@@ -43,11 +43,15 @@ export function useReservas() {
   const [reservasPage, setReservasPage] = useState(emptyPage);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [viewFilter, setViewFilter] = useState("active");
+  const [viewFilter, setViewFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
-  
+  // Obra 4 (firma de Gastón 2026-07-27): al entrar a Reservas la pestaña "Todas" queda
+  // seleccionada y la lista muestra todo — "lo que se ve es lo que dice la pestaña".
+  // Antes arrancaba en "active" (En gestión + Confirmadas), un filtro invisible para
+  // quien recién entra a la pantalla.
+
   // Filtro de período por defecto: Últimos 90 días
   const today = new Date();
   const [dateRange, setDateRange] = useState({

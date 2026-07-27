@@ -1,5 +1,6 @@
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess, showTextPrompt } from "../../../alerts";
+import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 
 // B1.15 Fase D (2026-05-11): options.onApprovalRequired (opcional). Cuando
@@ -151,7 +152,21 @@ export function useFinanceActions(loadData, options = {}) {
       showSuccess("Movimiento manual registrado.");
       await loadData();
     } catch (error) {
-      showError(error.message || "No se pudo registrar el movimiento.");
+      // Hallazgo menor (barrido de estándares, 2026-07-27): error.message puede traer un
+      // texto técnico crudo del cliente HTTP ("Not Found"/"Forbidden") en vez del motivo
+      // real que manda el backend — getApiErrorMessage ya sabe leer el payload del error
+      // primero (T-5).
+      //
+      // Fix del reviewer a este comentario (2026-07-27): un 404/403 "pelado" (sin body
+      // del servidor) NO cae en el texto en criollo de acá abajo — errors.js reconoce
+      // "Not Found"/"Forbidden" como bare HTTP statusText (ver
+      // HTTP_STATUSTEXT_EXACT/esErrorDeTransporteOStatusText en lib/errors.js) y los
+      // reemplaza por el genérico de red ("No se pudo conectar. Revisá tu conexión e
+      // intentá de nuevo."), no por "No se pudo registrar el movimiento.". Este segundo
+      // texto solo se usa cuando NO hay ningún mensaje aprovechable en absoluto (error
+      // sin message ni payload). El comportamiento en sí no cambia con este fix, solo se
+      // corrige lo que el comentario prometía.
+      showError(getApiErrorMessage(error, "No se pudo registrar el movimiento."));
       throw error;
     }
   };
@@ -162,7 +177,7 @@ export function useFinanceActions(loadData, options = {}) {
       showSuccess("Movimiento manual actualizado.");
       await loadData();
     } catch (error) {
-      showError(error.message || "No se pudo actualizar el movimiento.");
+      showError(getApiErrorMessage(error, "No se pudo actualizar el movimiento."));
       throw error;
     }
   };
@@ -183,7 +198,7 @@ export function useFinanceActions(loadData, options = {}) {
       showSuccess("Movimiento anulado.");
       await loadData();
     } catch (error) {
-      showError(error.message || "No se pudo anular el movimiento.");
+      showError(getApiErrorMessage(error, "No se pudo anular el movimiento."));
     }
   };
 

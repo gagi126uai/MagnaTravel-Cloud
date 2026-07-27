@@ -43,6 +43,7 @@ import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
 import { construirLineasKpiConCompatibilidad } from "../lib/dashboardKpiCurrency";
+import { statusConfig } from "../features/reservas/components/ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../lib/utils";
 
 export default function DashboardPage() {
@@ -440,21 +441,23 @@ function EmptyState({ message }) {
 }
 
 function BadgeStatus({ status }) {
-    // Mapeo de estados (en ingles, alineado con el enum EstadoReserva del backend)
-    // a (label en espanol + clases tailwind para el chip).
-    const config = {
-        Budget: { label: 'Presupuesto', className: 'bg-slate-100 text-slate-600' },
-        Confirmed: { label: 'Confirmada', className: 'bg-amber-100 text-amber-700' },
-        Traveling: { label: 'En viaje', className: 'bg-emerald-100 text-emerald-700' },
-        Closed: { label: 'Finalizada', className: 'bg-indigo-100 text-indigo-700' },
-        Cancelled: { label: 'Cancelada', className: 'bg-red-100 text-red-700' },
-        Archived: { label: 'Archivada', className: 'bg-slate-100 text-slate-500' },
-    };
-    const cfg = config[status] || { label: status, className: 'bg-slate-100' };
+    // Obra 6 (firma de Gastón 2026-07-27): antes este mapa local estaba INCOMPLETO (le
+    // faltaban Quotation/InManagement/Lost, entre otros) y el fallback mostraba la clave
+    // cruda del backend ("Quotation" en vez de "Cotización") — jerga técnica en inglés
+    // que un administrador no tiene por qué entender. Ahora reusa el mismo `statusConfig`
+    // canónico que ya pinta el estado en el listado y la ficha de Reservas
+    // (`ReservaStatusBadge.jsx`) — un solo mapa, sin divergencia posible entre pantallas.
+    const cfg = statusConfig[status];
+    const label = cfg ? cfg.label : "—";
+    // Fallback neutro (nunca la clave cruda) para un status que todavía no está en el
+    // mapa canónico — no debería pasar en producción, pero si pasa, no debe filtrar jerga.
+    const className = cfg
+        ? cfg.color
+        : "bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700";
 
     return (
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cfg.className}`}>
-            {cfg.label}
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${className}`}>
+            {label}
         </span>
     );
 }

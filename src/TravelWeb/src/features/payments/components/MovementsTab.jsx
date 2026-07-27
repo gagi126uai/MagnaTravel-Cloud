@@ -33,6 +33,8 @@ import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatCurrency } from "../lib/financeUtils";
 import { formatDate, formatDateTime } from "../../../lib/utils";
+import { debeApagarBotonesMovimiento, obtenerEstadoBadgeMovimiento } from "../lib/cashMovementBadgeLogic";
+import { esCategoriaDeSistema, mapearCategoriaMovimiento, mapearMetodoMovimiento } from "../lib/cashMovementLabels";
 
 // Formateador legacy mantenido solo para llamadas locales sin moneda explícita (compatibilidad interna)
 const currency = new Intl.NumberFormat("es-AR", {
@@ -106,6 +108,15 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
   const handleChange = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
   };
+
+  // Hallazgo menor (barrido de estándares, 2026-07-27): las categorías que arma el motor
+  // solo (ClientCreditWithdrawal/ClientCreditReversal, ver ManualCashMovementBuilder) NO
+  // se pueden re-tipear acá — si dejáramos el campo editable y el cajero guardara sin
+  // tocarlo, el input mostraría el texto en criollo pero al reenviarlo se perdería el
+  // token que el motor usa para la trazabilidad de ese movimiento. Por eso el campo queda
+  // de solo lectura (con el texto ya traducido) para estas categorías puntuales; el resto
+  // de las categorías (texto libre del usuario) siguen 100% editables como siempre.
+  const categoriaEsDeSistema = Boolean(movement && esCategoriaDeSistema(movement.category));
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -215,25 +226,48 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Metodo</label>
+            <label htmlFor="movimiento-manual-method" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Metodo</label>
+            {/* Fix bloqueante data-exposure (review): mismo problema que Categoría — un
+                movimiento de sistema (retiro/devolución de saldo a favor) trae Method="Cash"/
+                "Transfer" crudo (ver ManualCashMovementBuilder en el motor). Se muestra
+                traducido y de solo lectura; form.method sigue guardando el token crudo para
+                no corromper el dato si se re-guarda sin tocar este campo. */}
             <input
+              id="movimiento-manual-method"
               type="text"
-              value={form.method}
+              value={categoriaEsDeSistema ? mapearMetodoMovimiento(form.method) : form.method}
               onChange={(event) => handleChange("method", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              required
+              readOnly={categoriaEsDeSistema}
+              aria-describedby={categoriaEsDeSistema ? "movimiento-manual-method-hint" : undefined}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:read-only:bg-slate-900"
+              required={!categoriaEsDeSistema}
+              data-testid="movimiento-manual-method"
             />
+            {categoriaEsDeSistema && (
+              <p id="movimiento-manual-method-hint" className="mt-1 text-xs text-slate-400">
+                Método generado por el sistema, no se puede editar acá.
+              </p>
+            )}
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Categoria</label>
+            <label htmlFor="movimiento-manual-category" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Categoria</label>
             <input
+              id="movimiento-manual-category"
               type="text"
-              value={form.category}
+              value={categoriaEsDeSistema ? mapearCategoriaMovimiento(form.category) : form.category}
               onChange={(event) => handleChange("category", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              required
+              readOnly={categoriaEsDeSistema}
+              aria-describedby={categoriaEsDeSistema ? "movimiento-manual-category-hint" : undefined}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:read-only:bg-slate-900"
+              required={!categoriaEsDeSistema}
+              data-testid="movimiento-manual-category"
             />
+            {categoriaEsDeSistema && (
+              <p id="movimiento-manual-category-hint" className="mt-1 text-xs text-slate-400">
+                Categoría generada por el sistema, no se puede editar acá.
+              </p>
+            )}
           </div>
 
           <div>
@@ -387,6 +421,11 @@ export function MovementsTab({
             movements.map((movement) => {
               const isIncome = movement.direction === "Income";
               const isManual = movement.isManual;
+              // Obra 2 (firma 2026-07-27): un par de Caja por EDICIÓN dice "Reemplazado",
+              // distinto del par por anulación real que sigue diciendo "Anulado" — el
+              // cajero distingue qué pasó con el movimiento sin tener que abrir nada.
+              const estadoBadge = obtenerEstadoBadgeMovimiento(movement);
+              const botonesApagados = debeApagarBotonesMovimiento(movement);
 
               return (
                 // H14 (2026-07-25): key = movement.publicId, el PublicId ESTABLE del propio asiento
@@ -410,14 +449,19 @@ export function MovementsTab({
                           <div className="text-sm font-semibold text-slate-900 dark:text-white">
                             {sourceLabels[movement.sourceType] || movement.sourceType}
                           </div>
-                          {/* H14: badge "Anulado" en AMBAS filas del par (el asiento viejo reemplazado
-                              y su contra-asiento) — antes ninguna de las dos filas avisaba nada. */}
-                          {movement.isAnnulled && (
+                          {/* H14/Obra 2: badge "Anulado" o "Reemplazado" en AMBAS filas del par (el
+                              asiento viejo y su contra-asiento) — antes ninguna de las dos filas
+                              avisaba nada.
+                              Fix del reviewer (2026-07-27): testid ESTABLE (no cambia de nombre
+                              según el estado) + data-estado para que QA pueda leer cuál es sin
+                              tener que adivinar el nombre del selector. */}
+                          {estadoBadge && (
                             <span
                               className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-                              data-testid={`movimiento-anulado-badge-${movement.publicId}`}
+                              data-testid={`movimiento-estado-badge-${movement.publicId}`}
+                              data-estado={estadoBadge.estado}
                             >
-                              Anulado
+                              {estadoBadge.etiqueta}
                             </span>
                           )}
                         </div>
@@ -433,7 +477,7 @@ export function MovementsTab({
                       <div className="text-xs text-slate-500 dark:text-slate-400">Ref. {movement.reference}</div>
                     ) : null}
                   </DataGridCell>
-                  <DataGridCell>{movement.method}</DataGridCell>
+                  <DataGridCell>{mapearMetodoMovimiento(movement.method)}</DataGridCell>
                   {/* Columna Moneda: cartelito $/US$ según la moneda del movimiento */}
                   <DataGridCell>
                     <CurrencyBadge currency={movement.currency || "ARS"} size="sm" />
@@ -446,20 +490,20 @@ export function MovementsTab({
                   </DataGridCell>
                   <DataGridActionCell>
                     {isManual && isAdmin ? (
-                      // H14 (P-9): un movimiento ya anulado no se puede volver a editar ni anular —
-                      // los botones quedan APAGADOS, con el motivo siempre a la vista al lado (nunca
-                      // solo en un tooltip).
+                      // H14/Obra 2 (P-9): un movimiento ya anulado O reemplazado no se puede volver
+                      // a editar ni anular — los botones quedan APAGADOS, con el motivo siempre a
+                      // la vista al lado (nunca solo en un tooltip).
                       <div className="flex flex-col items-end gap-1">
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => !movement.isAnnulled && openEdit(movement)}
-                            disabled={movement.isAnnulled}
-                            aria-disabled={movement.isAnnulled}
+                            onClick={() => !botonesApagados && openEdit(movement)}
+                            disabled={botonesApagados}
+                            aria-disabled={botonesApagados}
                             aria-label="Editar"
                             data-testid={`movimiento-editar-${movement.publicId}`}
                             className={`rounded-lg p-2 transition-colors ${
-                              movement.isAnnulled
+                              botonesApagados
                                 ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
                                 : "text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
                             }`}
@@ -468,13 +512,13 @@ export function MovementsTab({
                           </button>
                           <button
                             type="button"
-                            onClick={() => !movement.isAnnulled && onDeleteManualMovement(movement)}
-                            disabled={movement.isAnnulled}
-                            aria-disabled={movement.isAnnulled}
+                            onClick={() => !botonesApagados && onDeleteManualMovement(movement)}
+                            disabled={botonesApagados}
+                            aria-disabled={botonesApagados}
                             aria-label="Anular"
                             data-testid={`movimiento-anular-${movement.publicId}`}
                             className={`rounded-lg p-2 transition-colors ${
-                              movement.isAnnulled
+                              botonesApagados
                                 ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
                                 : "text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
                             }`}
@@ -482,15 +526,15 @@ export function MovementsTab({
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
-                        {movement.isAnnulled && (
+                        {estadoBadge && (
                           <span className="text-[9px] text-slate-400 text-right">
-                            Ya está anulado, no se puede editar ni anular de nuevo.
+                            {estadoBadge.motivoBotonesApagados}
                           </span>
                         )}
                       </div>
                     ) : (
-                      // El badge "Anulado" para estos movimientos automáticos ya se muestra junto
-                      // al origen (columna Origen, arriba) — no se repite acá (P-16).
+                      // El badge "Anulado"/"Reemplazado" para estos movimientos automáticos ya se
+                      // muestra junto al origen (columna Origen, arriba) — no se repite acá (P-16).
                       <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
                     )}
                   </DataGridActionCell>
@@ -513,6 +557,11 @@ export function MovementsTab({
           {movements.map((movement) => {
             const isIncome = movement.direction === "Income";
             const isManual = movement.isManual;
+            // Obra 2 (firma 2026-07-27): mismo criterio que la tabla desktop — un par de
+            // Caja por edición dice "Reemplazado", uno por anulación real sigue diciendo
+            // "Anulado".
+            const estadoBadge = obtenerEstadoBadgeMovimiento(movement);
+            const botonesApagados = debeApagarBotonesMovimiento(movement);
 
             return (
               <MobileRecordCard
@@ -524,17 +573,21 @@ export function MovementsTab({
                   </div>
                 }
                 statusSlot={
-                  movement.isAnnulled ? (
+                  // Fix del reviewer (2026-07-27): mismo testid estable que la tabla
+                  // desktop (con sufijo "-mobile-" para no duplicar el id en el DOM,
+                  // ya que ambas vistas conviven ocultas por CSS) + data-estado.
+                  estadoBadge ? (
                     <span
                       className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-                      data-testid={`movimiento-anulado-badge-mobile-${movement.publicId}`}
+                      data-testid={`movimiento-estado-badge-mobile-${movement.publicId}`}
+                      data-estado={estadoBadge.estado}
                     >
-                      Anulado
+                      {estadoBadge.etiqueta}
                     </span>
                   ) : null
                 }
                 title={sourceLabels[movement.sourceType] || movement.sourceType}
-                subtitle={`${formatDate(movement.occurredAt)} · ${movement.method}`}
+                subtitle={`${formatDate(movement.occurredAt)} · ${mapearMetodoMovimiento(movement.method)}`}
                 meta={
                   <>
                     <div className="text-xs text-slate-500 dark:text-slate-400">{movement.description}</div>
@@ -557,19 +610,20 @@ export function MovementsTab({
                 }
                 footerActions={
                   isManual && isAdmin ? (
-                    // H14 (P-9): mismo criterio que la tabla desktop — botones apagados +
-                    // motivo a la vista cuando el movimiento ya fue anulado.
+                    // H14/Obra 2 (P-9): mismo criterio que la tabla desktop — botones
+                    // apagados + motivo a la vista cuando el movimiento ya fue anulado
+                    // o reemplazado por una edición.
                     <div className="flex flex-col items-end gap-1">
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => !movement.isAnnulled && openEdit(movement)}
-                          disabled={movement.isAnnulled}
-                          aria-disabled={movement.isAnnulled}
+                          onClick={() => !botonesApagados && openEdit(movement)}
+                          disabled={botonesApagados}
+                          aria-disabled={botonesApagados}
                           aria-label="Editar"
                           data-testid={`movimiento-editar-mobile-${movement.publicId}`}
                           className={`rounded-lg p-2 transition-colors ${
-                            movement.isAnnulled
+                            botonesApagados
                               ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
                               : "text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
                           }`}
@@ -578,13 +632,13 @@ export function MovementsTab({
                         </button>
                         <button
                           type="button"
-                          onClick={() => !movement.isAnnulled && onDeleteManualMovement(movement)}
-                          disabled={movement.isAnnulled}
-                          aria-disabled={movement.isAnnulled}
+                          onClick={() => !botonesApagados && onDeleteManualMovement(movement)}
+                          disabled={botonesApagados}
+                          aria-disabled={botonesApagados}
                           aria-label="Anular"
                           data-testid={`movimiento-anular-mobile-${movement.publicId}`}
                           className={`rounded-lg p-2 transition-colors ${
-                            movement.isAnnulled
+                            botonesApagados
                               ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
                               : "text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
                           }`}
@@ -592,9 +646,9 @@ export function MovementsTab({
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
-                      {movement.isAnnulled && (
+                      {estadoBadge && (
                         <span className="text-[9px] text-slate-400 text-right">
-                          Ya está anulado, no se puede editar ni anular de nuevo.
+                          {estadoBadge.motivoBotonesApagados}
                         </span>
                       )}
                     </div>

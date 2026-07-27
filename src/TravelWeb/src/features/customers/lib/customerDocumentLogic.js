@@ -178,6 +178,77 @@ export function construirPayloadDocumento({ tipoDocumento, numeroDocumento, docu
 }
 
 /**
+ * Devuelve el documento GUARDADO que el casillero único NO está mostrando, para pintarlo
+ * como dato de SOLO LECTURA en la ficha del cliente (Obra 3, firma de Gastón 2026-07-27:
+ * "si el cliente tiene el OTRO documento guardado (CUIT y DNI a la vez, hay 5 casos
+ * reales), se muestra debajo... No se esconde ningún documento").
+ *
+ * Como `construirEstadoInicialDocumento` SIEMPRE prioriza `taxId` cuando existe (ver su
+ * docstring: "taxId manda"), el caso MÁS COMÚN es: el casillero muestra CUIT/CUIL (por el
+ * taxId) y, ADEMÁS, el cliente tiene un documento NO fiscal (DNI/Pasaporte/Otro) guardado
+ * aparte en `documentType`/`documentNumber`. El caso inverso (casillero en DNI con un
+ * CUIT oculto) no puede darse con el modelo actual: si hubiera un taxId cargado,
+ * `construirEstadoInicialDocumento` ya lo mostraría a él, no al DNI.
+ *
+ * Fix bloqueante del reviewer (2026-07-27): había un SEGUNDO caso borde que este helper
+ * escondía por error — un cliente legacy con `documentType` FISCAL (CUIT/CUIL) pero con
+ * un `documentNumber` DISTINTO del `taxId` vigente (dato inconsistente real, no un
+ * duplicado). Antes, como `esTipoDocumentoFiscal(documentType)` daba `true`, la función
+ * devolvía `null` asumiendo "es el mismo dato" sin comparar los números — ese
+ * `documentNumber` quedaba invisible en toda la pantalla, violando la firma ("no se
+ * esconde ningún documento"). Ahora se compara el NÚMERO, no solo el tipo.
+ *
+ * @param {{taxId?: string|null, documentType?: string|null, documentNumber?: string|null}|null|undefined} customer
+ * @returns {{tipoDocumento: string, numeroDocumento: string}|null}
+ */
+export function obtenerDocumentoAlternativo(customer) {
+    const taxId = (customer?.taxId || "").trim();
+    const documentType = customer?.documentType;
+    const documentNumber = (customer?.documentNumber || "").trim();
+
+    if (!taxId || !documentType || !documentNumber) {
+        return null;
+    }
+
+    if (esTipoDocumentoFiscal(documentType)) {
+        if (documentNumber === taxId) {
+            // Mismo número que ya se ve en el casillero (o un duplicado legacy exacto) —
+            // no hay un SEGUNDO documento distinto que mostrar.
+            return null;
+        }
+        // Caso borde real: documentType fiscal (CUIT/CUIL) pero con un número DISTINTO
+        // del taxId vigente — dato legacy inconsistente, pero es un documento guardado
+        // de verdad. La etiqueta es el propio tipo (CUIT/CUIL), que siempre está claro
+        // en esta rama (esTipoDocumentoFiscal solo da true para esos dos valores).
+        return { tipoDocumento: documentType, numeroDocumento: documentNumber };
+    }
+
+    return { tipoDocumento: documentType, numeroDocumento: documentNumber };
+}
+
+/**
+ * Arma el texto legible del documento alternativo para la línea "También tiene ..." de
+ * la ficha del cliente (fix del reviewer, 2026-07-27): mostrar el tipo tal cual funciona
+ * bien para DNI/Pasaporte/CUIT/CUIL ("También tiene DNI 36.053.656"), pero para el tipo
+ * "Otro" ("También tiene Otro AB123") suena como si "Otro" fuera el NOMBRE del
+ * documento en vez de una categoría genérica — se reemplaza por una frase legible
+ * ("también tiene otro documento AB123").
+ *
+ * @param {{tipoDocumento: string, numeroDocumento: string}|null|undefined} documentoAlternativo
+ * @returns {string} texto listo para insertar después de "También tiene " (cadena vacía
+ *   si no hay documento alternativo, para que el caller pueda usarlo sin chequear null).
+ */
+export function describirDocumentoAlternativo(documentoAlternativo) {
+    if (!documentoAlternativo) {
+        return "";
+    }
+    if (documentoAlternativo.tipoDocumento === "Otro") {
+        return `otro documento ${documentoAlternativo.numeroDocumento}`;
+    }
+    return `${documentoAlternativo.tipoDocumento} ${documentoAlternativo.numeroDocumento}`;
+}
+
+/**
  * Aplica un resultado elegido del padrón AFIP al casillero único (hallazgo B1, revisión
  * 2026-07-27): `persona.id` que devuelve `/fiscal/search` SIEMPRE es el CUIT/CUIL de 11
  * dígitos del padrón — el motor calcula los CUILes candidatos a partir de un DNI para

@@ -1,7 +1,15 @@
 import React from 'react';
+import { RESERVA_STATUS_LABELS, traducirEstadoReserva } from '../lib/reservaStatusLabels';
 
 /**
  * Mapeo canonico de estados de Reserva al label en espanol y al color del badge.
+ *
+ * Los labels (el texto) viven en `reservaStatusLabels.js` (un archivo `.js` puro, sin
+ * JSX) — Obra 6 (2026-07-27): ese archivo es ahora la FUENTE UNICA del texto de cada
+ * estado, para que los dashboards (AgentDashboard/AdminDashboard) puedan reusar
+ * exactamente el mismo mapeo sin duplicarlo, y para poder testear la traduccion con
+ * `node --test` (este archivo .jsx, con JSX de verdad, no se puede importar desde un
+ * test plano de Node). Colores e iconos siguen viviendo aca, son solo de presentacion.
  *
  * Los keys son los strings persistidos en la BD (en ingles, alineados con EstadoReserva.cs).
  *
@@ -22,47 +30,47 @@ export const statusConfig = {
     // Cotizacion: primer paso del ciclo. Borrador interno del vendedor.
     // Color gris claro — indica "todavia nada", borrador.
     Quotation: {
-        label: 'Cotizacion',
+        label: RESERVA_STATUS_LABELS.Quotation,
         color: 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700',
         icon: '📝',
     },
     // Presupuesto: documento armado que el cliente recibe y evalua.
     // Color azul claro — sigue siendo "en curso", pero ya mas formal.
     Budget: {
-        label: 'Presupuesto',
+        label: RESERVA_STATUS_LABELS.Budget,
         color: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
         icon: '📋',
     },
     // En gestion: el cliente acepto; se solicitan servicios a los operadores.
     // Color celeste/cian — "en movimiento", diferente del azul del presupuesto.
     InManagement: {
-        label: 'En gestion',
+        label: RESERVA_STATUS_LABELS.InManagement,
         color: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-900/20 dark:text-cyan-300 dark:border-cyan-800',
         icon: '⚙️',
     },
     // Confirmada: todos los servicios resueltos. Se activa AUTOMATICAMENTE.
     // Color ambar/naranja — "lista pero en espera del viaje".
     Confirmed: {
-        label: 'Confirmada',
+        label: RESERVA_STATUS_LABELS.Confirmed,
         color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
         icon: '🔒',
     },
     // En viaje: el cliente esta viajando. ADR-036: solo lectura.
     Traveling: {
-        label: 'En viaje',
+        label: RESERVA_STATUS_LABELS.Traveling,
         color: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
         icon: '✈️',
     },
     // Finalizada: reserva cerrada, ciclo completo.
     Closed: {
-        label: 'Finalizada',
+        label: RESERVA_STATUS_LABELS.Closed,
         color: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
         icon: '✅',
     },
     // Perdido: cotizacion o presupuesto que el cliente no compro. Queda en historial.
     // Decisión #10 (guia UX 2026-06-08): gris oscuro + tachado visual — indica "no prospero".
     Lost: {
-        label: 'Perdido',
+        label: RESERVA_STATUS_LABELS.Lost,
         color: 'bg-slate-300 text-slate-600 border-slate-400 line-through dark:bg-slate-700 dark:text-slate-400 dark:border-slate-600',
         icon: '❌',
     },
@@ -70,7 +78,7 @@ export const statusConfig = {
     // ADR-036: el termino visible para el usuario es "Anulada" (anular = deshacer el viaje).
     // "Cancelar" en este producto significa "saldar una deuda"; por eso NO se usa "Cancelada".
     Cancelled: {
-        label: 'Anulada',
+        label: RESERVA_STATUS_LABELS.Cancelled,
         color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800',
         icon: '🚫',
     },
@@ -78,13 +86,13 @@ export const statusConfig = {
     // pendiente de confirmar. Es un estado transitorio después de Cancelled.
     // Color rosa (mismo espectro que Cancelled/Anulada) — sigue siendo una reserva anulada.
     PendingOperatorRefund: {
-        label: 'Esperando reembolso',
+        label: RESERVA_STATUS_LABELS.PendingOperatorRefund,
         color: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-700',
         icon: '⏳',
     },
     // Archivada: solo lectura, fuera del ciclo activo.
     Archived: {
-        label: 'Archivada',
+        label: RESERVA_STATUS_LABELS.Archived,
         color: 'bg-slate-100 text-slate-500 border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
         icon: '📦',
     },
@@ -141,9 +149,18 @@ export function isReservaEnEstadoVivo(status) {
     return LIVE_RESERVA_STATUSES.has(status);
 }
 
-/** Devuelve el label en espanol para mostrar en la UI. Si el status no existe, devuelve el string crudo. */
+/**
+ * Devuelve el label en espanol para mostrar en la UI.
+ *
+ * Fix bloqueante del reviewer (2026-07-27): antes, si el status no existia en el mapa,
+ * esta funcion devolvia el string CRUDO del backend (`status ?? ''`) — jerga tecnica en
+ * ingles filtrada a un usuario no programador (mismo problema que la Obra 6 encontro en
+ * los dashboards). Ahora reusa `traducirEstadoReserva` (fuente unica del mapeo, ver
+ * `reservaStatusLabels.js`), que cae a "—" para cualquier status desconocido, NUNCA la
+ * clave interna.
+ */
 export function translateStatus(status) {
-    return statusConfig[status]?.label ?? status ?? '';
+    return traducirEstadoReserva(status);
 }
 
 /** Devuelve la config completa (label + color + icon) para un status, con fallback a Budget. */
@@ -157,7 +174,9 @@ export function getStatusConfig(status) {
  */
 export function ReservaStatusBadge({ status }) {
     const cfg = getStatusConfig(status);
-    const label = statusConfig[status]?.label ?? status;
+    // Fix bloqueante del reviewer (2026-07-27): mismo motivo que translateStatus — nunca
+    // mostrar la clave cruda del backend si el status no esta en el mapa.
+    const label = traducirEstadoReserva(status);
     return (
         <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>
             {label}

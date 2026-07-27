@@ -14,6 +14,8 @@ import {
     construirEstadoInicialDocumento,
     construirPayloadDocumento,
     aplicarResultadoAfip,
+    obtenerDocumentoAlternativo,
+    describirDocumentoAlternativo,
 } from "./customerDocumentLogic.js";
 
 // ─── DOCUMENT_TYPE_OPTIONS ──────────────────────────────────────────────────────
@@ -327,4 +329,95 @@ test("B1: resultado de AFIP sin id -> conserva el número que ya había en el ca
         {}
     );
     assert.deepEqual(resultado, { tipoDocumento: "CUIT", numeroDocumento: "20304050607" });
+});
+
+// ─── obtenerDocumentoAlternativo (Obra 3, ficha del cliente unificada, 2026-07-27) ───
+
+test("cliente con CUIT y un DNI viejo guardado aparte -> devuelve el DNI (fixture real del hallazgo B2)", () => {
+    const resultado = obtenerDocumentoAlternativo({
+        taxId: "20304050607",
+        documentType: "DNI",
+        documentNumber: "36053656",
+    });
+    assert.deepEqual(resultado, { tipoDocumento: "DNI", numeroDocumento: "36053656" });
+});
+
+test("cliente con CUIT y un Pasaporte guardado aparte -> devuelve el Pasaporte", () => {
+    const resultado = obtenerDocumentoAlternativo({
+        taxId: "20304050607",
+        documentType: "Pasaporte",
+        documentNumber: "AB123456",
+    });
+    assert.deepEqual(resultado, { tipoDocumento: "Pasaporte", numeroDocumento: "AB123456" });
+});
+
+test("cliente con solo CUIT (sin otro documento guardado) -> no hay nada que mostrar aparte", () => {
+    assert.equal(obtenerDocumentoAlternativo({ taxId: "20304050607" }), null);
+});
+
+test("cliente con solo DNI (sin taxId) -> no hay nada que mostrar aparte (no existe un CUIT oculto)", () => {
+    assert.equal(obtenerDocumentoAlternativo({ documentType: "DNI", documentNumber: "30405060" }), null);
+});
+
+test("cliente con CUIT y documentType=CUIT/CUIL igual (mismo dato, no un segundo documento) -> no hay nada que mostrar", () => {
+    assert.equal(
+        obtenerDocumentoAlternativo({ taxId: "20304050607", documentType: "CUIT", documentNumber: "20304050607" }),
+        null
+    );
+    assert.equal(
+        obtenerDocumentoAlternativo({ taxId: "27111222338", documentType: "CUIL", documentNumber: "27111222338" }),
+        null
+    );
+});
+
+// Fix bloqueante del reviewer (2026-07-27): antes, con documentType FISCAL, la función
+// asumía "mismo dato que el taxId" sin comparar los números, y este caso quedaba oculto.
+test("cliente legacy con documentType=CUIT pero un NÚMERO distinto del taxId vigente -> SÍ se muestra (dato inconsistente real, no se esconde)", () => {
+    const resultado = obtenerDocumentoAlternativo({
+        taxId: "20111222333",
+        documentType: "CUIT",
+        documentNumber: "20999888777",
+    });
+    assert.deepEqual(resultado, { tipoDocumento: "CUIT", numeroDocumento: "20999888777" });
+});
+
+test("mismo caso con CUIL (número distinto del taxId vigente) -> también se muestra", () => {
+    const resultado = obtenerDocumentoAlternativo({
+        taxId: "20111222333",
+        documentType: "CUIL",
+        documentNumber: "27999888776",
+    });
+    assert.deepEqual(resultado, { tipoDocumento: "CUIL", numeroDocumento: "27999888776" });
+});
+
+test("cliente null/undefined -> no rompe, no hay nada que mostrar", () => {
+    assert.equal(obtenerDocumentoAlternativo(null), null);
+    assert.equal(obtenerDocumentoAlternativo(undefined), null);
+});
+
+// ─── describirDocumentoAlternativo (fix del reviewer, 2026-07-27) ────────────────
+
+test("tipo 'Otro' -> frase legible 'otro documento {numero}', NUNCA 'Otro {numero}' crudo", () => {
+    assert.equal(
+        describirDocumentoAlternativo({ tipoDocumento: "Otro", numeroDocumento: "AB123" }),
+        "otro documento AB123"
+    );
+});
+
+test("tipo DNI/Pasaporte/CUIT/CUIL -> el tipo se muestra tal cual", () => {
+    assert.equal(describirDocumentoAlternativo({ tipoDocumento: "DNI", numeroDocumento: "36053656" }), "DNI 36053656");
+    assert.equal(describirDocumentoAlternativo({ tipoDocumento: "Pasaporte", numeroDocumento: "AB123456" }), "Pasaporte AB123456");
+    assert.equal(describirDocumentoAlternativo({ tipoDocumento: "CUIT", numeroDocumento: "20999888777" }), "CUIT 20999888777");
+});
+
+test("sin documento alternativo (null/undefined) -> cadena vacía, no rompe", () => {
+    assert.equal(describirDocumentoAlternativo(null), "");
+    assert.equal(describirDocumentoAlternativo(undefined), "");
+});
+
+test("cliente legacy con taxId=\"\" (string vacío) -> no hay nada que mostrar (mismo criterio que taxId ausente)", () => {
+    assert.equal(
+        obtenerDocumentoAlternativo({ taxId: "", documentType: "DNI", documentNumber: "30405060" }),
+        null
+    );
 });

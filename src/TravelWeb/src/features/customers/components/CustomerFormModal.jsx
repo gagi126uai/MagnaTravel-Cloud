@@ -249,10 +249,14 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                     <div className="p-6 space-y-4">
                         <div className="grid gap-4 sm:grid-cols-2">
                             <div className="col-span-2 space-y-1.5">
-                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Nombre Completo <span className="text-red-500">*</span></label>
+                                {/* Menor d) del barrido de estándares (2026-07-27): label sin htmlFor —
+                                    mismo patrón de a11y que ya se usa en el casillero de documento de
+                                    más abajo. */}
+                                <label htmlFor="customer-modal-fullName" className="text-sm font-medium text-slate-700 dark:text-slate-300">Nombre Completo <span className="text-red-500">*</span></label>
                                 <div className="relative">
                                     <User className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                                     <input
+                                        id="customer-modal-fullName"
                                         type="text"
                                         value={formData.fullName}
                                         onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
@@ -346,8 +350,9 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                             </div>
 
                             <div className="col-span-2 space-y-1.5">
-                                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Condición AFIP <span className="text-red-500">*</span></label>
+                                <label htmlFor="customer-modal-taxConditionId" className="text-sm font-medium text-slate-700 dark:text-slate-300">Condición AFIP <span className="text-red-500">*</span></label>
                                 <select
+                                    id="customer-modal-taxConditionId"
                                     value={formData.taxConditionId}
                                     onChange={(e) => setFormData({ ...formData, taxConditionId: parseInt(e.target.value) })}
                                     className="w-full rounded-md border border-input bg-background dark:bg-slate-950 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
@@ -361,10 +366,11 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
 
                             <div className="col-span-2 grid sm:grid-cols-2 gap-4">
                                 <div className="space-y-1.5">
-                                    <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
+                                    <label htmlFor="customer-modal-email" className="text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
                                     <div className="relative">
                                         <Mail className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                                         <input
+                                            id="customer-modal-email"
                                             type="email"
                                             value={formData.email}
                                             onChange={(e) => setFormData({ ...formData, email: e.target.value })}

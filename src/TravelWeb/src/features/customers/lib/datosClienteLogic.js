@@ -110,10 +110,18 @@ export function construirPayloadDatosCliente(formData, notasOriginales) {
 }
 
 /**
- * Candado del CUIT (spec §3): SOLO el campo CUIT/DNI y el botón de búsqueda AFIP se
- * deshabilitan cuando el cliente ya tiene una factura viva con ese CUIT. Se expone como
- * función (en vez de comparar `=== true` repetido en el JSX) para que quede en un único
- * lugar testeable y no se pueda reintroducir por error la regla de calcularlo distinto.
+ * Candado del CUIT (spec §3): true cuando el cliente ya tiene una factura viva con ese
+ * CUIT. Se expone como función (en vez de comparar `=== true` repetido en el JSX) para
+ * que quede en un único lugar testeable y no se pueda reintroducir por error la regla de
+ * calcularlo distinto.
+ *
+ * OJO (fix del reviewer, 2026-07-27): este docstring decía "SOLO el campo CUIT/DNI y el
+ * botón de búsqueda AFIP se deshabilitan" — eso ya NO es así desde que la ficha del
+ * cliente (Obra 3, `DatosClienteTab.jsx`) unificó los dos campos sueltos en un solo
+ * casillero de documento. Hoy, cuando este veredicto da `true`, el CASILLERO ENTERO
+ * (tipo + número + lupita) queda deshabilitado en esa pantalla — no solo el número. Este
+ * archivo solo calcula el booleano; quién lo aplica y a qué controles es decisión de
+ * cada pantalla que lo consume.
  *
  * @param {boolean|null|undefined} taxIdLocked - veredicto del backend (overview.taxIdLocked)
  * @returns {boolean}

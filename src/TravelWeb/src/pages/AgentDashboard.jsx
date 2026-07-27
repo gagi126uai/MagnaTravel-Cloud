@@ -9,6 +9,7 @@ import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
 import { construirLineasKpiConCompatibilidad } from "../lib/dashboardKpiCurrency";
+import { traducirEstadoReserva } from "../features/reservas/lib/reservaStatusLabels";
 import { formatCurrency, formatDate } from "../lib/utils";
 
 export default function AgentDashboard() {
@@ -94,7 +95,11 @@ export default function AgentDashboard() {
                                     </div>
                                     <div className="text-right">
                                         <div className="font-medium text-blue-600 dark:text-blue-400">{formatDate(trip.startDate)}</div>
-                                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">{trip.status}</span>
+                                        {/* Obra 6 (firma 2026-07-27): antes se mostraba trip.status crudo
+                                            ("Confirmed", "InManagement") — jerga interna en inglés que un
+                                            vendedor no tiene por qué entender. Mismo mapa que las pestañas
+                                            de Reservas; fallback "—" si el status no se reconoce. */}
+                                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">{traducirEstadoReserva(trip.status)}</span>
                                     </div>
                                 </div>
                             )) : <EmptyState message="No tienes salidas proximas" />}

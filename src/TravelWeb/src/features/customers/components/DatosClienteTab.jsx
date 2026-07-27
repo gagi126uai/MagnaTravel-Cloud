@@ -9,6 +9,13 @@
  * Esta solapa hace su PROPIO `GET /customers/{id}` (el overview de la cuenta no trae
  * `taxConditionId`/`documentNumber`/`isActive` — esos campos solo vienen del endpoint de
  * detalle del cliente).
+ *
+ * Documento (Obra 3, firma de Gastón 2026-07-27): esta solapa usa el MISMO casillero
+ * único que el alta (`CustomerFormModal` + `customerDocumentLogic.js`) — un solo
+ * desplegable de tipo (CUIT/CUIL/DNI/Pasaporte/Otro) + número, en vez de los dos campos
+ * sueltos que había antes ("Documento/Pasaporte" y "CUIT/DNI"). Si el cliente tiene el
+ * OTRO documento guardado aparte (por ejemplo, CUIT y un DNI viejo a la vez), se muestra
+ * debajo como dato de SOLO LECTURA — nunca se esconde.
  */
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw, Search, XCircle } from "lucide-react";
@@ -22,6 +29,16 @@ import {
   debeDeshabilitarCuit,
   puedeGuardarDatosCliente,
 } from "../lib/datosClienteLogic";
+import {
+  DOCUMENT_TYPE_OPTIONS,
+  aplicarResultadoAfip,
+  construirEstadoInicialDocumento,
+  construirPayloadDocumento,
+  describirDocumentoAlternativo,
+  esTipoDocumentoFiscal,
+  obtenerDocumentoAlternativo,
+  tipoDocumentoTieneBusquedaAfip,
+} from "../lib/customerDocumentLogic";
 
 const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 dark:bg-slate-950 dark:border-slate-800 dark:text-white dark:disabled:bg-slate-900";
@@ -40,16 +57,28 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
   // ── Carga del detalle del cliente (fuente de los campos editables) ─────────
   const [loading, setLoading] = useState(true);
   const [errorCarga, setErrorCarga] = useState(null);
-  const [formData, setFormData] = useState(construirEstadoInicialDatosCliente(null));
+  const [formData, setFormData] = useState(() => ({
+    ...construirEstadoInicialDatosCliente(null),
+    ...construirEstadoInicialDocumento(null),
+  }));
   // `notes` no se muestra en esta solapa, pero el PUT lo pisa completo si no viaja
   // (ver docstring de construirPayloadDatosCliente) — se guarda aparte para reinyectarlo.
   const [notasOriginales, setNotasOriginales] = useState(null);
+  // Foto de cómo arrancó el casillero de documento (mismo criterio que CustomerFormModal,
+  // P-21): sirve para saber si el usuario lo TOCÓ antes de guardar, sin necesitar un flag
+  // manual en cada onChange — ver handleSubmit.
+  const [documentoInicial, setDocumentoInicial] = useState(() => construirEstadoInicialDocumento(null));
+  // Cliente TAL CUAL lo devolvió el motor (sin mezclar con el formulario editable):
+  // hace falta crudo para el round-trip de construirPayloadDocumento (P-21, no pisar un
+  // documento que no se ve en pantalla) y para saber si hay un OTRO documento guardado
+  // que el casillero no está mostrando (obtenerDocumentoAlternativo).
+  const [clienteOriginal, setClienteOriginal] = useState(null);
 
   // ── Guardado ─────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
   const [errorGuardado, setErrorGuardado] = useState(null);
 
-  // ── Búsqueda AFIP del CUIT (mismo comportamiento que CustomerFormModal) ────
+  // ── Búsqueda AFIP del documento (mismo comportamiento que CustomerFormModal) ────
   const [afipResults, setAfipResults] = useState([]);
   const [loadingAfip, setLoadingAfip] = useState(false);
 
@@ -58,7 +87,12 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
     setErrorCarga(null);
     try {
       const detalle = await api.get(`/customers/${customerPublicId}`);
-      setFormData(construirEstadoInicialDatosCliente(detalle));
+      setFormData({
+        ...construirEstadoInicialDatosCliente(detalle),
+        ...construirEstadoInicialDocumento(detalle),
+      });
+      setDocumentoInicial(construirEstadoInicialDocumento(detalle));
+      setClienteOriginal(detalle);
       setNotasOriginales(detalle?.notes ?? null);
     } catch (error) {
       setErrorCarga(getApiErrorMessage(error, "No se pudieron cargar los datos del cliente."));
@@ -76,8 +110,12 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
     setFormData((anterior) => ({ ...anterior, [campo]: event.target.value }));
   };
 
+  // Lupita AFIP: solo tiene sentido para los tipos que están en el padrón (CUIT/CUIL/DNI
+  // — ver tipoDocumentoTieneBusquedaAfip). El botón ya queda oculto para Pasaporte/Otro,
+  // este chequeo es un segundo candado por si se dispara desde otro lado.
   const handleAfipSearch = async () => {
-    const query = (formData.taxId || "").trim();
+    if (!tipoDocumentoTieneBusquedaAfip(formData.tipoDocumento)) return;
+    const query = (formData.numeroDocumento || "").trim();
     if (query.length < 3) return;
     setLoadingAfip(true);
     try {
@@ -96,7 +134,10 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
     setFormData((anterior) => ({
       ...anterior,
       fullName: persona.razonSocial || `${persona.apellido || ""} ${persona.nombre || ""}`.trim() || anterior.fullName,
-      taxId: persona.id || anterior.taxId,
+      // B1 (mismo criterio que CustomerFormModal): lo que devuelve el padrón SIEMPRE es
+      // un CUIT/CUIL de 11 dígitos — aplicarResultadoAfip sube el tipo a CUIT si el
+      // casillero estaba en un tipo no fiscal.
+      ...aplicarResultadoAfip({ tipoDocumento: anterior.tipoDocumento, numeroDocumento: anterior.numeroDocumento }, persona),
       taxConditionId: persona.taxConditionId || anterior.taxConditionId,
     }));
     setAfipResults([]);
@@ -111,7 +152,21 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
     setSaving(true);
     setErrorGuardado(null);
     try {
-      await api.put(`/customers/${customerPublicId}`, construirPayloadDatosCliente(formData, notasOriginales));
+      // documentNumber/taxId acá son los que arma construirEstadoInicialDatosCliente al
+      // cargar (viejos, sin tipo) — se descartan a propósito: el documento real del
+      // casillero único viaja aparte, calculado abajo con construirPayloadDocumento.
+      const { tipoDocumento, numeroDocumento, documentNumber, taxId, ...resto } = formData;
+      // P-21 (mismo criterio que CustomerFormModal, hallazgo B2): "tocado" se calcula
+      // comparando contra la FOTO de cómo arrancó el casillero (documentoInicial), nunca
+      // con un flag manual — así no hay forma de pisar en silencio un documento que el
+      // casillero no está mostrando (por ejemplo, un DNI viejo guardado junto al CUIT).
+      const documentoFueTocado =
+        tipoDocumento !== documentoInicial.tipoDocumento || numeroDocumento !== documentoInicial.numeroDocumento;
+      const payload = {
+        ...construirPayloadDatosCliente(resto, notasOriginales),
+        ...construirPayloadDocumento({ tipoDocumento, numeroDocumento, documentoFueTocado, clienteOriginal }),
+      };
+      await api.put(`/customers/${customerPublicId}`, payload);
       showSuccess("Datos del cliente guardados correctamente.");
       if (onGuardado) await onGuardado();
     } catch (error) {
@@ -123,8 +178,23 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
     }
   };
 
-  const cuitDeshabilitado = !canEdit || debeDeshabilitarCuit(taxIdLocked);
+  // El candado ahora cubre el casillero ENTERO (tipo + número + lupita), no solo un
+  // campo suelto. Fix del reviewer (2026-07-27) a este comentario: la razón NO es que
+  // cambiar el tipo "esquive" el candado del CUIT — el taxId viaja SIEMPRE preservado
+  // igual (regla 4 de construirPayloadDocumento, ver customerDocumentLogic.js), aunque
+  // el usuario pase el casillero a un tipo no fiscal. El riesgo real es otro: si solo el
+  // número quedara trabado y el tipo fuera libre, el usuario podría cambiar el tipo a
+  // DNI/Pasaporte/Otro y PISAR sin darse cuenta el documento no fiscal que el cliente ya
+  // tenía guardado (documentType/documentNumber) — el casillero solo puede mostrar UNO
+  // de los dos a la vez, así que ese dato viejo queda invisible mientras se edita. Este
+  // candado ampliado queda como decisión del orquestador (pendiente de firma de
+  // Gastón) — no es un veredicto nuevo del backend, sigue siendo el mismo taxIdLocked.
+  const documentoDeshabilitado = !canEdit || debeDeshabilitarCuit(taxIdLocked);
   const camposDeshabilitados = !canEdit;
+  // Documento guardado que el casillero no muestra (Obra 3): se calcula sobre el cliente
+  // CRUDO (clienteOriginal), nunca sobre formData — así sigue reflejando lo guardado
+  // aunque el usuario esté a mitad de editar el casillero en pantalla.
+  const documentoAlternativo = obtenerDocumentoAlternativo(clienteOriginal);
 
   // ── Estado: cargando el detalle del cliente ─────────────────────────────
   if (loading) {
@@ -172,78 +242,107 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
           />
         </div>
 
-        <div className="space-y-2">
-          <label className={labelClass}>Documento / Pasaporte</label>
-          <input
-            type="text"
-            value={formData.documentNumber}
-            onChange={handleChange("documentNumber")}
-            disabled={camposDeshabilitados}
-            className={inputClass}
-            data-testid="customer-datos-documentNumber"
-          />
-        </div>
-
-        {/* CUIT / DNI: candado independiente del resto del formulario (spec §3) */}
-        <div className="space-y-2">
-          <label className={labelClass}>CUIT / DNI</label>
-          <div className="relative">
-            <input
-              type="text"
-              value={formData.taxId}
+        {/* Documento: casillero único (Obra 3, firma 2026-07-27) — mismo componente que el
+            alta (CustomerFormModal): desplegable de tipo + número + lupita AFIP condicional.
+            Antes había DOS campos sueltos acá ("Documento/Pasaporte" y "CUIT/DNI") que
+            podían pisarse entre sí sin que el form supiera nunca qué TIPO era cada uno. */}
+        <div className="space-y-2 sm:col-span-2">
+          <label htmlFor="customer-datos-document-type" className={labelClass}>Documento</label>
+          <div className="grid grid-cols-[auto_1fr] gap-2">
+            <select
+              id="customer-datos-document-type"
+              value={formData.tipoDocumento}
               onChange={(event) => {
-                setFormData((anterior) => ({ ...anterior, taxId: event.target.value }));
-                setAfipResults([]);
+                const tipoDocumento = event.target.value;
+                setFormData((anterior) => ({ ...anterior, tipoDocumento }));
+                if (!tipoDocumentoTieneBusquedaAfip(tipoDocumento)) setAfipResults([]);
               }}
-              disabled={cuitDeshabilitado}
-              placeholder="20-30111222-3"
-              className={`${inputClass} pr-10 font-mono`}
-              data-testid="customer-datos-taxId"
-            />
-            <button
-              type="button"
-              onClick={handleAfipSearch}
-              disabled={cuitDeshabilitado}
-              title="Buscar en AFIP"
-              className="absolute right-2 top-2 p-1 text-slate-400 hover:text-indigo-600 disabled:cursor-not-allowed disabled:hover:text-slate-400 transition-colors"
-              data-testid="customer-datos-taxId-search"
+              disabled={documentoDeshabilitado}
+              className={`${inputClass} w-auto`}
+              data-testid="customer-datos-document-type"
             >
-              {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
-            </button>
+              {DOCUMENT_TYPE_OPTIONS.map((opcion) => (
+                <option key={opcion.value} value={opcion.value}>{opcion.label}</option>
+              ))}
+            </select>
 
-            {afipResults.length > 0 && (
-              <div className="absolute left-0 right-0 z-[100] mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">Resultados AFIP</span>
-                  <button type="button" onClick={() => setAfipResults([])} className="text-slate-400 hover:text-slate-600">
-                    <XCircle className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {afipResults.map((persona, indice) => (
-                    <button
-                      key={indice}
-                      type="button"
-                      onClick={() => handleAfipSelect(persona)}
-                      className="group w-full border-b border-slate-50 px-4 py-2 text-left transition-colors last:border-0 hover:bg-indigo-50 dark:border-slate-800 dark:hover:bg-indigo-900/30"
-                    >
-                      <div className="truncate text-sm font-medium text-slate-900 group-hover:text-indigo-600 dark:text-white">
-                        {persona.razonSocial || `${persona.apellido || ""} ${persona.nombre || ""}`}
-                      </div>
-                      <div className="text-[10px] text-slate-500">{persona.id} • {persona.taxCondition}</div>
+            <div className="relative">
+              <input
+                type="text"
+                aria-label="Número de documento"
+                value={formData.numeroDocumento}
+                onChange={(event) => {
+                  setFormData((anterior) => ({ ...anterior, numeroDocumento: event.target.value }));
+                  setAfipResults([]);
+                }}
+                disabled={documentoDeshabilitado}
+                placeholder={esTipoDocumentoFiscal(formData.tipoDocumento) ? "20-30111222-3" : "Número de documento"}
+                className={`${inputClass} pr-10 font-mono`}
+                data-testid="customer-datos-document-number"
+              />
+              {/* Lupita AFIP: SOLO para los tipos que están en el padrón (CUIT/CUIL/DNI) */}
+              {tipoDocumentoTieneBusquedaAfip(formData.tipoDocumento) && (
+                <button
+                  type="button"
+                  onClick={handleAfipSearch}
+                  disabled={documentoDeshabilitado}
+                  title="Buscar en AFIP"
+                  className="absolute right-2 top-2 p-1 text-slate-400 hover:text-indigo-600 disabled:cursor-not-allowed disabled:hover:text-slate-400 transition-colors"
+                  data-testid="customer-datos-document-search"
+                >
+                  {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
+                </button>
+              )}
+
+              {afipResults.length > 0 && (
+                <div className="absolute left-0 right-0 z-[100] mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+                    <span className="text-[10px] font-bold uppercase text-slate-500">Resultados AFIP</span>
+                    <button type="button" onClick={() => setAfipResults([])} className="text-slate-400 hover:text-slate-600">
+                      <XCircle className="h-3 w-3" />
                     </button>
-                  ))}
+                  </div>
+                  <div className="max-h-48 overflow-y-auto">
+                    {afipResults.map((persona, indice) => (
+                      <button
+                        key={indice}
+                        type="button"
+                        onClick={() => handleAfipSelect(persona)}
+                        className="group w-full border-b border-slate-50 px-4 py-2 text-left transition-colors last:border-0 hover:bg-indigo-50 dark:border-slate-800 dark:hover:bg-indigo-900/30"
+                      >
+                        <div className="truncate text-sm font-medium text-slate-900 group-hover:text-indigo-600 dark:text-white">
+                          {persona.razonSocial || `${persona.apellido || ""} ${persona.nombre || ""}`}
+                        </div>
+                        <div className="text-[10px] text-slate-500">{persona.id} • {persona.taxCondition}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          {/* Línea explicativa del candado — texto EXACTO de la spec §3, sin jerga ni
-              derivación a "administración" (regla 2026-07-08). */}
-          {cuitDeshabilitado && canEdit && (
-            <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="customer-datos-taxid-locked-note">
-              🔒 El CUIT no se puede cambiar acá (los comprobantes ya salieron con ese CUIT); si el titular
-              cambió de CUIT, registrá un cliente nuevo.
+          {/* Línea explicativa del candado. Fix del reviewer (2026-07-27): el texto viejo
+              hablaba SOLO del CUIT ("El CUIT no se puede cambiar acá"), pero ahora el
+              candado apaga el casillero ENTERO (tipo + número) — el texto nuevo aclara
+              que es "el documento" el que queda trabado, sin perder el motivo original
+              (comprobantes ya emitidos con ese CUIT). */}
+          {documentoDeshabilitado && canEdit && (
+            <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="customer-datos-document-locked-note">
+              🔒 El documento no se puede cambiar acá: los comprobantes ya salieron con este CUIT. Si el
+              titular cambió de CUIT, registrá un cliente nuevo.
+            </p>
+          )}
+
+          {/* Otro documento guardado que el casillero no muestra (Obra 3, firma 2026-07-27:
+              "hay 5 casos reales" de clientes con CUIT y DNI a la vez) — se ve siempre,
+              nunca se esconde ningún documento cargado. Solo lectura: para cambiarlo hay
+              que tocar el casillero de arriba. describirDocumentoAlternativo arma la frase
+              legible (fix del reviewer: "Otro" como tipo se muestra "otro documento", no
+              "Otro" con mayúscula suelta como si fuera un nombre de documento). */}
+          {documentoAlternativo && (
+            <p className="text-xs text-slate-500 dark:text-slate-400" data-testid="customer-datos-document-alternativo">
+              También tiene {describirDocumentoAlternativo(documentoAlternativo)}.
             </p>
           )}
         </div>
