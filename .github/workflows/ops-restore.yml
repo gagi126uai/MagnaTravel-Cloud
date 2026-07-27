@@ -288,7 +288,17 @@ jobs:
                 fi
 
                 echo "== Paso 1/3: respaldo de la base VIVA completa, antes de tocar nada =="
-                bash scripts/ops/backup-db.sh
+                # pg_dump inline con el MISMO patron de docker exec que ya usa este
+                # workflow para verificar (no delegamos en backup-db.sh: se ejecuta con
+                # otro contexto de .env y fallo con "container is not running").
+                mkdir -p backups/postgres/manual
+                PRE_BACKUP="backups/postgres/manual/${POSTGRES_DB}-pre-restore-$(date +%Y%m%d-%H%M%S).dump"
+                docker exec                   -e PGPASSWORD="${POSTGRES_PASSWORD}"                   "${POSTGRES_CONTAINER}"                   pg_dump -Fc -h 127.0.0.1 -U "${POSTGRES_USER}" "${POSTGRES_DB}" > "${PRE_BACKUP}"
+                if [ ! -s "${PRE_BACKUP}" ]; then
+                  echo "ERROR: el respaldo previo quedo vacio. No se toca la base viva."
+                  exit 1
+                fi
+                echo "Respaldo previo OK: ${PRE_BACKUP} ($(du -h "${PRE_BACKUP}" | cut -f1))"
 
                 echo
                 echo "== Paso 2/3: restaurando SOLO datos (--data-only) de: ${TABLA_LIST_CLEAN[*]} =="
