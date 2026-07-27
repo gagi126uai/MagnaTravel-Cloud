@@ -379,6 +379,44 @@ namespace TravelApi.Tests.Unit
             Assert.Equal("20-12345678-6", result.TaxId);
         }
 
+        /// <summary>
+        /// Hallazgo N1 (review 2026-07-27): antes el guard de duplicados comparaba el documento con
+        /// Trim() nomas, asi que "20-30405060-7" (con guiones, tipico si el front lo autocompleta) y
+        /// "20304050607" (sin guiones) pasaban como DOS clientes distintos. Ahora normaliza sacando
+        /// guiones/puntos/espacios de ambos lados antes de comparar: el alta con el segundo formato
+        /// debe detectar al cliente que ya existe con el primero.
+        /// </summary>
+        [Fact]
+        public async Task CreateCustomerAsync_MismoDocumentoConDistintoFormato_DetectaDuplicado()
+        {
+            using var context = new AppDbContext(_dbOptions);
+            context.Customers.Add(new Customer
+            {
+                Id = 70,
+                FullName = "Cliente Original",
+                DocumentType = "CUIT",
+                DocumentNumber = "20-30405060-7", // cargado CON guiones
+            });
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var service = new CustomerService(context, new FinancePositionService(context));
+            var nuevoCliente = new Customer
+            {
+                FullName = "Cliente Duplicado",
+                DocumentType = "CUIT",
+                DocumentNumber = "20304050607", // MISMO documento, SIN guiones
+            };
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.CreateCustomerAsync(nuevoCliente, CancellationToken.None));
+
+            Assert.Contains("Ya existe un cliente", ex.Message);
+            Assert.Contains("Cliente Original", ex.Message);
+            // No se agrego un segundo cliente con el documento "distinto" en apariencia.
+            Assert.Equal(1, await context.Customers.CountAsync());
+        }
+
         [Fact]
         public async Task CreateCustomerAsync_SinCuitCargado_Permite()
         {
@@ -448,6 +486,56 @@ namespace TravelApi.Tests.Unit
             var result = await service.UpdateCustomerAsync(customer.Id, incoming, CancellationToken.None);
 
             Assert.Equal("Nombre corregido", result.FullName);
+        }
+
+        /// <summary>
+        /// T-8 (red de la perdida de datos que encontraron las reviews del front): un PUT que solo
+        /// cambia el telefono, mandando documentType/documentNumber VACIOS (como hace el form cuando el
+        /// usuario no toco esos campos), NO debe borrar el DNI ni el CUIT ya cargados. El codigo de
+        /// UpdateCustomerAsync YA hace esto (criterio "vacio = no tocar", lineas ~470-477); este test lo
+        /// fija para que nadie lo rompa sin darse cuenta.
+        /// </summary>
+        [Fact]
+        public async Task UpdateCustomerAsync_SoloCambiaTelefono_ConDocumentoVacio_PreservaTaxIdYDocumentNumber()
+        {
+            using var context = new AppDbContext(_dbOptions);
+            var customer = new Customer
+            {
+                Id = 62,
+                FullName = "Cliente con documento y CUIT",
+                TaxId = "20-11111111-2",
+                DocumentType = "DNI",
+                DocumentNumber = "30111222",
+                Phone = "1140000000",
+                TaxCondition = "Consumidor Final",
+            };
+            context.Customers.Add(customer);
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var service = new CustomerService(context, new FinancePositionService(context));
+
+            // El form manda SOLO el telefono nuevo; documentType/documentNumber llegan vacios porque el
+            // usuario no toco esos campos en la pantalla (mismo patron que el bug real del front).
+            var incoming = new Customer
+            {
+                Id = customer.Id,
+                FullName = customer.FullName,
+                TaxId = customer.TaxId, // sin cambios
+                TaxCondition = customer.TaxCondition,
+                Phone = "1155555555", // UNICO campo que cambia de verdad
+                DocumentType = "",
+                DocumentNumber = "",
+                IsActive = true,
+            };
+
+            var result = await service.UpdateCustomerAsync(customer.Id, incoming, CancellationToken.None);
+
+            Assert.Equal("1155555555", result.Phone);
+            // El DNI y el CUIT tienen que seguir intactos: NO se pisan con el vacio que mando el form.
+            Assert.Equal("DNI", result.DocumentType);
+            Assert.Equal("30111222", result.DocumentNumber);
+            Assert.Equal("20-11111111-2", result.TaxId);
         }
 
         /// <summary>

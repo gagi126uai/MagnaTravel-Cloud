@@ -50,6 +50,10 @@ public record DashboardByCurrencyDto(
     List<CurrencyAmount> PagosProveedores,
     List<CurrencyAmount> VentasDelMes,
     List<CurrencyAmount> CostosDelMes,
+    // Ventas menos costos, POR MONEDA (nunca mezclada con otra moneda). Igual criterio de enmascarado
+    // que CostosDelMes: si el usuario no puede ver costos, esta lista viene vacia (no se puede mostrar
+    // margen sin mostrar de donde sale, porque venta - margen revelaria el costo).
+    List<CurrencyAmount> MargenBruto,
     List<CurrencyAmount> SaldoPendiente,
     List<CurrencyAmount> CuentasPorPagar);
 

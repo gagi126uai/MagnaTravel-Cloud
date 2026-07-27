@@ -2347,6 +2347,8 @@ public class SupplierService : ISupplierService
                 ImputedAmount = payment.ImputedAmount,
                 Method = payment.Method,
                 PaidAt = payment.PaidAt,
+                // H17: hora real de registro (distinta de la fecha de negocio PaidAt).
+                RegisteredAt = payment.CreatedAt,
                 Reference = payment.Reference,
                 Notes = payment.Notes,
                 NumeroReserva = payment.Reserva != null ? payment.Reserva.NumeroReserva : null,

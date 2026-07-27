@@ -174,6 +174,46 @@ public class PaymentServiceRegistrationTests
         Assert.Equal(2026, persisted.PaidAt.Year);
     }
 
+    /// <summary>
+    /// H17 (barrido E2E 2026-07-25): el cajero puede elegir CUALQUIER fecha de negocio para un cobro
+    /// (<see cref="PaymentDto.PaidAt"/>, ej. una fecha vieja al cargar un pago atrasado), pero la
+    /// AUDITORIA necesita saber cuando se registro de verdad en el sistema
+    /// (<see cref="PaymentDto.RegisteredAt"/>). Este test prueba que ambas fechas viajan SEPARADAS y
+    /// que <c>RegisteredAt</c> es la hora real (cercana a "ahora"), no un espejo de la fecha de negocio.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAsync_ConFechaDeNegocioVieja_RegisteredAtEsLaHoraRealDeAhora()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        var reserva = await SeedConfirmedReservaAsync(context, salePrice: 1000m);
+
+        var service = BuildService(context);
+
+        // Fecha de negocio bien vieja (el cajero carga un cobro atrasado); RegisteredAt NO debe copiarla.
+        var fechaDeNegocioVieja = DateTime.SpecifyKind(new DateTime(2020, 1, 1, 0, 0, 0), DateTimeKind.Utc);
+        var antesDeRegistrar = DateTime.UtcNow;
+
+        var dto = await service.CreatePaymentAsync(
+            new CreatePaymentRequest
+            {
+                ReservaId = reserva.PublicId.ToString(),
+                Amount = 150m,
+                Method = "Transferencia",
+                PaidAt = fechaDeNegocioVieja
+            },
+            CancellationToken.None);
+
+        var despuesDeRegistrar = DateTime.UtcNow;
+
+        // La fecha de negocio queda tal cual la eligio el cajero.
+        Assert.Equal(fechaDeNegocioVieja, dto.PaidAt);
+
+        // RegisteredAt es la hora REAL de ahora (entre el instante justo antes y justo despues de
+        // llamar al service), NO la fecha de negocio de 2020.
+        Assert.InRange(dto.RegisteredAt, antesDeRegistrar.AddSeconds(-1), despuesDeRegistrar.AddSeconds(1));
+        Assert.NotEqual(dto.PaidAt, dto.RegisteredAt);
+    }
+
     [Fact]
     public async Task CreatePaymentAsync_TwoPaymentsThatSumTotalSale_LeaveBalanceZero()
     {

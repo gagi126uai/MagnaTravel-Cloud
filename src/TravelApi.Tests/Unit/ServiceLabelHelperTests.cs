@@ -89,4 +89,46 @@ public class ServiceLabelHelperTests
 
         Assert.Equal("Hotel Sheraton", resultado);
     }
+
+    // ============================================================
+    // H11 (barrido E2E 2026-07-25): la palabra del prefijo puede aparecer en
+    // CUALQUIER parte del nombre, no solo al principio (ej. "PI0724 Hotel B",
+    // codigo de prueba adelante del nombre real del hotel).
+    // ============================================================
+
+    [Fact]
+    public void WithPrefix_NombreContieneElPrefijoEnElMedio_NoLoDuplica()
+    {
+        // "PI0724 Hotel B" no ARRANCA con "Hotel", pero ya lo tiene adentro: antes esto daba
+        // "Hotel PI0724 Hotel B" (hallazgo H11).
+        var resultado = ServiceLabelHelper.WithPrefix("Hotel", "PI0724 Hotel B", "sin nombre");
+
+        Assert.Equal("PI0724 Hotel B", resultado);
+    }
+
+    [Fact]
+    public void WithPrefix_NombreContieneElPrefijoEnElMedioEnOtroCasing_NoLoDuplica()
+    {
+        var resultado = ServiceLabelHelper.WithPrefix("Hotel", "PI0724 hotel B", "sin nombre");
+
+        Assert.Equal("PI0724 hotel B", resultado);
+    }
+
+    [Fact]
+    public void WithPrefix_PlanDeAsistenciaContieneElPrefijoEnElMedio_NoLoDuplica()
+    {
+        var resultado = ServiceLabelHelper.WithPrefix("Asistencia", "Grupo Asistencia Premium", "seguro");
+
+        Assert.Equal("Grupo Asistencia Premium", resultado);
+    }
+
+    [Fact]
+    public void WithPrefix_NombreContieneElPrefijoSoloComoPartePalabraDistinta_SiLoAntepone()
+    {
+        // "Hoteleria" NO es la palabra "Hotel" (limite de palabra \b): el nombre no la tiene de
+        // verdad, asi que el prefijo se antepone normal.
+        var resultado = ServiceLabelHelper.WithPrefix("Hotel", "Hoteleria Especial", "sin nombre");
+
+        Assert.Equal("Hotel Hoteleria Especial", resultado);
+    }
 }

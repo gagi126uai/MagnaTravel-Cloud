@@ -26,7 +26,10 @@ public class MappingProfile : Profile
             // (ImputedCurrency/ExchangeRate/ExchangeRateAt/ImputedAmount) matchea por nombre.
             .ForMember(dest => dest.Currency, opt => opt.MapFrom(src => TravelApi.Domain.Entities.Monedas.Normalizar(src.Currency)))
             .ForMember(dest => dest.ExchangeRateSource, opt => opt.MapFrom(src => src.ExchangeRateSource != null ? (int?)src.ExchangeRateSource : null))
-            .ForMember(dest => dest.Receipt, opt => opt.MapFrom(src => src.Receipt));
+            .ForMember(dest => dest.Receipt, opt => opt.MapFrom(src => src.Receipt))
+            // H17: hora real de registro (nombre distinto de la entidad a proposito, para no confundirla
+            // con PaidAt en el front). AutoMapper no la matchea por convencion porque el nombre difiere.
+            .ForMember(dest => dest.RegisteredAt, opt => opt.MapFrom(src => src.CreatedAt));
 
         CreateMap<PaymentReceipt, PaymentReceiptDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))

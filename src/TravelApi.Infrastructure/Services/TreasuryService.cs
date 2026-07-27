@@ -363,6 +363,8 @@ public class TreasuryService : ITreasuryService
                 (e.Supplier != null && e.Supplier.Name.ToLower().Contains(normalizedSearch)))
             .Select(e => new CashMovementDto
             {
+                // H14: PublicId del PROPIO asiento (no del origen). Ver el XML-doc de CashMovementDto.PublicId.
+                PublicId = e.PublicId,
                 // DisplaySourceType (front contract): el front solo conoce CustomerPayment/SupplierPayment/
                 // ManualAdjustment. Los asientos de cancelacion (OperatorRefund/ClientCreditWithdrawal) SON
                 // movimientos manuales desde la vista del front, asi que se colapsan a "ManualAdjustment"
@@ -404,7 +406,10 @@ public class TreasuryService : ITreasuryService
                         && e.SourceType != CashLedgerSourceTypes.SupplierPayment,
                 // Tipo crudo del asiento (no colapsado): lo usa el enmascarado de costo de abajo para tapar
                 // los refund de operador sin tapar los ajustes manuales genuinos ni la devolucion al cliente.
-                LedgerSourceType = e.SourceType
+                LedgerSourceType = e.SourceType,
+                // H14: anulado = esta fila ya fue reemplazada (IsReversed) O es la que reemplaza a otra
+                // (IsReversal). Cualquiera de las dos formas dice "esta fila no cuenta para el saldo vivo".
+                IsAnnulled = e.IsReversed || e.IsReversal
             });
 
         if (!string.Equals(query.Direction, "all", StringComparison.OrdinalIgnoreCase))

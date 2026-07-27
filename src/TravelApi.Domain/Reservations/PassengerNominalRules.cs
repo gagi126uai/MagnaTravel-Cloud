@@ -346,12 +346,28 @@ public static class PassengerNominalRules
         }
 
         var fieldList = JoinWithSpanishConjunction(missingFieldNames);
-        // "Falta el nombre" (singular) vs "Faltan nombre y documento" (plural): elegimos el verbo segun
-        // cuantos campos falten, para que el castellano suene natural.
-        var verb = missingFieldNames.Count == 1 ? "Falta el" : "Faltan";
+        // "Falta el nombre" / "Falta la fecha de nacimiento" (singular, con el articulo que corresponda
+        // al GENERO del campo) vs "Faltan nombre y documento" (plural, sin articulo). H10 (barrido E2E
+        // 2026-07-25): antes el articulo del singular estaba fijo en "el", asi que el unico campo
+        // femenino ("fecha de nacimiento") salia mal: "Falta el fecha de nacimiento...". Con un solo
+        // campo faltante, buscamos SU articulo especifico en vez de asumir "el" para todos.
+        var verb = missingFieldNames.Count == 1
+            ? $"Falta {SingularArticleFor(missingFieldNames[0])}"
+            : "Faltan";
 
         return $"{verb} {fieldList} de {affectedPassengers} pasajero(s) para {actionLabel}.";
     }
+
+    /// <summary>
+    /// Articulo castellano ("el"/"la") del campo cuando aparece SOLO en el mensaje de faltantes. Los
+    /// nombres de campo son fijos (ver <see cref="BuildMissingDataMessage"/>), por eso alcanza con esta
+    /// tabla chica en vez de una libreria de genero gramatical completa.
+    /// </summary>
+    private static string SingularArticleFor(string fieldName) => fieldName switch
+    {
+        "fecha de nacimiento" => "la",
+        _ => "el", // "nombre" y "documento" son masculinos.
+    };
 
     /// <summary>
     /// Une una lista de campos con comas y "y" antes del ultimo, al estilo castellano:

@@ -181,8 +181,16 @@ public class ManualCashMovementBuilderTests
         Assert.Equal(withdrawal.ExecutedAt, movement.OccurredAt);
         Assert.Equal("Cash", movement.Method);
         Assert.Equal("ClientCreditWithdrawal", movement.Category);
-        Assert.Contains(entry.PublicId.ToString(), movement.Description);
-        Assert.Contains("PhysicalCash", movement.Description);
+        // Pendiente firmado del Lote 1 (mismo criterio que H5): el texto que ve el cajero en el Libro
+        // de Caja NUNCA debe llevar el PublicId (GUID interno) del entry. BuildValidEntry() no carga
+        // Customer, asi que degrada al texto generico "del cliente" (no revienta, no expone un ID).
+        Assert.DoesNotContain(entry.PublicId.ToString(), movement.Description);
+        Assert.Contains("del cliente", movement.Description);
+        // Hallazgo B1 (review 2026-07-27, bloqueante T-5): este assert antes blindaba la FUGA
+        // ("PhysicalCash" crudo en el texto que ve el cajero). Ahora blinda el FIX: el texto es
+        // criollo ("en efectivo") y el nombre del enum jamas aparece en el Libro de Caja.
+        Assert.Contains("en efectivo", movement.Description);
+        Assert.DoesNotContain("PhysicalCash", movement.Description);
         Assert.Equal("user-cashier", movement.CreatedBy);
         Assert.Equal(entry.BookingCancellation!.ReservaId, movement.RelatedReservaId);
         // Bug fix FC1.2.3 (27506d9, 2026-05-18): el builder setea la NAVIGATION
@@ -193,6 +201,31 @@ public class ManualCashMovementBuilderTests
         Assert.Null(movement.ClientCreditWithdrawalId);
         Assert.Null(movement.OperatorRefundReceivedId);
         Assert.Null(movement.RelatedSupplierId);
+    }
+
+    [Fact]
+    public void BuildExpenseForWithdrawal_conCustomerCargado_UsaElNombreDelClienteNoElGuid()
+    {
+        // Pendiente firmado del Lote 1: cuando el caller SI hizo Include(e => e.Customer), el texto
+        // debe nombrar al cliente de verdad, no caer al generico "del cliente".
+        var entry = BuildValidEntry();
+        entry.Customer = new Customer { Id = 5, FullName = "Maria Gonzalez" };
+        var withdrawal = new ClientCreditWithdrawal
+        {
+            Id = 57,
+            PublicId = Guid.NewGuid(),
+            ClientCreditEntryId = entry.Id,
+            Amount = 10_000m,
+            Kind = WithdrawalKind.PhysicalCash,
+            ExecutedByUserId = "user-cashier",
+            ExecutedByUserName = "Cashier",
+            ExecutedAt = new DateTime(2026, 2, 1, 11, 0, 0, DateTimeKind.Utc),
+        };
+
+        var movement = ManualCashMovementBuilder.BuildExpenseForWithdrawal(withdrawal, entry, "user-cashier");
+
+        Assert.Contains("Maria Gonzalez", movement.Description);
+        Assert.DoesNotContain(entry.PublicId.ToString(), movement.Description);
     }
 
     [Fact]
@@ -215,6 +248,11 @@ public class ManualCashMovementBuilderTests
         Assert.Equal(CashMovementDirections.Expense, movement.Direction);
         Assert.Equal("Transfer", movement.Method);
         Assert.Equal("ClientCreditWithdrawal", movement.Category);
+        // Hallazgo B1 (review 2026-07-27, bloqueante T-5): texto criollo por kind, sin el nombre del enum.
+        // "Transfer" (con mayuscula, como lo imprime el enum) no debe aparecer; "transferencia" en
+        // minuscula (el texto criollo) si.
+        Assert.Contains("por transferencia", movement.Description);
+        Assert.DoesNotContain("Transfer", movement.Description);
     }
 
     [Fact]
@@ -238,6 +276,32 @@ public class ManualCashMovementBuilderTests
 
         Assert.Equal(CashMovementDirections.Income, movement.Direction);
         Assert.Equal("ClientCreditReversal", movement.Category);
+        // Hallazgo B1 (review 2026-07-27, bloqueante T-5): texto criollo por kind, sin el nombre del enum.
+        Assert.Contains("devuelto al operador", movement.Description);
+        Assert.DoesNotContain("ReversedToOperator", movement.Description);
+    }
+
+    [Fact]
+    public void BuildExpenseForWithdrawal_con_voided_by_annulment_undo_lanza_invalid_operation()
+    {
+        // ADR-050 (2026-07-24): VoidedByAnnulmentUndo es un contra-asiento contable interno (el credito
+        // se anula porque se deshizo la anulacion de reserva que lo origino), NO un retiro fisico del
+        // cliente. El builder no debe generar ManualCashMovement para este kind (mismo criterio que
+        // KeptAsCredit).
+        var entry = BuildValidEntry();
+        var withdrawal = new ClientCreditWithdrawal
+        {
+            Id = 58,
+            ClientCreditEntryId = entry.Id,
+            Amount = 1_000m,
+            Kind = WithdrawalKind.VoidedByAnnulmentUndo,
+            ExecutedByUserId = "user",
+            ExecutedByUserName = "User",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ManualCashMovementBuilder.BuildExpenseForWithdrawal(withdrawal, entry, "user"));
+        Assert.Contains("VoidedByAnnulmentUndo", ex.Message);
     }
 
     [Fact]

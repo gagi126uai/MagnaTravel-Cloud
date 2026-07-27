@@ -110,4 +110,100 @@ public class TreasuryServiceMovementsSearchTests
         Assert.Equal(2, page.TotalCount);
         Assert.Equal(2, page.Items.Count);
     }
+
+    // ================================================================================================
+    // H14 (barrido E2E 2026-07-25): el contra-asiento de una anulacion/edicion no traia ninguna marca
+    // visual — el front no podia distinguir "esta fila sigue vigente" de "esta fila ya quedo sin efecto".
+    // Estos tests blindan que GetMovementsAsync expone (a) PublicId propio de CADA fila (no el del
+    // origen, que el manual y su contra-asiento COMPARTEN) y (b) IsAnnulled=true en AMBAS filas del par.
+    // ================================================================================================
+
+    [Fact]
+    public async Task GetMovementsAsync_MovimientoManualSinAnular_TraePublicIdPropioEIsAnnulledFalse()
+    {
+        await using var context = CreateContext();
+        var service = CreateService(context);
+
+        var created = await service.CreateManualMovementAsync(
+            new UpsertManualCashMovementRequest
+            {
+                Direction = CashMovementDirections.Expense,
+                Amount = 500m,
+                OccurredAt = DateTime.UtcNow,
+                Method = "Cash",
+                Category = "Otros",
+                Description = "Gasto vigente",
+            },
+            createdBy: "cajero-1",
+            CancellationToken.None);
+
+        var page = await service.GetMovementsAsync(
+            new TreasuryMovementsQuery { PageSize = 25 }, CancellationToken.None);
+
+        var row = Assert.Single(page.Items);
+        Assert.False(row.IsAnnulled);
+        Assert.NotEqual(Guid.Empty, row.PublicId);
+        // El PublicId de la FILA no es el mismo que el PublicId del movimiento manual (origen):
+        // son identificadores de cosas distintas (el asiento vs. el movimiento que lo origino).
+        Assert.NotEqual(created.PublicId, row.PublicId);
+    }
+
+    [Fact]
+    public async Task GetMovementsAsync_TrasEditarUnManual_ElParOriginalYContraAsiento_QuedanMarcadosAnulados()
+    {
+        await using var context = CreateContext();
+        var service = CreateService(context);
+
+        var created = await service.CreateManualMovementAsync(
+            new UpsertManualCashMovementRequest
+            {
+                Direction = CashMovementDirections.Expense,
+                Amount = 500m,
+                OccurredAt = DateTime.UtcNow,
+                Method = "Cash",
+                Category = "Otros",
+                Description = "Gasto original",
+            },
+            createdBy: "cajero-1",
+            CancellationToken.None);
+
+        // Editar el monto de un manual reversa el asiento viejo e inserta uno nuevo (ADR-022 §4.5):
+        // el resultado son 3 filas en el Libro de Caja (original anulado, contra-asiento, asiento nuevo).
+        var manualEntity = await context.ManualCashMovements.SingleAsync(m => m.PublicId == created.PublicId);
+        await service.UpdateManualMovementAsync(
+            manualEntity.Id,
+            new UpsertManualCashMovementRequest
+            {
+                Direction = CashMovementDirections.Expense,
+                Amount = 800m, // distinto -> dispara la reversa (mismo monto no dispara nada nuevo)
+                OccurredAt = DateTime.UtcNow,
+                Method = "Cash",
+                Category = "Otros",
+                Description = "Gasto corregido",
+            },
+            CancellationToken.None);
+
+        var page = await service.GetMovementsAsync(
+            new TreasuryMovementsQuery { PageSize = 25 }, CancellationToken.None);
+
+        Assert.Equal(3, page.Items.Count);
+
+        // Se distinguen las 3 filas por Direction/Amount (no por orden, que depende del reloj):
+        //  - original: Expense $500 (el asiento viejo, ahora reemplazado).
+        //  - contra-asiento: Income $500 (CashLedgerEntryFactory.Reverse INVIERTE la Direction).
+        //  - nuevo: Expense $800 (el monto corregido, post-edicion).
+        var original = Assert.Single(page.Items, m => m.Direction == CashMovementDirections.Expense && m.Amount == 500m);
+        var contraAsiento = Assert.Single(page.Items, m => m.Direction == CashMovementDirections.Income);
+        var nuevo = Assert.Single(page.Items, m => m.Direction == CashMovementDirections.Expense && m.Amount == 800m);
+
+        Assert.True(original.IsAnnulled, "el asiento viejo quedo reemplazado: debe marcarse anulado.");
+        Assert.True(contraAsiento.IsAnnulled, "el contra-asiento tambien debe marcarse anulado (es el reverso, no un movimiento vivo).");
+        Assert.False(nuevo.IsAnnulled, "el asiento nuevo (post-edicion) sigue vigente.");
+
+        // Las 3 filas son asientos DISTINTOS: cada una con su propio PublicId, aunque el original y el
+        // contra-asiento compartan el mismo SourcePublicId (los dos apuntan al mismo ManualCashMovement).
+        Assert.NotEqual(original.PublicId, contraAsiento.PublicId);
+        Assert.NotEqual(contraAsiento.PublicId, nuevo.PublicId);
+        Assert.Equal(original.SourcePublicId, contraAsiento.SourcePublicId);
+    }
 }

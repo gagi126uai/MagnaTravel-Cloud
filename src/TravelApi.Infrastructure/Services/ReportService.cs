@@ -3,6 +3,7 @@ using System.Security.Claims;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -113,12 +114,27 @@ public class ReportService : IReportService
             ? null
             : (string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId);
 
+        // H15 (barrido E2E 2026-07-25): el widget "Cobros Pendientes" mostraba una reserva YA SALDADA
+        // (o incluso sobre-cobrada) como si tuviera plata pendiente. Causa: este filtro solo miraba
+        // "row.Balance > 0" de la tabla hija por moneda, sin consultar el eje de cobranza YA CALCULADO
+        // (Reserva.DerivedCollectionStatus, ADR-048 T5) que el resto del sistema usa como fuente unica
+        // para decidir si una reserva "debe" (ver el mismo criterio en el filtro "settled" de
+        // GetReservasWithScopeAsync, unas lineas mas abajo en este archivo). Un residuo de centavos por
+        // redondeo, o una reserva marcada "Saldado"/"SaldoAFavor" por el motor, igual aparecia en la
+        // lista de deudores.
+        //
+        // Fix: si la reserva YA tiene el eje calculado (no null), confiamos EXCLUSIVAMENTE en el
+        // ("ConDeuda" = de verdad pendiente; cualquier otro valor = no pendiente, se excluye). Si el eje
+        // TODAVIA es null (reserva vieja sin backfilear), caemos al chequeo crudo de Balance > 0 de
+        // antes, para no esconder deuda real de un dato legacy que el sistema no llego a clasificar.
         var pendingByCurrencyQuery =
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
             where row.Balance > 0
                 && reservaPadre.Status != EstadoReserva.Closed
                 && reservaPadre.Status != EstadoReserva.Cancelled
+                && (reservaPadre.DerivedCollectionStatus == null
+                    || reservaPadre.DerivedCollectionStatus == ReservaCollectionStatus.WithDebt)
                 && (ownerFilterForPending == null || reservaPadre.ResponsibleUserId == ownerFilterForPending)
             select new { row.Currency, row.Balance, reservaPadre.PublicId, reservaPadre.NumeroReserva, reservaPadre.Name, reservaPadre.Status };
 
@@ -134,7 +150,10 @@ public class ReportService : IReportService
                     x.NumeroReserva,
                     x.Name,
                     x.Balance,
-                    x.Status.ToString(),
+                    // x.Status YA es string (Reserva.Status): el .ToString() de aca era un no-op que
+                    // Npgsql no puede traducir a SQL (mismo landmine que el hotfix del buscador global,
+                    // commit 48b15347 — encontrado al tocar esta consulta para H15).
+                    x.Status,
                     currency))
                 .ToListAsync(cancellationToken);
             pendingReservas.AddRange(topForCurrency);
@@ -143,7 +162,8 @@ public class ReportService : IReportService
         var upcomingTrips = await upcomingQuery
             .OrderBy(f => f.StartDate)
             .Take(5)
-            .Select(f => new UpcomingTripDto(f.PublicId, f.NumeroReserva, f.Name, f.StartDate!.Value, f.Status.ToString()))
+            // f.Status YA es string: mismo fix de traduccion que arriba (H15).
+            .Select(f => new UpcomingTripDto(f.PublicId, f.NumeroReserva, f.Name, f.StartDate!.Value, f.Status))
             .ToListAsync(cancellationToken);
 
         var sixMonthsAgo = startOfMonth.AddMonths(-5);
@@ -336,6 +356,12 @@ public class ReportService : IReportService
                 cancellationToken)
             : new List<CurrencyAmount>();
 
+        // Margen bruto del mes por moneda: ventas menos costos, moneda por moneda. Si no ve costos, no
+        // ve margen tampoco (mismo enmascarado que CostosDelMes de arriba).
+        var margenBruto = canSeeCost
+            ? ComputeMargenBrutoByCurrency(ventas, costos)
+            : new List<CurrencyAmount>();
+
         // ADR-022 §4.7 (T4): cuentas por cobrar (AR) y por pagar (AP) por moneda salen ahora de la FUENTE
         // UNICA compartida con tesoreria, para que dashboard y tesoreria den EXACTAMENTE el mismo numero.
         // Si no se inyecto el servicio (unit tests con ctor corto), se construye sobre el mismo DbContext.
@@ -358,8 +384,36 @@ public class ReportService : IReportService
             PagosProveedores: canSeeCost ? pagosProveedores : new List<CurrencyAmount>(),
             VentasDelMes: ventas,
             CostosDelMes: costos,
+            MargenBruto: margenBruto,
             SaldoPendiente: saldoPendiente,
             CuentasPorPagar: cuentasPorPagar);
+    }
+
+    /// <summary>
+    /// Calcula el margen bruto (venta menos costo) POR MONEDA, uniendo las monedas presentes en
+    /// cualquiera de las dos listas. Si una moneda solo aparece en costos (por ejemplo un servicio
+    /// cotizado en USD que todavia no se vendio en esa moneda), el margen da negativo A PROPOSITO: mejor
+    /// mostrar la perdida en el dashboard que esconderla asumiendo venta cero.
+    /// </summary>
+    private static List<CurrencyAmount> ComputeMargenBrutoByCurrency(
+        List<CurrencyAmount> ventasPorMoneda, List<CurrencyAmount> costosPorMoneda)
+    {
+        var ventaPorMoneda = ventasPorMoneda.ToDictionary(x => x.Currency, x => x.Amount, StringComparer.Ordinal);
+        var costoPorMoneda = costosPorMoneda.ToDictionary(x => x.Currency, x => x.Amount, StringComparer.Ordinal);
+
+        var monedasPresentes = ventaPorMoneda.Keys
+            .Union(costoPorMoneda.Keys, StringComparer.Ordinal)
+            .OrderBy(currency => currency, StringComparer.Ordinal);
+
+        var margenPorMoneda = new List<CurrencyAmount>();
+        foreach (var currency in monedasPresentes)
+        {
+            var venta = ventaPorMoneda.TryGetValue(currency, out var ventaAmount) ? ventaAmount : 0m;
+            var costo = costoPorMoneda.TryGetValue(currency, out var costoAmount) ? costoAmount : 0m;
+            margenPorMoneda.Add(new CurrencyAmount(currency, EconomicRulesHelper.RoundCurrency(venta - costo)));
+        }
+
+        return margenPorMoneda;
     }
 
     /// <summary>
@@ -564,6 +618,11 @@ public class ReportService : IReportService
                 cancellationToken)
             : new List<CurrencyAmount>();
 
+        // Margen bruto del periodo por moneda: mismo criterio que el dashboard (ver ComputeMargenBrutoByCurrency).
+        var margenBruto = canSeeCost
+            ? ComputeMargenBrutoByCurrency(ventas, costos)
+            : new List<CurrencyAmount>();
+
         // Saldo pendiente (cuentas por cobrar) por moneda: no es un dato del periodo sino el saldo vigente.
         // ADR-023 T1.3: usa la MISMA lista canonica de estados en firme que el AR de tesoreria y la cuenta del
         // cliente (antes excluia Closed/Cancelled/Budget pero contaba Quotation/Lost/PendingOperatorRefund, que
@@ -593,6 +652,7 @@ public class ReportService : IReportService
             PagosProveedores: pagosProveedores,
             VentasDelMes: ventas,
             CostosDelMes: costos,
+            MargenBruto: margenBruto,
             SaldoPendiente: saldoPendiente,
             CuentasPorPagar: cuentasPorPagar);
     }

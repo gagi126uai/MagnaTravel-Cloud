@@ -5,6 +5,16 @@ public class PaymentDto
     public Guid PublicId { get; set; }
     public decimal Amount { get; set; }
     public DateTime PaidAt { get; set; }
+
+    /// <summary>
+    /// H17 (barrido E2E 2026-07-25): hora REAL en que el cajero registro este cobro en el sistema
+    /// (UTC), distinta de <see cref="PaidAt"/> (la fecha de NEGOCIO del cobro, que el usuario puede
+    /// elegir manualmente y suele quedar sin hora). <c>Payment.CreatedAt</c> ya existia con este
+    /// proposito (default <c>DateTime.UtcNow</c> al crear la fila, nunca lo pisa nadie despues); antes
+    /// simplemente no viajaba al front. Sirve para auditoria: "¿a que hora se cargo este cobro de
+    /// verdad?", sin tocar como la Caja muestra la fecha de negocio (eso NO cambia).
+    /// </summary>
+    public DateTime RegisteredAt { get; set; }
     public string Method { get; set; } = string.Empty;
     public string? Reference { get; set; }
     public string? Notes { get; set; }

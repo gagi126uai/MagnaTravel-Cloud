@@ -2464,6 +2464,17 @@ public class ClientCreditService : IClientCreditService
             var openPenalties = await LoadOpenPenaltiesForCustomerAsync(customerId, currency, ct);
             var currencyEntries = await LoadFifoCreditEntriesAsync(customerId, currency, ct);
 
+            // Pendiente firmado del Lote 1 (mismo criterio que H5/H14): LoadFifoCreditEntriesAsync NO hace
+            // Include(e => e.Customer) — el "customer" YA esta cargado dos lineas arriba en la MISMA
+            // consulta de este flujo, asi que en vez de pagar un JOIN extra en el loader (que tambien lo
+            // usa otro camino que no necesita el nombre), le asignamos la navigation en memoria. Asi, si
+            // ManualCashMovementBuilder.BuildExpenseForWithdrawal necesita nombrar al cliente en el texto
+            // del movimiento (mas abajo en este mismo metodo), el dato ya esta disponible.
+            foreach (var entryToLabel in currencyEntries)
+            {
+                entryToLabel.Customer = customer;
+            }
+
             // 1) Netear FIFO contra cada multa abierta, con el pendiente RE-LEIDO fresco (revalidacion
             //    acumulada por ND, M2): si otra operacion ya la toco desde que armamos openPenalties, se
             //    respeta el numero nuevo (incluso si eso significa saltearla por completo).

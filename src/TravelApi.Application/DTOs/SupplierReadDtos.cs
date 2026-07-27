@@ -579,6 +579,13 @@ public class SupplierPaymentDto
     public decimal? ImputedAmount { get; set; }
     public string Method { get; set; } = string.Empty;
     public DateTime PaidAt { get; set; }
+
+    /// <summary>
+    /// H17 (barrido E2E 2026-07-25): hora REAL en que se registro este pago al proveedor (UTC), espejo
+    /// exacto de <see cref="PaymentDto.RegisteredAt"/> para el eje del cliente. Sale de
+    /// <c>SupplierPayment.CreatedAt</c> (ya existia, default <c>DateTime.UtcNow</c> al crear la fila).
+    /// </summary>
+    public DateTime RegisteredAt { get; set; }
     public string? Reference { get; set; }
     public string? Notes { get; set; }
     public string? NumeroReserva { get; set; }

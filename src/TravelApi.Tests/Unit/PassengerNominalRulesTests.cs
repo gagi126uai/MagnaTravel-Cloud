@@ -181,6 +181,30 @@ public class PassengerNominalRulesTests
     }
 
     [Fact]
+    public void Assistance_OnlyBirthDateMissing_UsaElArticuloFemenino_La()
+    {
+        // H10 (barrido E2E 2026-07-25): "fecha de nacimiento" es femenino ("LA fecha"), no masculino
+        // ("EL fecha"). Antes el articulo del singular estaba fijo en "el" para cualquier campo.
+        var set = Set(Pax(1, "Uno", "DNI", "11111111", birthDate: null));
+        var message = PassengerNominalRules.GetMissing(set, PassengerNominalRules.ServiceKind.Assistance);
+
+        Assert.NotNull(message);
+        Assert.Contains("Falta la fecha de nacimiento", message);
+        Assert.DoesNotContain("Falta el fecha de nacimiento", message);
+    }
+
+    [Fact]
+    public void Flight_OnlyDocumentMissing_SigueUsandoElArticuloMasculino_El()
+    {
+        // Regresion: "documento" y "nombre" son masculinos, el articulo "el" no debe cambiar para ellos.
+        var set = Set(Pax(1, "Uno", birthDate: null)); // nombre cargado, sin documento
+        var message = PassengerNominalRules.GetMissing(set, PassengerNominalRules.ServiceKind.Flight);
+
+        Assert.NotNull(message);
+        Assert.Contains("Falta el documento", message);
+    }
+
+    [Fact]
     public void Flight_DoesNotRequireBirthDate()
     {
         // El aereo NO exige fecha de nacimiento (decision del dueno: eso es APIS/check-in).

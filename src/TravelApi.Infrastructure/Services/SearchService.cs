@@ -14,7 +14,10 @@ namespace TravelApi.Infrastructure.Services;
 ///
 /// Reglas:
 ///  - Reservas: si el user NO tiene <c>reservas.view_all</c> ni rol Admin, filtramos
-///    por <c>Reserva.ResponsibleUserId == currentUserId</c>.
+///    por <c>Reserva.ResponsibleUserId == currentUserId</c>. Ademas de por numero/nombre de la
+///    reserva y nombre del titular, tambien se busca por el nombre del SERVICIO (hotel, vuelo,
+///    traslado, paquete, asistencia o generico) — H18, barrido E2E 2026-07-25 — devolviendo la
+///    reserva que lo contiene, con el MISMO scope de arriba.
 ///  - Payments: si el user NO tiene <c>cobranzas.view_all</c> ni rol Admin, filtramos
 ///    por la reserva contenedora (<c>Payment.Reserva.ResponsibleUserId == currentUserId</c>).
 ///    Adicionalmente, si NO tiene <c>cobranzas.view</c> base, no devolvemos payments.
@@ -82,12 +85,26 @@ public class SearchService : ISearchService
             : new List<CustomerSearchResult>();
 
         // Reservas: si no tiene view_all, filtrar por owner.
+        //
+        // H18 (barrido E2E 2026-07-25, decision firmada de Gaston): el buscador global TAMBIEN busca
+        // por el nombre de un SERVICIO (hotel, vuelo, traslado, paquete, asistencia o el generico) y
+        // devuelve la RESERVA que lo contiene — nunca abre el servicio suelto, el buscador global
+        // siempre lista reservas. Al agregar estas condiciones DENTRO del mismo Where de reservasQuery
+        // (en vez de armar una consulta aparte), el scope de permisos que se aplica dos lineas mas abajo
+        // (owner-only sin reservas.view_all) alcanza AUTOMATICAMENTE a los matches por servicio: es
+        // literalmente el mismo filtro de reserva, con mas condiciones OR adentro (T-10, mismo scope).
         var reservasQuery = _dbContext.Reservas
             .AsNoTracking()
             .Include(f => f.Payer)
             .Where(f => f.NumeroReserva.ToLower().Contains(normalized) ||
                 f.Name.ToLower().Contains(normalized) ||
-                (f.Payer != null && f.Payer.FullName.ToLower().Contains(normalized)));
+                (f.Payer != null && f.Payer.FullName.ToLower().Contains(normalized)) ||
+                f.HotelBookings.Any(h => h.HotelName.ToLower().Contains(normalized)) ||
+                f.FlightSegments.Any(v => v.ProductName != null && v.ProductName.ToLower().Contains(normalized)) ||
+                f.TransferBookings.Any(t => t.ProductName != null && t.ProductName.ToLower().Contains(normalized)) ||
+                f.PackageBookings.Any(p => p.PackageName.ToLower().Contains(normalized)) ||
+                f.AssistanceBookings.Any(a => a.PlanType != null && a.PlanType.ToLower().Contains(normalized)) ||
+                f.Servicios.Any(s => s.Description != null && s.Description.ToLower().Contains(normalized)));
 
         if (!hasReservasViewAll)
         {

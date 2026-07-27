@@ -39,6 +39,16 @@ public class TreasurySummaryDto
 
 public class CashMovementDto
 {
+    /// <summary>
+    /// H14 (barrido E2E 2026-07-25): <c>PublicId</c> del PROPIO asiento del Libro de Caja
+    /// (<c>CashLedgerEntry.PublicId</c>), no el del origen. Es el identificador ESTABLE de esta fila
+    /// puntual: a diferencia de <see cref="SourcePublicId"/> (que un manual y su contra-asiento
+    /// COMPARTEN, porque los dos apuntan al mismo origen), este valor es distinto para cada fila.
+    /// Reemplaza la key sintetica <c>sourceType-sourcePublicId-direction-indice</c> que el front armaba
+    /// a mano (pendiente firmado del Lote 1, hallazgo H4) por un identificador real que ya trae el motor.
+    /// </summary>
+    public Guid PublicId { get; set; }
+
     public string SourceType { get; set; } = string.Empty;
     public Guid SourcePublicId { get; set; }
     public string Direction { get; set; } = string.Empty;
@@ -65,6 +75,16 @@ public class CashMovementDto
     /// actual lo ignora.
     /// </summary>
     public string LedgerSourceType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// H14 (barrido E2E 2026-07-25): true cuando ESTA fila del Libro de Caja quedo SIN EFECTO por una
+    /// anulacion/edicion — ya sea porque es el asiento viejo que se reemplazo (<c>IsReversed</c>) o
+    /// porque es el contra-asiento que lo revierte (<c>IsReversal</c>). El front usa este flag para
+    /// mostrar el badge "Anulado" y apagar "Editar"/"Anular" en AMBAS filas del par (antes ninguna de
+    /// las dos filas avisaba nada, y el usuario podia intentar anular una fila ya anulada — ver
+    /// <c>CashLedgerEntry</c>, seccion "Anular != borrar (reversa)").
+    /// </summary>
+    public bool IsAnnulled { get; set; }
 }
 
 public class ManualCashMovementDto

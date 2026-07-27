@@ -161,6 +161,45 @@ public class SearchServiceFilteringTests
         Assert.Equal(2, result.Reservas.Count);
     }
 
+    /// <summary>
+    /// H18 (2026-07-25) + review de scope pendiente: la busqueda por nombre de SERVICIO (hotel, vuelo,
+    /// etc.) esta metida DENTRO del mismo Where que aplica el filtro de owner (SearchService.cs:96-114),
+    /// pero antes no habia ningun test que probara el caso de permisos: un vendedor SIN
+    /// reservas.view_all busca el nombre de un hotel que pertenece a una reserva AJENA. El resultado
+    /// debe venir VACIO — el vendedor no debe poder "descubrir" reservas de otros solo porque conoce
+    /// (o adivina) el nombre de un hotel cargado ahi.
+    /// </summary>
+    [Fact]
+    public async Task Search_VendedorWithoutViewAll_BuscandoHotelDeReservaAjena_NoLaEncuentra()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        var supplier = new Supplier { Id = 1, Name = "Hotelera Test SA" };
+        context.Suppliers.Add(supplier);
+        context.HotelBookings.Add(new HotelBooking
+        {
+            ReservaId = 2, // la reserva AJENA (vendedor-B) del seed comun.
+            SupplierId = supplier.Id,
+            HotelName = "Hotel Secreto Del Vendedor B",
+            City = "Bariloche",
+            Status = "Solicitado",
+            CheckIn = DateTime.UtcNow,
+            CheckOut = DateTime.UtcNow.AddDays(3),
+        });
+        await context.SaveChangesAsync();
+
+        var accessor = BuildContextAccessor("vendedor-A", "Vendedor");
+        // Sin reservas.view_all: mismo escenario del primer test de esta clase, pero buscando por
+        // servicio en vez de por numero/nombre de reserva.
+        var resolver = BuildResolver("vendedor-A", Permissions.ClientesView, Permissions.CobranzasView);
+
+        var service = new SearchService(context, resolver, accessor);
+        var result = await service.SearchAsync("Hotel Secreto", CancellationToken.None);
+
+        Assert.Empty(result.Reservas);
+    }
+
     [Fact]
     public async Task Search_VendedorWithoutCobranzasView_DoesNotReturnPayments()
     {

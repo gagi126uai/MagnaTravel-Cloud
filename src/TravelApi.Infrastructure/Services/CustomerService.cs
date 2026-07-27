@@ -265,9 +265,25 @@ public class CustomerService : ICustomerService
         {
             var docType = customer.DocumentType.Trim();
             var docNumber = customer.DocumentNumber.Trim();
+
+            // Hallazgo N1 (review 2026-07-27): el front puede mandar el mismo CUIT/documento con
+            // formato distinto — "20-30405060-7" (con guiones) o "20304050607" (sin ellos) — y este
+            // guard comparaba el string CRUDO (solo Trim()), asi que los dos formatos del MISMO
+            // documento pasaban como clientes DISTINTOS: se podia dar de alta un duplicado con solo
+            // cambiar el formato. Se compara normalizando (sin guiones/puntos/espacios) de ambos
+            // lados. Solo se sacan caracteres de FORMATO — nunca letras: los pasaportes llevan letras
+            // y tienen que seguir comparando tal cual.
+            var docNumberNormalized = NormalizeDocumentNumberFormatting(docNumber);
+
             var duplicate = await _dbContext.Customers
                 .AsNoTracking()
-                .Where(c => c.DocumentType == docType && c.DocumentNumber == docNumber)
+                // El .Replace(...) va INLINE en el Where (no adentro de un metodo aparte): EF Core
+                // traduce llamadas a Replace(string, string) a SQL real (mismo patron que usa
+                // SearchSimilarAsync, mas abajo, para normalizar el telefono), pero no puede traducir
+                // una llamada a un metodo C# arbitrario definido en esta clase.
+                .Where(c => c.DocumentType == docType &&
+                    c.DocumentNumber != null &&
+                    c.DocumentNumber.Replace("-", "").Replace(".", "").Replace(" ", "") == docNumberNormalized)
                 .Select(c => new { c.PublicId, c.FullName })
                 .FirstOrDefaultAsync(cancellationToken);
             if (duplicate != null)
@@ -305,6 +321,9 @@ public class CustomerService : ICustomerService
     {
         var docType = documentType?.Trim();
         var docNumber = documentNumber?.Trim();
+        // Hallazgo N1 (review 2026-07-27): misma normalizacion que en CreateCustomerAsync — sin esto,
+        // buscar similares con "20-30405060-7" no encontraba un cliente ya cargado como "20304050607".
+        var docNumberNormalized = !string.IsNullOrEmpty(docNumber) ? NormalizeDocumentNumberFormatting(docNumber) : null;
         var phoneNorm = NormalizePhone(phone);
         var nameNorm = NormalizeName(fullName);
 
@@ -317,7 +336,9 @@ public class CustomerService : ICustomerService
         var candidates = await _dbContext.Customers
             .AsNoTracking()
             .Where(c =>
-                (docNumber != null && c.DocumentNumber == docNumber && (docType == null || c.DocumentType == docType)) ||
+                (docNumberNormalized != null && c.DocumentNumber != null &&
+                    c.DocumentNumber.Replace("-", "").Replace(".", "").Replace(" ", "") == docNumberNormalized &&
+                    (docType == null || c.DocumentType == docType)) ||
                 (phoneNorm != null && c.Phone != null && c.Phone.Replace(" ", "").Replace("+", "").Replace("-", "") == phoneNorm) ||
                 (nameNorm != null && c.FullName.ToLower().Contains(nameNorm)))
             .Take(50)
@@ -337,7 +358,11 @@ public class CustomerService : ICustomerService
             .Select(c =>
             {
                 int score = 0;
-                if (docNumber != null && c.DocumentNumber == docNumber)
+                // Esta parte ya corre en memoria (candidates ya vino de ToListAsync), asi que aca SI
+                // se puede llamar al helper normalizador tranquilamente — no hay traduccion a SQL de
+                // por medio.
+                if (docNumberNormalized != null && c.DocumentNumber != null &&
+                    NormalizeDocumentNumberFormatting(c.DocumentNumber) == docNumberNormalized)
                 {
                     score = (docType != null && c.DocumentType == docType) ? 100 : 90;
                 }
@@ -374,6 +399,21 @@ public class CustomerService : ICustomerService
 
         return matches;
     }
+
+    /// <summary>
+    /// Hallazgo N1 (review 2026-07-27): saca SOLO caracteres de formato de un documento/CUIT
+    /// (guiones, puntos, espacios) para poder comparar "20-30405060-7" contra "20304050607" como el
+    /// MISMO documento. Deliberadamente NO toca letras: los pasaportes llevan letras (ej. "AAB123456")
+    /// y esas SI tienen que seguir comparando tal cual, letra por letra.
+    ///
+    /// IMPORTANTE para quien la use en un Where de EF Core: esta llamada NO es traducible a SQL si se
+    /// invoca directo dentro de la expresion LINQ-to-Entities (EF no puede traducir un metodo C#
+    /// arbitrario). Adentro de un Where contra la base hay que escribir el mismo Replace().Replace()
+    /// INLINE (ver CreateCustomerAsync/SearchSimilarAsync mas arriba); este helper es para el lado C#
+    /// (el valor de busqueda, o datos ya materializados en memoria con ToListAsync).
+    /// </summary>
+    private static string NormalizeDocumentNumberFormatting(string value) =>
+        value.Replace("-", "").Replace(".", "").Replace(" ", "");
 
     private static string? NormalizePhone(string? phone)
     {

@@ -276,6 +276,43 @@ public static class ManualCashMovementBuilder
                 _ => "Transfer",
             };
 
+        // Pendiente firmado del Lote 1 (mismo criterio que el fix H5 en BuildIncomeForRefund, ~linea
+        // 120): antes esta linea concatenaba entry.PublicId (un GUID interno) en el texto que el
+        // cajero ve en el Libro de Caja — "Retiro credito cliente 7d94dc68-... (PhysicalCash)". El
+        // nombre del cliente identifica el movimiento sin ambiguedad, un GUID no le dice nada a un
+        // usuario no programador.
+        //
+        // A diferencia de BuildIncomeForRefund (que EXIGE el Include de Supplier y tira excepcion si
+        // falta), aca NO se exige el Include de Customer: uno de los 5 call-sites reales
+        // (ClientCreditService, el "neteo" de multas contra varias NDs) arma sus entries con
+        // LoadFifoCreditEntriesAsync SIN Include(e => e.Customer) porque ESE camino siempre pasa su
+        // propio descriptionOverride (el desglose de la devolucion), que pisa este texto igual. Exigir
+        // el Include ahi rompería ese flujo por un dato que ni siquiera se termina mostrando. Si el
+        // nombre no esta cargado, se degrada a un texto generico en vez de romper.
+        var customerLabel = !string.IsNullOrWhiteSpace(entry.Customer?.FullName)
+            ? $"de {entry.Customer!.FullName}"
+            : "del cliente";
+
+        // Hallazgo B1 (review 2026-07-27, bloqueante T-5): antes esta linea concatenaba el enum crudo
+        // withdrawal.Kind directo en el texto -> "Retiro de saldo a favor de Juan Perez (PhysicalCash)".
+        // El cajero (un usuario NO programador) ve este texto en el Libro de Caja, y ademas queda
+        // grabado asi en la BD para siempre. "PhysicalCash" es jerga interna: no le dice nada a nadie
+        // fuera del equipo tecnico. Se reemplaza por una frase criolla por cada kind soportado.
+        //
+        // Solo 3 kinds llegan hasta aca (los otros 3 ya tiraron excepcion mas arriba: KeptAsCredit,
+        // AppliedToNewBooking y VoidedByAnnulmentUndo no generan movimiento fisico). Igual se deja el
+        // switch EXHAUSTIVO con default que revienta: si algun dia se agrega un kind nuevo que SI llegue
+        // hasta esta linea, mejor fallar ruidosamente en un test que persistir el nombre del enum en
+        // produccion sin que nadie se de cuenta.
+        var kindLabel = withdrawal.Kind switch
+        {
+            WithdrawalKind.PhysicalCash => "en efectivo",
+            WithdrawalKind.Transfer => "por transferencia",
+            WithdrawalKind.ReversedToOperator => "devuelto al operador",
+            _ => throw new InvalidOperationException(
+                $"WithdrawalKind sin texto criollo definido para el Libro de Caja: {withdrawal.Kind}"),
+        };
+
         return new ManualCashMovement
         {
             Direction = direction,
@@ -288,7 +325,7 @@ public static class ManualCashMovementBuilder
             OccurredAt = withdrawal.ExecutedAt,
             Method = method,
             Category = category,
-            Description = $"Retiro credito cliente {entry.PublicId} ({withdrawal.Kind})",
+            Description = $"Retiro de saldo a favor {customerLabel} {kindLabel}",
             // Reference no existe en la entity Withdrawal; lo dejamos null.
             // El service caller puede setearlo a un dato externo si aplica
             // (ej. numero de transferencia bancaria).
