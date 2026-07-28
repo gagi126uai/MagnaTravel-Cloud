@@ -1,23 +1,35 @@
-import { useEffect, useState } from "react";
-import { X, Loader2, AlertOctagon, AlertTriangle, Trash2, CheckCircle2, ShieldAlert } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { X, Loader2, AlertOctagon, AlertTriangle, Trash2, CheckCircle2, ShieldAlert, CheckSquare } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { formatDateTime } from "../../../lib/utils";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import {
     FRASE_CONFIRMACION_WIPE,
-    construirFilasConteosWipe,
+    WIPE_GRUPO_CONFIGURACION,
+    construirGruposWipeParaMostrar,
+    calcularSeleccionEfectivaWipe,
+    calcularGruposArrastradosWipe,
+    alternarGrupoWipe,
+    seleccionarTodosLosGruposWipe,
+    construirResumenCompletoSeleccionWipe,
     construirConfirmacionEmpezarDeCero,
     construirResumenExitoWipe,
+    construirMotivoWipeDeshabilitado,
     puedeConfirmarWipe,
 } from "../lib/dangerWipeLogic";
 
 /**
  * Modal de "Empezar de cero" (Zona peligrosa, Mantenimiento → Administración).
- * Borra TODO lo cargado en el sistema (reservas, clientes, operadores, tarifario,
- * países y destinos, facturas, caja, archivos) dejando siempre usuarios y auditoría.
- * Requiere escribir la frase exacta "BORRAR TODO" + la contraseña del que ejecuta,
- * y hace una doble confirmación antes de disparar el borrado.
+ * Borra POR GRUPOS lo cargado en el sistema (reservas y su plata, clientes, operadores,
+ * tarifario, países y destinos, clientes potenciales, configuración) dejando siempre
+ * usuarios y auditoría. Requiere escribir la frase exacta "BORRAR TODO" + la contraseña
+ * del que ejecuta, y hace una doble confirmación antes de disparar el borrado.
+ *
+ * Regla del dueño (2026-07-27, "tilda solo y avisa"): si un grupo elegido arrastra a otro
+ * (ej. "clientes" arrastra a "reservas y su plata" porque cada reserva tiene un titular),
+ * ese otro se tilda solo y queda bloqueado mientras el que lo arrastra siga tildado.
  *
  * Molde clonado de RevertStatusModal.jsx (bloqueos duros que apagan el submit +
  * doble confirmación + cartel de error del motor).
@@ -27,7 +39,9 @@ export function EmpezarDeCeroModal({ onClose }) {
     const [loadingPreview, setLoadingPreview] = useState(true);
     const [previewError, setPreviewError] = useState(null);
 
-    const [incluirConfiguracion, setIncluirConfiguracion] = useState(false);
+    // Grupos que el USUARIO tildó a mano (sin resolver dependencias todavía — eso se
+    // deriva con useMemo más abajo, para no duplicar el estado de la selección efectiva).
+    const [gruposManual, setGruposManual] = useState([]);
     const [frase, setFrase] = useState("");
     const [password, setPassword] = useState("");
 
@@ -36,7 +50,7 @@ export function EmpezarDeCeroModal({ onClose }) {
     const [resultadoExitoso, setResultadoExitoso] = useState(null);
 
     // useEffect con dependencia vacia: el preview se pide UNA sola vez al abrir el
-    // modal, no cada vez que el usuario tipea la frase o tilda la configuracion.
+    // modal, no cada vez que el usuario tilda un grupo o tipea la frase.
     useEffect(() => {
         let cancelado = false;
         (async () => {
@@ -57,18 +71,48 @@ export function EmpezarDeCeroModal({ onClose }) {
     }, []);
 
     const bloqueado = Boolean(preview?.bloqueado);
-    const filasConteos = construirFilasConteosWipe(preview?.conteos);
-    const hayAlgoParaBorrar = filasConteos.some((fila) => fila.cantidad > 0);
+    const dependencias = preview?.dependencias || {};
+    const gruposParaMostrar = construirGruposWipeParaMostrar(preview?.conteos);
+
+    // Selección EFECTIVA (lo que el usuario tildó + lo que eso arrastra): es lo que se
+    // manda al backend y lo que se lee en el resumen final. Se recalcula solo cuando
+    // cambia lo que el usuario tildó a mano o el mapa de dependencias del preview.
+    const gruposSeleccionados = useMemo(
+        () => calcularSeleccionEfectivaWipe(gruposManual, dependencias),
+        [gruposManual, dependencias]
+    );
+    const gruposArrastrados = useMemo(
+        () => calcularGruposArrastradosWipe(gruposManual, dependencias),
+        [gruposManual, dependencias]
+    );
+    const resumenCompleto = construirResumenCompletoSeleccionWipe(gruposSeleccionados, preview?.conteos);
 
     const canSubmit = !loadingPreview && !previewError
-        && puedeConfirmarWipe({ frase, password, bloqueado, ejecutando });
+        && puedeConfirmarWipe({ grupos: gruposSeleccionados, frase, password, bloqueado, ejecutando });
+
+    // Fix de review (P-9/P-10, "prohibido tooltip"): el motivo por el que el submit está
+    // apagado tiene que verse SIEMPRE como texto (no solo en el title, que en touch nadie
+    // ve). Mientras carga el preview o falló, no hay un motivo de NEGOCIO que mostrar todavía.
+    const motivoSubmitDeshabilitado = (loadingPreview || previewError || ejecutando)
+        ? null
+        : construirMotivoWipeDeshabilitado({
+            grupos: gruposSeleccionados,
+            frase,
+            password,
+            bloqueado,
+            motivoBloqueo: preview?.motivoBloqueo,
+        });
+
+    const alternarGrupo = (grupo, tildar) => {
+        setGruposManual((actual) => alternarGrupoWipe({ gruposManual: actual, grupo, dependencias, tildar }));
+    };
 
     const handleSubmit = async () => {
         if (!canSubmit) return;
 
-        // Regla del dueño: nunca se dispara un borrado total sin una doble confirmación
-        // explícita, con el texto cambiando si además se va a borrar la configuración.
-        const confirmado = await showConfirm(construirConfirmacionEmpezarDeCero(incluirConfiguracion));
+        // Regla del dueño: nunca se dispara un borrado sin una doble confirmación
+        // explícita, mencionando los grupos elegidos (distinto texto si incluye configuración).
+        const confirmado = await showConfirm(construirConfirmacionEmpezarDeCero(gruposSeleccionados));
         if (!confirmado) return;
 
         setEjecutando(true);
@@ -77,7 +121,7 @@ export function EmpezarDeCeroModal({ onClose }) {
             const resultado = await api.post("/admin/danger/wipe", {
                 password,
                 phrase: frase,
-                incluirConfiguracion,
+                grupos: gruposSeleccionados,
             });
             setResultadoExitoso(resultado);
         } catch (error) {
@@ -101,7 +145,8 @@ export function EmpezarDeCeroModal({ onClose }) {
         const resumen = construirResumenExitoWipe({
             borrado: resultadoExitoso.borrado,
             backupArchivo: resultadoExitoso.backupArchivo,
-            configuracionBorrada: resultadoExitoso.configuracionBorrada,
+            gruposBorrados: resultadoExitoso.gruposBorrados,
+            formatearFecha: formatDateTime,
         });
 
         return (
@@ -114,10 +159,8 @@ export function EmpezarDeCeroModal({ onClose }) {
                     <div className="p-6 space-y-4">
                         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
                             <p className="font-semibold">Se borró: {resumen.resumenConteos}</p>
-                            {resumen.backupArchivo && (
-                                <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-                                    Backup guardado antes de borrar: <span className="font-mono">{resumen.backupArchivo}</span>
-                                </p>
+                            {resumen.mensajeBackup && (
+                                <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">{resumen.mensajeBackup}</p>
                             )}
                         </div>
                         <p className="text-sm text-slate-600 dark:text-slate-300">{resumen.mensajeConfiguracion}</p>
@@ -163,22 +206,87 @@ export function EmpezarDeCeroModal({ onClose }) {
                         </div>
                     ) : (
                         <>
-                            <div>
-                                <label className="text-xs font-bold uppercase text-slate-500 mb-1 block">Esto se borra</label>
-                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                    {hayAlgoParaBorrar
-                                        ? filasConteos
-                                            .filter((fila) => fila.cantidad > 0)
-                                            .map((fila) => `${fila.cantidad} ${fila.etiqueta}`)
-                                            .join(" · ")
-                                        : "Por ahora no hay datos de negocio cargados para borrar."}
-                                </div>
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-bold uppercase text-slate-500 block">Elegí qué borrar</label>
+                                <button
+                                    type="button"
+                                    data-testid="danger-wipe-selectall"
+                                    onClick={() => setGruposManual(seleccionarTodosLosGruposWipe())}
+                                    disabled={ejecutando}
+                                    className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 hover:text-rose-800 disabled:opacity-40 dark:text-rose-400"
+                                >
+                                    <CheckSquare className="h-3.5 w-3.5" />
+                                    Seleccionar todo
+                                </button>
+                            </div>
+
+                            <div className="space-y-2">
+                                {gruposParaMostrar.map((grupo) => {
+                                    const estaSeleccionado = gruposSeleccionados.includes(grupo.clave);
+                                    const responsables = gruposArrastrados[grupo.clave];
+                                    const estaBloqueado = Boolean(responsables);
+
+                                    return (
+                                        <div
+                                            key={grupo.clave}
+                                            className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+                                        >
+                                            <label className={`flex items-start gap-2 select-none ${estaBloqueado ? "cursor-not-allowed" : "cursor-pointer"}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    data-testid={`danger-grupo-${grupo.clave}`}
+                                                    checked={estaSeleccionado}
+                                                    disabled={ejecutando || estaBloqueado}
+                                                    onChange={(event) => alternarGrupo(grupo.clave, event.target.checked)}
+                                                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500 disabled:opacity-60"
+                                                />
+                                                <span className="flex-1">
+                                                    <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
+                                                        {grupo.etiqueta}
+                                                    </span>
+                                                    {grupo.detalleConteo && (
+                                                        <span className="block text-xs text-slate-500 dark:text-slate-400">
+                                                            {grupo.detalleConteo}
+                                                        </span>
+                                                    )}
+                                                </span>
+                                            </label>
+                                            {estaBloqueado && (
+                                                <p className="mt-1.5 ml-6 text-xs text-amber-700 dark:text-amber-400">
+                                                    Se borra también porque depende de{" "}
+                                                    {responsables
+                                                        .map((clave) => gruposParaMostrar.find((g) => g.clave === clave)?.etiqueta || clave)
+                                                        .join(" y ")}.
+                                                </p>
+                                            )}
+                                            {grupo.clave === WIPE_GRUPO_CONFIGURACION && estaSeleccionado && (
+                                                <p className="mt-1.5 ml-6 text-xs text-amber-700 dark:text-amber-400">
+                                                    Después vas a tener que volver a configurar AFIP (certificado incluido) antes de poder facturar.
+                                                </p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
 
                             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                                 <ShieldAlert className="h-3.5 w-3.5 inline-block mr-1 text-slate-400" />
-                                Los usuarios y la auditoría <span className="font-semibold">siempre quedan</span>. Antes de borrar se hace un backup completo; la restauración la gestiona soporte.
+                                Los usuarios y la auditoría <span className="font-semibold">siempre quedan</span>. Antes de borrar se hace un backup completo; después lo podés probar desde "Volver atrás" en esta misma pantalla.
                             </div>
+
+                            {gruposSeleccionados.length > 0 && (
+                                <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/40 dark:bg-rose-950/20">
+                                    <p className="text-xs font-bold uppercase text-rose-700 dark:text-rose-400 mb-1.5">Esto vuela para siempre</p>
+                                    <ul className="space-y-1 text-sm text-rose-900 dark:text-rose-200">
+                                        {resumenCompleto.map((fila) => (
+                                            <li key={fila.clave}>
+                                                <span className="font-semibold">{fila.etiqueta}</span>
+                                                {fila.detalleConteo && <span> — {fila.detalleConteo}</span>}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
 
                             {bloqueado && (
                                 <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200">
@@ -190,27 +298,6 @@ export function EmpezarDeCeroModal({ onClose }) {
                                     </div>
                                 </div>
                             )}
-
-                            <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                                <label className="flex items-start gap-2 cursor-pointer select-none">
-                                    <input
-                                        type="checkbox"
-                                        data-testid="danger-wipe-config-check"
-                                        checked={incluirConfiguracion}
-                                        onChange={(event) => setIncluirConfiguracion(event.target.checked)}
-                                        disabled={ejecutando}
-                                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
-                                    />
-                                    <span className="text-sm text-slate-700 dark:text-slate-200">
-                                        Borrar también la configuración (AFIP, datos de la agencia, reglas)
-                                    </span>
-                                </label>
-                                {incluirConfiguracion && (
-                                    <p className="mt-2 ml-6 text-xs text-amber-700 dark:text-amber-400">
-                                        Si tildás esto, después hay que volver a configurar AFIP (certificado incluido) antes de poder facturar.
-                                    </p>
-                                )}
-                            </div>
 
                             <div>
                                 <label htmlFor="danger-wipe-phrase-input" className="text-xs font-bold uppercase text-slate-500 mb-1 block">
@@ -248,26 +335,37 @@ export function EmpezarDeCeroModal({ onClose }) {
                     )}
                 </div>
 
-                <div className="px-6 py-4 border-t bg-slate-50/50 dark:bg-slate-900/50 flex justify-end gap-3">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        disabled={ejecutando}
-                        className="px-4 py-2 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
-                    >
-                        Cancelar
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleSubmit}
-                        disabled={!canSubmit}
-                        data-testid="danger-wipe-submit"
-                        title={bloqueado ? preview?.motivoBloqueo : undefined}
-                        className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                    >
-                        {ejecutando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                        {ejecutando ? "Borrando..." : "Empezar de cero..."}
-                    </button>
+                <div className="px-6 py-4 border-t bg-slate-50/50 dark:bg-slate-900/50 flex flex-col items-end gap-2">
+                    <div className="flex justify-end gap-3">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            disabled={ejecutando}
+                            className="px-4 py-2 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSubmit}
+                            disabled={!canSubmit}
+                            data-testid="danger-wipe-submit"
+                            className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                            {ejecutando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                            {ejecutando ? "Borrando..." : "Empezar de cero..."}
+                        </button>
+                    </div>
+                    {/* Fix de review (P-9/P-10): el motivo va SIEMPRE como texto visible, nunca
+                        solo en un tooltip (title) — en touch/mobile nadie lo llega a ver. */}
+                    {motivoSubmitDeshabilitado && (
+                        <p
+                            className="text-xs font-medium text-amber-600 dark:text-amber-400"
+                            data-testid="danger-wipe-submit-hint"
+                        >
+                            {motivoSubmitDeshabilitado}
+                        </p>
+                    )}
                 </div>
             </div>
 
