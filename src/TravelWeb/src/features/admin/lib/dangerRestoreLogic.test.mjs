@@ -11,6 +11,7 @@ import {
     construirMotivoRestoreDeshabilitado,
     construirConfirmacionRestore,
     construirTextoVerificacionRestore,
+    construirExplicacionAccionesRestore,
     construirResumenExitoPruebaRestore,
     construirResumenExitoRealRestore,
 } from "./dangerRestoreLogic.js";
@@ -93,26 +94,69 @@ test("construirConfirmacionRestore: modo real avisa el alcance acotado a configu
     assert.ok(confirmacion.text.includes("vacías"));
 });
 
-test("construirTextoVerificacionRestore: invalido devuelve el motivo del motor tal cual", () => {
-    const texto = construirTextoVerificacionRestore({ valido: false, motivo: "El archivo no existe en el servidor.", tieneTablasClave: false });
-    assert.equal(texto, "El archivo no existe en el servidor.");
+test("construirTextoVerificacionRestore: invalido devuelve el motivo del motor tal cual, en una sola linea", () => {
+    const resultado = construirTextoVerificacionRestore({ valido: false, motivo: "El archivo no existe en el servidor.", cantidadTablas: 0, tieneTablasClave: false });
+    assert.equal(resultado.valido, false);
+    assert.deepEqual(resultado.lineas, ["El archivo no existe en el servidor."]);
 });
 
-test("construirTextoVerificacionRestore: valido y completo, mensaje positivo sin jerga tecnica", () => {
-    const texto = construirTextoVerificacionRestore({ valido: true, motivo: null, tieneTablasClave: true });
-    assert.equal(texto, "Se pudo leer el resguardo: tiene toda la información necesaria para restaurar.");
-    assert.equal(texto.toLowerCase().includes("tabla"), false);
+test("construirTextoVerificacionRestore: valido y completo, dice que se pudo leer, cuantas partes trae y que incluye lo clave", () => {
+    // Fix del hallazgo del dueño ("ver que tiene no me muestra nada"): antes era UNA frase
+    // vaga; ahora tiene que decir la cantidad concreta que manda el motor (cantidadTablas).
+    const resultado = construirTextoVerificacionRestore({ valido: true, motivo: null, cantidadTablas: 89, tieneTablasClave: true });
+    assert.equal(resultado.valido, true);
+    assert.deepEqual(resultado.lineas, [
+        "Se pudo leer sin problemas.",
+        "Trae 89 partes de información.",
+        "Incluye reservas, clientes, facturas y la configuración.",
+    ]);
+    // P-1: nunca se dice "tabla" en pantalla, es jerga de base de datos.
+    assert.equal(resultado.lineas.join(" ").toLowerCase().includes("tabla"), false);
 });
 
-test("construirTextoVerificacionRestore: valido pero incompleto, aviso de revisar con cuidado", () => {
-    const texto = construirTextoVerificacionRestore({ valido: true, motivo: null, tieneTablasClave: false });
-    assert.ok(texto.includes("podría faltarle alguna parte clave"));
+test("construirTextoVerificacionRestore: agrega la fecha/tamaño del resguardo elegido cuando se le pasa la etiqueta", () => {
+    const resultado = construirTextoVerificacionRestore(
+        { valido: true, motivo: null, cantidadTablas: 5, tieneTablasClave: true },
+        "Resguardo del 27/07/2026 22:33 — 1,2 MB"
+    );
+    assert.equal(resultado.lineas[0], "Resguardo del 27/07/2026 22:33 — 1,2 MB");
 });
 
-test("construirResumenExitoPruebaRestore: reusa las mismas filas de conteo que Empezar de cero", () => {
+test("construirTextoVerificacionRestore: cantidadTablas=1 usa singular ('1 parte'), no '1 partes'", () => {
+    const resultado = construirTextoVerificacionRestore({ valido: true, motivo: null, cantidadTablas: 1, tieneTablasClave: true });
+    assert.ok(resultado.lineas.includes("Trae 1 parte de información."));
+});
+
+test("construirTextoVerificacionRestore: valido pero sin tablas clave, explica que puede ser de otro sistema o version vieja", () => {
+    const resultado = construirTextoVerificacionRestore({ valido: true, motivo: null, cantidadTablas: 3, tieneTablasClave: false });
+    const ultimaLinea = resultado.lineas[resultado.lineas.length - 1];
+    assert.ok(ultimaLinea.includes("otro sistema o de una versión muy vieja"));
+    assert.ok(ultimaLinea.includes("Revisá con cuidado"));
+});
+
+test("construirExplicacionAccionesRestore: explica las 3 acciones sin nombres tecnicos", () => {
+    const lineas = construirExplicacionAccionesRestore();
+    assert.equal(lineas.length, 3);
+    assert.ok(lineas[0].startsWith("Ver qué contiene"));
+    assert.ok(lineas[1].startsWith("Probar en una copia"));
+    assert.ok(lineas[2].startsWith("Restaurar configuración"));
+});
+
+test("construirResumenExitoPruebaRestore: reusa las mismas filas de conteo que Empezar de cero, en una lista", () => {
     const resumen = construirResumenExitoPruebaRestore({ conteos: { reservas: 30, clientes: 16 }, advertencia: null });
-    assert.equal(resumen.resumenConteos, "30 reservas · 16 clientes");
+    assert.equal(resumen.encabezado, "Esto es lo que contiene el resguardo:");
+    assert.equal(resumen.sinDatos, false);
+    assert.deepEqual(resumen.filas, [
+        { clave: "reservas", etiqueta: "reservas", cantidad: 30 },
+        { clave: "clientes", etiqueta: "clientes", cantidad: 16 },
+    ]);
     assert.equal(resumen.advertencia, null);
+});
+
+test("construirResumenExitoPruebaRestore: explica el proceso (copia aparte, se conto, se borro)", () => {
+    const resumen = construirResumenExitoPruebaRestore({ conteos: { reservas: 1 }, advertencia: null });
+    assert.ok(resumen.comoSeHizo.includes("copia aparte"));
+    assert.ok(resumen.comoSeHizo.includes("no se tocaron"));
 });
 
 test("construirResumenExitoPruebaRestore: propaga la advertencia del motor si vino", () => {
@@ -123,13 +167,13 @@ test("construirResumenExitoPruebaRestore: propaga la advertencia del motor si vi
     assert.equal(resumen.advertencia, "Backup de una version anterior: algunos conteos no se pudieron calcular.");
 });
 
-test("construirResumenExitoPruebaRestore: resguardo vacio usa SU PROPIO texto, no el de Empezar de cero ('...para borrar')", () => {
-    // Fix de review: antes reusaba construirResumenConteosWipe entero, que devuelve "Por
-    // ahora no hay datos de negocio cargados PARA BORRAR" — una frase de otro flujo (borrar)
-    // que no tiene sentido en el panel de exito de "probar un resguardo".
+test("construirResumenExitoPruebaRestore: conteos todos en cero, dice claramente que no hay datos de negocio", () => {
+    // Caso pedido explicitamente: antes esto quedaba ambiguo ("no hizo nada"). Ahora tiene
+    // que quedar clarísimo que el resguardo en si no tenia datos cargados.
     const resumen = construirResumenExitoPruebaRestore({ conteos: { reservas: 0, clientes: 0 }, advertencia: null });
-    assert.equal(resumen.resumenConteos, "El resguardo no tenía datos de negocio cargados (quedó vacío).");
-    assert.equal(resumen.resumenConteos.includes("para borrar"), false);
+    assert.equal(resumen.sinDatos, true);
+    assert.deepEqual(resumen.filas, []);
+    assert.equal(resumen.mensajeSinDatos, "El resguardo no tiene datos de negocio cargados.");
 });
 
 test("construirResumenExitoRealRestore: muestra el mensaje del motor TAL CUAL (no lo arma ni lo traduce)", () => {

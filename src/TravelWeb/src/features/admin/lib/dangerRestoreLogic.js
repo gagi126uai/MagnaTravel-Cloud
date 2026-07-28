@@ -160,44 +160,99 @@ export function construirConfirmacionRestore(modo) {
 }
 
 /**
- * Texto en criollo del resultado de "Ver qué contiene" (verify). Si el backend marcó el
- * resguardo como inválido, se muestra el motivo tal cual lo manda (ya viene en criollo,
- * mismo criterio que el resto de los rechazos del motor). Nunca se menciona la cantidad
- * de tablas ni ningún otro detalle técnico (P-1: nada de jerga de base de datos).
+ * Texto en criollo del resultado de "Ver qué contiene" (verify).
  *
- * @param {{valido: boolean, motivo: string|null, tieneTablasClave: boolean}} resultado
- * @returns {string}
+ * Fix de hallazgo del dueño ("ver qué tiene no me muestra nada"): antes esta función
+ * devolvía UNA sola frase vaga que no decía nada concreto del contenido, aunque el motor
+ * ya manda `cantidadTablas` y `tieneTablasClave` en la respuesta. Ahora arma VARIAS líneas
+ * con info concreta: si se pudo leer, cuántas partes trae, si incluye las partes clave del
+ * negocio, y (si se le pasa `etiquetaBackup`) la fecha/tamaño del resguardo elegido, para
+ * que el resultado quede completo sin tener que mirar la lista de arriba de nuevo.
+ *
+ * "Partes de información" es el término en criollo para lo que el motor cuenta como
+ * `cantidadTablas` (P-1: nunca se dice "tablas" en pantalla, es jerga de base de datos).
+ *
+ * @param {{valido: boolean, motivo: string|null, cantidadTablas: number, tieneTablasClave: boolean}} resultado
+ * @param {string|null} [etiquetaBackup] - "Resguardo del <fecha> — <tamaño>" del resguardo elegido (opcional).
+ * @returns {{valido: boolean, lineas: string[]}}
  */
-export function construirTextoVerificacionRestore({ valido, motivo, tieneTablasClave }) {
+export function construirTextoVerificacionRestore({ valido, motivo, cantidadTablas, tieneTablasClave }, etiquetaBackup) {
     if (!valido) {
-        return motivo || "Este resguardo no se puede usar.";
+        return { valido: false, lineas: [motivo || "Este resguardo no se puede usar."] };
     }
 
-    return tieneTablasClave
-        ? "Se pudo leer el resguardo: tiene toda la información necesaria para restaurar."
-        : "Se pudo leer el resguardo, pero podría faltarle alguna parte clave. Revisá con cuidado antes de restaurar.";
+    const lineas = [];
+    if (etiquetaBackup) lineas.push(etiquetaBackup);
+
+    lineas.push("Se pudo leer sin problemas.");
+
+    const cantidad = Number(cantidadTablas) || 0;
+    lineas.push(cantidad === 1 ? "Trae 1 parte de información." : `Trae ${cantidad} partes de información.`);
+
+    lineas.push(
+        tieneTablasClave
+            ? "Incluye reservas, clientes, facturas y la configuración."
+            : "No se pudo confirmar que traiga reservas, clientes, facturas y configuración: puede ser un " +
+              "resguardo de otro sistema o de una versión muy vieja. Revisá con cuidado antes de restaurar."
+    );
+
+    return { valido: true, lineas };
+}
+
+/**
+ * Explicación fija de qué hace cada acción de este modal, para el hallazgo del dueño
+ * "tampoco deja en claro cómo lo hace o qué conecta". Se muestra siempre, arriba de los
+ * botones, antes de que el usuario toque nada. No depende de ningún dato de la pantalla
+ * (es texto fijo) pero vive acá — no hardcodeado en el JSX — para poder testearlo igual
+ * que el resto de los textos de esta pantalla, y para que quien lo cambie tenga que
+ * pensarlo como un texto de negocio, no como un detalle visual suelto.
+ *
+ * @returns {string[]}
+ */
+export function construirExplicacionAccionesRestore() {
+    return [
+        "Ver qué contiene: lee el resguardo sin tocar nada.",
+        "Probar en una copia: arma una copia aparte para mostrarte qué tiene, y la borra al terminar.",
+        "Restaurar configuración: repone en el sistema real solo las partes de configuración que estén vacías.",
+    ];
 }
 
 /**
  * Arma el resumen de éxito del modo "prueba": reusa las mismas filas de conteo que
  * Empezar de cero (`construirFilasConteosWipe`, misma lectura visual en las dos pantallas:
  * "esto es lo que hay"), pero con SU PROPIO texto para cuando no hay nada — el texto de
- * Empezar de cero dice "no hay datos... para borrar", que no tiene sentido acá (fix de
- * review: antes se colaba ese texto de otro flujo en el panel de éxito de "probar resguardo").
+ * Empezar de cero dice "no hay datos... para borrar", que no tiene sentido acá.
+ *
+ * Fix de hallazgo del dueño ("le indicó lo que restauró pero después no pude ver realmente
+ * qué contenía, es como que no hizo nada"): antes esto se mostraba en UN renglón separado
+ * por "·" y sin decir qué se hizo con la copia de prueba. Ahora devuelve las filas en una
+ * lista (una por tipo de dato, para mostrar en varias líneas como en Empezar de cero) más
+ * un texto fijo que explica el PROCESO en criollo — para que quede claro que la copia se
+ * armó aparte, se contó y se borró, y que en ningún momento se tocaron los datos reales.
  *
  * @param {object} params
  * @param {object} params.conteos
  * @param {string|null} params.advertencia
- * @returns {{resumenConteos: string, advertencia: string|null}}
+ * @returns {{
+ *   encabezado: string,
+ *   filas: {clave: string, etiqueta: string, cantidad: number}[],
+ *   sinDatos: boolean,
+ *   mensajeSinDatos: string,
+ *   comoSeHizo: string,
+ *   advertencia: string|null,
+ * }}
  */
 export function construirResumenExitoPruebaRestore({ conteos, advertencia }) {
     const filas = construirFilasConteosWipe(conteos).filter((fila) => fila.cantidad > 0);
-    const resumenConteos = filas.length > 0
-        ? filas.map((fila) => `${fila.cantidad} ${fila.etiqueta}`).join(" · ")
-        : "El resguardo no tenía datos de negocio cargados (quedó vacío).";
 
     return {
-        resumenConteos,
+        encabezado: "Esto es lo que contiene el resguardo:",
+        filas,
+        sinDatos: filas.length === 0,
+        mensajeSinDatos: "El resguardo no tiene datos de negocio cargados.",
+        comoSeHizo:
+            "Cómo se hizo: armamos una copia aparte de tu base, le cargamos el resguardo, contamos lo que " +
+            "tiene y borramos la copia. Tus datos no se tocaron en ningún momento.",
         advertencia: advertencia || null,
     };
 }

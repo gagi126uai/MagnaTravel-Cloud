@@ -16,6 +16,7 @@ import {
     construirMotivoRestoreDeshabilitado,
     construirConfirmacionRestore,
     construirTextoVerificacionRestore,
+    construirExplicacionAccionesRestore,
     construirResumenExitoPruebaRestore,
     construirResumenExitoRealRestore,
 } from "../lib/dangerRestoreLogic";
@@ -85,7 +86,12 @@ export function RestaurarResguardoModal({ onClose }) {
         setTextoVerify(null);
         try {
             const resultado = await api.post("/admin/danger/restore/verify", { archivo: archivoSeleccionado });
-            setTextoVerify(construirTextoVerificacionRestore(resultado));
+            // Se busca el resguardo elegido en la lista ya cargada (no hace falta otro pedido)
+            // para poder mostrar su fecha/tamaño junto con el resultado de la lectura — el
+            // dueño pidió que "ver qué contiene" no deje dudas de sobre CUÁL resguardo se leyó.
+            const backupElegido = backups.find((backup) => backup.archivo === archivoSeleccionado) || null;
+            const etiquetaBackup = backupElegido ? construirEtiquetaBackup(backupElegido, formatDateTime) : null;
+            setTextoVerify(construirTextoVerificacionRestore(resultado, etiquetaBackup));
         } catch (error) {
             setRejectionMessage(getApiErrorMessage(error, "No se pudo revisar este resguardo."));
         } finally {
@@ -156,16 +162,33 @@ export function RestaurarResguardoModal({ onClose }) {
                     </div>
                     <div className="p-6 space-y-4">
                         {esPrueba ? (
-                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
-                                <p className="font-semibold">La copia de prueba quedó con: {resumen.resumenConteos}</p>
-                                {/* Reassurance repetida a propósito (fix de review): ya se dijo antes de
-                                    confirmar, pero después de una acción sobre un resguardo de TODA la
-                                    base de datos, conviene reafirmarlo en el resultado — que el admin no
-                                    se quede con la duda de si tocó algo real. */}
-                                <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-                                    Esto se hizo en una base de prueba separada: no se tocó ningún dato real.
-                                </p>
-                            </div>
+                            <>
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                                    <p className="font-semibold mb-1.5">{resumen.encabezado}</p>
+                                    {resumen.sinDatos ? (
+                                        <p>{resumen.mensajeSinDatos}</p>
+                                    ) : (
+                                        <ul className="space-y-0.5">
+                                            {resumen.filas.map((fila) => (
+                                                <li key={fila.clave}>{fila.cantidad} {fila.etiqueta}</li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                    {/* Reassurance repetida a propósito (fix de review): ya se dijo antes de
+                                        confirmar, pero después de una acción sobre un resguardo de TODA la
+                                        base de datos, conviene reafirmarlo en el resultado — que el admin no
+                                        se quede con la duda de si tocó algo real. */}
+                                    <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                                        Esto se hizo en una base de prueba separada: no se tocó ningún dato real.
+                                    </p>
+                                </div>
+                                {/* Fix de hallazgo del dueño ("no deja en claro cómo lo hace"): explica el
+                                    proceso en criollo, separado del resultado, para no mezclar "qué encontramos"
+                                    con "cómo lo hicimos". */}
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                                    {resumen.comoSeHizo}
+                                </div>
+                            </>
                         ) : (
                             // Modo real: el "mensaje" viene ARMADO por el motor (qué se repuso, qué se
                             // salteó por ya tener datos, y el aviso de AFIP si corresponde) — se muestra
@@ -266,14 +289,33 @@ export function RestaurarResguardoModal({ onClose }) {
                             </button>
 
                             {textoVerify && (
-                                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100">
-                                    {textoVerify}
+                                <div
+                                    className={`rounded-lg border p-3 text-sm space-y-0.5 ${
+                                        textoVerify.valido
+                                            ? "border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100"
+                                            : "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
+                                    }`}
+                                    data-testid="danger-restore-verify-resultado"
+                                >
+                                    {textoVerify.lineas.map((linea, indice) => (
+                                        <p key={indice}>{linea}</p>
+                                    ))}
                                 </div>
                             )}
 
-                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                                <ShieldCheck className="h-3.5 w-3.5 inline-block mr-1 text-slate-400" />
-                                "Probar en una copia" NUNCA toca los datos reales. "Restaurar configuración" solo repone partes que estén vacías ahora mismo.
+                            {/* Fix de hallazgo del dueño ("no deja en claro... qué conecta"): explica, en
+                                criollo y antes de tocar nada, qué hace cada una de las tres acciones de
+                                abajo (ver qué contiene / probar en una copia / restaurar configuración). */}
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 space-y-1">
+                                <p className="flex items-start gap-1.5">
+                                    <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-slate-400" />
+                                    <span>Qué hace cada acción:</span>
+                                </p>
+                                <ul className="ml-5 list-disc space-y-0.5">
+                                    {construirExplicacionAccionesRestore().map((linea) => (
+                                        <li key={linea}>{linea}</li>
+                                    ))}
+                                </ul>
                             </div>
 
                             <div>
