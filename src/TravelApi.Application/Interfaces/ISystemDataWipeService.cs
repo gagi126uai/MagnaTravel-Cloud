@@ -25,14 +25,16 @@ public interface ISystemDataWipeService
     Task<SystemDataWipePreviewResponse> GetPreviewAsync(CancellationToken ct);
 
     /// <summary>
-    /// Ejecuta el borrado real. Tira <see cref="SystemDataWipeRefusedException"/> si la frase no coincide, la
-    /// contraseña es incorrecta, el candado fiscal está activo, o el backup previo falló — en todos esos casos
-    /// NO se borra nada.
+    /// Ejecuta el borrado real de los grupos pedidos (Parte A, 2026-07-27: borrado selectivo por grupos — ver
+    /// <c>TravelApi.Application.Constants.WipeGroups</c>). Tira <see cref="SystemDataWipeRefusedException"/> si
+    /// la frase no coincide, la contraseña es incorrecta, algún grupo no existe o le falta un grupo dependiente
+    /// (regla "tilda solo y avisa"), el candado fiscal está activo (solo aplica si <c>reservasYPlata</c> está
+    /// entre los grupos pedidos), o el backup previo falló — en todos esos casos NO se borra nada.
     /// </summary>
     Task<SystemDataWipeResponse> ExecuteWipeAsync(
         string requesterUserId,
         string password,
         string phrase,
-        bool incluirConfiguracion,
+        IReadOnlyList<string> grupos,
         CancellationToken ct);
 }

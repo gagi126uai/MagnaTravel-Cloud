@@ -11,34 +11,43 @@ using TravelApi.Infrastructure.Persistence;
 namespace TravelApi.Infrastructure.Services;
 
 /// <summary>
-/// Obra "Empezar de cero" (2026-07-27): borra TODOS los datos de negocio cargados (reservas, clientes,
-/// proveedores, pasajeros, facturas, catálogo, etc.) dejando SIEMPRE intactos usuarios/roles/permisos y la
-/// auditoría. Pensado para dejar la máquina lista para operar desde cero (demo/pruebas -> producción real),
-/// con las siguientes garantías:
+/// Obra "Empezar de cero" (2026-07-27) + Parte A "Borrado selectivo por grupos" (2026-07-27, firmada): borra
+/// SOLO los grupos de datos que el usuario elige (reservas y plata, clientes, operadores, tarifario, países y
+/// destinos, posibles clientes, configuración — ver <see cref="WipeGroups"/>), dejando SIEMPRE intactos
+/// usuarios/roles/permisos y la auditoría. Garantías:
 ///
 /// <list type="number">
 ///   <item><b>A prueba de dedos</b>: exige escribir la frase exacta "BORRAR TODO" + la contraseña del usuario
 ///   que ejecuta (mismo mecanismo que el login, <c>UserManager.CheckPasswordAsync</c>).</item>
-///   <item><b>Candado fiscal, chequeado DOS VECES</b>: si hay algún comprobante emitido en el ambiente
-///   PRODUCTIVO de ARCA, O si AFIP está configurado en PRODUCCIÓN ahora mismo (haya o no CAE todavía), el
-///   borrado se rechaza. Se evalúa antes del backup Y de nuevo como PRIMER statement dentro de la transacción
-///   de borrado (cierra la ventana TOCTOU: una factura podría emitirse con CAE productivo justo entre el
-///   primer chequeo y el TRUNCATE). Ver <see cref="EvaluateFiscalLockAsync"/>.</item>
+///   <item><b>Grupos coherentes ("tilda solo y avisa")</b>: si el caller pide un grupo sin alguno de sus
+///   dependientes forzosos (ver <see cref="WipeGroups.ForcedDependencies"/>), se rechaza con 409 listando qué
+///   falta — el front tilda solo los dependientes (belt), este chequeo es el cinturón (suspenders). Ver
+///   <see cref="ValidateAndNormalizeGroups"/>.</item>
+///   <item><b>Candado fiscal, chequeado DOS VECES, si el pedido puede tocar algo fiscal</b>: aplica cuando se
+///   pide <c>reservasYPlata</c> (tiene <c>Invoices</c>) o <c>configuracion</c> (tiene <c>AfipSettings</c> —
+///   hallazgo B5 de la revisión de seguridad: borrar la configuración de AFIP con comprobantes productivos
+///   vivos tampoco puede pasar). Si ninguno de los dos está en el pedido, el candado no aplica (no tiene
+///   sentido bloquear "borrar leads viejos" porque AFIP está en modo productivo). Si hay algún comprobante
+///   emitido en el ambiente PRODUCTIVO de ARCA, o AFIP está configurado en PRODUCCIÓN ahora mismo, el borrado
+///   se rechaza. Se evalúa antes del backup Y de nuevo como PRIMER statement dentro de la transacción de
+///   borrado (cierra la ventana TOCTOU). Ver <see cref="RequiresFiscalLockCheck"/>/<see cref="EvaluateFiscalLockAsync"/>.</item>
+///   <item><b>Ningún grupo deja huérfano a otro que no pediste</b>: varias tablas tienen foreign keys OPCIONALES
+///   cruzando grupos (ej. un presupuesto "convertido en la reserva X", una reserva "originada en el lead Y").
+///   Antes de truncar, esas foreign keys se DROPEAN temporalmente (no alcanza con poner la columna en NULL:
+///   <c>TRUNCATE ... CASCADE</c> cascadea por la EXISTENCIA del constraint, no por el valor de los datos) y se
+///   recrean después del TRUNCATE. Ver <see cref="DropCrossGroupForeignKeysAsync"/>/<see cref="ReattachForeignKeysAsync"/>.</item>
+///   <item><b>Red de seguridad genérica fail-closed (B4)</b>: después de dropear las foreign keys CONOCIDAS,
+///   se vuelve a consultar <c>information_schema</c> por CUALQUIER foreign key sin contemplar que cruce hacia
+///   el conjunto a truncar. Si aparece alguna, se ABORTA el borrado entero (nada de cascadear en silencio) —
+///   protege contra un mapa de desenganches desactualizado por una migración futura. Ver
+///   <see cref="EnsureNoUnhandledCrossGroupForeignKeysAsync"/>. <see cref="FindForeignKeyAsync"/> también es
+///   fail-closed: si una FK conocida no aparece (o aparece más de una vez), aborta en vez de seguir de largo.</item>
 ///   <item><b>Backup obligatorio ANTES de borrar</b>: si el backup (Postgres + copia verificada de MinIO, ver
-///   <see cref="IWipeBackupPort"/>) falla, no se borra nada. Los ORIGINALES de MinIO recién se borran DESPUÉS
-///   de que la transacción de Postgres hizo commit (best-effort, ver <see cref="ExecuteWipeAsync"/>).</item>
-///   <item><b>Todo o nada</b>: el borrado real corre en SQL crudo dentro de UNA sola transacción — o se borró
-///   todo y quedó auditado, o no pasó nada. Nunca EF/<c>SaveChanges</c> para el borrado en sí: el interceptor
-///   de auditoría automática de <c>AppDbContext</c> generaría miles de <c>AuditLog</c> (uno por fila borrada)
-///   en vez de UN solo evento de negocio.</item>
-///   <item><b>Configuración opcional</b>: la configuración de la agencia (AFIP, políticas de aprobación, bot
-///   de WhatsApp) solo se borra si el ejecutor lo pide explícitamente (<c>incluirConfiguracion=true</c>). Las
-///   reglas de comisión GENERALES (sin proveedor asociado) son un caso especial: <c>CommissionRules</c> tiene
-///   FK física a <c>Suppliers</c> (que SIEMPRE se trunca), así que se capturan y se re-insertan cuando NO se
-///   incluye la configuración — ver <see cref="CaptureGeneralCommissionRulesAsync"/>.</item>
-///   <item><b>Todo intento queda auditado</b>: tanto el éxito (<see cref="AuditActions.SystemDataWiped"/>)
-///   como cualquier rechazo (<see cref="AuditActions.SystemDataWipeRejected"/> — frase, contraseña, candado
-///   fiscal o backup fallido) quedan en el <c>AuditLog</c>, con el motivo en criollo y JAMÁS la contraseña.</item>
+///   <see cref="IWipeBackupPort"/>) falla, no se borra nada.</item>
+///   <item><b>Todo o nada</b>: el borrado real corre en SQL crudo dentro de UNA sola transacción.</item>
+///   <item><b>Todo intento queda auditado</b>: éxito (<see cref="AuditActions.SystemDataWiped"/>) y rechazo
+///   (<see cref="AuditActions.SystemDataWipeRejected"/>) quedan en el <c>AuditLog</c>, con el motivo en criollo
+///   y JAMÁS la contraseña.</item>
 /// </list>
 /// </summary>
 public class SystemDataWipeService : ISystemDataWipeService
@@ -49,11 +58,6 @@ public class SystemDataWipeService : ISystemDataWipeService
     private const string FiscalLockMessage =
         "Hay comprobantes emitidos en modo productivo: no se puede borrar. Los comprobantes fiscales reales deben conservarse.";
 
-    /// <summary>
-    /// Hardening final (revision 2026-07-27, prescripto por seguridad): mensaje cuando AFIP esta configurado
-    /// en modo PRODUCTIVO ahora mismo, exista o no una factura con CAE todavia. Ver
-    /// <see cref="EvaluateFiscalLockAsync"/>.
-    /// </summary>
     private const string AfipProductionModeMessage =
         "AFIP está en modo productivo: pasá a homologación antes de borrar datos. Los comprobantes reales no se tocan.";
 
@@ -79,7 +83,7 @@ public class SystemDataWipeService : ISystemDataWipeService
 
     public async Task<SystemDataWipePreviewResponse> GetPreviewAsync(CancellationToken ct)
     {
-        var counts = await CountAllAsync(ct);
+        var counts = await CountAllAsync(_context, ct);
         var (bloqueado, motivo) = await EvaluateFiscalLockAsync(ct);
 
         return new SystemDataWipePreviewResponse
@@ -87,6 +91,7 @@ public class SystemDataWipeService : ISystemDataWipeService
             Conteos = counts,
             Bloqueado = bloqueado,
             MotivoBloqueo = motivo,
+            Dependencias = WipeGroups.ForcedDependencies.ToDictionary(kv => kv.Key, kv => kv.Value),
         };
     }
 
@@ -94,16 +99,14 @@ public class SystemDataWipeService : ISystemDataWipeService
         string requesterUserId,
         string password,
         string phrase,
-        bool incluirConfiguracion,
+        IReadOnlyList<string> grupos,
         CancellationToken ct)
     {
-        // Fix menor #6 (revision 2026-07-27): CUALQUIER rechazo (frase, contraseña, candado fiscal, backup
-        // fallido) queda auditado con el motivo — nunca la contraseña. Un solo try/catch envolvente cubre
-        // TODOS los caminos de rechazo, incluido el re-chequeo del candado fiscal DENTRO de la transaccion
-        // (para ese momento la transaccion ya se deshizo sola via "await using" antes de llegar aca).
+        // Cualquier rechazo (frase, contraseña, grupos incoherentes, candado fiscal, backup fallido) queda
+        // auditado con el motivo — nunca la contraseña. Un solo try/catch envolvente cubre TODOS los caminos.
         try
         {
-            return await ExecuteWipeCoreAsync(requesterUserId, password, phrase, incluirConfiguracion, ct);
+            return await ExecuteWipeCoreAsync(requesterUserId, password, phrase, grupos, ct);
         }
         catch (SystemDataWipeRefusedException ex)
         {
@@ -123,7 +126,7 @@ public class SystemDataWipeService : ISystemDataWipeService
         string requesterUserId,
         string password,
         string phrase,
-        bool incluirConfiguracion,
+        IReadOnlyList<string> grupos,
         CancellationToken ct)
     {
         // 1) Frase EXACTA. Ordinal (case-sensitive): el usuario tiene que escribir "BORRAR TODO" a la letra.
@@ -139,18 +142,30 @@ public class SystemDataWipeService : ISystemDataWipeService
             throw new SystemDataWipeRefusedException("La contraseña no es correcta.");
         }
 
-        // 3) Candado fiscal (chequeo #1, fuera de la transaccion): si hay algún comprobante real, no seguimos.
-        var (bloqueado, motivo) = await EvaluateFiscalLockAsync(ct);
-        if (bloqueado)
+        // 3) Grupos: validos, sin repetidos, y coherentes con las dependencias forzosas (regla "tilda solo y
+        // avisa" — el front ya tilda los dependientes; esto es el cinturón que rechaza un pedido incompleto).
+        var gruposResueltos = ValidateAndNormalizeGroups(grupos);
+
+        // 4) Candado fiscal (chequeo #1, fuera de la transaccion): aplica si el grupo pedido puede tocar un
+        // comprobante — "reservasYPlata" (contiene Invoices) O "configuracion" (contiene AfipSettings: borrar
+        // la config de AFIP con comprobantes productivos vivos tampoco puede pasar, hallazgo B5 de la revision
+        // de seguridad). Borrar solo tarifario/paises/leads nunca toca nada fiscal, no hay motivo para
+        // bloquearlo por el estado de AFIP.
+        if (RequiresFiscalLockCheck(gruposResueltos))
         {
-            throw new SystemDataWipeRefusedException(motivo!);
+            var (bloqueado, motivo) = await EvaluateFiscalLockAsync(ct);
+            if (bloqueado)
+            {
+                throw new SystemDataWipeRefusedException(motivo!);
+            }
         }
 
-        // Conteos ANTES de borrar: son los que se reportan como "lo que se borró".
-        var counts = await CountAllAsync(ct);
+        // Conteos ANTES de borrar, recortados a SOLO los grupos pedidos (hallazgo N8 de la revision: informar
+        // conteos de grupos que ni se tocaron seria "informar de mas" — el usuario podria creer que se borro
+        // algo que en realidad seguia intacto).
+        var counts = ScopeCountsToSelectedGroups(await CountAllAsync(_context, ct), gruposResueltos);
 
-        // 4) Backup OBLIGATORIO. Si falla, no se toca un solo dato (ni Postgres ni MinIO: el paso de MinIO
-        // solo COPIA, ver PgDumpAndMinioWipeBackupPort — los originales siguen intactos pase lo que pase aca).
+        // 5) Backup OBLIGATORIO. Si falla, no se toca un solo dato.
         var timestamp = DateTime.UtcNow;
         var backupFileName = BuildBackupFileName(timestamp);
         var minioPrefix = BuildMinioPrefix(timestamp);
@@ -164,38 +179,80 @@ public class SystemDataWipeService : ISystemDataWipeService
                 "No se pudo generar el backup previo. No se borró nada. Volvé a intentarlo o avisá al equipo técnico.");
         }
 
-        // 5) Borrado real: SQL crudo, UNA sola transaccion. CreateExecutionStrategy() envuelve el reintento
-        // transitorio de Npgsql (igual patron que AuthService.LoginAsync/RefreshAsync); acá además garantiza
-        // que si algo falla a mitad de camino, Postgres deshace TODO (nada de borrado parcial).
+        // 6) Borrado real: SQL crudo, UNA sola transaccion.
         var strategy = _context.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
             await using var transaction = await _context.Database.BeginTransactionAsync(ct);
 
-            // Fix bloqueante #3 (revision 2026-07-27): re-chequeo del candado fiscal como PRIMER statement
-            // DENTRO de la transaccion. Cierra la ventana TOCTOU: entre el chequeo #1 (arriba) y este punto
-            // pudo haber corrido un ProcessInvoiceJob que le puso CAE productivo a una factura. Si esto tira,
-            // "await using" deshace la transaccion (rollback) ANTES de que la excepcion llegue al catch de
-            // ExecuteWipeAsync (que audita el rechazo fuera de cualquier transaccion abierta).
-            var (bloqueadoEnTx, motivoEnTx) = await EvaluateFiscalLockAsync(ct);
-            if (bloqueadoEnTx)
+            // Re-chequeo del candado fiscal como PRIMER statement DENTRO de la transaccion (cierra la ventana
+            // TOCTOU), mismo criterio de scoping que el chequeo #1.
+            if (RequiresFiscalLockCheck(gruposResueltos))
             {
-                throw new SystemDataWipeRefusedException(motivoEnTx!);
+                var (bloqueadoEnTx, motivoEnTx) = await EvaluateFiscalLockAsync(ct);
+                if (bloqueadoEnTx)
+                {
+                    throw new SystemDataWipeRefusedException(motivoEnTx!);
+                }
             }
 
-            // Fix bloqueante #2 (revision 2026-07-27): capturamos las reglas de comision GENERALES (sin
-            // proveedor) ANTES del TRUNCATE. Suppliers cascadea FISICAMENTE sobre CommissionRules (FK real,
-            // aunque SupplierId sea nullable) — sin esto, las reglas generales (que son CONFIGURACION) morian
-            // igual aunque el tilde estuviera apagado. Las de un proveedor especifico SI mueren con el
-            // proveedor (correcto en ambos casos).
-            var generalCommissionRules = incluirConfiguracion
-                ? null
-                : await CaptureGeneralCommissionRulesAsync(ct);
+            var tablesToDelete = BuildTableSetForGroups(gruposResueltos);
 
-            await TruncateBusinessTablesAsync(ct);
-            await DeleteBankAccountsAsync(includeAgency: incluirConfiguracion, ct);
+            // CommissionRules es un caso especial (ver comentario de la constante): vive con Suppliers (FK
+            // fisica) pero conceptualmente es CONFIGURACION. Se captura la porcion GENERAL (sin proveedor)
+            // ANTES del truncate si no se va a restaurar (solo cuando "configuracion" no fue pedido).
+            var incluyeConfiguracion = gruposResueltos.Contains(WipeGroups.Configuracion);
+            var incluyeOperadores = gruposResueltos.Contains(WipeGroups.Operadores);
+            List<CapturedCommissionRule>? generalCommissionRules = null;
+            if (incluyeOperadores || incluyeConfiguracion)
+            {
+                tablesToDelete.Add(CommissionRulesTable);
+                if (!incluyeConfiguracion)
+                {
+                    generalCommissionRules = await CaptureGeneralCommissionRulesAsync(ct);
+                }
+            }
 
-            if (incluirConfiguracion)
+            // RateSupplierSales es una cache de estadisticas de venta (Rate<->Supplier) sin valor de negocio
+            // propio: sus dos FK (RateId, SupplierId) son OBLIGATORIAS (no nullable), asi que no se puede
+            // "desenganchar" — muere entera apenas CUALQUIERA de sus dos padres muere.
+            if (incluyeOperadores || gruposResueltos.Contains(WipeGroups.Tarifario))
+            {
+                tablesToDelete.Add(RateSupplierSalesTable);
+            }
+
+            // Desenganchar referencias cruzadas OPCIONALES antes del TRUNCATE (ver el comentario largo del
+            // metodo: hay que DROPEAR la foreign key, no alcanza con poner la columna en NULL — Postgres
+            // cascadea por la EXISTENCIA del constraint, no por el valor actual de los datos).
+            var droppedForeignKeys = await DropCrossGroupForeignKeysAsync(gruposResueltos, ct);
+
+            // Red de seguridad generica fail-closed (hallazgo B4): si despues de dropear TODAS las FK
+            // conocidas todavia queda alguna foreign key sin contemplar apuntando hacia el conjunto a
+            // truncar, aborta ANTES de tocar un solo dato en vez de dejar que CASCADE se coma un grupo de mas.
+            //
+            // Hallazgo menor (punto 6, ronda de revision): "configuracion" se trunca APARTE (mas abajo, via
+            // TruncateConfigurationTablesAsync — necesita el reseed de ApprovalPolicies, no alcanza un
+            // TRUNCATE liso) y por eso NO esta en "tablesToDelete". Para que la red tambien lo cubra, se arma
+            // un conjunto de chequeo que le suma esas 5 tablas cuando "configuracion" fue pedido — barato
+            // (una union de sets, no una consulta extra) y cierra el hueco de una vez en vez de solo
+            // documentarlo. Hoy es inocuo (ninguna FK real apunta hacia esas 5 tablas standalone), pero
+            // protege igual contra una migracion futura que agregue una.
+            var tablasParaElChequeoDeFks = new HashSet<string>(tablesToDelete, StringComparer.Ordinal);
+            if (incluyeConfiguracion)
+            {
+                tablasParaElChequeoDeFks.UnionWith(WipeGroups.ConfiguracionTables);
+            }
+
+            await EnsureNoUnhandledCrossGroupForeignKeysAsync(tablasParaElChequeoDeFks, ct);
+
+            await TruncateTablesAsync(tablesToDelete, ct);
+            await DeleteBankAccountsAsync(gruposResueltos, ct);
+
+            // Repone las foreign keys dropeadas ANTES de truncar, ya con las columnas del lado sobreviviente
+            // en NULL (nunca quedan apuntando a una fila que se acaba de borrar).
+            await ReattachForeignKeysAsync(droppedForeignKeys, ct);
+
+            if (incluyeConfiguracion)
             {
                 await TruncateConfigurationTablesAsync(ct);
                 await ReseedApprovalPoliciesAsync(ct);
@@ -205,21 +262,17 @@ public class SystemDataWipeService : ISystemDataWipeService
                 await RestoreGeneralCommissionRulesAsync(generalCommissionRules, ct);
             }
 
-            await InsertWipeAuditLogAsync(requester, counts, backupResult, backupFileName, minioPrefix, incluirConfiguracion, ct);
+            await InsertWipeAuditLogAsync(requester, counts, backupResult, backupFileName, minioPrefix, gruposResueltos, ct);
 
             await transaction.CommitAsync(ct);
         });
 
         _logger.LogWarning(
-            "Empezar de cero ejecutado por {UserId} ({UserName}). IncluirConfiguracion={IncluirConfiguracion}. Backup={BackupFile}",
-            requester.Id, requester.UserName, incluirConfiguracion, backupResult.BackupFileName ?? backupFileName);
+            "Empezar de cero ejecutado por {UserId} ({UserName}). Grupos={Grupos}. Backup={BackupFile}",
+            requester.Id, requester.UserName, string.Join(",", gruposResueltos), backupResult.BackupFileName ?? backupFileName);
 
-        // Fix bloqueante #1 (revision 2026-07-27): recien ACA, con el commit YA confirmado, borramos los
-        // objetos ORIGINALES de MinIO (la copia de backup bajo el prefijo ya esta verificada desde el paso 4).
-        // Best-effort a proposito: si esto falla, el wipe YA fue exitoso (Postgres + backup de MinIO existen)
-        // - un objeto que quedo sin borrar es basura inofensiva, nunca una perdida de dato. Si en cambio la
-        // transaccion de arriba hubiera fallado, este bloque NUNCA se ejecuta y los originales de MinIO
-        // siguen intactos - "no se borro nada" vuelve a ser literalmente cierto.
+        // Recien ACA, con el commit YA confirmado, borramos los objetos ORIGINALES de MinIO. Best-effort a
+        // proposito (ver IWipeBackupPort.RemoveOriginalObjectsAsync).
         try
         {
             await _backupPort.RemoveOriginalObjectsAsync(backupResult, ct);
@@ -234,31 +287,128 @@ public class SystemDataWipeService : ISystemDataWipeService
         {
             Borrado = counts,
             BackupArchivo = backupResult.BackupFileName ?? backupFileName,
-            ConfiguracionBorrada = incluirConfiguracion,
+            GruposBorrados = gruposResueltos.ToList(),
         };
     }
 
     /// <summary>
-    /// Candado fiscal: un comprobante emitido en el ambiente PRODUCTIVO de ARCA jamás se puede borrar, aunque
-    /// el dueño reconfigure AFIP a homologación después. Tres capas (de más precisa a más conservadora):
-    /// <list type="bullet">
-    ///   <item>La correcta (no proxy): <see cref="Domain.Entities.Invoice.WasIssuedInProduction"/>, congelada
-    ///   AL MOMENTO de conseguir el CAE (ver <c>AfipService.ProcessInvoiceJob</c>). Los históricos previos a
-    ///   esta columna quedaron backfillados a <c>FALSE</c> (ver migración
-    ///   <c>Adr051_DataWipe_BackfillWasIssuedInProductionForHistoricInvoices</c> — regla firmada del dueño: en
-    ///   PROD solo se factura en homologación, nunca en modo productivo).</item>
-    ///   <item>Hardening final (revisión 2026-07-27, prescripto por seguridad): si AFIP está configurado en
-    ///   PRODUCCIÓN ahora mismo, se rechaza el wipe SIEMPRE — haya o no una factura con CAE todavía. No alcanza
-    ///   con "no hay comprobantes reales hoy": si el ambiente es productivo, cualquier operación posterior
-    ///   (incluso una emisión en curso) podría generar uno antes de que el dueño se dé cuenta. Es más simple y
-    ///   más seguro exigir pasar a homologación primero, en vez de perseguir cada ventana de carrera con una
-    ///   consulta de CAE puntual.</item>
-    ///   <item>Cinturón y tiradores residual para el caso en que este método se invoque contra una base SIN
-    ///   fila de <c>AfipSettings</c> (AFIP nunca configurado): sin fila no hay forma de saber el ambiente, así
-    ///   que se sigue confiando en <see cref="Domain.Entities.Invoice.WasIssuedInProduction"/> (capa 1).</item>
-    /// </list>
-    /// Se llama DOS VECES por cada wipe (antes del backup y de nuevo como primer statement de la transacción)
-    /// para cerrar la ventana TOCTOU — ver <see cref="ExecuteWipeCoreAsync"/>.
+    /// Valida que <paramref name="grupos"/> sea una lista no vacia de nombres validos (ver
+    /// <see cref="WipeGroups.All"/>), sin repetidos, y que incluya TODOS los dependientes forzosos de cada
+    /// grupo pedido (<see cref="WipeGroups.ForcedDependencies"/>). Regla firmada "tilda solo y avisa": el
+    /// front ya tilda los dependientes solo — esto es el cinturon que rechaza un pedido incompleto en vez de
+    /// completarlo en silencio (si el front tiene un bug y no tilda el dependiente, mejor un 409 explicito que
+    /// un borrado parcial que sorprenda al usuario).
+    ///
+    /// <para><b>Hallazgo bloqueante de data-exposure (ronda de revisión)</b>: ambos mensajes de rechazo usan
+    /// <see cref="WipeGroups.GrupoLabels"/> (nombres de NEGOCIO en criollo) — NUNCA la clave interna cruda
+    /// ("reservasYPlata", "posiblesClientes", etc, vocabulario de programador). El caso de "grupo desconocido"
+    /// además evita hasta nombrar el token que mandó el caller (podría ser cualquier string arbitrario): el
+    /// mensaje es genérico y el detalle técnico completo queda SOLO en el log del servidor.</para>
+    /// </summary>
+    private HashSet<string> ValidateAndNormalizeGroups(IReadOnlyList<string> grupos)
+    {
+        if (grupos is null || grupos.Count == 0)
+        {
+            throw new SystemDataWipeRefusedException("Elegí al menos un grupo de datos para borrar.");
+        }
+
+        var normalizados = new HashSet<string>(grupos, StringComparer.Ordinal);
+
+        var invalidos = normalizados.Where(g => !WipeGroups.IsValid(g)).ToList();
+        if (invalidos.Count > 0)
+        {
+            // El token invalido (podria ser cualquier string arbitrario, hasta con datos pegados por error)
+            // NUNCA se le muestra al usuario - el detalle completo queda en el log del servidor.
+            _logger.LogWarning(
+                "Empezar de cero: se pidieron grupos desconocidos: {Invalidos}.", string.Join(", ", invalidos));
+            throw new SystemDataWipeRefusedException(
+                "Alguno de los grupos elegidos ya no existe. Actualizá la pantalla y probá de nuevo.");
+        }
+
+        var faltantes = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var grupo in normalizados)
+        {
+            foreach (var dependiente in WipeGroups.ForcedDependencies[grupo])
+            {
+                if (!normalizados.Contains(dependiente))
+                {
+                    faltantes.Add(dependiente);
+                }
+            }
+        }
+
+        if (faltantes.Count > 0)
+        {
+            var faltantesEnCriollo = faltantes.Select(ToGrupoLabel);
+            throw new SystemDataWipeRefusedException(
+                $"Para borrar los grupos elegidos también hace falta incluir: {string.Join(", ", faltantesEnCriollo)}.");
+        }
+
+        return normalizados;
+    }
+
+    /// <summary>Traduce una clave interna de grupo ("reservasYPlata") a su nombre de negocio ("Reservas y su plata") — ver <see cref="WipeGroups.GrupoLabels"/>.</summary>
+    private static string ToGrupoLabel(string grupo) =>
+        WipeGroups.GrupoLabels.TryGetValue(grupo, out var label) ? label : grupo;
+
+    /// <summary>
+    /// El candado fiscal aplica si el pedido puede tocar algo fiscal: "reservasYPlata" (tiene <c>Invoices</c>)
+    /// o "configuracion" (tiene <c>AfipSettings</c> — hallazgo B5: borrar la configuración de AFIP con
+    /// comprobantes productivos vivos tampoco puede pasar, aunque no se toque ninguna reserva).
+    /// </summary>
+    private static bool RequiresFiscalLockCheck(HashSet<string> grupos) =>
+        grupos.Contains(WipeGroups.ReservasYPlata) || grupos.Contains(WipeGroups.Configuracion);
+
+    /// <summary>
+    /// Recorta un <see cref="SystemDataWipeCounts"/> completo a SOLO los campos de los grupos pedidos (el
+    /// resto queda en 0). Hallazgo N8: informar conteos de grupos que no se tocaron sería "informar de más".
+    /// </summary>
+    private static SystemDataWipeCounts ScopeCountsToSelectedGroups(SystemDataWipeCounts full, HashSet<string> grupos)
+    {
+        var scoped = new SystemDataWipeCounts();
+
+        if (grupos.Contains(WipeGroups.ReservasYPlata))
+        {
+            scoped.Reservas = full.Reservas;
+            scoped.Pasajeros = full.Pasajeros;
+            scoped.Facturas = full.Facturas;
+            scoped.Cobros = full.Cobros;
+            scoped.MovimientosCaja = full.MovimientosCaja;
+            scoped.Archivos = full.Archivos;
+        }
+
+        if (grupos.Contains(WipeGroups.Clientes))
+        {
+            scoped.Clientes = full.Clientes;
+        }
+
+        if (grupos.Contains(WipeGroups.Operadores))
+        {
+            scoped.Operadores = full.Operadores;
+        }
+
+        if (grupos.Contains(WipeGroups.Tarifario))
+        {
+            scoped.Tarifario = full.Tarifario;
+        }
+
+        if (grupos.Contains(WipeGroups.PaisesYDestinos))
+        {
+            scoped.PaisesYDestinos = full.PaisesYDestinos;
+        }
+
+        if (grupos.Contains(WipeGroups.PosiblesClientes))
+        {
+            scoped.PosiblesClientes = full.PosiblesClientes;
+        }
+
+        return scoped;
+    }
+
+    /// <summary>
+    /// Candado fiscal: ver el comentario completo en la clase. Se llama DOS VECES por cada wipe cuyo pedido
+    /// pueda tocar algo fiscal (antes del backup y de nuevo como primer statement de la transacción). Ver
+    /// <see cref="RequiresFiscalLockCheck"/> para saber cuándo aplica.
     /// </summary>
     private async Task<(bool Bloqueado, string? Motivo)> EvaluateFiscalLockAsync(CancellationToken ct)
     {
@@ -272,9 +422,6 @@ public class SystemDataWipeService : ISystemDataWipeService
         var afipSettings = await _context.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
         if (afipSettings is { IsProduction: true })
         {
-            // Hardening final: ya no se condiciona a "existe algun CAE" — el ambiente productivo por si solo
-            // basta para frenar el wipe. Mensaje distinto al candado por comprobante: acá el problema es la
-            // CONFIGURACION (arreglable por el dueño reconfigurando AFIP), no un dato que haya que conservar.
             return (true, AfipProductionModeMessage);
         }
 
@@ -282,34 +429,28 @@ public class SystemDataWipeService : ISystemDataWipeService
     }
 
     /// <summary>
-    /// Conteos usando los DbSet tipados (LINQ), NO SQL crudo: así el preview corre igual contra Postgres real
-    /// y contra InMemory (tests unitarios). Nota sobre <c>Cobros</c>: <c>Payment</c> tiene un query filter
-    /// global (<c>!IsDeleted</c>), así que este conteo muestra pagos ACTIVOS — un pago soft-deleted ya se
-    /// considera "borrado" para el usuario aunque el TRUNCATE de más abajo también le pegue a esa fila física.
+    /// Conteos usando los DbSet tipados (LINQ), NO SQL crudo: asi corre igual contra Postgres real y contra
+    /// InMemory (tests unitarios), y se puede reusar contra CUALQUIER <see cref="AppDbContext"/> — incluido
+    /// uno apuntando a la base SOMBRA de una restauracion de prueba (Parte B, ver <c>SystemDataRestoreService</c>).
     /// </summary>
-    private async Task<SystemDataWipeCounts> CountAllAsync(CancellationToken ct)
+    internal static async Task<SystemDataWipeCounts> CountAllAsync(AppDbContext context, CancellationToken ct)
     {
         return new SystemDataWipeCounts
         {
-            Reservas = await _context.Reservas.CountAsync(ct),
-            Clientes = await _context.Customers.CountAsync(ct),
-            Operadores = await _context.Suppliers.CountAsync(ct),
-            Pasajeros = await _context.Passengers.CountAsync(ct),
-            Facturas = await _context.Invoices.CountAsync(ct),
-            Cobros = await _context.Payments.CountAsync(ct),
-            MovimientosCaja = await _context.CashLedgerEntries.CountAsync(ct),
-            Archivos = await _context.ReservaAttachments.CountAsync(ct),
-            PaisesYDestinos = await _context.Countries.CountAsync(ct) + await _context.Destinations.CountAsync(ct),
-            Tarifario = await _context.Rates.CountAsync(ct),
-            PosiblesClientes = await _context.Leads.CountAsync(ct),
+            Reservas = await context.Reservas.CountAsync(ct),
+            Clientes = await context.Customers.CountAsync(ct),
+            Operadores = await context.Suppliers.CountAsync(ct),
+            Pasajeros = await context.Passengers.CountAsync(ct),
+            Facturas = await context.Invoices.CountAsync(ct),
+            Cobros = await context.Payments.CountAsync(ct),
+            MovimientosCaja = await context.CashLedgerEntries.CountAsync(ct),
+            Archivos = await context.ReservaAttachments.CountAsync(ct),
+            PaisesYDestinos = await context.Countries.CountAsync(ct) + await context.Destinations.CountAsync(ct),
+            Tarifario = await context.Rates.CountAsync(ct),
+            PosiblesClientes = await context.Leads.CountAsync(ct),
         };
     }
 
-    /// <summary>
-    /// Snapshot MINIMO de una regla de comision GENERAL (sin proveedor) capturado antes del TRUNCATE, para
-    /// poder re-insertarla si el tilde de configuracion esta apagado. NO guarda <c>Id</c> a proposito: la
-    /// restauracion es un INSERT nuevo (fila nueva con Id propio), no una restauracion identica byte a byte.
-    /// </summary>
     private sealed record CapturedCommissionRule(
         string? ServiceType,
         decimal CommissionPercent,
@@ -318,11 +459,6 @@ public class SystemDataWipeService : ISystemDataWipeService
         DateTime CreatedAt,
         string? Description);
 
-    /// <summary>
-    /// Fix bloqueante #2: lee (sin trackear) las reglas de comision que NO estan atadas a un proveedor
-    /// especifico (<c>SupplierId IS NULL</c>) — son configuracion agencia-wide, no datos de negocio por
-    /// proveedor. Se llama DENTRO de la transaccion, ANTES del TRUNCATE.
-    /// </summary>
     private async Task<List<CapturedCommissionRule>> CaptureGeneralCommissionRulesAsync(CancellationToken ct)
     {
         return await _context.CommissionRules.AsNoTracking()
@@ -332,11 +468,6 @@ public class SystemDataWipeService : ISystemDataWipeService
             .ToListAsync(ct);
     }
 
-    /// <summary>
-    /// Fix bloqueante #2: re-inserta (SQL crudo, dentro de la misma transaccion) las reglas de comision
-    /// generales capturadas ANTES del TRUNCATE. Solo se llama cuando <c>incluirConfiguracion=false</c> — con
-    /// el tilde puesto, CommissionRules es parte de "borrar TODA la configuracion" y no se restaura nada.
-    /// </summary>
     private async Task RestoreGeneralCommissionRulesAsync(List<CapturedCommissionRule> rules, CancellationToken ct)
     {
         foreach (var rule in rules)
@@ -350,151 +481,382 @@ public class SystemDataWipeService : ISystemDataWipeService
         }
     }
 
+    // ===== Tablas por grupo =====
+    //
+    // Cada tabla de negocio/catalogo vive en EXACTAMENTE UNO de estos 6 grupos (CommissionRules y
+    // RateSupplierSales son casos especiales, ver arriba). El test de integracion
+    // "InformationSchemaTables_CoincideExactamenteConListaBlancaMasSupervivientes" garantiza que TODA tabla
+    // real de la base este clasificada en alguno de estos grupos, en configuracion, o en la lista de
+    // supervivientes (AspNetUsers, AuditLogs, etc.) — una tabla nueva sin clasificar rompe ese test.
+
+    internal const string CommissionRulesTable = "CommissionRules";
+    internal const string RateSupplierSalesTable = "RateSupplierSales";
+
     /// <summary>
-    /// TRUNCATE de TODAS las tablas de NEGOCIO y CATÁLOGO ("todo es todo": incluye países/destinos/tarifario,
-    /// no solo reservas/clientes). <c>RESTART IDENTITY CASCADE</c> en un único statement: Postgres lo procesa
-    /// atómicamente y el CASCADE arrastra cualquier tabla hija con FK hacia estas (aunque no esté en la lista),
-    /// así que listar los padres alcanza. Lo que NUNCA aparece acá: AspNet* (usuarios/roles/permisos),
-    /// RolePermissions, AuditLogs, tablas de Hangfire — esas sobreviven SIEMPRE, no tienen FK ENTRANTE desde
-    /// ninguna tabla de este listado (el CASCADE nunca las toca).
+    /// Tablas propias del grupo "reservas y plata". Expuestas <c>internal</c> (con
+    /// <c>InternalsVisibleTo("TravelApi.Tests")</c>) para que el test guardián
+    /// "InformationSchemaTables_CoincideExactamenteConListaBlancaMasSupervivientes" DERIVE la lista esperada de
+    /// ACÁ en vez de mantener una copia paralela que se puede desincronizar en silencio (N1).
     ///
-    /// <para><b>OJO con <c>CommissionRules</c></b> (fix bloqueante #2): aunque conceptualmente es CONFIGURACION,
-    /// vive ACA (no en <see cref="TruncateConfigurationTablesAsync"/>) porque tiene FK FISICA a
-    /// <c>Suppliers</c> — el CASCADE la arrastraría de todos modos aunque no estuviera listada. Por eso se
-    /// captura y re-inserta la porcion "general" ANTES de este TRUNCATE (ver
-    /// <see cref="CaptureGeneralCommissionRulesAsync"/>/<see cref="RestoreGeneralCommissionRulesAsync"/>)
-    /// cuando <c>incluirConfiguracion=false</c>.</para>
+    /// <para><b>Decisión firmada del dueño (2026-07-27, revisión de seguridad B3)</b>: "la plata del operador
+    /// ligada a reservas se va CON las reservas; la ficha del operador queda". Por eso
+    /// <c>SupplierInvoices</c>/<c>SupplierInvoiceLines</c>/<c>SupplierPayments</c>/sus aplicaciones y reversas, y
+    /// el saldo materializado <c>SupplierBalanceByCurrency</c> viven ACÁ (no en <see cref="OperadoresTables"/>):
+    /// borrar solo "reservasYPlata" (sin "operadores") también borra toda esa plata, dejando la ficha del
+    /// proveedor (<c>Suppliers</c>) intacta pero SIN saldo huérfano — <c>SupplierBalanceByCurrency</c> es una
+    /// PROYECCIÓN calculada de esa plata (ver su propio comentario XML), así que dejarla viva sin la plata que
+    /// la respalda sería un saldo mentiroso.</para>
+    ///
+    /// <para><b>SupplierInvoiceLine.ReservaId es NOT NULL</b> (no es una FK opcional, no se puede desenganchar):
+    /// por eso tiene que vivir en el MISMO grupo que <c>TravelFiles</c> siempre.</para>
     /// </summary>
-    private async Task TruncateBusinessTablesAsync(CancellationToken ct)
+    internal static readonly string[] ReservasYPlataTables =
     {
-        await _context.Database.ExecuteSqlRawAsync("""
-            TRUNCATE TABLE
-                "PartialCreditNoteReconciliationReceipts",
-                "PartialCreditNoteReconciliations",
-                "ClientCreditWithdrawals",
-                "ClientCreditEntries",
-                "SupplierCreditApplications",
-                "SupplierCreditEntries",
-                "DeductionLines",
-                "OperatorRefundAllocations",
-                "OperatorRefundsReceived",
-                "BookingCancellationDebitNoteAnnulments",
-                "BookingCancellationCreditNotes",
-                "BookingCancellationLineTreasuryFxAdjustments",
-                "BookingCancellationLineOperatorCharges",
-                "BookingCancellationLines",
-                "BookingCancellations",
-                "ApprovalRequests",
-                "CashLedgerEntries",
-                "ArcaIdempotencyKeys",
-                "ManualCashMovements",
-                "PaymentReceipts",
-                "VoucherAuditEntries",
-                "VoucherPassengerAssignments",
-                "Vouchers",
-                "PassengerServiceAssignments",
-                "ReservaEditAuthorizationChanges",
-                "ReservaEditAuthorizations",
-                "ReservaStatusChangeLogs",
-                "ReservaAttachments",
-                "ReservaPendingChanges",
-                "CommissionAccruals",
-                "CommissionRules",
-                "InvoiceTribute",
-                "InvoiceItem",
-                "Invoices",
-                "WhatsAppDeliveries",
-                "MessageDeliveries",
-                "QuoteItems",
-                "Quotes",
-                "LeadActivities",
-                "Leads",
-                "UpcomingStartAlertDismissals",
-                "Notifications",
-                "SupplierInvoicePaymentApplicationReversals",
-                "SupplierInvoicePaymentApplications",
-                "SupplierInvoiceLines",
-                "SupplierInvoices",
-                "SupplierPayments",
-                "RateSupplierSales",
-                "Rates",
-                "CatalogPackageDepartures",
-                "CatalogPackages",
-                "HotelBookings",
-                "TransferBookings",
-                "PackageBookings",
-                "AssistanceBookings",
-                "CustomerCreditLimitByCurrency",
-                "SupplierBalanceByCurrency",
-                "ReservaMoneyByCurrency",
-                "FlightSegments",
-                "Payments",
-                "Passengers",
-                "Reservations",
-                "TravelFiles",
-                "Customers",
-                "Suppliers",
-                "Countries",
-                "DestinationDepartures",
-                "Destinations",
-                "BnaExchangeRateSnapshots",
-                "BusinessSequences",
-                "RefreshTokens",
-                "OutboxMessage",
-                "OutboxState",
-                "InboxState"
-            RESTART IDENTITY CASCADE;
-            """, ct);
+        "PartialCreditNoteReconciliationReceipts", "PartialCreditNoteReconciliations", "ClientCreditWithdrawals",
+        "ClientCreditEntries", "SupplierCreditApplications", "SupplierCreditEntries", "DeductionLines",
+        "OperatorRefundAllocations", "OperatorRefundsReceived", "BookingCancellationDebitNoteAnnulments",
+        "BookingCancellationCreditNotes", "BookingCancellationLineTreasuryFxAdjustments",
+        "BookingCancellationLineOperatorCharges", "BookingCancellationLines", "BookingCancellations",
+        "ApprovalRequests", "CashLedgerEntries", "ArcaIdempotencyKeys", "ManualCashMovements", "PaymentReceipts",
+        "VoucherAuditEntries", "VoucherPassengerAssignments", "Vouchers", "PassengerServiceAssignments",
+        "ReservaEditAuthorizationChanges", "ReservaEditAuthorizations", "ReservaStatusChangeLogs",
+        "ReservaAttachments", "ReservaPendingChanges", "CommissionAccruals", "InvoiceTribute", "InvoiceItem",
+        "Invoices", "WhatsAppDeliveries", "MessageDeliveries", "UpcomingStartAlertDismissals", "Notifications",
+        "HotelBookings", "TransferBookings", "PackageBookings", "AssistanceBookings", "ReservaMoneyByCurrency",
+        "FlightSegments", "Payments", "Passengers", "Reservations", "TravelFiles", "BnaExchangeRateSnapshots",
+        "BusinessSequences", "RefreshTokens", "OutboxMessage", "OutboxState", "InboxState",
+        // Decision firmada B3 (ver comentario de la clase): plata del operador ligada a reservas.
+        "SupplierInvoicePaymentApplicationReversals", "SupplierInvoicePaymentApplications",
+        "SupplierInvoiceLines", "SupplierInvoices", "SupplierPayments", "SupplierBalanceByCurrency",
+    };
+
+    internal static readonly string[] ClientesTables = { "Customers", "CustomerCreditLimitByCurrency" };
+
+    /// <summary>
+    /// Decision firmada B3 (ver <see cref="ReservasYPlataTables"/>): "operadores" conserva SOLO la ficha del
+    /// proveedor (datos de contacto/fiscales) — la plata que ese proveedor movió con reservas se fue con
+    /// "reservasYPlata" (que "operadores" siempre arrastra, ver <see cref="WipeGroups.ForcedDependencies"/>).
+    /// </summary>
+    internal static readonly string[] OperadoresTables = { "Suppliers" };
+
+    internal static readonly string[] TarifarioTables = { "Rates", "CatalogPackageDepartures", "CatalogPackages" };
+
+    internal static readonly string[] PaisesYDestinosTables = { "Countries", "DestinationDepartures", "Destinations" };
+
+    internal static readonly string[] PosiblesClientesTables = { "QuoteItems", "Quotes", "LeadActivities", "Leads" };
+
+    /// <summary>Arma el conjunto final de tablas a truncar segun los grupos pedidos (sin CommissionRules ni RateSupplierSales, se agregan aparte).</summary>
+    private static HashSet<string> BuildTableSetForGroups(HashSet<string> grupos)
+    {
+        var tables = new HashSet<string>(StringComparer.Ordinal);
+        if (grupos.Contains(WipeGroups.ReservasYPlata)) tables.UnionWith(ReservasYPlataTables);
+        if (grupos.Contains(WipeGroups.Clientes)) tables.UnionWith(ClientesTables);
+        if (grupos.Contains(WipeGroups.Operadores)) tables.UnionWith(OperadoresTables);
+        if (grupos.Contains(WipeGroups.Tarifario)) tables.UnionWith(TarifarioTables);
+        if (grupos.Contains(WipeGroups.PaisesYDestinos)) tables.UnionWith(PaisesYDestinosTables);
+        if (grupos.Contains(WipeGroups.PosiblesClientes)) tables.UnionWith(PosiblesClientesTables);
+        // "configuracion" NO agrega tablas aca: TruncateConfigurationTablesAsync las maneja aparte porque
+        // ademas necesitan el reseed de ApprovalPolicies (no alcanza con un TRUNCATE liso).
+        return tables;
     }
 
     /// <summary>
-    /// TRUNCATE del grupo CONFIGURACIÓN — solo corre si <c>incluirConfiguracion=true</c>. Sin el tilde, estas
-    /// 5 tablas quedan intactas (limpieza normal deja la agencia lista para seguir operando con su
-    /// configuración de siempre). <c>CommissionRules</c> NO aparece acá a propósito: ya se truncó como parte
-    /// del grupo de negocio (ver <see cref="TruncateBusinessTablesAsync"/>) porque el CASCADE de
-    /// <c>Suppliers</c> la arrastra de todos modos; las reglas generales se restauran aparte cuando el tilde
-    /// está apagado.
+    /// Metadata de una foreign key dropeada temporalmente para poder truncar un grupo sin arrastrar otro.
+    /// Se descubre TODO por consulta a <c>information_schema</c> (constraint name, tabla/columna referenciada,
+    /// regla de borrado) — nunca se hardcodea el nombre del constraint, que EF genera con su propia
+    /// convención y puede no coincidir con lo que uno esperaría a simple vista.
     /// </summary>
-    private async Task TruncateConfigurationTablesAsync(CancellationToken ct)
-    {
-        await _context.Database.ExecuteSqlRawAsync("""
-            TRUNCATE TABLE
-                "AgencySettings",
-                "AfipSettings",
-                "OperationalFinanceSettings",
-                "ApprovalPolicies",
-                "WhatsAppBotConfigs"
-            RESTART IDENTITY CASCADE;
-            """, ct);
-    }
+    private sealed record DroppedForeignKey(
+        string ChildTable, string ChildColumn, string ConstraintName, string ReferencedTable, string ReferencedColumn,
+        string DeleteRule, string UpdateRule);
+
+    /// <summary>Mensaje generico fail-closed: se usa tanto cuando una FK conocida desaparecio del modelo como cuando aparece una NO contemplada (ver <see cref="EnsureNoUnhandledCrossGroupForeignKeysAsync"/>).</summary>
+    private const string UnhandledForeignKeyMessage =
+        "Hay datos relacionados que este borrado no sabe manejar todavía; avisá al equipo técnico.";
 
     /// <summary>
-    /// <c>BankAccounts</c> es polimórfica (Agencia/Cliente/Proveedor, ver <c>BankAccountOwnerType</c>) y
-    /// <c>OwnerId</c> es FK LÓGICA (no física) — el CASCADE del TRUNCATE de negocio NO la toca. Por eso se
-    /// borra aparte con DELETE, filtrando por dueño: las de Cliente/Proveedor son SIEMPRE negocio; la de la
-    /// Agencia (OwnerType=0) es CONFIGURACIÓN y solo se borra con el tilde.
+    /// Dropea (temporalmente, DENTRO de la misma transacción) las foreign keys OPCIONALES que cruzan de un
+    /// grupo a otro, ANTES del TRUNCATE, y deja en NULL la columna del lado que sobrevive.
+    ///
+    /// <para><b>Por qué no alcanza con un simple <c>UPDATE ... SET columna = NULL</c></b> (lección aprendida
+    /// escribiendo esta obra): <c>TRUNCATE ... CASCADE</c> de Postgres cascadea según la EXISTENCIA del
+    /// constraint de foreign key, no según el VALOR actual de los datos. Aunque la columna esté en NULL para
+    /// todas las filas, si el constraint sigue ahí, <c>TRUNCATE</c> igual vacía la tabla completa. Por eso hay
+    /// que DROPEAR el constraint (no solo los datos) antes de truncar, y volver a crearlo EXACTAMENTE igual
+    /// después (ver <see cref="ReattachForeignKeysAsync"/>) — el modelo de EF queda intacto al terminar.</para>
+    ///
+    /// <para>Cada bloque de abajo documenta la foreign key real que motiva el desenganche (columna, tabla
+    /// origen y destino) verificada contra el modelo de EF (<c>AppDbContext</c>) — no de memoria. Todas las
+    /// columnas de esta lista son NULLABLE por diseño (si alguna dejara de serlo, la migración que la cambie
+    /// tiene que revisar este método).</para>
     /// </summary>
-    private async Task DeleteBankAccountsAsync(bool includeAgency, CancellationToken ct)
+    private async Task<List<DroppedForeignKey>> DropCrossGroupForeignKeysAsync(HashSet<string> grupos, CancellationToken ct)
     {
-        await _context.Database.ExecuteSqlRawAsync(
-            "DELETE FROM \"BankAccounts\" WHERE \"OwnerType\" IN (1, 2);", ct);
+        var incluyeReservas = grupos.Contains(WipeGroups.ReservasYPlata);
+        var incluyeClientes = grupos.Contains(WipeGroups.Clientes);
+        var incluyeOperadores = grupos.Contains(WipeGroups.Operadores);
+        var incluyeTarifario = grupos.Contains(WipeGroups.Tarifario);
+        var incluyePosiblesClientes = grupos.Contains(WipeGroups.PosiblesClientes);
 
-        if (includeAgency)
+        var candidatos = new List<(string Table, string Column)>();
+
+        // clientes SIN posiblesClientes: Quote.CustomerId y Lead.ConvertedCustomerId apuntan a Customers.
+        if (incluyeClientes && !incluyePosiblesClientes)
         {
+            candidatos.Add(("Quotes", "CustomerId"));
+            candidatos.Add(("Leads", "ConvertedCustomerId"));
+        }
+
+        // reservasYPlata SIN posiblesClientes: Quote.ConvertedReservaId (columna real "ConvertedFileId") apunta a TravelFiles.
+        if (incluyeReservas && !incluyePosiblesClientes)
+        {
+            candidatos.Add(("Quotes", "ConvertedFileId"));
+        }
+
+        // posiblesClientes SIN reservasYPlata: Reserva.SourceQuoteId/SourceLeadId apuntan a Quotes/Leads.
+        if (incluyePosiblesClientes && !incluyeReservas)
+        {
+            candidatos.Add(("TravelFiles", "SourceQuoteId"));
+            candidatos.Add(("TravelFiles", "SourceLeadId"));
+        }
+
+        // operadores SIN tarifario: Rate.SupplierId apunta a Suppliers.
+        if (incluyeOperadores && !incluyeTarifario)
+        {
+            candidatos.Add(("Rates", "SupplierId"));
+        }
+
+        // operadores SIN posiblesClientes: QuoteItem.SupplierId apunta a Suppliers.
+        if (incluyeOperadores && !incluyePosiblesClientes)
+        {
+            candidatos.Add(("QuoteItems", "SupplierId"));
+        }
+
+        // tarifario SIN posiblesClientes: QuoteItem.RateId apunta a Rates.
+        if (incluyeTarifario && !incluyePosiblesClientes)
+        {
+            candidatos.Add(("QuoteItems", "RateId"));
+        }
+
+        // tarifario SIN reservasYPlata: TODOS los servicios tipados referencian Rates via RateId.
+        if (incluyeTarifario && !incluyeReservas)
+        {
+            candidatos.Add(("Reservations", "RateId"));
+            candidatos.Add(("HotelBookings", "RateId"));
+            candidatos.Add(("TransferBookings", "RateId"));
+            candidatos.Add(("PackageBookings", "RateId"));
+            candidatos.Add(("AssistanceBookings", "RateId"));
+            candidatos.Add(("FlightSegments", "RateId"));
+        }
+
+        // reservasYPlata SIN tarifario: Rate.CreatedFromReservaId apunta a TravelFiles (marca informativa de
+        // "en que reserva nacio este producto de catalogo" — ADR-017 F1.1). Hallazgo B1 de la revision de
+        // seguridad: sin este desenganche, borrar solo reservas se llevaba puesto TODO el tarifario por
+        // CASCADE (y en cadena, QuoteItems/RateSupplierSales que dependen de Rates).
+        if (incluyeReservas && !incluyeTarifario)
+        {
+            candidatos.Add(("Rates", "CreatedFromReservaId"));
+        }
+
+        var dropped = new List<DroppedForeignKey>();
+        foreach (var (tabla, columna) in candidatos)
+        {
+            // Fail-closed (hallazgo bloqueante de seguridad): si la FK esperada no aparece (o aparece mas de
+            // una vez, algo que no debería pasar nunca para una columna simple), NO seguimos de largo — eso
+            // seria fail-OPEN y dejaria que el CASCADE se coma un grupo que nadie pidio. Mejor abortar todo el
+            // borrado con un aviso de "avisá al equipo técnico" que arriesgar un borrado de mas.
+            var fk = await FindForeignKeyAsync(tabla, columna, ct);
+
+            // EF1002: "fk" sale de FindForeignKeyAsync, que solo devuelve constraints que EXISTEN de verdad
+            // en information_schema para las columnas de la lista candidatos de arriba (todas hardcodeadas
+            // en este archivo) - nunca es un string libre que mande el caller.
+#pragma warning disable EF1002
             await _context.Database.ExecuteSqlRawAsync(
-                "DELETE FROM \"BankAccounts\" WHERE \"OwnerType\" = 0;", ct);
+                $"""ALTER TABLE "{fk.ChildTable}" DROP CONSTRAINT "{fk.ConstraintName}";""", ct);
+            await _context.Database.ExecuteSqlRawAsync(
+                $"""UPDATE "{fk.ChildTable}" SET "{fk.ChildColumn}" = NULL WHERE "{fk.ChildColumn}" IS NOT NULL;""", ct);
+#pragma warning restore EF1002
+            dropped.Add(fk);
+        }
+
+        return dropped;
+    }
+
+    /// <summary>
+    /// Busca en <c>information_schema</c> el constraint de foreign key definido sobre
+    /// <paramref name="childColumn"/> de <paramref name="childTable"/>: nombre del constraint, tabla/columna
+    /// REFERENCIADA y reglas de borrado/actualización (<c>delete_rule</c>/<c>update_rule</c>, que Postgres
+    /// devuelve como el mismo texto SQL que hace falta para recrearlas: "SET NULL", "CASCADE", "RESTRICT", "NO
+    /// ACTION"). <b>Fail-closed</b> (hallazgo bloqueante de seguridad): si no aparece EXACTAMENTE una fila (ni
+    /// cero, ni más de una — una columna simple nunca debería tener más de una FK), TIRA
+    /// <see cref="SystemDataWipeRefusedException"/> en vez de seguir de largo. Antes esto hacía <c>continue</c>
+    /// silencioso (fail-open) si no encontraba nada, lo que dejaba el CASCADE libre para comerse un grupo
+    /// entero sin que nadie se enterara.
+    /// </summary>
+    private async Task<DroppedForeignKey> FindForeignKeyAsync(string childTable, string childColumn, CancellationToken ct)
+    {
+        // EF1002: childTable/childColumn vienen SIEMPRE de la lista "candidatos" hardcodeada en
+        // DropCrossGroupForeignKeysAsync, nunca de un string libre del caller.
+#pragma warning disable EF1002
+        var filas = await _context.Database.SqlQueryRaw<string>($"""
+            SELECT tc.constraint_name || '|' || ccu.table_name || '|' || ccu.column_name || '|' || rc.delete_rule || '|' || rc.update_rule AS "Value"
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+              ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+            JOIN information_schema.referential_constraints rc
+              ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
+              AND tc.table_name = '{childTable}' AND kcu.column_name = '{childColumn}'
+            """).ToListAsync(ct);
+#pragma warning restore EF1002
+
+        if (filas.Count != 1)
+        {
+            _logger.LogError(
+                "Empezar de cero: se esperaba EXACTAMENTE una foreign key para {ChildTable}.{ChildColumn}, se encontraron {Cantidad}.",
+                childTable, childColumn, filas.Count);
+            throw new SystemDataWipeRefusedException(UnhandledForeignKeyMessage);
+        }
+
+        var partes = filas[0].Split('|');
+        return new DroppedForeignKey(childTable, childColumn, partes[0], partes[1], partes[2], partes[3], partes[4]);
+    }
+
+    /// <summary>
+    /// Red de seguridad GENÉRICA fail-closed (hallazgo bloqueante B4 de la revisión de seguridad): después de
+    /// dropear las foreign keys CONOCIDAS (<see cref="DropCrossGroupForeignKeysAsync"/>), vuelve a consultar
+    /// <c>information_schema</c> por CUALQUIER foreign key que todavía apunte hacia una tabla que se va a
+    /// truncar, DESDE una tabla que NO se va a truncar. Si aparece alguna, significa que el mapa de
+    /// desenganches de este archivo quedó desactualizado (por ejemplo, una migración futura agrega una FK
+    /// nueva cruzando grupos) — en vez de dejar que <c>TRUNCATE ... CASCADE</c> se coma esa tabla en silencio,
+    /// se ABORTA todo el borrado con un aviso de "avisá al equipo técnico". Esta es la protección de último
+    /// recurso: aunque el mapa manual de <see cref="DropCrossGroupForeignKeysAsync"/> tenga un agujero, este
+    /// método lo detecta ANTES de tocar un solo dato.
+    /// </summary>
+    private async Task EnsureNoUnhandledCrossGroupForeignKeysAsync(HashSet<string> tablesToDelete, CancellationToken ct)
+    {
+        if (tablesToDelete.Count == 0)
+        {
+            return;
+        }
+
+        var listaTablas = string.Join(", ", tablesToDelete.Select(t => $"'{t}'"));
+
+        // EF1002: "listaTablas" se arma con los mismos strings estaticos que TruncateTablesAsync ya usa
+        // (tablesToDelete sale de los arrays hardcodeados de este archivo) - nunca un string libre del caller.
+#pragma warning disable EF1002
+        var filasSinManejar = await _context.Database.SqlQueryRaw<string>($"""
+            SELECT tc.table_name || '.' || kcu.column_name || ' -> ' || ccu.table_name AS "Value"
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+              ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
+              AND ccu.table_name IN ({listaTablas})
+              AND tc.table_name NOT IN ({listaTablas})
+            """).ToListAsync(ct);
+#pragma warning restore EF1002
+
+        if (filasSinManejar.Count > 0)
+        {
+            // El detalle tecnico (nombres de tabla/columna reales) SOLO va al log — nunca al usuario (T-5).
+            _logger.LogError(
+                "Empezar de cero: hay foreign keys SIN CONTEMPLAR cruzando hacia el conjunto a truncar: {Detalle}. Se aborta el borrado sin tocar datos.",
+                string.Join(" | ", filasSinManejar));
+            throw new SystemDataWipeRefusedException(UnhandledForeignKeyMessage);
         }
     }
 
     /// <summary>
-    /// <c>ApprovalPolicies</c> NO tiene un "GetOrCreate" perezoso como <c>AgencySettings</c>/<c>AfipSettings</c>
-    /// (ver <c>ApprovalPolicyService.RequiresApprovalAsync</c>: una fila ausente cae a un fallback GENÉRICO
-    /// <c>true</c>, no al default de FÁBRICA de cada tipo). Sin este re-seed, truncar la tabla cambiaría
-    /// SILENCIOSAMENTE el comportamiento de <c>PaymentDeadlineOverride</c>/<c>ReservationTransfer</c> (nacieron
-    /// en <c>FALSE</c>; el fallback genérico es <c>TRUE</c>, o sea "ahora sí pide aprobación"). Estos 7 INSERT
-    /// son EXACTAMENTE los mismos valores que sembraron las migraciones <c>AddApprovalPolicies</c> y
-    /// <c>FC1_3_6_SeedPartialCreditNoteApprovalPolicy</c> — el sistema vuelve a los defaults de fábrica reales,
-    /// no a un fallback genérico.
+    /// Recrea, DENTRO de la misma transacción, las foreign keys dropeadas por
+    /// <see cref="DropCrossGroupForeignKeysAsync"/> — con el MISMO nombre, misma columna, mismo destino y
+    /// misma regla de borrado que tenían antes. Se llama DESPUES del TRUNCATE (que para entonces ya truncó la
+    /// tabla referenciada) y de que la columna del lado sobreviviente quedó en NULL, así que la foreign key
+    /// nueva nunca encuentra una fila inválida al recrearse.
+    /// </summary>
+    private async Task ReattachForeignKeysAsync(List<DroppedForeignKey> dropped, CancellationToken ct)
+    {
+        foreach (var fk in dropped)
+        {
+            // EF1002: "fk" viene de FindForeignKeyAsync (consulta a information_schema), nunca de un string
+            // libre del caller.
+#pragma warning disable EF1002
+            await _context.Database.ExecuteSqlRawAsync($"""
+                ALTER TABLE "{fk.ChildTable}" ADD CONSTRAINT "{fk.ConstraintName}"
+                FOREIGN KEY ("{fk.ChildColumn}") REFERENCES "{fk.ReferencedTable}" ("{fk.ReferencedColumn}")
+                ON DELETE {fk.DeleteRule} ON UPDATE {fk.UpdateRule};
+                """, ct);
+#pragma warning restore EF1002
+        }
+    }
+
+    /// <summary>
+    /// TRUNCATE de las tablas resueltas en un UNICO statement (atomico) con <c>RESTART IDENTITY CASCADE</c>.
+    /// Para este punto, <see cref="DropCrossGroupForeignKeysAsync"/> ya dropeó toda foreign key opcional hacia
+    /// afuera del conjunto, asi que el CASCADE de Postgres ya no tiene forma de alcanzar una tabla de un grupo
+    /// no pedido (esas tablas ya no tienen ningún constraint que las conecte a las que se van a truncar).
+    /// </summary>
+    private async Task TruncateTablesAsync(HashSet<string> tables, CancellationToken ct)
+    {
+        if (tables.Count == 0)
+        {
+            return;
+        }
+
+        var quotedTables = string.Join(", ", tables.Select(t => $"\"{t}\""));
+        // EF1002: el analizador avisa "nunca interpoles directo en SQL crudo" porque asume que el valor puede
+        // venir de un usuario. Aca NO es asi: "tables" sale SIEMPRE de los arrays estaticos hardcodeados de
+        // este archivo (ReservasYPlataTables, ClientesTables, etc.) - nunca de un string que mande el caller.
+#pragma warning disable EF1002
+        await _context.Database.ExecuteSqlRawAsync($"TRUNCATE TABLE {quotedTables} RESTART IDENTITY CASCADE;", ct);
+#pragma warning restore EF1002
+    }
+
+    /// <summary>
+    /// <c>BankAccounts</c> es polimórfica (Agencia/Cliente/Proveedor) y <c>OwnerId</c> es FK LÓGICA (no
+    /// física) — el CASCADE del TRUNCATE de negocio NO la toca, se borra aparte por DELETE segun que grupos
+    /// se pidieron: las de Cliente mueren con "clientes", las de Proveedor con "operadores", la de la Agencia
+    /// solo con "configuracion".
+    /// </summary>
+    private async Task DeleteBankAccountsAsync(HashSet<string> grupos, CancellationToken ct)
+    {
+        if (grupos.Contains(WipeGroups.Clientes))
+        {
+            await _context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"BankAccounts\" WHERE \"OwnerType\" = 1;", ct); // Customer
+        }
+
+        if (grupos.Contains(WipeGroups.Operadores))
+        {
+            await _context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"BankAccounts\" WHERE \"OwnerType\" = 2;", ct); // Supplier
+        }
+
+        if (grupos.Contains(WipeGroups.Configuracion))
+        {
+            await _context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"BankAccounts\" WHERE \"OwnerType\" = 0;", ct); // Agency
+        }
+    }
+
+    private async Task TruncateConfigurationTablesAsync(CancellationToken ct)
+    {
+        var quotedTables = string.Join(", ", WipeGroups.ConfiguracionTables.Select(t => $"\"{t}\""));
+        // EF1002: mismo motivo que TruncateTablesAsync — WipeGroups.ConfiguracionTables es un array estatico.
+#pragma warning disable EF1002
+        await _context.Database.ExecuteSqlRawAsync($"TRUNCATE TABLE {quotedTables} RESTART IDENTITY CASCADE;", ct);
+#pragma warning restore EF1002
+    }
+
+    /// <summary>
+    /// <c>ApprovalPolicies</c> NO tiene un "GetOrCreate" perezoso: sin este re-seed, truncar la tabla
+    /// cambiaria SILENCIOSAMENTE el comportamiento de <c>PaymentDeadlineOverride</c>/<c>ReservationTransfer</c>
+    /// (nacieron en <c>FALSE</c>; el fallback generico de <c>ApprovalPolicyService</c> es <c>TRUE</c>). Estos 7
+    /// INSERT son EXACTAMENTE los mismos valores que sembraron las migraciones <c>AddApprovalPolicies</c> y
+    /// <c>FC1_3_6_SeedPartialCreditNoteApprovalPolicy</c>.
     /// </summary>
     private async Task ReseedApprovalPoliciesAsync(CancellationToken ct)
     {
@@ -512,13 +874,25 @@ public class SystemDataWipeService : ISystemDataWipeService
     }
 
     /// <summary>
-    /// El AuditLog del wipe se inserta con SQL crudo DENTRO de la misma transacción que el borrado (nunca via
-    /// <c>IAuditService.LogBusinessEventAsync</c>, que hace su propio <c>SaveChanges</c> fuera de esta
-    /// transacción): o se borró todo y quedó auditado, o no pasó nada — commit único.
-    ///
-    /// <para>Fix menor #6 (revision 2026-07-27): el JSON de <c>Changes</c> queda con TODOS los campos como
-    /// ESCALARES (nada de objetos anidados) — la pantalla de auditoría del front pinta <c>[object Object]</c>
-    /// cuando un valor de <c>Changes</c> es un objeto en vez de string/numero/booleano.</para>
+    /// Trampa de framework (comentario didáctico): <c>JsonSerializer.Serialize</c> por default usa el encoder
+    /// "seguro para HTML", que escapa CUALQUIER letra acentuada o con diéresis como <c>ó</c> en vez de
+    /// dejarla literal — pensado para texto que se va a incrustar en una página HTML, no para JSON que se
+    /// guarda en una columna de auditoría y lo lee un humano. Sin este encoder relajado, "Configuración"
+    /// quedaría guardado como "Configuración" — técnicamente el mismo texto, pero ilegible a simple vista
+    /// para cualquiera que abra la tabla de auditoría directo en la base. <c>UnicodeRanges.All</c> le dice
+    /// "no escapes ningún caracter Unicode conocido", así el español con tildes/ñ queda tal cual se escribió.
+    /// </summary>
+    private static readonly JsonSerializerOptions AuditJsonOptions = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All),
+    };
+
+    /// <summary>
+    /// El AuditLog del wipe se inserta con SQL crudo DENTRO de la misma transacción que el borrado: o se
+    /// borró todo y quedó auditado, o no pasó nada — commit único. El JSON de <c>Changes</c> queda con todos
+    /// los campos como ESCALARES (nada de objetos/arrays anidados: la pantalla de auditoría del front pinta
+    /// <c>[object Object]</c> cuando un valor de <c>Changes</c> no es string/numero/booleano) — por eso los
+    /// grupos borrados viajan como un string separado por comas, no como un array JSON.
     /// </summary>
     private async Task InsertWipeAuditLogAsync(
         ApplicationUser requester,
@@ -526,7 +900,7 @@ public class SystemDataWipeService : ISystemDataWipeService
         WipeBackupResult backupResult,
         string backupFileName,
         string minioPrefix,
-        bool incluirConfiguracion,
+        HashSet<string> grupos,
         CancellationToken ct)
     {
         var changes = JsonSerializer.Serialize(new
@@ -544,8 +918,10 @@ public class SystemDataWipeService : ISystemDataWipeService
             posiblesClientesBorrados = counts.PosiblesClientes,
             backupArchivo = backupResult.BackupFileName ?? backupFileName,
             backupMinioPrefijo = backupResult.MinioPrefix ?? minioPrefix,
-            incluirConfiguracion,
-        });
+            // Hallazgo bloqueante de data-exposure: nombres de NEGOCIO en el audit log, nunca las claves
+            // internas crudas (ver WipeGroups.GrupoLabels) - la auditoria la puede leer un no-programador.
+            gruposBorrados = string.Join(", ", grupos.OrderBy(g => g, StringComparer.Ordinal).Select(ToGrupoLabel)),
+        }, AuditJsonOptions);
 
         var now = DateTime.UtcNow;
         var userName = string.IsNullOrWhiteSpace(requester.FullName) ? requester.Email : requester.FullName;

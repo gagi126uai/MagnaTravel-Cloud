@@ -695,4 +695,26 @@ public static class AuditActions
 
     /// <summary>Obra "Empezar de cero": entityName para los eventos de borrado masivo (exitoso o rechazado).</summary>
     public const string SystemDataWipeEntityName = "SystemDataWipe";
+
+    // ===== Obra "Restaurar desde la app" (2026-07-27, Parte B) =====
+
+    /// <summary>
+    /// Parte B (2026-07-27): un Admin restauró un backup de Postgres — a la base SOMBRA de prueba (no toca la
+    /// base viva) o data-only de tablas de configuración sobre la base viva (solo sobre tablas que estaban
+    /// vacías). El detail JSON lleva el archivo restaurado, el modo (prueba/real) y, en modo real, las tablas
+    /// afectadas — NUNCA datos sensibles. EntityName=<see cref="SystemDataRestoreEntityName"/>,
+    /// EntityId=timestamp de la restauración.
+    /// </summary>
+    public const string SystemDataRestored = "SystemDataRestored";
+
+    /// <summary>
+    /// Parte B (2026-07-27): un intento de restauración fue RECHAZADO (frase que no coincide, contraseña
+    /// incorrecta, archivo inválido/inexistente, tabla fuera de la lista permitida para modo real, o alguna
+    /// tabla destino ya tenía datos). Se audita SIEMPRE, aunque no se haya restaurado nada. El detail JSON
+    /// lleva el motivo del rechazo en criollo — JAMÁS la contraseña provista.
+    /// </summary>
+    public const string SystemDataRestoreRejected = "SystemDataRestoreRejected";
+
+    /// <summary>Parte B: entityName para los eventos de restauración (exitosa o rechazada).</summary>
+    public const string SystemDataRestoreEntityName = "SystemDataRestore";
 }

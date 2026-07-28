@@ -99,6 +99,14 @@ public static class Permissions
     /// </summary>
     public const string ConfiguracionDataWipe = "configuracion.data_wipe";
 
+    /// <summary>
+    /// Obra "Restaurar desde la app" (2026-07-27, Parte B firmada): restaurar un backup de Postgres (a la
+    /// base sombra de prueba, o data-only de tablas de configuración sobre la base viva). Mismo criterio que
+    /// <see cref="ConfiguracionDataWipe"/>: permiso PROPIO, solo Admin (viene incluido en <see cref="DefaultAdmin"/>
+    /// por ser "todos los permisos"), NO entra en los defaults de Colaborador ni Vendedor.
+    /// </summary>
+    public const string ConfiguracionDataRestore = "configuracion.data_restore";
+
     // CRM
     public const string CrmView = "crm.view";
     public const string CrmEdit = "crm.edit";
@@ -183,7 +191,7 @@ public static class Permissions
         ["Caja"] = new[] { CajaView, CajaEdit },
         ["Tesoreria"] = new[] { TesoreriaSupplierPayments },
         ["Reportes"] = new[] { ReportesView },
-        ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip, ConfiguracionDataWipe },
+        ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip, ConfiguracionDataWipe, ConfiguracionDataRestore },
         ["CRM"] = new[] { CrmView, CrmEdit },
         ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
         ["Paises y destinos"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },

@@ -622,6 +622,11 @@ builder.Services.AddSingleton<InternalMetricsService>();
 builder.Services.AddScoped<IWipeBackupPort, PgDumpAndMinioWipeBackupPort>();
 builder.Services.AddScoped<ISystemDataWipeService, SystemDataWipeService>();
 
+// Obra "Restaurar desde la app" (2026-07-27, Parte B): reusa el mismo directorio de backups (Wipe:BackupDirectory)
+// y los mismos binarios de postgresql-client-16 que el backup del wipe.
+builder.Services.AddScoped<IDatabaseRestorePort, PgDatabaseRestorePort>();
+builder.Services.AddScoped<ISystemDataRestoreService, SystemDataRestoreService>();
+
 var realtimeHostedServicesEnabled = builder.Configuration.GetValue("HostedServices:RealtimeEnabled", true);
 if (realtimeHostedServicesEnabled)
 {
