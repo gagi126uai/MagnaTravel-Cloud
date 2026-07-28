@@ -138,7 +138,7 @@ public class AdminDangerController : ControllerBase
         try
         {
             var result = await _restoreService.ExecuteRestoreAsync(
-                userId, request.Password, request.Phrase, request.Archivo, request.Modo, request.Tablas, ct);
+                userId, request.Password, request.Phrase, request.Archivo, request.Modo, request.Tablas, request.Motivo, ct);
             return Ok(result);
         }
         catch (SystemDataRestoreRefusedException ex)

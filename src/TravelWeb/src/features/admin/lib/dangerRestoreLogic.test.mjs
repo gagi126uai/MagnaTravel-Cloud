@@ -4,16 +4,18 @@ import {
     FRASE_CONFIRMACION_RESTORE,
     RESTORE_MODO_PRUEBA,
     RESTORE_MODO_REAL,
+    RESTORE_MODO_TOTAL,
     TABLAS_CONFIGURACION_RESTORE,
     formatearTamanioArchivo,
     construirEtiquetaBackup,
     puedeConfirmarRestore,
     construirMotivoRestoreDeshabilitado,
     construirConfirmacionRestore,
-    construirTextoVerificacionRestore,
     construirExplicacionAccionesRestore,
+    esErrorDeMantenimiento,
     construirResumenExitoPruebaRestore,
     construirResumenExitoRealRestore,
+    construirResumenExitoTotalRestore,
 } from "./dangerRestoreLogic.js";
 
 test("formatearTamanioArchivo: bytes chicos se muestran en B", () => {
@@ -94,52 +96,47 @@ test("construirConfirmacionRestore: modo real avisa el alcance acotado a configu
     assert.ok(confirmacion.text.includes("vacías"));
 });
 
-test("construirTextoVerificacionRestore: invalido devuelve el motivo del motor tal cual, en una sola linea", () => {
-    const resultado = construirTextoVerificacionRestore({ valido: false, motivo: "El archivo no existe en el servidor.", cantidadTablas: 0, tieneTablasClave: false });
-    assert.equal(resultado.valido, false);
-    assert.deepEqual(resultado.lineas, ["El archivo no existe en el servidor."]);
+test("construirConfirmacionRestore: modo prueba (boton 'Ver que contiene') avisa que NO toca datos reales", () => {
+    const confirmacion = construirConfirmacionRestore(RESTORE_MODO_PRUEBA);
+    assert.ok(confirmacion.text.includes("base de PRUEBA"));
+    assert.ok(confirmacion.text.includes("NO toca ningún dato real"));
 });
 
-test("construirTextoVerificacionRestore: valido y completo, dice que se pudo leer, cuantas partes trae y que incluye lo clave", () => {
-    // Fix del hallazgo del dueño ("ver que tiene no me muestra nada"): antes era UNA frase
-    // vaga; ahora tiene que decir la cantidad concreta que manda el motor (cantidadTablas).
-    const resultado = construirTextoVerificacionRestore({ valido: true, motivo: null, cantidadTablas: 89, tieneTablasClave: true });
-    assert.equal(resultado.valido, true);
-    assert.deepEqual(resultado.lineas, [
-        "Se pudo leer sin problemas.",
-        "Trae 89 partes de información.",
-        "Incluye reservas, clientes, facturas y la configuración.",
-    ]);
-    // P-1: nunca se dice "tabla" en pantalla, es jerga de base de datos.
-    assert.equal(resultado.lineas.join(" ").toLowerCase().includes("tabla"), false);
+test("construirConfirmacionRestore: modo total avisa duro que TODO el sistema vuelve para atras y que se pierde lo cargado despues", () => {
+    const confirmacion = construirConfirmacionRestore(RESTORE_MODO_TOTAL, { fechaBackup: "27/07/2026 22:33" });
+    assert.equal(confirmacion.title, "¿Restaurar TODO el sistema?");
+    assert.ok(confirmacion.text.includes("TODO el sistema a como estaba el 27/07/2026 22:33"));
+    assert.ok(confirmacion.text.includes("se pierde"));
+    assert.ok(confirmacion.text.includes("se guarda un resguardo del estado actual"));
+    assert.equal(confirmacion.confirmColor, "red");
 });
 
-test("construirTextoVerificacionRestore: agrega la fecha/tamaño del resguardo elegido cuando se le pasa la etiqueta", () => {
-    const resultado = construirTextoVerificacionRestore(
-        { valido: true, motivo: null, cantidadTablas: 5, tieneTablasClave: true },
-        "Resguardo del 27/07/2026 22:33 — 1,2 MB"
-    );
-    assert.equal(resultado.lineas[0], "Resguardo del 27/07/2026 22:33 — 1,2 MB");
+test("construirConfirmacionRestore: modo total sin fecha (no deberia pasar) no rompe, usa un fallback generico", () => {
+    const confirmacion = construirConfirmacionRestore(RESTORE_MODO_TOTAL, {});
+    assert.ok(confirmacion.text.includes("como estaba el de este resguardo"));
 });
 
-test("construirTextoVerificacionRestore: cantidadTablas=1 usa singular ('1 parte'), no '1 partes'", () => {
-    const resultado = construirTextoVerificacionRestore({ valido: true, motivo: null, cantidadTablas: 1, tieneTablasClave: true });
-    assert.ok(resultado.lineas.includes("Trae 1 parte de información."));
+test("esErrorDeMantenimiento: 503 + code MAINTENANCE es mantenimiento", () => {
+    assert.equal(esErrorDeMantenimiento({ status: 503, code: "MAINTENANCE" }), true);
 });
 
-test("construirTextoVerificacionRestore: valido pero sin tablas clave, explica que puede ser de otro sistema o version vieja", () => {
-    const resultado = construirTextoVerificacionRestore({ valido: true, motivo: null, cantidadTablas: 3, tieneTablasClave: false });
-    const ultimaLinea = resultado.lineas[resultado.lineas.length - 1];
-    assert.ok(ultimaLinea.includes("otro sistema o de una versión muy vieja"));
-    assert.ok(ultimaLinea.includes("Revisá con cuidado"));
+test("esErrorDeMantenimiento: un 503 sin ese code exacto NO es mantenimiento (puede ser la base de datos caida por otro motivo)", () => {
+    assert.equal(esErrorDeMantenimiento({ status: 503, code: null }), false);
+    assert.equal(esErrorDeMantenimiento({ status: 503, code: "database_unavailable" }), false);
+});
+
+test("esErrorDeMantenimiento: el code MAINTENANCE en otro status (ej. 500) no cuenta", () => {
+    assert.equal(esErrorDeMantenimiento({ status: 500, code: "MAINTENANCE" }), false);
 });
 
 test("construirExplicacionAccionesRestore: explica las 3 acciones sin nombres tecnicos", () => {
     const lineas = construirExplicacionAccionesRestore();
     assert.equal(lineas.length, 3);
     assert.ok(lineas[0].startsWith("Ver qué contiene"));
-    assert.ok(lineas[1].startsWith("Probar en una copia"));
-    assert.ok(lineas[2].startsWith("Restaurar configuración"));
+    assert.ok(lineas[1].startsWith("Restaurar configuración"));
+    assert.ok(lineas[2].startsWith("Restaurar todo"));
+    // P-1: nunca se dice "tabla" en pantalla, es jerga de base de datos.
+    assert.equal(lineas.join(" ").toLowerCase().includes("tabla"), false);
 });
 
 test("construirResumenExitoPruebaRestore: reusa las mismas filas de conteo que Empezar de cero, en una lista", () => {
@@ -216,6 +213,24 @@ test("construirResumenExitoRealRestore: sin nada restaurado ni salteado, usa el 
 test("construirResumenExitoRealRestore: mensaje nulo (no deberia pasar) no rompe, usa un fallback en criollo", () => {
     const resumen = construirResumenExitoRealRestore({ mensaje: null, tablasRestauradas: [], advertencia: null });
     assert.equal(resumen.mensaje, "No había nada para restaurar.");
+});
+
+test("construirResumenExitoTotalRestore: muestra el mensaje del motor TAL CUAL, junto con backupPrevio y restauradoDe", () => {
+    const resumen = construirResumenExitoTotalRestore({
+        mensaje: "El sistema se restauró desde el resguardo del 27/07/2026 22:33.",
+        backupPrevio: "wipe-20260727-233000.dump",
+        restauradoDe: "Resguardo del 27/07/2026 22:33 — 1,2 MB",
+    });
+    assert.equal(resumen.mensaje, "El sistema se restauró desde el resguardo del 27/07/2026 22:33.");
+    assert.equal(resumen.backupPrevio, "wipe-20260727-233000.dump");
+    assert.equal(resumen.restauradoDe, "Resguardo del 27/07/2026 22:33 — 1,2 MB");
+});
+
+test("construirResumenExitoTotalRestore: valores nulos (no deberian pasar) no rompen, usan fallbacks seguros", () => {
+    const resumen = construirResumenExitoTotalRestore({ mensaje: null, backupPrevio: null, restauradoDe: null });
+    assert.equal(resumen.mensaje, "El sistema se restauró correctamente.");
+    assert.equal(resumen.backupPrevio, null);
+    assert.equal(resumen.restauradoDe, null);
 });
 
 test("TABLAS_CONFIGURACION_RESTORE: son las 5 tablas conocidas del backend (WipeGroups.ConfiguracionTables)", () => {

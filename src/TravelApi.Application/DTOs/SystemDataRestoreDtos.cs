@@ -1,19 +1,22 @@
 namespace TravelApi.Application.DTOs;
 
 /// <summary>
-/// Obra "Restaurar desde la app" (2026-07-27, Parte B firmada): nombres de los dos modos de restauración.
+/// Obra "Restaurar desde la app" (2026-07-27, Parte B firmada) + Parte C "Restaurar TOTAL" (2026-07-28,
+/// firmada por el dueño): nombres de los tres modos de restauración.
 /// <c>Prueba</c> restaura el backup completo a una base SOMBRA separada (nunca toca la base viva, sirve solo
 /// para verificar "¿esto tiene lo que necesito?"). <c>Real</c> restaura SOLO las tablas de configuración
-/// (data-only, y solo si están vacías) directamente sobre la base viva — ver el comentario completo en
-/// <c>ISystemDataRestoreService</c> sobre por qué el modo real NO puede ser un restore total desde dentro del
-/// proceso de la API.
+/// (data-only, y solo si están vacías) directamente sobre la base viva. <c>Total</c> reemplaza TODA la base
+/// viva por la foto del backup elegido (con backup previo obligatorio del estado actual, modo mantenimiento
+/// mientras dura, y todo dentro de una única transacción de Postgres) — ver el comentario completo en
+/// <c>ISystemDataRestoreService</c> para el detalle de las tres garantías.
 /// </summary>
 public static class RestoreModes
 {
     public const string Prueba = "prueba";
     public const string Real = "real";
+    public const string Total = "total";
 
-    public static readonly string[] All = { Prueba, Real };
+    public static readonly string[] All = { Prueba, Real, Total };
 }
 
 /// <summary>Un backup disponible para restaurar, tal como lo va a ver el usuario en la lista (Parte B).</summary>
@@ -53,6 +56,9 @@ public sealed class SystemDataRestoreVerifyResponse
 /// dedos" que el borrado masivo. <see cref="Tablas"/> solo aplica (y es obligatorio) cuando
 /// <see cref="Modo"/> es <see cref="RestoreModes.Real"/>: la lista de tablas de configuración a restaurar
 /// (tiene que ser un subconjunto de <c>TravelApi.Application.Constants.WipeGroups.ConfiguracionTables</c>).
+/// <see cref="Motivo"/> solo aplica (y es obligatorio, mínimo 10 caracteres) cuando <see cref="Modo"/> es
+/// <see cref="RestoreModes.Total"/> (hallazgo B6 de seguridad, F-16): la operación más destructiva del sistema
+/// exige que quien la ejecuta escriba POR QUÉ, y ese motivo queda en la auditoría.
 /// </summary>
 public sealed class SystemDataRestoreRequest
 {
@@ -61,6 +67,7 @@ public sealed class SystemDataRestoreRequest
     public string Phrase { get; set; } = string.Empty;
     public string Modo { get; set; } = string.Empty;
     public List<string>? Tablas { get; set; }
+    public string? Motivo { get; set; }
 }
 
 /// <summary>
@@ -93,4 +100,14 @@ public sealed class SystemDataRestoreResponse
     /// todos los conteos porque cambió el esquema desde entonces).
     /// </summary>
     public string? Advertencia { get; set; }
+
+    /// <summary>
+    /// Modo <see cref="RestoreModes.Total"/>: nombre del backup que se generó AUTOMÁTICAMENTE del estado
+    /// ACTUAL (antes de sobrescribirlo) — es el "deshacer el deshacer": si la restauración total no era lo
+    /// que el usuario quería, este archivo permite volver a como estaba justo antes de ejecutarla.
+    /// </summary>
+    public string? BackupPrevio { get; set; }
+
+    /// <summary>Modo <see cref="RestoreModes.Total"/>: nombre del archivo de backup que se restauró.</summary>
+    public string? RestauradoDe { get; set; }
 }

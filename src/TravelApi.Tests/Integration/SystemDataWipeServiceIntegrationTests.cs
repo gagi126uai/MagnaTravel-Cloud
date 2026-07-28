@@ -119,6 +119,8 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
             RemoveOriginalsWasCalled = true;
             return Task.CompletedTask;
         }
+
+        public Task<int> RestoreObjectsFromBackupPrefixAsync(string minioPrefix, CancellationToken ct) => Task.FromResult(0);
     }
 
     private static SystemDataWipeService NewWipeService(

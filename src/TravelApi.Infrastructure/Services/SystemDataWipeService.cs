@@ -412,20 +412,16 @@ public class SystemDataWipeService : ISystemDataWipeService
     /// </summary>
     private async Task<(bool Bloqueado, string? Motivo)> EvaluateFiscalLockAsync(CancellationToken ct)
     {
-        var hasInvoiceMarkedProduction = await _context.Invoices.AsNoTracking()
-            .AnyAsync(invoice => invoice.WasIssuedInProduction == true, ct);
-        if (hasInvoiceMarkedProduction)
+        // (2026-07-28) La consulta en si vive en FiscalLockEvaluator, COMPARTIDA con SystemDataRestoreService
+        // (modo total) - ver el comentario XML de esa clase sobre por que se comparte la consulta pero no el
+        // mensaje (cada operacion usa su propio verbo: "borrar" aca, "restaurar" alla).
+        var reason = await FiscalLockEvaluator.EvaluateAsync(_context, ct);
+        return reason switch
         {
-            return (true, FiscalLockMessage);
-        }
-
-        var afipSettings = await _context.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
-        if (afipSettings is { IsProduction: true })
-        {
-            return (true, AfipProductionModeMessage);
-        }
-
-        return (false, null);
+            FiscalLockEvaluator.Reason.LiveProductionInvoice => (true, FiscalLockMessage),
+            FiscalLockEvaluator.Reason.AfipInProductionMode => (true, AfipProductionModeMessage),
+            _ => (false, null),
+        };
     }
 
     /// <summary>

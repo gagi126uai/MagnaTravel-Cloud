@@ -37,6 +37,12 @@ services:
     networks:
       - backend
 
+  # NOTA operativa (hallazgo de infra 2026-07-28, runbook "Restaurar TOTAL" en docs/db-operations.md): este
+  # sidecar corre su PROPIO pg_dump diario contra la base viva. Antes de ejecutar una restauración TOTAL desde
+  # la app, hay que pararlo (`docker compose stop postgres-backup`) — si su pg_dump diario cae justo mientras
+  # `pg_restore --clean` está reemplazando la base, sus locks pueden hacer fallar la restauración con un error
+  # confuso (no relacionado con el contenido real del backup). Se reinicia (`docker compose start postgres-backup`)
+  # recién después de confirmar que la restauración terminó.
   postgres-backup:
     image: postgres:16
     container_name: travel_postgres_backup
@@ -126,6 +132,25 @@ services:
       # Obra "Empezar de cero": directorio DENTRO del contenedor donde queda el dump antes de un borrado
       # masivo. Coincide con el volumen montado arriba (./backups/postgres/wipe:/backups/wipe).
       Wipe__BackupDirectory: /backups/wipe
+      # Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B-N2 de seguridad, "los timeouts no cierran
+      # entre sí"): valores EXPLÍCITOS (no solo el default hardcodeado en el código) para que la invariante
+      # sea visible y auditable acá, en el mismo lugar donde se despliega. INVARIANTE que tiene que cumplirse
+      # SIEMPRE (verificada además por un test de guardia, RestoreTotalTimeoutConfigurationTests):
+      #   Maintenance__MaxDurationMinutes >= Wipe__PgDumpTimeoutMinutes + Wipe__SchemaCheckTimeoutMinutes
+      #                                      + Wipe__MinioCopyTimeoutMinutes + margen operativo
+      #   Maintenance__MaxDurationMinutes >= Wipe__PgRestoreTotalTimeoutMinutes + margen operativo
+      # (el reloj de auto-expiración se resetea, vía Touch(), justo antes de arrancar el pg_restore — por eso
+      # el segundo camino solo necesita cubrir el pg_restore en sí, no toda la operación; el PRIMER camino
+      # cubre los pasos ANTERIORES al pg_restore, que corren bajo el reloj SIN resetear). Con los valores de
+      # abajo: 10+3+5=18 y 15, ambos con más de 10 minutos de margen contra el límite de 30.
+      Wipe__PgDumpTimeoutMinutes: "10"
+      Wipe__SchemaCheckTimeoutMinutes: "3"
+      Wipe__MinioCopyTimeoutMinutes: "5"
+      Wipe__PgRestoreTotalTimeoutMinutes: "15"
+      Maintenance__MaxDurationMinutes: "30"
+      # Path ABSOLUTO explícito (antes solo dependía del default hardcodeado en FileMaintenanceModeService) —
+      # coincide con el volumen compartido api↔worker (./logs:/app/logs, ver comentario en "worker" más abajo).
+      Maintenance__StateFilePath: /app/logs/maintenance-mode-state.json
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
       interval: 15s
@@ -209,6 +234,15 @@ services:
       HostedServices__RealtimeEnabled: "false"
       MassTransit__Enabled: "true"
       Metrics__Token: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+      # Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B-10/B-N2): el worker corre su PROPIA instancia
+      # de FileMaintenanceModeService y de MaintenanceModeHangfireFilter, leyendo el MISMO archivo compartido
+      # (./logs:/app/logs, montado abajo) que escribe el proceso api — Maintenance__MaxDurationMinutes y
+      # Maintenance__StateFilePath tienen que ser IDÉNTICOS en ambos procesos: si difirieran, cada proceso
+      # podría decidir auto-expirar (o no) el MISMO archivo en momentos distintos, una inconsistencia que
+      # ninguno de los dos podría detectar por sí solo. Ver la invariante completa en el comentario del
+      # servicio "api" más arriba.
+      Maintenance__MaxDurationMinutes: "30"
+      Maintenance__StateFilePath: /app/logs/maintenance-mode-state.json
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
       interval: 20s

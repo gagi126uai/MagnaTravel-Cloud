@@ -627,6 +627,11 @@ builder.Services.AddScoped<ISystemDataWipeService, SystemDataWipeService>();
 builder.Services.AddScoped<IDatabaseRestorePort, PgDatabaseRestorePort>();
 builder.Services.AddScoped<ISystemDataRestoreService, SystemDataRestoreService>();
 
+// Obra "Restaurar TOTAL" (2026-07-28, firmada): singleton a proposito - el flag de mantenimiento tiene que ser
+// UNA sola instancia compartida por TODO el proceso (el middleware de todos los pedidos y el servicio de
+// restauracion tienen que ver el MISMO estado), no una instancia nueva por request como los servicios Scoped.
+builder.Services.AddSingleton<IMaintenanceModeService, FileMaintenanceModeService>();
+
 var realtimeHostedServicesEnabled = builder.Configuration.GetValue("HostedServices:RealtimeEnabled", true);
 if (realtimeHostedServicesEnabled)
 {
@@ -700,6 +705,13 @@ if (hangfireServerEnabled)
 
 var app = builder.Build();
 GlobalJobFilters.Filters.Add(new HangfireMetricsFilter(app.Services.GetRequiredService<InternalMetricsService>()));
+
+// Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B-10 de la revision funcional): frena CUALQUIER job
+// de Hangfire mientras el sistema esta en modo mantenimiento. Sin esto, el proceso worker (que corre TODOS
+// los jobs en background) seguiria escribiendo en la base mientras pg_restore la reemplaza entera. Se
+// registra en AMBOS procesos (api/worker comparten este mismo Program.cs) - inocuo en la API, que no corre
+// Hangfire server salvo que Hangfire:ServerEnabled este prendido.
+GlobalJobFilters.Filters.Add(new TravelApi.Filters.MaintenanceModeHangfireFilter(app.Services.GetRequiredService<IMaintenanceModeService>()));
 
 if (!app.Environment.IsProduction())
 {
@@ -910,6 +922,14 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 
 // 2. CORS (MUST be before any other middleware that responds or sets headers)
 app.UseCors("web");
+
+// Obra "Restaurar TOTAL" (2026-07-28, firmada): lo mas arriba posible del pipeline, a proposito. Mientras el
+// sistema esta en mantenimiento, corta CASI todos los pedidos a /api/** con un 503 ANTES de que corran
+// routing/autenticacion/autorizacion/compresion/cache - no hace falta nada de eso para decidir "estamos en
+// mantenimiento", y la decision entera sale de un flag en memoria (nunca toca la base). Va DESPUES de CORS
+// para que la respuesta 503 tambien lleve los headers de CORS (si no, el navegador la trataria como un error
+// de CORS en vez de mostrar el mensaje real al usuario).
+app.UseMiddleware<TravelApi.Middleware.MaintenanceModeMiddleware>();
 
 if (app.Environment.IsProduction())
 {

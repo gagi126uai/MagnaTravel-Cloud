@@ -136,6 +136,101 @@ Recién ACA, con Postgres Y MinIO restaurados y verificados:
 docker compose up -d api worker
 ```
 
+## Restaurar TOTAL desde la app (2026-07-28)
+
+Además del restore manual de más arriba, un Admin puede ejecutar una restauración TOTAL desde la propia
+aplicación (`POST /api/admin/danger/restore` con `modo: "total"`): reemplaza toda la base viva por la foto de
+un backup, con backup previo automático del estado actual, modo mantenimiento mientras dura (todo `/api/**`
+y `/hubs/**` responde 503, salvo `GET /api/system/status`, `POST /api/admin/danger/restore`, `POST
+/api/auth/login` y `POST /api/auth/refresh`), y todo dentro de una única transacción de `pg_restore`.
+
+### Requisito OBLIGATORIO antes de usar la restauración total en producción (nginx del HOST)
+
+⚠️ **Verificar esto ANTES del primer uso en producción, no durante un incidente.** `nginx.conf` de este repo
+(el nginx que corre DENTRO del contenedor `web`) ya tiene un `location /api/admin/danger/` con
+`proxy_read_timeout`/`proxy_send_timeout` largos (2700s). Pero en producción hay **otro nginx corriendo en el
+HOST** (Ubuntu, versión 1.24.0 al momento de esta revisión, **fuera de este repo**, configurado en
+`/etc/nginx/` del VPS) que hace de reverse-proxy hacia el contenedor `web` — ese nginx tiene su propio
+default de 60 segundos y corta la conexión ANTES que cualquier otra cosa, sin importar lo que diga el nginx
+del contenedor.
+
+**Paso manual en el VPS** (una sola vez, o cada vez que se reconfigure ese nginx):
+
+```bash
+# 1) Verificar el valor ACTUAL configurado para el location del backoffice:
+nginx -T | grep -A5 "location.*api"
+
+# 2) Si no aparece "proxy_read_timeout"/"proxy_send_timeout" (o son menores a 2700s), agregar en el
+#    location correspondiente al backoffice (ej. /etc/nginx/sites-available/backoffice, dentro del
+#    location que proxypasea hacia el contenedor "web"):
+#        proxy_read_timeout 2700s;
+#        proxy_send_timeout 2700s;
+
+# 3) Validar la sintaxis y recargar:
+nginx -t && systemctl reload nginx
+```
+
+Sin este paso, una restauración total real se corta a los 60 segundos en el nginx del host — el pedido HTTP
+muere, pero (ver el hallazgo B1 más abajo) el `pg_restore` real sigue vivo en el contenedor `api`.
+
+### Runbook: el sistema quedó en mantenimiento y no se sabe si terminó
+
+**El chequeo autoritativo es contra la BASE, nunca contra procesos del sistema operativo.** El `pg_restore`
+real corre DENTRO del contenedor **`api`** (no `travel_db`: el Dockerfile de la API instala
+`postgresql-client-16` y el puerto lanza ahí el `Process.Start`) — y la imagen `postgres:16` de `travel_db`
+ni siquiera trae el binario `ps`, así que `docker exec travel_db ps aux | grep pg_restore` da un resultado
+VACÍO SIEMPRE, sea que el restore esté corriendo o no. Un operador que use ese comando y vea "nada corriendo"
+puede concluir erróneamente "ya terminó, es seguro reabrir el sistema" y borrar el archivo de estado con la
+base todavía a medio reemplazar — el escenario exacto que el modo mantenimiento existe para evitar.
+
+**Comando correcto** (consulta la actividad real contra Postgres, sin importar en qué contenedor corre el
+cliente que la generó):
+
+```bash
+docker exec travel_db psql -U traveluser -d postgres -c \
+  "select pid, state, left(query, 60) as query from pg_stat_activity where datname = 'travel';"
+```
+
+(ajustar `traveluser`/`travel` si `POSTGRES_USER`/`POSTGRES_DB` fueron sobreescritos en `.env`). Si aparece una
+fila con una consulta larga en curso contra la base `travel`, la restauración TODAVÍA está corriendo — **no
+tocar nada**, esperar y volver a consultar. Recién cuando la consulta ya no aparece es seguro asumir que el
+`pg_restore` terminó (con éxito o con rollback automático — ver el hallazgo B1: ambos casos son seguros para
+reabrir el sistema; lo único inseguro es "no sé si terminó").
+
+### Salida de emergencia si el sistema queda "tapiado"
+
+El modo mantenimiento se auto-desactiva solo si sigue activo pasado `Maintenance:MaxDurationMinutes` (fijado
+explícito en `docker-compose.yml`, `api` y `worker`, en 30 minutos) — pensado para el caso en que el PROCESO
+muere a mitad de una restauración. **Excepción importante (hallazgo B-N2 de seguridad)**: si el desenlace de
+un `pg_restore` quedó incierto (timeout propio agotado) o no se pudo confirmar que AFIP quedó en modo
+homologación, el sistema queda marcado "requiere intervención manual" y **la auto-expiración NO aplica** —
+nunca se reabre solo, hay que seguir este runbook a mano.
+
+1. **Confirmar con el comando de arriba** que no hay ninguna consulta en curso contra la base `travel`.
+2. **Parar el sidecar de backup automático** si todavía sigue activo desde el intento anterior:
+   `docker compose stop postgres-backup` (su `pg_dump` diario toma locks que pueden interferir con un
+   `pg_restore --clean` — ver el comentario en `docker-compose.yml`, servicio `postgres-backup`).
+3. Recién con el paso 1 confirmado, borrar el archivo de estado — **path ABSOLUTO** (puede requerir `sudo`
+   según los permisos del volumen montado, ya que el contenedor escribe con su propio usuario interno):
+
+   ```bash
+   sudo rm /ruta/al/repo/logs/maintenance-mode-state.json
+   ```
+
+   `/ruta/al/repo/logs` es el host-path del volumen `./logs:/app/logs` (mismo volumen que
+   `Maintenance:StateFilePath=/app/logs/maintenance-mode-state.json` dentro del contenedor) — **compartido
+   entre `api` y `worker`** (por eso el worker se entera de un mantenimiento activado por la API, ver
+   `FileMaintenanceModeService`). **No "limpiar" ni vaciar todo ese directorio** — ahí también viven los logs
+   de Serilog de ambos procesos; borrar solo el archivo de estado puntual.
+4. **NO hace falta reiniciar los contenedores**: `FileMaintenanceModeService` relee el archivo cada ~2
+   segundos (caché corto, ver el comentario de esa clase) — a los pocos segundos ambos procesos ven el estado
+   inactivo solos. Si de verdad hace falta forzar un reinicio, **ojo**: `docker compose restart api` MATA
+   cualquier `pg_restore` que siga corriendo de verdad (corre DENTRO de ese contenedor) — solo reiniciar
+   DESPUÉS de haber confirmado con el paso 1 que no hay nada corriendo; si el paso 1 mostró una consulta en
+   curso, un reinicio de `api` en este momento la cortaría a la fuerza, dejando la base en un estado
+   verdaderamente incierto (peor que esperar).
+5. Reactivar el backup automático si se paró en el paso 2: `docker compose start postgres-backup`.
+
 ## Objetivos operativos de esta fase
 - `RPO`: 24h
 - `RTO`: restore probado en menos de 60 minutos

@@ -15,9 +15,10 @@ public sealed class SystemDataRestoreRefusedException : Exception
 }
 
 /// <summary>
-/// Obra "Restaurar desde la app" (2026-07-27, Parte B firmada, "el usuario tiene que poder volver atrás"):
-/// orquesta la restauración de un backup de Postgres generado por <c>SystemDataWipeService</c> (u otro backup
-/// del mismo directorio). Dos modos, deliberadamente distintos en alcance:
+/// Obra "Restaurar desde la app" (2026-07-27, Parte B firmada, "el usuario tiene que poder volver atrás") +
+/// Parte C "Restaurar TOTAL" (2026-07-28, firmada por el dueño): orquesta la restauración de un backup de
+/// Postgres generado por <c>SystemDataWipeService</c> (u otro backup del mismo directorio). Tres modos,
+/// deliberadamente distintos en alcance:
 ///
 /// <list type="bullet">
 ///   <item><b><c>prueba</c></b>: restaura el backup COMPLETO a una base espejo separada
@@ -25,17 +26,19 @@ public sealed class SystemDataRestoreRefusedException : Exception
 ///   necesitaba?" — NUNCA toca la base viva.</item>
 ///   <item><b><c>real</c></b>: restaura SOLO las tablas de configuración (AFIP, políticas de aprobación, bot
 ///   de WhatsApp, ajustes generales — ver <c>TravelApi.Application.Constants.WipeGroups.ConfiguracionTables</c>),
-///   data-only, y SOLO sobre tablas que estén vacías en la base viva.</item>
+///   data-only, y SOLO sobre tablas que estén vacías en la base viva. Pensado para "recuperé de más al usar
+///   Empezar de cero y necesito la configuración de vuelta", SIN cortar ninguna conexión ni interrumpir el
+///   servicio (esas tablas no tienen foreign keys entre sí ni con el resto del sistema).</item>
+///   <item><b><c>total</c></b> (Parte C): reemplaza TODA la base viva por la foto del backup — la operación
+///   más invasiva de las tres. Con backup previo OBLIGATORIO del estado que se pisa (el "deshacer del
+///   deshacer"), modo mantenimiento activo mientras dura (el sistema responde 503 a casi todo
+///   <c>/api/**</c> — ver <c>TravelApi.Middleware.MaintenanceModeMiddleware</c>), corte de conexiones activas,
+///   y <c>pg_restore --clean --if-exists --single-transaction</c> (si algo falla a mitad de camino, Postgres
+///   hace ROLLBACK automático: la base queda exactamente como estaba). Antes de esta obra, un restore total NO
+///   podía hacerse desde dentro del proceso de la API sin detener los contenedores primero (ver
+///   <c>scripts/ops/restore-db.sh --target primary</c>); esta obra lo resuelve activando mantenimiento ANTES
+///   de cortar conexiones, en vez de depender de que un operador humano pare los contenedores a mano.</item>
 /// </list>
-///
-/// <para><b>Por qué el modo <c>real</c> NO es un restore total de la base viva</b>: un restore total mientras
-/// la aplicación está corriendo necesita cortar TODAS las conexiones activas a esa base (incluida la que
-/// atiende el propio pedido HTTP que dispara la restauración) y recrear el schema entero — el script existente
-/// <c>scripts/ops/restore-db.sh --target primary</c> resuelve esto deteniendo los contenedores <c>api</c>/<c>worker</c>
-/// ANTES de restaurar, algo que el proceso de la API no puede hacerse a sí mismo de forma segura. En cambio,
-/// el caso de uso real más común — "recuperé de más al usar Empezar de cero y necesito la configuración de
-/// vuelta" — se cubre por completo restaurando solo esas 5 tablas standalone (sin foreign keys entre sí) sobre
-/// tablas vacías, sin necesitar cortar ninguna conexión.</para>
 /// </summary>
 public interface ISystemDataRestoreService
 {
@@ -51,9 +54,15 @@ public interface ISystemDataRestoreService
 
     /// <summary>
     /// Ejecuta la restauración real. Tira <see cref="SystemDataRestoreRefusedException"/> si la frase no
-    /// coincide, la contraseña es incorrecta, el archivo/modo/tablas no son válidos, o (modo <c>real</c>)
-    /// alguna tabla pedida ya tenía datos — en todos esos casos NO se restaura nada.
+    /// coincide, la contraseña es incorrecta, el archivo/modo/tablas no son válidos, (modo <c>real</c>)
+    /// alguna tabla pedida ya tenía datos, o (modo <c>total</c>) el motivo falta/es muy corto, hay una
+    /// restauración ya en curso, el esquema del backup es incompatible, o hay comprobantes fiscales reales en
+    /// juego — en todos esos casos NO se restaura nada.
     /// </summary>
+    /// <param name="motivo">
+    /// Obligatorio (mínimo 10 caracteres) SOLO para <see cref="RestoreModes.Total"/> — por qué se ejecuta la
+    /// restauración más destructiva del sistema. Ignorado en los otros modos.
+    /// </param>
     Task<SystemDataRestoreResponse> ExecuteRestoreAsync(
         string requesterUserId,
         string password,
@@ -61,5 +70,6 @@ public interface ISystemDataRestoreService
         string fileName,
         string modo,
         IReadOnlyList<string>? tablas,
+        string? motivo,
         CancellationToken ct);
 }

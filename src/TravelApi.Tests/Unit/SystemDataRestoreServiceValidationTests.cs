@@ -13,6 +13,7 @@ using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
+using TravelApi.Tests.Fixtures;
 using Xunit;
 
 namespace TravelApi.Tests.Unit;
@@ -56,12 +57,16 @@ public class SystemDataRestoreServiceValidationTests
         AppDbContext context,
         Mock<UserManager<ApplicationUser>> userManagerMock,
         Mock<IDatabaseRestorePort> portMock,
-        Mock<IAuditService>? auditServiceMock = null)
+        Mock<IAuditService>? auditServiceMock = null,
+        Mock<IWipeBackupPort>? backupPortMock = null,
+        RecordingMaintenanceModeService? maintenanceModeService = null)
     {
         return new SystemDataRestoreService(
             context,
             userManagerMock.Object,
             portMock.Object,
+            (backupPortMock ?? new Mock<IWipeBackupPort>()).Object,
+            maintenanceModeService ?? new RecordingMaintenanceModeService(),
             (auditServiceMock ?? new Mock<IAuditService>()).Object,
             NullLogger<SystemDataRestoreService>.Instance);
     }
@@ -76,7 +81,7 @@ public class SystemDataRestoreServiceValidationTests
         var service = NewService(context, userManagerMock, portMock, auditServiceMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
-            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, "restaurar todo", ValidFileName, RestoreModes.Prueba, null, CancellationToken.None));
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, "restaurar todo", ValidFileName, RestoreModes.Prueba, null, null, CancellationToken.None));
 
         Assert.Contains("RESTAURAR TODO", ex.Message);
         userManagerMock.Verify(m => m.FindByIdAsync(It.IsAny<string>()), Times.Never);
@@ -100,7 +105,7 @@ public class SystemDataRestoreServiceValidationTests
         var service = NewService(context, userManagerMock, portMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
-            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Prueba, null, CancellationToken.None));
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Prueba, null, null, CancellationToken.None));
 
         Assert.Equal("La contraseña no es correcta.", ex.Message);
         portMock.Verify(p => p.RestoreToShadowDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -118,7 +123,7 @@ public class SystemDataRestoreServiceValidationTests
         var service = NewService(context, userManagerMock, portMock);
 
         await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
-            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, archivoMalicioso, RestoreModes.Prueba, null, CancellationToken.None));
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, archivoMalicioso, RestoreModes.Prueba, null, null, CancellationToken.None));
 
         portMock.Verify(p => p.RestoreToShadowDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -132,10 +137,11 @@ public class SystemDataRestoreServiceValidationTests
         var service = NewService(context, userManagerMock, portMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
-            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, "produccion", null, CancellationToken.None));
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, "produccion", null, null, CancellationToken.None));
 
         Assert.Contains("prueba", ex.Message);
         Assert.Contains("real", ex.Message);
+        Assert.Contains("total", ex.Message);
     }
 
     [Fact]
@@ -147,7 +153,7 @@ public class SystemDataRestoreServiceValidationTests
         var service = NewService(context, userManagerMock, portMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
-            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Real, null, CancellationToken.None));
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Real, null, null, CancellationToken.None));
 
         Assert.Contains("al menos una tabla", ex.Message);
         portMock.Verify(p => p.RestoreTablesIntoLiveDatabaseAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -164,7 +170,7 @@ public class SystemDataRestoreServiceValidationTests
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(
                 RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Real,
-                new List<string> { "Customers" }, CancellationToken.None));
+                new List<string> { "Customers" }, null, CancellationToken.None));
 
         Assert.Contains("configuración", ex.Message);
         portMock.Verify(p => p.RestoreTablesIntoLiveDatabaseAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);

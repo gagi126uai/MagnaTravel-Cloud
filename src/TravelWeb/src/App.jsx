@@ -4,8 +4,10 @@ import Swal from "sweetalert2";
 import { api, hasSessionCookieHint } from "./api";
 import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState, hasPermission, isAdmin } from "./auth";
 import { usePermissions } from "./hooks/usePermissions";
+import { useMaintenanceState } from "./maintenanceState";
 import Layout from "./components/Layout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { MaintenanceScreen } from "./components/MaintenanceScreen";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
 import CustomersPage from "./features/customers/pages/CustomersPage";
@@ -84,6 +86,10 @@ export default function App() {
   const { user, loading } = useAuthState();
   const adminUser = Boolean(user?.isAdmin);
   usePermissions();
+  // Obra 2026-07-27 "Restaurar todo": ver maintenanceState.js para el detalle de los dos
+  // caminos que prenden este estado (el propio admin que dispara la restauración, o
+  // cualquier pedido de api.js que choque con un 503 MAINTENANCE).
+  const { active: sistemaEnMantenimiento, awaitingLocalResult } = useMaintenanceState();
 
   const handleLogout = useCallback(
     async ({ callServer = true } = {}) => {
@@ -188,6 +194,13 @@ export default function App() {
     */
     <ErrorBoundary variant="fullscreen">
       <Toaster richColors position="top-right" />
+      {/*
+        Cartel de mantenimiento: se dibuja ENCIMA de toda la app (fixed inset-0, no
+        reemplaza el árbol) para que, si esta misma pestaña disparó "Restaurar todo", el
+        modal que sigue montado más abajo NO se pierda y pueda mostrar su resumen apenas
+        el sistema vuelve. Mientras está activo, bloquea toda interacción con lo de abajo.
+      */}
+      {sistemaEnMantenimiento && <MaintenanceScreen awaitingLocalResult={awaitingLocalResult} />}
       <Routes>
         <Route
           path="/login"

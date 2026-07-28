@@ -1,4 +1,6 @@
 import { normalizeMessage } from "./lib/errors";
+import { esErrorDeMantenimiento } from "./features/admin/lib/dangerRestoreLogic";
+import { activateMaintenance } from "./maintenanceState";
 
 const configuredApiUrl = (import.meta.env.VITE_API_URL || "").trim();
 
@@ -102,29 +104,42 @@ function mergeHeaders(options = {}) {
 
 async function parseErrorResponse(response) {
   const errorText = await response.text();
+
+  let errorInfo;
   if (!errorText) {
-    return {
+    errorInfo = {
       message: response.statusText || "Request failed",
       code: null,
       payload: null,
     };
+  } else {
+    try {
+      const data = JSON.parse(errorText);
+      errorInfo = {
+        message: normalizeMessage(data, response.statusText || "Request failed"),
+        code: data?.code || null,
+        payload: data,
+      };
+    } catch {
+      errorInfo = {
+        message: normalizeMessage(errorText, response.statusText || "Request failed"),
+        code: null,
+        payload: errorText,
+      };
+    }
   }
 
-  try {
-    const data = JSON.parse(errorText);
-
-    return {
-      message: normalizeMessage(data, response.statusText || "Request failed"),
-      code: data?.code || null,
-      payload: data,
-    };
-  } catch {
-    return {
-      message: normalizeMessage(errorText, response.statusText || "Request failed"),
-      code: null,
-      payload: errorText,
-    };
+  // Obra 2026-07-27 "Restaurar todo": mientras el motor está restaurando el sistema
+  // completo, CUALQUIER pedido a /api/** devuelve 503 con code="MAINTENANCE" (contrato
+  // nuevo, ver dangerRestoreLogic.js). Se detecta ACÁ, en el único lugar donde se arma el
+  // error de cualquier pedido fallido (tanto el pedido normal como el retry de refresh de
+  // sesión), para prender la pantalla de mantenimiento global sin importar qué pantalla
+  // estaba pidiendo qué cosa cuando el 503 llegó.
+  if (esErrorDeMantenimiento({ status: response.status, code: errorInfo.code })) {
+    activateMaintenance();
   }
+
+  return errorInfo;
 }
 
 async function parseResponse(response, responseType) {

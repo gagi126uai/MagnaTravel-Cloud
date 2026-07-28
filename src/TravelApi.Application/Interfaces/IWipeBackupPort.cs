@@ -47,4 +47,17 @@ public interface IWipeBackupPort
     /// también existe), NUNCA una pérdida de dato.
     /// </summary>
     Task RemoveOriginalObjectsAsync(WipeBackupResult backupResult, CancellationToken ct);
+
+    /// <summary>
+    /// Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B5 de seguridad, "los archivos no vuelven"):
+    /// repone en el bucket VIVO los objetos que estén bajo <paramref name="minioPrefix"/> (un backup de MinIO
+    /// generado por <see cref="CreateBackupAsync"/>). Se usa DESPUÉS de un <c>pg_restore</c> total exitoso
+    /// para que los archivos subidos (vouchers, adjuntos) vuelvan a la foto de ese momento junto con la base
+    /// de datos — sin esto, la base "recuerda" un adjunto que en MinIO ya no existe (o cuyo contenido cambió
+    /// después). Best-effort POR OBJETO (un archivo que no se pudo reponer es una pérdida acotada a ESE
+    /// adjunto, nunca motivo para abortar el resto ni para revertir la restauración de la base, que ya fue
+    /// exitosa en este punto). Devuelve la cantidad de objetos repuestos con éxito; 0 si el prefijo no existe,
+    /// está vacío, o falló la reposición completa.
+    /// </summary>
+    Task<int> RestoreObjectsFromBackupPrefixAsync(string minioPrefix, CancellationToken ct);
 }

@@ -3,13 +3,19 @@
  * Mantenimiento, obra 2026-07-27 Parte B "restaurar desde la app", firma del dueño "el
  * usuario tiene que poder volver atrás"). Se usa desde RestaurarResguardoModal.jsx.
  *
- * Dos modos de restauración, bien distintos en alcance (esto lo decide el motor, acá solo
+ * TRES modos de restauración, bien distintos en alcance (esto lo decide el motor, acá solo
  * se arman los textos y las validaciones de habilitación):
- * - "prueba": restaura el resguardo COMPLETO a una base separada, de mentira. Sirve para
- *   comprobar "¿este resguardo tiene lo que necesito?" sin tocar los datos reales.
- * - "real": restaura SOLO la configuración de la agencia (AFIP, políticas, bot de
- *   WhatsApp, reglas de multas/comisiones) sobre los datos reales, y solo si esas partes
- *   están vacías ahora mismo.
+ * - "prueba" (botón "Ver qué contiene"): restaura el resguardo COMPLETO a una base
+ *   separada, de mentira, cuenta lo que trae y la borra. Sirve para comprobar "¿este
+ *   resguardo tiene lo que necesito?" sin tocar los datos reales.
+ * - "real" (botón "Restaurar configuración"): restaura SOLO la configuración de la
+ *   agencia (AFIP, políticas, bot de WhatsApp, reglas de multas/comisiones) sobre los
+ *   datos reales, y solo si esas partes están vacías ahora mismo.
+ * - "total" (botón "Restaurar todo", obra 2026-07-27 "Restaurar todo desde la app"):
+ *   devuelve TODO el sistema al estado del resguardo elegido. A diferencia de los otros
+ *   dos modos, mientras esta restauración corre el motor tumba TODA la API con 503
+ *   ({code: "MAINTENANCE"}) — por eso este modo prende la pantalla de mantenimiento
+ *   global (ver maintenanceState.js y MaintenanceScreen.jsx) apenas se confirma.
  *
  * T-5 (nunca nombres técnicos en pantalla): el PEDIDO (POST /restore) todavía manda los 5
  * nombres técnicos de tabla en `tablas` (son la lista blanca que valida el backend contra
@@ -30,6 +36,7 @@ export const FRASE_CONFIRMACION_RESTORE = "RESTAURAR TODO";
 
 export const RESTORE_MODO_PRUEBA = "prueba";
 export const RESTORE_MODO_REAL = "real";
+export const RESTORE_MODO_TOTAL = "total";
 
 // Nombres TÉCNICOS de las 5 tablas de configuración que se mandan en el PEDIDO (POST
 // /admin/danger/restore, campo `tablas`) cuando modo="real" — tienen que coincidir con
@@ -108,10 +115,10 @@ export function puedeConfirmarRestore({ frase, password, ejecutando }) {
 }
 
 /**
- * Fix de review (P-9/P-10, "prohibido tooltip"): el motivo por el que "Probar en una copia"
- * / "Restaurar configuración" están apagados tiene que verse SIEMPRE como texto, no solo en
- * el `title`. Las dos acciones comparten el mismo gate (elegir resguardo + frase + password),
- * así que un solo motivo alcanza para las dos.
+ * Fix de review (P-9/P-10, "prohibido tooltip"): el motivo por el que "Ver qué contiene" /
+ * "Restaurar configuración" / "Restaurar todo" están apagados tiene que verse SIEMPRE como
+ * texto, no solo en el `title`. Las tres acciones comparten el mismo gate (elegir resguardo +
+ * frase + password), así que un solo motivo alcanza para las tres.
  *
  * @param {object} params
  * @param {string|null} params.archivoSeleccionado
@@ -128,13 +135,31 @@ export function construirMotivoRestoreDeshabilitado({ archivoSeleccionado, frase
 
 /**
  * Texto de la doble confirmación (showConfirm) antes de disparar el POST de restauración.
- * Cambia según el modo porque el alcance real es MUY distinto (uno no toca nada real, el
- * otro sí, aunque acotado a configuración vacía).
+ * Cambia según el modo porque el alcance real es MUY distinto (uno no toca nada real, otro
+ * repone configuración vacía, y el tercero vuelve TODO el sistema para atrás).
  *
- * @param {"prueba"|"real"} modo
+ * `fechaBackup` (ya formateada por el componente, ej. "27/07/2026 22:33") solo se usa en el
+ * modo "total", para que el aviso durísimo diga a qué momento exacto vuelve el sistema — en
+ * los otros dos modos se ignora sin problema si se manda igual.
+ *
+ * @param {"prueba"|"real"|"total"} modo
+ * @param {{fechaBackup?: string|null}} [contexto]
  * @returns {{title: string, text: string, confirmText: string, confirmColor: string}}
  */
-export function construirConfirmacionRestore(modo) {
+export function construirConfirmacionRestore(modo, { fechaBackup } = {}) {
+    if (modo === RESTORE_MODO_TOTAL) {
+        const fechaTexto = fechaBackup || "de este resguardo";
+        return {
+            title: "¿Restaurar TODO el sistema?",
+            text:
+                `Esto devuelve TODO el sistema a como estaba el ${fechaTexto}. Lo que hayas cargado ` +
+                "después se pierde. Antes se guarda un resguardo del estado actual, así podés volver " +
+                "a este momento si te arrepentís.",
+            confirmText: "Sí, restaurar todo",
+            confirmColor: "red",
+        };
+    }
+
     if (modo === RESTORE_MODO_REAL) {
         return {
             title: "¿Restaurar la configuración?",
@@ -150,53 +175,14 @@ export function construirConfirmacionRestore(modo) {
     }
 
     return {
-        title: "¿Probar este resguardo?",
+        title: "¿Ver el contenido de este resguardo?",
         text:
-            "Se restaura el resguardo completo en una base de PRUEBA separada, para que puedas " +
-            "verificar que tiene lo que necesitás. Esto NO toca ningún dato real del sistema.",
-        confirmText: "Sí, probar",
+            "Para mostrarte el detalle, se restaura el resguardo completo en una base de PRUEBA " +
+            "separada, se cuenta lo que trae y esa copia se borra. Esto NO toca ningún dato real " +
+            "del sistema.",
+        confirmText: "Sí, ver contenido",
         confirmColor: "indigo",
     };
-}
-
-/**
- * Texto en criollo del resultado de "Ver qué contiene" (verify).
- *
- * Fix de hallazgo del dueño ("ver qué tiene no me muestra nada"): antes esta función
- * devolvía UNA sola frase vaga que no decía nada concreto del contenido, aunque el motor
- * ya manda `cantidadTablas` y `tieneTablasClave` en la respuesta. Ahora arma VARIAS líneas
- * con info concreta: si se pudo leer, cuántas partes trae, si incluye las partes clave del
- * negocio, y (si se le pasa `etiquetaBackup`) la fecha/tamaño del resguardo elegido, para
- * que el resultado quede completo sin tener que mirar la lista de arriba de nuevo.
- *
- * "Partes de información" es el término en criollo para lo que el motor cuenta como
- * `cantidadTablas` (P-1: nunca se dice "tablas" en pantalla, es jerga de base de datos).
- *
- * @param {{valido: boolean, motivo: string|null, cantidadTablas: number, tieneTablasClave: boolean}} resultado
- * @param {string|null} [etiquetaBackup] - "Resguardo del <fecha> — <tamaño>" del resguardo elegido (opcional).
- * @returns {{valido: boolean, lineas: string[]}}
- */
-export function construirTextoVerificacionRestore({ valido, motivo, cantidadTablas, tieneTablasClave }, etiquetaBackup) {
-    if (!valido) {
-        return { valido: false, lineas: [motivo || "Este resguardo no se puede usar."] };
-    }
-
-    const lineas = [];
-    if (etiquetaBackup) lineas.push(etiquetaBackup);
-
-    lineas.push("Se pudo leer sin problemas.");
-
-    const cantidad = Number(cantidadTablas) || 0;
-    lineas.push(cantidad === 1 ? "Trae 1 parte de información." : `Trae ${cantidad} partes de información.`);
-
-    lineas.push(
-        tieneTablasClave
-            ? "Incluye reservas, clientes, facturas y la configuración."
-            : "No se pudo confirmar que traiga reservas, clientes, facturas y configuración: puede ser un " +
-              "resguardo de otro sistema o de una versión muy vieja. Revisá con cuidado antes de restaurar."
-    );
-
-    return { valido: true, lineas };
 }
 
 /**
@@ -207,14 +193,61 @@ export function construirTextoVerificacionRestore({ valido, motivo, cantidadTabl
  * que el resto de los textos de esta pantalla, y para que quien lo cambie tenga que
  * pensarlo como un texto de negocio, no como un detalle visual suelto.
  *
+ * Fix de review (unificación 2026-07-27, firmado): "Ver qué contiene" pasó a hacer lo mismo
+ * que antes hacía "Probar en una copia" (esa acción por separado desapareció, era lo mismo
+ * con otro nombre), y se agregó "Restaurar todo".
+ *
  * @returns {string[]}
  */
 export function construirExplicacionAccionesRestore() {
     return [
-        "Ver qué contiene: lee el resguardo sin tocar nada.",
-        "Probar en una copia: arma una copia aparte para mostrarte qué tiene, y la borra al terminar.",
+        "Ver qué contiene: arma una copia de prueba con este resguardo, te muestra el detalle y la borra al terminar. Pide la frase y la contraseña de abajo para confirmar.",
         "Restaurar configuración: repone en el sistema real solo las partes de configuración que estén vacías.",
+        "Restaurar todo: vuelve TODO el sistema al estado de este resguardo. Antes guarda un resguardo del estado actual.",
     ];
+}
+
+/**
+ * Detecta si un pedido a la API falló porque el motor está en medio de una restauración
+ * TOTAL (contrato nuevo, obra 2026-07-27: "mientras dura la restauración total, cualquier
+ * llamada a /api/** devuelve 503 con {code: 'MAINTENANCE'}"). La usa api.js, en el único
+ * lugar donde se arma el error de cualquier pedido fallido, para prender la pantalla de
+ * mantenimiento global sin importar qué pantalla estaba pidiendo qué cosa.
+ *
+ * OJO: el 503 SOLO se interpreta como mantenimiento si además viene con ese code exacto —
+ * un 503 "normal" (ej. la base de datos caída por otro motivo, ver isDatabaseUnavailableError
+ * en lib/errors.js) NO tiene que prender esta pantalla, porque ahí no hay ninguna
+ * restauración en curso de la que "esperar a que vuelva".
+ *
+ * @param {{status: number, code: string|null}} info
+ * @returns {boolean}
+ */
+export function esErrorDeMantenimiento({ status, code }) {
+    return status === 503 && code === "MAINTENANCE";
+}
+
+/**
+ * Arma el resumen de éxito del modo "total" (obra 2026-07-27 "Restaurar todo"): el motor
+ * manda un `mensaje` en criollo listo para mostrar TAL CUAL (mismo criterio que el resto
+ * de los textos del motor en esta pantalla), más `backupPrevio` (el resguardo del estado
+ * actual que se guardó automáticamente ANTES de restaurar, por si hay que volver atrás de
+ * esto) y `restauradoDe` (una etiqueta de qué resguardo se aplicó, según el motor). Acá NO
+ * se arma ni se traduce ese texto, solo se blindan los `null` para que la pantalla nunca
+ * muestre "undefined". OJO (T-5): el componente NO usa `restauradoDe` tal cual para
+ * mostrarlo en pantalla — arma su propia etiqueta con `construirEtiquetaBackup` a partir
+ * del resguardo que el propio usuario eligió, para no depender de que el motor mande un
+ * texto ya "limpio" de nombres técnicos. Este campo queda igual en el resumen por si algún
+ * consumidor futuro lo necesita.
+ *
+ * @param {{mensaje: string|null, backupPrevio: string|null, restauradoDe: string|null}} params
+ * @returns {{mensaje: string, backupPrevio: string|null, restauradoDe: string|null}}
+ */
+export function construirResumenExitoTotalRestore({ mensaje, backupPrevio, restauradoDe }) {
+    return {
+        mensaje: mensaje || "El sistema se restauró correctamente.",
+        backupPrevio: backupPrevio || null,
+        restauradoDe: restauradoDe || null,
+    };
 }
 
 /**
@@ -261,8 +294,8 @@ export function construirResumenExitoPruebaRestore({ conteos, advertencia }) {
  * Arma el resumen de éxito del modo "real" (fix de review 2026-07-27: el restore YA NO es
  * todo-o-nada, repone lo que está vacío y SALTEA lo que ya tenía datos). El motor arma un
  * `mensaje` en criollo listo para mostrar TAL CUAL (mismo criterio que el resto de los
- * textos del motor en esta pantalla, ver construirTextoVerificacionRestore) — dice qué se
- * repuso, qué se salteó por ya tener datos, y si corresponde agrega el aviso de que AFIP
+ * textos del motor en esta pantalla) — dice qué se repuso, qué se salteó por ya tener
+ * datos cargados, y si corresponde agrega el aviso de que AFIP
  * volvió forzado a homologación. Acá NO se arma ni se traduce nada de ese texto: solo se
  * detecta si conviene destacar visualmente el aviso de AFIP (`incluyeAfip`), buscando la
  * etiqueta de negocio de AFIP dentro de `tablasRestauradas` (que el motor ya manda

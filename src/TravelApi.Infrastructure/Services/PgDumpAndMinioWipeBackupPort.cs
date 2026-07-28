@@ -35,8 +35,25 @@ namespace TravelApi.Infrastructure.Services;
 /// </summary>
 public class PgDumpAndMinioWipeBackupPort : IWipeBackupPort
 {
-    /// <summary>Prefijo que identifica objetos que YA son backup de un wipe anterior — no se re-copian.</summary>
-    private const string WipeBackupPrefixMarker = "wipe-backup-";
+    /// <summary>
+    /// Prefijos que identifican objetos que YA son backup de una operación anterior — no se re-copian (evita
+    /// anidar backups-de-backups en operaciones sucesivas). <c>wipe-backup-</c> es de "Empezar de cero";
+    /// <c>pre-restore-backup-</c> (2026-07-28, hallazgo menor de la revisión funcional: "el resguardo previo
+    /// de un restore total era indistinguible de un wipe en la lista") es el resguardo automático que
+    /// <c>SystemDataRestoreService</c> genera del estado ACTUAL antes de una restauración TOTAL.
+    /// </summary>
+    private static readonly string[] KnownBackupPrefixMarkers = { "wipe-backup-", "pre-restore-backup-" };
+
+    /// <summary>
+    /// Defaults expuestos <c>internal</c> (con <c>InternalsVisibleTo("TravelApi.Tests")</c> ya configurado)
+    /// para que el test guardián de la invariante de timeouts (<c>RestoreTotalTimeoutConfigurationTests</c>,
+    /// hallazgo B-N2(d)) los derive de ACÁ en vez de mantener números duplicados que se puedan desincronizar
+    /// en silencio si algún día se cambia el default acá sin actualizar el test.
+    /// </summary>
+    internal const int DefaultPgDumpTimeoutMinutes = 10;
+
+    /// <summary>Ver <see cref="DefaultPgDumpTimeoutMinutes"/>. Hallazgo B-N2(b): la copia de MinIO no tenía NINGÚN timeout propio antes de esta obra.</summary>
+    internal const int DefaultMinioCopyTimeoutMinutes = 5;
 
     private readonly IConfiguration _configuration;
     private readonly IMinioClient _minioClient;
@@ -129,7 +146,7 @@ public class PgDumpAndMinioWipeBackupPort : IWipeBackupPort
             return new WipeBackupResult(false, null, null, $"No se pudo acceder al directorio de backup: {ex.Message}");
         }
 
-        var timeoutMinutes = _configuration.GetValue<int?>("Wipe:PgDumpTimeoutMinutes") ?? 10;
+        var timeoutMinutes = _configuration.GetValue<int?>("Wipe:PgDumpTimeoutMinutes") ?? DefaultPgDumpTimeoutMinutes;
 
         var startInfo = new ProcessStartInfo
         {
@@ -247,6 +264,69 @@ public class PgDumpAndMinioWipeBackupPort : IWipeBackupPort
         return new WipeBackupResult(true, null, null, null);
     }
 
+    /// <summary>
+    /// Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B5 de seguridad, "los archivos no vuelven"):
+    /// repone en el bucket VIVO los objetos que estén bajo <paramref name="minioPrefix"/>, best-effort por
+    /// objeto (ver el comentario XML de <see cref="IWipeBackupPort.RestoreObjectsFromBackupPrefixAsync"/>).
+    /// </summary>
+    public async Task<int> RestoreObjectsFromBackupPrefixAsync(string minioPrefix, CancellationToken ct)
+    {
+        var bucket = _configuration["Minio:BucketName"] ?? _configuration["MINIO_BUCKET_NAME"] ?? "reservations";
+
+        List<string> keysToRestore;
+        try
+        {
+            var listArgs = new ListObjectsArgs().WithBucket(bucket).WithPrefix(minioPrefix).WithRecursive(true);
+            keysToRestore = new List<string>();
+            await foreach (var item in _minioClient.ListObjectsEnumAsync(listArgs, ct))
+            {
+                if (!item.IsDir)
+                {
+                    keysToRestore.Add(item.Key);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Restaurar TOTAL: fallo listando los objetos del backup {Prefix} para reponerlos.", minioPrefix);
+            return 0;
+        }
+
+        var restoredCount = 0;
+        foreach (var backupKey in keysToRestore)
+        {
+            if (backupKey.Length <= minioPrefix.Length)
+            {
+                continue;
+            }
+
+            var originalKey = backupKey[minioPrefix.Length..];
+
+            try
+            {
+                var copySource = new CopySourceObjectArgs().WithBucket(bucket).WithObject(backupKey);
+                var copyArgs = new CopyObjectArgs().WithBucket(bucket).WithObject(originalKey).WithCopyObjectSource(copySource);
+                await _minioClient.CopyObjectAsync(copyArgs, ct);
+
+                var statArgs = new StatObjectArgs().WithBucket(bucket).WithObject(originalKey);
+                await _minioClient.StatObjectAsync(statArgs, ct);
+
+                restoredCount++;
+            }
+            catch (Exception ex)
+            {
+                // Best-effort A PROPOSITO: un archivo que no se pudo reponer es una perdida ACOTADA a ese
+                // adjunto puntual, nunca motivo para abortar el resto de la reposicion ni para revertir la
+                // restauracion de la base, que ya fue exitosa en este punto.
+                _logger.LogWarning(ex,
+                    "Restaurar TOTAL: no se pudo reponer el archivo {OriginalKey} desde el backup {BackupKey}.",
+                    originalKey, backupKey);
+            }
+        }
+
+        return restoredCount;
+    }
+
     private static void TryKillProcess(Process process)
     {
         try
@@ -271,10 +351,27 @@ public class PgDumpAndMinioWipeBackupPort : IWipeBackupPort
     /// <para>Si un objeto individual falla la copia o la verificación, el backup se reporta como fallido. Los
     /// objetos YA copiados con éxito antes del fallo quedan como copias sueltas en el prefijo (basura
     /// inofensiva: ningún original se tocó, así que no hay pérdida de dato ni inconsistencia).</para>
+    ///
+    /// <para><b>Timeout propio (hallazgo B-N2(b), 2026-07-28)</b>: antes, esta copia (que puede recorrer TODO
+    /// el bucket, un bucket grande con miles de vouchers/adjuntos) no tenía ningún límite de tiempo propio —
+    /// solo dependía del <c>ct</c> del caller. Mientras el modo total sostiene el candado de mantenimiento
+    /// DESDE ANTES de esta llamada (ver <c>SystemDataRestoreService.ExecuteTotalRestoreAsync</c>), un bucket
+    /// enorme o una red lenta hacia MinIO podía colgar el sistema entero indefinidamente, sosteniendo el
+    /// candado sin que ningún timeout lo cortara. <c>Wipe:MinioCopyTimeoutMinutes</c> (default
+    /// <see cref="DefaultMinioCopyTimeoutMinutes"/>) acota esto — igual que el patrón de <c>RunPgDumpAsync</c>,
+    /// el timeout está LINKEADO al <paramref name="ct"/> del caller (a diferencia del <c>pg_restore</c> total,
+    /// acá SÍ es seguro heredar la cancelación del caller: esta copia solo toca objetos NUEVOS en el mismo
+    /// bucket, nunca datos en uso — cancelarla a mitad de camino dejaría, como mucho, copias sueltas
+    /// incompletas en el prefijo de backup, basura inofensiva, nunca una base a medio reemplazar).</para>
     /// </summary>
     private async Task<WipeBackupResult> CopyMinioObjectsAsync(string minioPrefix, CancellationToken ct)
     {
         var bucket = _configuration["Minio:BucketName"] ?? _configuration["MINIO_BUCKET_NAME"] ?? "reservations";
+        var timeoutMinutes = _configuration.GetValue<int?>("Wipe:MinioCopyTimeoutMinutes") ?? DefaultMinioCopyTimeoutMinutes;
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
+        var timeoutToken = timeoutCts.Token;
 
         try
         {
@@ -283,16 +380,16 @@ public class PgDumpAndMinioWipeBackupPort : IWipeBackupPort
                 .WithRecursive(true);
 
             var keysToCopy = new List<string>();
-            await foreach (var item in _minioClient.ListObjectsEnumAsync(listArgs, ct))
+            await foreach (var item in _minioClient.ListObjectsEnumAsync(listArgs, timeoutToken))
             {
                 if (item.IsDir)
                 {
                     continue;
                 }
 
-                // Ya es backup de un wipe anterior: no lo volvemos a copiar (evita anidar prefijos en wipes
-                // sucesivos, ej. "wipe-backup-A/wipe-backup-B/archivo").
-                if (item.Key.StartsWith(WipeBackupPrefixMarker, StringComparison.Ordinal))
+                // Ya es backup de una operacion anterior (wipe o restore total): no lo volvemos a copiar
+                // (evita anidar prefijos en operaciones sucesivas, ej. "wipe-backup-A/wipe-backup-B/archivo").
+                if (KnownBackupPrefixMarkers.Any(marker => item.Key.StartsWith(marker, StringComparison.Ordinal)))
                 {
                     continue;
                 }
@@ -312,18 +409,25 @@ public class PgDumpAndMinioWipeBackupPort : IWipeBackupPort
                     .WithBucket(bucket)
                     .WithObject(destinationKey)
                     .WithCopyObjectSource(copySource);
-                await _minioClient.CopyObjectAsync(copyArgs, ct);
+                await _minioClient.CopyObjectAsync(copyArgs, timeoutToken);
 
                 // Verificacion OBLIGATORIA (fix bloqueante #1): confirmamos que la copia existe DE VERDAD en
                 // el destino antes de confiar en ella. Si esto tira, el catch de abajo aborta todo el backup
                 // (los originales, incluido este, siguen intactos - nunca se llamo a RemoveObject).
                 var statArgs = new StatObjectArgs().WithBucket(bucket).WithObject(destinationKey);
-                await _minioClient.StatObjectAsync(statArgs, ct);
+                await _minioClient.StatObjectAsync(statArgs, timeoutToken);
 
                 copiedKeys.Add(key);
             }
 
             return new WipeBackupResult(true, null, minioPrefix, null, copiedKeys);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            _logger.LogError(
+                "Empezar de cero: la copia de MinIO excedio el timeout de {Timeout} minutos. Los originales NO se tocaron.",
+                timeoutMinutes);
+            return new WipeBackupResult(false, null, null, $"La copia de archivos a MinIO excedio el timeout de {timeoutMinutes} minutos.");
         }
         catch (Exception ex)
         {

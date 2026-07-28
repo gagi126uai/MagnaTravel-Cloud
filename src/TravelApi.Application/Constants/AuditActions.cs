@@ -717,4 +717,20 @@ public static class AuditActions
 
     /// <summary>Parte B: entityName para los eventos de restauración (exitosa o rechazada).</summary>
     public const string SystemDataRestoreEntityName = "SystemDataRestore";
+
+    // ===== Obra "Restaurar TOTAL" (2026-07-28, firmada por el dueño) =====
+
+    /// <summary>
+    /// Un Admin ejecutó una restauración TOTAL: la base viva se reemplazó ENTERA por la foto de un backup
+    /// (con backup previo obligatorio del estado que se pisó, modo mantenimiento mientras duró, y todo dentro
+    /// de una única transacción de <c>pg_restore</c>). <b>Por qué este evento se escribe DESPUÉS del restore,
+    /// nunca dentro de la misma transacción</b> (a diferencia de <see cref="SystemDataWiped"/>): la tabla
+    /// <c>AuditLogs</c> también es parte de la base que se reemplaza — si este evento se escribiera ANTES o
+    /// DURANTE la restauración, la propia restauración lo borraría junto con todo lo demás. Se inserta recién
+    /// cuando la base YA está restaurada, así que queda como el primer registro de auditoría de la "nueva"
+    /// vida de esa base. El detail JSON lleva el archivo restaurado y el nombre del backup previo (el
+    /// "deshacer del deshacer") — NUNCA la contraseña. EntityName=<see cref="SystemDataRestoreEntityName"/>
+    /// (mismo entityName que Parte B: sigue siendo una restauración, solo que de alcance total).
+    /// </summary>
+    public const string SystemDataTotallyRestored = "SystemDataTotallyRestored";
 }

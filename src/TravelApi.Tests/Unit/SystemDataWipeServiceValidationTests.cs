@@ -67,6 +67,8 @@ public class SystemDataWipeServiceValidationTests
             => Task.FromResult(new WipeBackupResult(true, backupFileName, minioPrefix, null));
 
         public Task RemoveOriginalObjectsAsync(WipeBackupResult backupResult, CancellationToken ct) => Task.CompletedTask;
+
+        public Task<int> RestoreObjectsFromBackupPrefixAsync(string minioPrefix, CancellationToken ct) => Task.FromResult(0);
     }
 
     private sealed class AlwaysFailsBackupPort : IWipeBackupPort
@@ -75,6 +77,8 @@ public class SystemDataWipeServiceValidationTests
             => Task.FromResult(new WipeBackupResult(false, null, null, "boom (detalle tecnico que NUNCA debe llegar al usuario)"));
 
         public Task RemoveOriginalObjectsAsync(WipeBackupResult backupResult, CancellationToken ct) => Task.CompletedTask;
+
+        public Task<int> RestoreObjectsFromBackupPrefixAsync(string minioPrefix, CancellationToken ct) => Task.FromResult(0);
     }
 
     [Fact]
