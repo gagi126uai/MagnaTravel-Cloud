@@ -66,14 +66,38 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
 
         // El indice (TOC) de pg_restore --list lista una linea por objeto restaurable, con el tipo de objeto
         // en mayusculas (TABLE, INDEX, CONSTRAINT, etc). Contamos solo las lineas de tabla para "cuantas
-        // tablas trae este backup", y buscamos algunas tablas clave (con comillas, porque son PascalCase y
-        // Postgres las guarda con comillas) para dar una señal rapida de "esto es un backup de este sistema".
+        // tablas trae este backup", y buscamos algunas tablas clave para dar una señal rapida de "esto es
+        // un backup de este sistema".
         var lines = stdout!.Split('\n');
         var tableCount = lines.Count(line => line.Contains(" TABLE ", StringComparison.Ordinal));
-        var keyTables = new[] { "\"TravelFiles\"", "\"Customers\"", "\"Invoices\"", "\"AgencySettings\"" };
-        var hasKeyTables = keyTables.Any(key => stdout.Contains(key, StringComparison.Ordinal));
+        var tableNames = ParseTableNamesFromToc(stdout);
+        var keyTables = new[] { "TravelFiles", "Customers", "Invoices", "AgencySettings" };
+        var hasKeyTables = keyTables.Any(key => tableNames.Contains(key, StringComparer.Ordinal));
 
         return new RestoreVerifyResult(true, null, tableCount, hasKeyTables);
+    }
+
+    /// <summary>
+    /// Saca los nombres de tabla del indice (TOC) que imprime <c>pg_restore --list</c>. Cada linea de tabla
+    /// tiene la forma <c>"215; 1259 16456 TABLE public TravelFiles traveluser"</c>: el nombre va DOS lugares
+    /// despues del token TABLE (primero el schema). OJO: el TOC los imprime SIN comillas aunque sean
+    /// PascalCase — buscarlos entrecomillados daba siempre "no encontrado" y hacia que un resguardo sano se
+    /// reportara como sospechoso ("podria faltarle alguna parte clave").
+    /// </summary>
+    internal static IReadOnlyList<string> ParseTableNamesFromToc(string toc)
+    {
+        var nombres = new List<string>();
+        foreach (var line in toc.Split('\n'))
+        {
+            var partes = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var idx = Array.IndexOf(partes, "TABLE");
+            if (idx >= 0 && idx + 2 < partes.Length)
+            {
+                nombres.Add(partes[idx + 2]);
+            }
+        }
+
+        return nombres;
     }
 
     public async Task<ShadowRestoreResult> RestoreToShadowDatabaseAsync(string fileName, CancellationToken ct)
