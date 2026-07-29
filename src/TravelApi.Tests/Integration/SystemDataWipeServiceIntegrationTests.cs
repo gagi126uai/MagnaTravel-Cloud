@@ -831,7 +831,9 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
 
     private static async Task<int> CountRowsAsync(AppDbContext ctx, string table)
     {
-        return await ctx.Database.SqlQueryRaw<int>($"""SELECT COUNT(*)::int AS "Value" FROM "{table}";""").FirstAsync();
+        // OJO: sin ";" final — EF envuelve este SQL en una subconsulta al componer FirstAsync() (le agrega su
+        // propio LIMIT), y un ";" adentro de la subconsulta es error de sintaxis en Postgres (42601).
+        return await ctx.Database.SqlQueryRaw<int>($"""SELECT COUNT(*)::int AS "Value" FROM "{table}" """).FirstAsync();
     }
 
     [Fact]
