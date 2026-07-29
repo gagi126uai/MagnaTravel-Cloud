@@ -168,11 +168,13 @@ limpiar_temporales() {
 }
 trap limpiar_temporales EXIT
 
+# OJO: quien llama hace `VAR="$(nuevo_temporal)"`, y la sustitucion de comando corre en una
+# SUB-SHELL: un `TMP_FILES+=` hecho aca adentro moriria con la sub-shell y el trap de limpieza
+# nunca se enteraria del archivo (visto en el VPS real, 2026-07-29: el trap corria siempre con
+# la lista vacia). Por eso el registro lo hace el LLAMADOR, en el shell padre:
+#   VAR="$(nuevo_temporal)"; TMP_FILES+=("${VAR}")
 nuevo_temporal() {
-  local t
-  t="$(mktemp)"
-  TMP_FILES+=("${t}")
-  printf '%s' "${t}"
+  mktemp
 }
 
 # ----------------------------------------------------------------------------
@@ -272,6 +274,7 @@ resolver_config() {
   # contra el archivo real. Todo el analisis se hace contra esta copia; el
   # archivo real solo se toca al escribir.
   CLEAN_FILE="$(nuevo_temporal)"
+  TMP_FILES+=("${CLEAN_FILE}")
   sed 's/#.*$//' "${REAL_FILE}" > "${CLEAN_FILE}"
 
   # El patron acepta proxy_pass al principio de la linea O despues de '{' / ';'
@@ -634,6 +637,7 @@ accion_aplicar() {
   NEW_RT="proxy_read_timeout ${TIMEOUT};"
   NEW_ST="proxy_send_timeout ${TIMEOUT};"
   TMP_FILE="$(nuevo_temporal)"
+  TMP_FILES+=("${TMP_FILE}")
 
   # UNA sola pasada por el archivo, atendiendo a todos los locations:
   #   upd_rt / upd_st : lineas donde hay que REEMPLAZAR el valor existente
