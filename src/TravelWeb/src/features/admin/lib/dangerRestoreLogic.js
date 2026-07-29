@@ -15,7 +15,10 @@
  *   devuelve TODO el sistema al estado del resguardo elegido. A diferencia de los otros
  *   dos modos, mientras esta restauración corre el motor tumba TODA la API con 503
  *   ({code: "MAINTENANCE"}) — por eso este modo prende la pantalla de mantenimiento
- *   global (ver maintenanceState.js y MaintenanceScreen.jsx) apenas se confirma.
+ *   global (ver maintenanceState.js y MaintenanceScreen.jsx) apenas se confirma. Además,
+ *   por ser la operación más destructiva del sistema, el motor exige un motivo (mínimo
+ *   10 caracteres) de por qué se ejecuta — bug reportado por el dueño 2026-07-28: esto ya
+ *   se exigía en el motor pero la pantalla nunca tuvo el campo para cargarlo.
  *
  * T-5 (nunca nombres técnicos en pantalla): el PEDIDO (POST /restore) todavía manda los 5
  * nombres técnicos de tabla en `tablas` (son la lista blanca que valida el backend contra
@@ -37,6 +40,13 @@ export const FRASE_CONFIRMACION_RESTORE = "RESTAURAR TODO";
 export const RESTORE_MODO_PRUEBA = "prueba";
 export const RESTORE_MODO_REAL = "real";
 export const RESTORE_MODO_TOTAL = "total";
+
+// Bug reportado por el dueño (2026-07-28): el motor YA exigía este motivo (contrato
+// SystemDataRestoreRequest.Motivo, obligatorio y con este mínimo SOLO para modo "total" —
+// hallazgo de seguridad B6/F-16: la operación más destructiva del sistema tiene que quedar
+// auditada con el POR QUÉ), pero la pantalla nunca tuvo el campo para cargarlo. Este número
+// tiene que coincidir con el mínimo que valida el backend.
+export const MOTIVO_RESTAURAR_TODO_MIN_LENGTH = 10;
 
 // Nombres TÉCNICOS de las 5 tablas de configuración que se mandan en el PEDIDO (POST
 // /admin/danger/restore, campo `tablas`) cuando modo="real" — tienen que coincidir con
@@ -131,6 +141,44 @@ export function construirMotivoRestoreDeshabilitado({ archivoSeleccionado, frase
     if (frase !== FRASE_CONFIRMACION_RESTORE) return `Escribí la frase exacta "${FRASE_CONFIRMACION_RESTORE}" para confirmar.`;
     if (!password) return "Cargá tu contraseña para confirmar.";
     return null;
+}
+
+/**
+ * Fix de bug reportado por el dueño (2026-07-28, P-9/T-5): "Restaurar todo" es el único de
+ * los tres modos donde el motor exige un motivo (mínimo 10 caracteres, recortando espacios
+ * en los extremos igual que hace el backend con `Trim()`) — los otros dos modos lo ignoran,
+ * así que esta validación no les aplica.
+ *
+ * @param {string} motivo
+ * @returns {boolean}
+ */
+export function motivoRestaurarTodoEsValido(motivo) {
+    return typeof motivo === "string" && motivo.trim().length >= MOTIVO_RESTAURAR_TODO_MIN_LENGTH;
+}
+
+/**
+ * Motivo por el que el botón "Restaurar todo" en particular sigue apagado, en el mismo
+ * criterio "prohibido tooltip" (P-9) que `construirMotivoRestoreDeshabilitado`. A diferencia
+ * de aquel (compartido por los tres botones: resguardo/frase/contraseña), este helper es
+ * SOLO el delta extra que exige el modo "total" — el motivo del porqué. El componente decide
+ * cuándo conviene mostrar este texto (nunca junto al motivo genérico de los tres botones, así
+ * no queda duplicado): acá no hace falta saber nada de ese otro gate.
+ *
+ * Fix de review (B4): antes esta función recibía también `motivoAccionDeshabilitada` y lo
+ * reenviaba tal cual cuando estaba presente — una rama que nunca se alcanzaba en la práctica,
+ * porque el componente ya oculta este texto con `!motivoAccionDeshabilitada &&` antes de
+ * siquiera mirar este valor. Se saca esa rama muerta y el helper queda como lo que
+ * realmente es: la validación del motivo, nada más.
+ *
+ * @param {string} motivoRestaurarTodo - lo que el usuario tipeó en "¿Por qué restaurás?".
+ * @returns {string|null}
+ */
+export function construirMotivoRestaurarTodoDeshabilitado(motivoRestaurarTodo) {
+    if (motivoRestaurarTodoEsValido(motivoRestaurarTodo)) return null;
+    // Fix de review (B2/P-9): el hint vive debajo de una fila de TRES botones — sin nombrar
+    // la acción, el admin no sabe a cuál de los tres se refiere. Unificamos "caracteres" acá
+    // (antes decía "letras"), igual que el error inline de este mismo campo.
+    return `Para "Restaurar todo" falta escribir el motivo (mínimo ${MOTIVO_RESTAURAR_TODO_MIN_LENGTH} caracteres).`;
 }
 
 /**

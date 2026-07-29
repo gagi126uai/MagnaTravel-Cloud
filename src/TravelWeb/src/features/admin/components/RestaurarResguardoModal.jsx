@@ -9,6 +9,7 @@ import { activateMaintenance, deactivateMaintenance } from "../../../maintenance
 import { BackupListItem } from "./BackupListItem";
 import {
     FRASE_CONFIRMACION_RESTORE,
+    MOTIVO_RESTAURAR_TODO_MIN_LENGTH,
     RESTORE_MODO_PRUEBA,
     RESTORE_MODO_REAL,
     RESTORE_MODO_TOTAL,
@@ -16,6 +17,8 @@ import {
     construirEtiquetaBackup,
     puedeConfirmarRestore,
     construirMotivoRestoreDeshabilitado,
+    construirMotivoRestaurarTodoDeshabilitado,
+    motivoRestaurarTodoEsValido,
     construirConfirmacionRestore,
     construirExplicacionAccionesRestore,
     construirResumenExitoPruebaRestore,
@@ -58,6 +61,9 @@ export function RestaurarResguardoModal({ onClose }) {
 
     const [frase, setFrase] = useState("");
     const [password, setPassword] = useState("");
+    // Bug reportado por el dueño (2026-07-28): el motor exige este motivo SOLO para
+    // "Restaurar todo" (los otros dos modos lo ignoran) — ver dangerRestoreLogic.js.
+    const [motivoRestaurarTodo, setMotivoRestaurarTodo] = useState("");
     const [accionEnCurso, setAccionEnCurso] = useState(null); // null | "prueba" | "real" | "total"
     const [rejectionMessage, setRejectionMessage] = useState(null);
     const [resultadoExitoso, setResultadoExitoso] = useState(null); // { modo, data }
@@ -100,8 +106,25 @@ export function RestaurarResguardoModal({ onClose }) {
         ? null
         : construirMotivoRestoreDeshabilitado({ archivoSeleccionado, frase, password });
 
+    // "Restaurar todo" es el único de los tres que además necesita el motivo (bug reportado
+    // por el dueño 2026-07-28) — por eso tiene su propio gate y su propio texto de ayuda.
+    // El helper de abajo es SOLO el delta del motivo (ya no recibe `motivoAccionDeshabilitada`):
+    // el render decide cuándo mostrarlo, más abajo, para no duplicar el aviso genérico.
+    const puedeConfirmarTotal = puedeConfirmar && motivoRestaurarTodoEsValido(motivoRestaurarTodo);
+    const motivoRestaurarTodoDeshabilitado = ejecutando
+        ? null
+        : construirMotivoRestaurarTodoDeshabilitado(motivoRestaurarTodo);
+
+    // Fix de review (P-15): mientras el usuario todavía no tipeó nada, no mostramos error ni
+    // marcamos el campo como inválido — recién cuando ya escribió algo pero no llega al
+    // mínimo, se lo señalamos (mismo criterio que el resto de los "motivo" del repo).
+    const motivoTotalEsCorto = motivoRestaurarTodo.length > 0 && !motivoRestaurarTodoEsValido(motivoRestaurarTodo);
+
     const handleRestaurar = async (modo) => {
-        if (!puedeConfirmar) return;
+        // "Restaurar todo" tiene un gate extra (el motivo) — los otros dos siguen con el
+        // gate genérico de siempre.
+        const puedeConfirmarEsteModo = modo === RESTORE_MODO_TOTAL ? puedeConfirmarTotal : puedeConfirmar;
+        if (!puedeConfirmarEsteModo) return;
 
         // Para el aviso durísimo del modo "total" hace falta la fecha del resguardo elegido
         // (ya formateada) — se busca en la lista que ya se tiene cargada, no hace falta
@@ -136,6 +159,9 @@ export function RestaurarResguardoModal({ onClose }) {
                 // Modo "real" solo puede tocar las 5 tablas de configuración conocidas —
                 // esta pantalla no ofrece elegir tablas sueltas, siempre pide las 5.
                 tablas: modo === RESTORE_MODO_REAL ? TABLAS_CONFIGURACION_RESTORE : undefined,
+                // Modo "total" es el único que el motor audita con el motivo — se manda
+                // recortado (Trim), igual que hace el backend, para no mandar espacios sueltos.
+                motivo: esModoTotal ? motivoRestaurarTodo.trim() : undefined,
             });
             setResultadoExitoso({ modo, data: resultado });
         } catch (error) {
@@ -407,6 +433,41 @@ export function RestaurarResguardoModal({ onClose }) {
                                 </p>
                             </div>
 
+                            {/* Fix de bug reportado por el dueño (2026-07-28): el motor ya exigía este motivo
+                                para "Restaurar todo" (queda en el historial, es la operación más destructiva
+                                del sistema) pero la pantalla nunca tuvo el campo. Fix de review (P-15): el
+                                alcance ("solo para Restaurar todo") va DENTRO del rótulo, no en una leyenda ni
+                                en un asterisco — un asterisco rojo acá mentiría para las otras dos acciones,
+                                que no piden este campo. */}
+                            <div>
+                                <label htmlFor="danger-restore-total-motivo-input" className="text-xs font-bold uppercase text-slate-500 mb-1 block">
+                                    Motivo — obligatorio para "Restaurar todo"
+                                </label>
+                                <textarea
+                                    id="danger-restore-total-motivo-input"
+                                    data-testid="danger-restore-total-motivo"
+                                    value={motivoRestaurarTodo}
+                                    onChange={(event) => setMotivoRestaurarTodo(event.target.value)}
+                                    disabled={ejecutando}
+                                    rows={2}
+                                    maxLength={1000}
+                                    placeholder="Contá en una frase el motivo; queda registrado en el historial."
+                                    aria-describedby={motivoTotalEsCorto ? "danger-restore-total-motivo-error" : undefined}
+                                    aria-invalid={motivoTotalEsCorto}
+                                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                                />
+                                {motivoTotalEsCorto && (
+                                    <div
+                                        id="danger-restore-total-motivo-error"
+                                        role="alert"
+                                        data-testid="danger-restore-total-motivo-error"
+                                        className="mt-1 text-xs text-rose-600"
+                                    >
+                                        El motivo debe tener al menos {MOTIVO_RESTAURAR_TODO_MIN_LENGTH} caracteres.
+                                    </div>
+                                )}
+                            </div>
+
                             <div className="flex flex-col gap-2 sm:flex-row">
                                 <button
                                     type="button"
@@ -436,7 +497,7 @@ export function RestaurarResguardoModal({ onClose }) {
                                     type="button"
                                     data-testid="danger-restore-total"
                                     onClick={() => handleRestaurar(RESTORE_MODO_TOTAL)}
-                                    disabled={!puedeConfirmar}
+                                    disabled={!puedeConfirmarTotal}
                                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
                                 >
                                     {accionEnCurso === RESTORE_MODO_TOTAL ? (
@@ -455,6 +516,17 @@ export function RestaurarResguardoModal({ onClose }) {
                                     data-testid="danger-restore-accion-hint"
                                 >
                                     {motivoAccionDeshabilitada}
+                                </p>
+                            )}
+                            {/* Motivo específico de "Restaurar todo": solo se muestra cuando el resto ya está
+                                OK (archivo/frase/contraseña) y lo único que falta es el motivo — si no, ya lo
+                                explica el texto de arriba y este quedaría duplicado. */}
+                            {!motivoAccionDeshabilitada && motivoRestaurarTodoDeshabilitado && (
+                                <p
+                                    className="text-xs font-medium text-amber-600 dark:text-amber-400"
+                                    data-testid="danger-restore-total-motivo-hint"
+                                >
+                                    {motivoRestaurarTodoDeshabilitado}
                                 </p>
                             )}
                         </>

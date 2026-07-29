@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     FRASE_CONFIRMACION_RESTORE,
+    MOTIVO_RESTAURAR_TODO_MIN_LENGTH,
     RESTORE_MODO_PRUEBA,
     RESTORE_MODO_REAL,
     RESTORE_MODO_TOTAL,
@@ -10,6 +11,8 @@ import {
     construirEtiquetaBackup,
     puedeConfirmarRestore,
     construirMotivoRestoreDeshabilitado,
+    motivoRestaurarTodoEsValido,
+    construirMotivoRestaurarTodoDeshabilitado,
     construirConfirmacionRestore,
     construirExplicacionAccionesRestore,
     esErrorDeMantenimiento,
@@ -80,6 +83,41 @@ test("construirMotivoRestoreDeshabilitado: con resguardo y frase pero sin passwo
 
 test("construirMotivoRestoreDeshabilitado: todo en orden, no hay motivo (null)", () => {
     const motivo = construirMotivoRestoreDeshabilitado({ archivoSeleccionado: "wipe-20260727-101500.dump", frase: FRASE_CONFIRMACION_RESTORE, password: "1234" });
+    assert.equal(motivo, null);
+});
+
+test("motivoRestaurarTodoEsValido: vacio o corto no alcanza", () => {
+    assert.equal(motivoRestaurarTodoEsValido(""), false);
+    assert.equal(motivoRestaurarTodoEsValido("corto"), false);
+    assert.equal(motivoRestaurarTodoEsValido(null), false);
+    assert.equal(motivoRestaurarTodoEsValido(undefined), false);
+});
+
+test("motivoRestaurarTodoEsValido: exactamente el minimo (recortando espacios) ya alcanza", () => {
+    const motivoJusto = "a".repeat(MOTIVO_RESTAURAR_TODO_MIN_LENGTH);
+    assert.equal(motivoRestaurarTodoEsValido(motivoJusto), true);
+    // Mismo criterio que el backend (Trim antes de medir): los espacios de los extremos
+    // no cuentan como parte del motivo.
+    assert.equal(motivoRestaurarTodoEsValido(`  ${motivoJusto}  `), true);
+    assert.equal(motivoRestaurarTodoEsValido(" ".repeat(MOTIVO_RESTAURAR_TODO_MIN_LENGTH)), false);
+});
+
+test("construirMotivoRestaurarTodoDeshabilitado: motivo vacio, pide escribirlo nombrando la accion (fila de 3 botones, P-9)", () => {
+    const motivo = construirMotivoRestaurarTodoDeshabilitado("");
+    assert.equal(
+        motivo,
+        `Para "Restaurar todo" falta escribir el motivo (mínimo ${MOTIVO_RESTAURAR_TODO_MIN_LENGTH} caracteres).`
+    );
+});
+
+test("construirMotivoRestaurarTodoDeshabilitado: motivo corto, mismo aviso que vacio", () => {
+    const motivo = construirMotivoRestaurarTodoDeshabilitado("corto");
+    assert.ok(motivo.includes("caracteres"));
+    assert.equal(motivo.toLowerCase().includes("letras"), false);
+});
+
+test("construirMotivoRestaurarTodoDeshabilitado: motivo valido, no hay motivo de bloqueo (null)", () => {
+    const motivo = construirMotivoRestaurarTodoDeshabilitado("Se detectó un problema y hay que volver atrás");
     assert.equal(motivo, null);
 });
 
