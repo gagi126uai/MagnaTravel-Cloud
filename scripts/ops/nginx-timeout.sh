@@ -5,15 +5,23 @@ set -euo pipefail
 # QUE ES ESTO
 # ----------------------------------------------------------------------------
 # Ajusta de forma segura y auditada el proxy_read_timeout/proxy_send_timeout
-# del nginx del HOST (Ubuntu, fuera de este repo, en /etc/nginx del VPS) para
-# el location que hace de reverse-proxy hacia el contenedor "web" del
-# backoffice (backoffice.magnaviajesyturismo.com). Ver docs/db-operations.md,
-# seccion "Requisito OBLIGATORIO antes de usar la restauracion total en
-# produccion (nginx del HOST)".
+# del nginx del HOST (Ubuntu, fuera de este repo, en /etc/nginx del VPS) en
+# TODOS los locations que hacen de reverse-proxy del vhost del backoffice
+# (backoffice.magnaviajesyturismo.com). Ver docs/db-operations.md, seccion
+# "Requisito OBLIGATORIO antes de usar la restauracion total en produccion
+# (nginx del HOST)".
 #
 # Motivo: el default de nginx (60s) corta la restauracion total del sistema
 # (que puede tardar varios minutos) antes de que termine, dejando un
 # pg_restore huerfano en el contenedor.
+#
+# POR QUE TODOS LOS LOCATIONS Y NO UNO
+#   El vhost real tiene el layout clasico: `location /` hacia el contenedor de
+#   la web y `location /api` hacia el de la API. El que importa para la
+#   restauracion es el de la API, pero identificar "cual es el de la API" por
+#   el nombre del path seria adivinar. Se tocan todos: un timeout largo en el
+#   proxy de la web estatica es inofensivo (solo cambia cuanto espera nginx a
+#   un upstream que no contesta, y esos contestan en milisegundos).
 #
 # QUIEN LO CORRE
 #   Este script asume que YA esta corriendo como root. NO se corre desde el
@@ -22,32 +30,35 @@ set -euo pipefail
 #   workflow .github/workflows/ops-nginx.yml invoca esa copia instalada.
 #
 # ACCIONES
-#   ver       : SOLO LECTURA. nginx -v, listado de sites-enabled/available,
-#               y el resultado de la deteccion del archivo/location (sin
-#               modificar nada).
-#   aplicar   : detecta el archivo y el location con CERTEZA (fail-closed: si
-#               hay ambiguedad, aborta sin tocar nada); hace backup con
-#               timestamp en /var/backups/nginx; inserta o actualiza
-#               proxy_read_timeout/proxy_send_timeout a 2700s SOLO en ese
-#               location; corre `nginx -t`; si falla, RESTAURA el backup y
-#               aborta; si pasa, hace `systemctl reload nginx` (nunca
-#               restart) y verifica. Requiere confirmacion exacta: APLICAR.
+#   ver       : SOLO LECTURA. nginx -v, listado de sites-enabled/available, y
+#               CADA location detectado (rango de lineas, sus proxy_*timeout
+#               actuales y el bloque completo), sin modificar nada.
+#   aplicar   : detecta el archivo y TODOS sus locations con proxy_pass activo
+#               (fail-closed: si hay ambiguedad, aborta sin tocar nada); hace
+#               UN backup del archivo entero con timestamp en
+#               /var/backups/nginx; inserta o actualiza
+#               proxy_read_timeout/proxy_send_timeout a 2700s en CADA uno de
+#               esos locations, en una sola pasada; corre `nginx -t` UNA vez;
+#               si falla, RESTAURA el backup y aborta; si pasa, hace
+#               `systemctl reload nginx` UNA vez (nunca restart) y verifica.
+#               Requiere confirmacion exacta: APLICAR.
 #   revertir  : restaura el backup MAS RECIENTE que dejo `aplicar` para el
-#               archivo detectado, corre `nginx -t`, reload, verifica.
+#               archivo detectado (el archivo ENTERO, o sea todos los
+#               locations juntos), corre `nginx -t`, reload, verifica.
 #               Requiere confirmacion exacta: REVERTIR.
 #
 # IDEMPOTENCIA
-#   Correr `aplicar` dos veces no duplica directivas: si ya existen
-#   proxy_read_timeout/proxy_send_timeout dentro del location detectado, se
-#   ACTUALIZA su valor en la misma linea en vez de agregar una nueva. Y si ya
-#   estan las dos en el valor objetivo, no hace nada (ni backup ni reload).
+#   Correr `aplicar` dos veces no duplica directivas: en cada location, si ya
+#   existen proxy_read_timeout/proxy_send_timeout se ACTUALIZA su valor en la
+#   misma linea en vez de agregar una nueva. Y si TODOS los locations ya
+#   tienen las dos en el valor objetivo, no hace nada (ni backup ni reload).
 #
 # FAIL-CLOSED
-#   Si no se puede determinar con certeza UN SOLO archivo y UN SOLO location
-#   (por ejemplo, mas de un proxy_pass en el archivo, ningun server_name que
-#   mencione el dominio, o un layout de location que este script no sabe
-#   editar sin riesgo), el script ABORTA con un mensaje claro. Nunca adivina
-#   ni edita "a ver si sale".
+#   Si no se puede determinar con certeza el archivo (ningun server_name activo
+#   que mencione el dominio, o el archivo no existe), o si CUALQUIERA de los
+#   locations con proxy_pass tiene un layout que este script no sabe editar sin
+#   riesgo, ABORTA con un mensaje claro y NO modifica nada: el archivo se edita
+#   entero o no se edita. Nunca adivina ni edita "a ver si sale".
 #
 # DONDE VAN LOS BACKUPS (y por que NO al lado del archivo)
 #   Los backups van a /var/backups/nginx/ (se crea si falta, root, 0700), con
@@ -174,14 +185,32 @@ valor_directiva() {
 }
 
 # ----------------------------------------------------------------------------
-# Encuentra CON CERTEZA el archivo de config y el rango de lineas del
-# location que hace de proxy hacia el backoffice, a partir de la config
-# ACTIVA de nginx (nginx -T), nunca adivinando por convencion de nombres.
+# Encuentra CON CERTEZA el archivo de config y TODOS los locations que hacen
+# de proxy en ese archivo, a partir de la config ACTIVA de nginx (nginx -T),
+# nunca adivinando por convencion de nombres.
+#
+# POR QUE VARIOS LOCATIONS (y no uno solo)
+#   El vhost real del backoffice tiene el layout clasico: un `location /` que
+#   proxypasea al contenedor de la web y un `location /api` que proxypasea al
+#   contenedor de la API. Antes este script exigia EXACTAMENTE 1 proxy_pass y
+#   abortaba en ese vhost. Ahora acepta N: pone el timeout largo en TODOS los
+#   locations con proxy_pass del archivo. El que de verdad importa es el de la
+#   API (por ahi va la restauracion total); un timeout largo en el proxy de la
+#   web estatica es inofensivo (solo cambia cuanto espera nginx a un upstream
+#   que no contesta, y esos responden en milisegundos).
+#
 # Deja el resultado en las variables globales:
 #   CONFIG_FILE  : la ruta tal cual la reporta nginx -T (puede ser un symlink)
 #   REAL_FILE    : el archivo REAL a editar (symlink ya resuelto)
 #   CLEAN_FILE   : copia temporal de REAL_FILE sin comentarios (para analizar)
-#   LOCATION_LINE, BLOCK_END, RT_LINE (o vacio), ST_LINE (o vacio), INDENT
+#   BASE_NAME    : nombre del archivo real (para nombrar los backups)
+#   arrays paralelos, uno por location con proxy_pass activo:
+#     LOC_START[]  linea del 'location'
+#     LOC_END[]    linea del '}' que lo cierra
+#     LOC_PROXY[]  linea de su proxy_pass
+#     LOC_RT[]     linea de su proxy_read_timeout, o "" si no lo tiene
+#     LOC_ST[]     linea de su proxy_send_timeout, o "" si no lo tiene
+#     LOC_INDENT[] sangria a usar si hay que insertar lineas nuevas
 # Devuelve 1 y explica el motivo si no puede determinarlo con certeza.
 # ----------------------------------------------------------------------------
 resolver_config() {
@@ -245,93 +274,151 @@ resolver_config() {
   # "0 proxy_pass" y el script abortaria con un mensaje enganoso, en vez de
   # con el mensaje claro de "este layout de location no esta contemplado".
   # El [[:space:]] final evita confundirlo con proxy_pass_header.
-  PROXY_COUNT="$(grep -cE '(^|[{;])[[:space:]]*proxy_pass[[:space:]]' "${CLEAN_FILE}" || true)"
-  if [ "${PROXY_COUNT:-0}" != "1" ]; then
-    echo "ERROR: se esperaba EXACTAMENTE 1 'proxy_pass' activo (sin contar comentarios) en ${REAL_FILE} para identificar el location con certeza; se encontraron ${PROXY_COUNT:-0}."
-    echo "Fail-closed: no se adivina cual location tocar. Resolver manualmente y, si hace falta, ajustar este script."
+  # Todos los proxy_pass ACTIVOS (los comentados ya no estan en CLEAN_FILE).
+  # El patron acepta proxy_pass al principio de la linea O despues de '{' / ';'
+  # (o sea, tambien el caso "location / { proxy_pass ...; }" de una sola
+  # linea). Si se buscara SOLO al principio de la linea, ese layout daria
+  # "0 proxy_pass" y el script abortaria con un mensaje enganoso, en vez de
+  # con el mensaje claro de "este layout de location no esta contemplado".
+  # El [[:space:]] final evita confundirlo con proxy_pass_header.
+  PROXY_LINES=()
+  mapfile -t PROXY_LINES < <(grep -nE '(^|[{;])[[:space:]]*proxy_pass[[:space:]]' "${CLEAN_FILE}" | cut -d: -f1)
+
+  if [ "${#PROXY_LINES[@]}" -eq 0 ]; then
+    echo "ERROR: no se encontro ningun 'proxy_pass' activo (sin contar comentarios) en ${REAL_FILE}."
+    echo "Fail-closed: si este vhost no proxypasea a ningun lado, no hay nada que este script deba tocar."
     return 1
   fi
 
-  PROXY_LINE="$(grep -nE '(^|[{;])[[:space:]]*proxy_pass[[:space:]]' "${CLEAN_FILE}" | cut -d: -f1)"
+  LOC_START=(); LOC_END=(); LOC_PROXY=(); LOC_RT=(); LOC_ST=(); LOC_INDENT=()
+  local pl loc_line loc_text block_end indent ya j problemas=0
 
-  LOCATION_LINE="$(awk -v proxy_line="${PROXY_LINE}" '
-    /^[[:space:]]*location[[:space:]]/ { loc = NR }
-    NR == proxy_line { print loc; exit }
-  ' "${CLEAN_FILE}")"
+  for pl in "${PROXY_LINES[@]}"; do
+    loc_line="$(awk -v proxy_line="${pl}" '
+      /^[[:space:]]*location[[:space:]]/ { loc = NR }
+      NR == proxy_line { print loc; exit }
+    ' "${CLEAN_FILE}")"
 
-  if [ -z "${LOCATION_LINE:-}" ]; then
-    echo "ERROR: no se encontro un bloque 'location' que contenga la linea del proxy_pass (linea ${PROXY_LINE}) en ${REAL_FILE}."
+    if [ -z "${loc_line}" ]; then
+      echo "ERROR: el proxy_pass de la linea ${pl} de ${REAL_FILE} no esta dentro de ningun bloque 'location'"
+      echo "  (esta suelto a nivel server). Este layout no esta contemplado: editalo a mano segun docs/db-operations.md."
+      problemas=$((problemas + 1))
+      continue
+    fi
+
+    # Dos proxy_pass en el MISMO location: se registra una sola vez.
+    ya=""
+    for j in "${!LOC_START[@]}"; do
+      if [ "${LOC_START[$j]}" = "${loc_line}" ]; then ya="si"; break; fi
+    done
+    if [ -n "${ya}" ]; then
+      continue
+    fi
+
+    # --------------------------------------------------------------------
+    # Layouts de 'location' que este script NO sabe editar sin romper algo.
+    # Se aborta TODO (ver el chequeo de 'problemas' al final): el archivo se
+    # edita entero o no se edita, nunca a medias.
+    #  (a) location y su bloque en UNA sola linea -> insertar "despues de la
+    #      linea del location" dejaria las directivas FUERA del location, con
+    #      alcance de server entero. Silencioso: nginx -t pasa igual.
+    #  (b) la llave de apertura en la linea SIGUIENTE -> insertar despues de
+    #      la linea del location las meteria ENTRE el 'location' y su '{'.
+    #      Ahi nginx -t falla, pero con un error que no explica nada.
+    # --------------------------------------------------------------------
+    loc_text="$(sed -n "${loc_line}p" "${CLEAN_FILE}")"
+    if ! printf '%s' "${loc_text}" | grep -q '{'; then
+      echo "ERROR: el 'location' de la linea ${loc_line} de ${REAL_FILE} abre la llave '{' en OTRA linea."
+      echo "  Este layout de location no esta contemplado por este script: editalo a mano segun docs/db-operations.md."
+      problemas=$((problemas + 1))
+      continue
+    fi
+    if printf '%s' "${loc_text}" | grep -q '}'; then
+      echo "ERROR: el 'location' de la linea ${loc_line} de ${REAL_FILE} abre y cierra en la MISMA linea (bloque de una sola linea)."
+      echo "  Este layout de location no esta contemplado por este script: editalo a mano segun docs/db-operations.md."
+      problemas=$((problemas + 1))
+      continue
+    fi
+
+    # Cierre del bloque contando llaves sobre la copia SIN comentarios (una
+    # llave dentro de un comentario no cuenta).
+    block_end="$(awk -v start="${loc_line}" '
+      BEGIN { depth = 0 }
+      NR < start { next }
+      {
+        depth += gsub(/\{/, "{")
+        depth -= gsub(/\}/, "}")
+        if (depth == 0) { print NR; exit }
+      }
+    ' "${CLEAN_FILE}")"
+
+    if [ -z "${block_end}" ]; then
+      echo "ERROR: no se pudo determinar el cierre del bloque location de la linea ${loc_line} en ${REAL_FILE}; llaves no balanceadas."
+      problemas=$((problemas + 1))
+      continue
+    fi
+    if [ "${block_end}" -le "${loc_line}" ]; then
+      echo "ERROR: el bloque location de la linea ${loc_line} de ${REAL_FILE} no abarca ninguna linea propia (cierre calculado: ${block_end})."
+      echo "  Este layout de location no esta contemplado por este script: editalo a mano segun docs/db-operations.md."
+      problemas=$((problemas + 1))
+      continue
+    fi
+
+    LOC_START+=("${loc_line}")
+    LOC_END+=("${block_end}")
+    LOC_PROXY+=("${pl}")
+    LOC_RT+=("$(awk -v s="${loc_line}" -v e="${block_end}" 'NR>=s && NR<=e && /proxy_read_timeout/ {print NR; exit}' "${CLEAN_FILE}")")
+    LOC_ST+=("$(awk -v s="${loc_line}" -v e="${block_end}" 'NR>=s && NR<=e && /proxy_send_timeout/ {print NR; exit}' "${CLEAN_FILE}")")
+
+    # Sangria para las lineas nuevas: la misma que ya usa el proxy_pass de
+    # ESE location (cada location puede tener su propia profundidad).
+    indent="$(sed -n "${pl}p" "${REAL_FILE}" | sed -E 's/^([[:space:]]*).*/\1/')"
+    [ -n "${indent}" ] || indent="        "
+    LOC_INDENT+=("${indent}")
+  done
+
+  # Fail-closed GLOBAL: si CUALQUIER location con proxy_pass tiene un layout
+  # que no sabemos editar, no se toca NADA. El archivo se edita entero o no se
+  # edita: dejar la mitad de los locations con timeout largo y la otra mitad
+  # sin tocar seria peor que no hacer nada (y mas dificil de diagnosticar).
+  if [ "${problemas}" -ne 0 ]; then
+    echo
+    echo "ABORTADO (fail-closed): ${problemas} location(es) con proxy_pass tienen un layout no contemplado."
+    echo "No se modifica NADA del archivo (se edita entero o no se edita)."
     return 1
   fi
-
-  # ------------------------------------------------------------------------
-  # Layouts de 'location' que este script NO sabe editar sin romper algo.
-  # Se ABORTA (fail-closed) en vez de escribir mal:
-  #  (a) location y su bloque en UNA sola linea -> insertar "despues de la
-  #      linea del location" dejaria las directivas FUERA del location, con
-  #      alcance de server entero. Silencioso: nginx -t pasa igual.
-  #  (b) la llave de apertura en la linea SIGUIENTE -> insertar despues de la
-  #      linea del location las meteria ENTRE el 'location' y su '{'. Ahi
-  #      nginx -t falla, pero con un error que no explica nada.
-  # ------------------------------------------------------------------------
-  LOC_TEXT="$(sed -n "${LOCATION_LINE}p" "${CLEAN_FILE}")"
-  if ! printf '%s' "${LOC_TEXT}" | grep -q '{'; then
-    echo "ERROR: el 'location' de la linea ${LOCATION_LINE} de ${REAL_FILE} abre la llave '{' en OTRA linea."
-    echo "Este layout de location no esta contemplado por este script: editalo a mano segun docs/db-operations.md."
-    echo "Fail-closed: no se toco nada."
+  if [ "${#LOC_START[@]}" -eq 0 ]; then
+    echo "ERROR: no quedo ningun location con proxy_pass utilizable en ${REAL_FILE}."
     return 1
-  fi
-  if printf '%s' "${LOC_TEXT}" | grep -q '}'; then
-    echo "ERROR: el 'location' de la linea ${LOCATION_LINE} de ${REAL_FILE} abre y cierra en la MISMA linea (bloque de una sola linea)."
-    echo "Este layout de location no esta contemplado por este script: editalo a mano segun docs/db-operations.md."
-    echo "Fail-closed: no se toco nada."
-    return 1
-  fi
-
-  # Cierre del bloque contando llaves sobre la copia SIN comentarios (una
-  # llave dentro de un comentario no cuenta).
-  BLOCK_END="$(awk -v start="${LOCATION_LINE}" '
-    BEGIN { depth = 0 }
-    NR < start { next }
-    {
-      depth += gsub(/\{/, "{")
-      depth -= gsub(/\}/, "}")
-      if (depth == 0) { print NR; exit }
-    }
-  ' "${CLEAN_FILE}")"
-
-  if [ -z "${BLOCK_END:-}" ]; then
-    echo "ERROR: no se pudo determinar el cierre del bloque location (linea ${LOCATION_LINE}) en ${REAL_FILE}; llaves no balanceadas."
-    return 1
-  fi
-  if [ "${BLOCK_END}" -le "${LOCATION_LINE}" ]; then
-    echo "ERROR: el bloque location de la linea ${LOCATION_LINE} de ${REAL_FILE} no abarca ninguna linea propia (cierre calculado: ${BLOCK_END})."
-    echo "Este layout de location no esta contemplado por este script: editalo a mano segun docs/db-operations.md."
-    echo "Fail-closed: no se toco nada."
-    return 1
-  fi
-
-  RT_LINE="$(awk -v s="${LOCATION_LINE}" -v e="${BLOCK_END}" 'NR>=s && NR<=e && /proxy_read_timeout/ {print NR; exit}' "${CLEAN_FILE}")"
-  ST_LINE="$(awk -v s="${LOCATION_LINE}" -v e="${BLOCK_END}" 'NR>=s && NR<=e && /proxy_send_timeout/ {print NR; exit}' "${CLEAN_FILE}")"
-
-  # Sangria para las lineas nuevas: la misma que ya usa el proxy_pass.
-  INDENT="$(sed -n "${PROXY_LINE}p" "${REAL_FILE}" | sed -E 's/^([[:space:]]*).*/\1/')"
-  [ -n "${INDENT}" ] || INDENT="        "
-
-  echo "Location detectado: lineas ${LOCATION_LINE}-${BLOCK_END} de ${REAL_FILE} (contiene el proxy_pass de la linea ${PROXY_LINE})."
-  if [ -n "${RT_LINE:-}" ]; then
-    echo "  proxy_read_timeout actual (linea ${RT_LINE}): $(sed -n "${RT_LINE}p" "${REAL_FILE}" | sed -e 's/^[[:space:]]*//')"
-  else
-    echo "  proxy_read_timeout: no configurado en este location (rige el default de nginx, 60s)"
-  fi
-  if [ -n "${ST_LINE:-}" ]; then
-    echo "  proxy_send_timeout actual (linea ${ST_LINE}): $(sed -n "${ST_LINE}p" "${REAL_FILE}" | sed -e 's/^[[:space:]]*//')"
-  else
-    echo "  proxy_send_timeout: no configurado en este location (rige el default de nginx, 60s)"
   fi
 
   BASE_NAME="$(basename "${REAL_FILE}")"
+
+  echo "Locations con proxy_pass activo detectados: ${#LOC_START[@]}"
   return 0
+}
+
+# ----------------------------------------------------------------------------
+# Imprime, para cada location detectado, su rango de lineas y el estado actual
+# de sus dos timeouts. Se usa igual en 'ver' y en 'aplicar'.
+# ----------------------------------------------------------------------------
+describir_locations() {
+  local i n
+  for i in "${!LOC_START[@]}"; do
+    n=$((i + 1))
+    echo "  [${n}] location de las lineas ${LOC_START[$i]}-${LOC_END[$i]} (proxy_pass en la linea ${LOC_PROXY[$i]}):"
+    echo "      $(sed -n "${LOC_START[$i]}p" "${REAL_FILE}" | sed -e 's/^[[:space:]]*//')"
+    if [ -n "${LOC_RT[$i]}" ]; then
+      echo "      proxy_read_timeout actual (linea ${LOC_RT[$i]}): $(sed -n "${LOC_RT[$i]}p" "${REAL_FILE}" | sed -e 's/^[[:space:]]*//')"
+    else
+      echo "      proxy_read_timeout: no configurado aca (rige el default de nginx, 60s)"
+    fi
+    if [ -n "${LOC_ST[$i]}" ]; then
+      echo "      proxy_send_timeout actual (linea ${LOC_ST[$i]}): $(sed -n "${LOC_ST[$i]}p" "${REAL_FILE}" | sed -e 's/^[[:space:]]*//')"
+    else
+      echo "      proxy_send_timeout: no configurado aca (rige el default de nginx, 60s)"
+    fi
+  done
 }
 
 # ----------------------------------------------------------------------------
@@ -443,11 +530,19 @@ accion_ver() {
   ls -la /etc/nginx/sites-available/ 2>&1 || echo "(no existe sites-available)"
   echo
 
-  echo "== Deteccion del archivo/location del backoffice (${DOMAIN}) =="
+  echo "== Deteccion del archivo y los locations del backoffice (${DOMAIN}) =="
   if resolver_config; then
     echo
-    echo "== Bloque del location detectado (lineas ${LOCATION_LINE}-${BLOCK_END} de ${REAL_FILE}) =="
-    sed -n "${LOCATION_LINE},${BLOCK_END}p" "${REAL_FILE}"
+    echo "== Resumen de los locations que 'aplicar' tocaria =="
+    describir_locations
+
+    local i n
+    for i in "${!LOC_START[@]}"; do
+      n=$((i + 1))
+      echo
+      echo "== [${n}] Bloque completo: lineas ${LOC_START[$i]}-${LOC_END[$i]} de ${REAL_FILE} =="
+      sed -n "${LOC_START[$i]},${LOC_END[$i]}p" "${REAL_FILE}"
+    done
 
     echo
     echo "== Backups disponibles para revertir (${BACKUP_DIR}, del mas nuevo al mas viejo) =="
@@ -459,7 +554,7 @@ accion_ver() {
     avisar_backups_legacy
   else
     echo
-    echo "(No se pudo identificar un unico archivo/location con certeza; ver el error de arriba. 'aplicar' abortaria en el mismo punto.)"
+    echo "(No se pudo identificar el archivo/los locations con certeza; ver el error de arriba. 'aplicar' abortaria en el mismo punto.)"
   fi
 }
 
@@ -472,17 +567,52 @@ accion_aplicar() {
     exit 1
   fi
 
-  if [ -n "${RT_LINE:-}" ] && [ -n "${ST_LINE:-}" ]; then
-    # Si el valor no se puede parsear (por ejemplo "60" sin sufijo, o "5m"),
-    # valor_directiva devuelve algo distinto de "2700s" o vacio: en los dos
-    # casos se sigue de largo y se reescribe. Nunca se muere en silencio.
-    RT_ACTUAL="$(valor_directiva "${RT_LINE}" 'proxy_read_timeout')"
-    ST_ACTUAL="$(valor_directiva "${ST_LINE}" 'proxy_send_timeout')"
-    if [ "${RT_ACTUAL}" = "${TIMEOUT}" ] && [ "${ST_ACTUAL}" = "${TIMEOUT}" ]; then
-      echo
-      echo "Ya estan en ${TIMEOUT} ambas directivas. Nada que cambiar (idempotente): no se crea backup nuevo ni se recarga nginx."
-      exit 0
+  echo
+  describir_locations
+
+  # ------------------------------------------------------------------------
+  # Idempotencia: si TODOS los locations ya tienen las DOS directivas en el
+  # valor objetivo, no se toca nada (ni backup, ni reload).
+  #
+  # Si algun valor no se puede parsear (por ejemplo "60" sin sufijo, o "5m"),
+  # valor_directiva devuelve vacio: cuenta como "distinto del objetivo" y se
+  # reescribe. Nunca se muere en silencio por no entender un valor.
+  # ------------------------------------------------------------------------
+  local i falta=0
+  UPD_RT=""; UPD_ST=""; INS_SPECS=""
+  for i in "${!LOC_START[@]}"; do
+    local flags=""
+    if [ -n "${LOC_RT[$i]}" ]; then
+      if [ "$(valor_directiva "${LOC_RT[$i]}" 'proxy_read_timeout')" != "${TIMEOUT}" ]; then
+        UPD_RT="${UPD_RT}${LOC_RT[$i]},"
+        falta=$((falta + 1))
+      fi
+    else
+      flags="R"
+      falta=$((falta + 1))
     fi
+    if [ -n "${LOC_ST[$i]}" ]; then
+      if [ "$(valor_directiva "${LOC_ST[$i]}" 'proxy_send_timeout')" != "${TIMEOUT}" ]; then
+        UPD_ST="${UPD_ST}${LOC_ST[$i]},"
+        falta=$((falta + 1))
+      fi
+    else
+      if [ "${flags}" = "R" ]; then flags="B"; else flags="S"; fi
+      falta=$((falta + 1))
+    fi
+    # Spec de insercion: "linea_del_location:flags:sangria", registros
+    # separados por ';'. Se parsea con split(...,":") en awk, asi la sangria
+    # (que es solo espacios/tabs) viaja intacta en el tercer campo.
+    if [ -n "${flags}" ]; then
+      INS_SPECS="${INS_SPECS}${LOC_START[$i]}:${flags}:${LOC_INDENT[$i]};"
+    fi
+  done
+
+  if [ "${falta}" -eq 0 ]; then
+    echo
+    echo "Los ${#LOC_START[@]} location(es) ya tienen proxy_read_timeout y proxy_send_timeout en ${TIMEOUT}."
+    echo "Nada que cambiar (idempotente): no se crea backup nuevo ni se recarga nginx."
+    exit 0
   fi
 
   echo
@@ -490,24 +620,41 @@ accion_aplicar() {
   BACKUP_PATH="$(crear_backup)"
   echo "Backup creado: ${BACKUP_PATH}"
   echo "(es una copia del CONTENIDO de ${REAL_FILE}, fuera de /etc/nginx, para que nginx no la cargue)"
+  echo "(UN backup del archivo ENTERO, aunque se toquen varios locations: revertir vuelve todo junto)"
   podar_backups normales
 
   echo
-  echo "== Paso 3/5: insertar/actualizar proxy_read_timeout y proxy_send_timeout (${TIMEOUT}) =="
+  echo "== Paso 3/5: insertar/actualizar proxy_read_timeout y proxy_send_timeout (${TIMEOUT}) en ${#LOC_START[@]} location(es) =="
   NEW_RT="proxy_read_timeout ${TIMEOUT};"
   NEW_ST="proxy_send_timeout ${TIMEOUT};"
   TMP_FILE="$(nuevo_temporal)"
 
-  awk -v start="${LOCATION_LINE}" -v rtl="${RT_LINE:-0}" -v stl="${ST_LINE:-0}" \
-      -v rt="${NEW_RT}" -v st="${NEW_ST}" -v indent="${INDENT}" '
+  # UNA sola pasada por el archivo, atendiendo a todos los locations:
+  #   upd_rt / upd_st : lineas donde hay que REEMPLAZAR el valor existente
+  #   ins_specs       : locations donde hay que INSERTAR la directiva que falta
+  awk -v upd_rt="${UPD_RT}" -v upd_st="${UPD_ST}" -v ins_specs="${INS_SPECS}" \
+      -v rt="${NEW_RT}" -v st="${NEW_ST}" '
+    BEGIN {
+      n = split(upd_rt, a, ",")
+      for (i = 1; i <= n; i++) if (a[i] != "") RT_UPD[a[i] + 0] = 1
+      n = split(upd_st, b, ",")
+      for (i = 1; i <= n; i++) if (b[i] != "") ST_UPD[b[i] + 0] = 1
+      n = split(ins_specs, recs, ";")
+      for (i = 1; i <= n; i++) {
+        if (recs[i] == "") continue
+        split(recs[i], f, ":")
+        INS_FLAG[f[1] + 0] = f[2]
+        INS_IND[f[1] + 0] = f[3]
+      }
+    }
     {
       line = $0
-      if (NR == rtl) { sub(/proxy_read_timeout[^;]*;/, rt, line) }
-      if (NR == stl) { sub(/proxy_send_timeout[^;]*;/, st, line) }
+      if (NR in RT_UPD) { sub(/proxy_read_timeout[^;]*;/, rt, line) }
+      if (NR in ST_UPD) { sub(/proxy_send_timeout[^;]*;/, st, line) }
       print line
-      if (NR == start) {
-        if (rtl == 0) { print indent rt }
-        if (stl == 0) { print indent st }
+      if (NR in INS_FLAG) {
+        if (INS_FLAG[NR] == "B" || INS_FLAG[NR] == "R") { print INS_IND[NR] rt }
+        if (INS_FLAG[NR] == "B" || INS_FLAG[NR] == "S") { print INS_IND[NR] st }
       }
     }
   ' "${REAL_FILE}" > "${TMP_FILE}"

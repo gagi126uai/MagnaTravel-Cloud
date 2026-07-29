@@ -161,16 +161,22 @@ El ajuste se hace desde GitHub Actions, sin entrar por SSH: **Actions → "Ops -
 
 | acción | qué hace | confirmación |
 | --- | --- | --- |
-| `ver` | **Solo lectura.** Muestra el archivo/location del backoffice detectado, sus `proxy_*_timeout` actuales y los backups disponibles. | — |
-| `aplicar` | Backup con timestamp + pone `proxy_read_timeout`/`proxy_send_timeout` en 2700s **solo en ese location**, valida con `nginx -t` (si falla, restaura el backup) y hace `systemctl reload nginx`. | `APLICAR` |
-| `revertir` | Restaura el backup más reciente que dejó `aplicar`, valida y recarga. | `REVERTIR` |
+| `ver` | **Solo lectura.** Muestra el vhost detectado y **cada** location con `proxy_pass` (rango de líneas, sus `proxy_*_timeout` actuales y el bloque completo), más los backups disponibles. | — |
+| `aplicar` | Un backup del archivo entero con timestamp + pone `proxy_read_timeout`/`proxy_send_timeout` en 2700s en **cada** location con `proxy_pass` del vhost, en una sola pasada; valida con `nginx -t` (si falla, restaura el backup) y hace un único `systemctl reload nginx`. | `APLICAR` |
+| `revertir` | Restaura el backup más reciente que dejó `aplicar` (el archivo entero, todos los locations juntos), valida y recarga. | `REVERTIR` |
 
 Toda la lógica vive en `scripts/ops/nginx-timeout.sh` (versionado). Detalles que importan:
 
-- **Es fail-closed**: el archivo y el location se detectan leyendo la config ACTIVA (`nginx -T`), nunca por
-  convención de nombres. Si hay más de un `proxy_pass`, ningún `server_name` con el dominio, o un layout de
-  `location` que el script no sabe editar sin riesgo (bloque en una sola línea, o la `{` en la línea
-  siguiente), **aborta sin tocar nada** y dice que hay que editar a mano.
+- **Toca TODOS los locations con `proxy_pass` del vhost, no uno solo.** El vhost real tiene el layout clásico
+  (`location /` → contenedor de la web, `location /api` → contenedor de la API). El que importa para la
+  restauración es el de la API, pero adivinar "cuál es el de la API" por el nombre del path sería frágil, así
+  que se tocan todos: un timeout largo en el proxy de la web estática es inofensivo (solo cambia cuánto espera
+  nginx a un upstream que no contesta, y esos contestan en milisegundos).
+- **Es fail-closed, y todo-o-nada**: el archivo y los locations se detectan leyendo la config ACTIVA
+  (`nginx -T`), nunca por convención de nombres. Si no hay ningún `server_name` activo con el dominio, o si
+  **cualquiera** de los locations con `proxy_pass` tiene un layout que el script no sabe editar sin riesgo
+  (bloque en una sola línea, o la `{` en la línea siguiente), **aborta sin tocar nada** —antes de crear el
+  backup— y dice que hay que editar a mano. Nunca deja la mitad de los locations editados.
 - **Backups en `/var/backups/nginx/`** (root, 0700), nunca al lado del archivo: en el layout estándar de
   Ubuntu la config vive como symlink en `sites-enabled/`, que se incluye entero (`include sites-enabled/*`),
   así que un `.bak` ahí adentro sería config **activa** duplicada. Se conservan los 10 más nuevos.
