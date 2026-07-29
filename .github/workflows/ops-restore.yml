@@ -304,19 +304,41 @@ jobs:
                 echo "Respaldo previo OK: ${PRE_BACKUP} ($(du -h "${PRE_BACKUP}" | cut -f1))"
 
                 echo
-                echo "== Paso 2/3: restaurando SOLO datos (--data-only) de: ${TABLA_LIST_CLEAN[*]} =="
+                echo "== Paso 2/4: restaurando SOLO datos (--data-only) de: ${TABLA_LIST_CLEAN[*]} =="
                 echo "AVISO: --data-only no borra ni recrea el esquema (no hay DROP/CREATE TABLE)."
                 echo "AVISO: si alguna de estas tablas ya tuviera filas, esto las duplicaria (son INSERT"
-                echo "sin control de conflicto). Para este caso las tablas de destino estan vacias."
+                echo "sin control de conflicto). Este camino asume tablas de destino VACIAS."
+                # --disable-triggers (2026-07-29): al cargar datos con las foreign keys YA puestas en el
+                # esquema vivo, el orden de carga importa y las referencias CIRCULARES (ej. una reserva
+                # que apunta al presupuesto del que nacio, y ese presupuesto apunta de vuelta a la
+                # reserva) no tienen NINGUN orden valido. Deshabilitar los triggers de las tablas que se
+                # estan cargando (solo durante la carga, es lo que hace pg_restore con este flag) evita
+                # ambos problemas. Requiere superusuario: en la imagen oficial de Postgres, el usuario
+                # de POSTGRES_USER lo es.
                 docker exec -i \
                   -e PGPASSWORD="${POSTGRES_PASSWORD}" \
                   "${POSTGRES_CONTAINER}" \
-                  pg_restore --data-only --no-owner --no-acl -h 127.0.0.1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+                  pg_restore --data-only --disable-triggers --no-owner --no-acl -h 127.0.0.1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
                   "${TABLE_ARGS[@]}" \
                   < "${BACKUP_PATH}"
 
                 echo
-                echo "== Paso 3/3: conteo de filas restauradas por tabla (BASE VIVA) =="
+                echo "== Paso 3/4: sincronizando las secuencias de numeracion de las tablas restauradas =="
+                # Sin esto, un restore --data-only deja las secuencias (los contadores de los "Id"
+                # autonumerados) como estaban ANTES del restore: la proxima alta intentaria repetir un
+                # numero ya usado y fallaria por clave duplicada. Para cada tabla restaurada que tenga
+                # una columna "Id" autonumerada, se lleva el contador al maximo Id presente.
+                for t in "${TABLA_LIST_CLEAN[@]}"; do
+                  docker exec \
+                    -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+                    "${POSTGRES_CONTAINER}" \
+                    psql -h 127.0.0.1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -P pager=off -v ON_ERROR_STOP=1 \
+                      -c "SELECT CASE WHEN pg_get_serial_sequence('\"${t}\"', 'Id') IS NOT NULL THEN setval(pg_get_serial_sequence('\"${t}\"', 'Id'), GREATEST(COALESCE((SELECT MAX(\"Id\") FROM \"${t}\"), 0), 1), COALESCE((SELECT MAX(\"Id\") FROM \"${t}\"), 0) > 0) ELSE NULL END AS secuencia_ajustada_${t};" \
+                      || { echo "AVISO: no se pudo ajustar la secuencia de ${t} (si la tabla no tiene Id autonumerado, es esperable)."; }
+                done
+
+                echo
+                echo "== Paso 4/4: conteo de filas restauradas por tabla (BASE VIVA) =="
                 for t in "${TABLA_LIST_CLEAN[@]}"; do
                   echo "-- ${t} --"
                   docker exec \
