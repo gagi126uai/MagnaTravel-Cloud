@@ -154,7 +154,39 @@ HOST** (Ubuntu, versión 1.24.0 al momento de esta revisión, **fuera de este re
 default de 60 segundos y corta la conexión ANTES que cualquier otra cosa, sin importar lo que diga el nginx
 del contenedor.
 
-**Paso manual en el VPS** (una sola vez, o cada vez que se reconfigure ese nginx):
+#### Camino recomendado: workflow `ops-nginx.yml` (reemplaza el paso manual)
+
+El ajuste se hace desde GitHub Actions, sin entrar por SSH: **Actions → "Ops - Timeout nginx del HOST
+(backoffice)" → Run workflow** (o `gh workflow run ops-nginx.yml -f accion=ver`). Tiene tres acciones:
+
+| acción | qué hace | confirmación |
+| --- | --- | --- |
+| `ver` | **Solo lectura.** Muestra el archivo/location del backoffice detectado, sus `proxy_*_timeout` actuales y los backups disponibles. | — |
+| `aplicar` | Backup con timestamp + pone `proxy_read_timeout`/`proxy_send_timeout` en 2700s **solo en ese location**, valida con `nginx -t` (si falla, restaura el backup) y hace `systemctl reload nginx`. | `APLICAR` |
+| `revertir` | Restaura el backup más reciente que dejó `aplicar`, valida y recarga. | `REVERTIR` |
+
+Toda la lógica vive en `scripts/ops/nginx-timeout.sh` (versionado). Detalles que importan:
+
+- **Es fail-closed**: el archivo y el location se detectan leyendo la config ACTIVA (`nginx -T`), nunca por
+  convención de nombres. Si hay más de un `proxy_pass`, ningún `server_name` con el dominio, o un layout de
+  `location` que el script no sabe editar sin riesgo (bloque en una sola línea, o la `{` en la línea
+  siguiente), **aborta sin tocar nada** y dice que hay que editar a mano.
+- **Backups en `/var/backups/nginx/`** (root, 0700), nunca al lado del archivo: en el layout estándar de
+  Ubuntu la config vive como symlink en `sites-enabled/`, que se incluye entero (`include sites-enabled/*`),
+  así que un `.bak` ahí adentro sería config **activa** duplicada. Se conservan los 10 más nuevos.
+- **Resuelve symlinks**: edita el archivo real (normalmente en `sites-available/`) y lo dice en la salida.
+- **Es idempotente**: si las dos directivas ya están en 2700s, no crea backup ni recarga nginx.
+- Nunca toca contenedores, volúmenes ni datos; hace `reload`, nunca `restart`.
+
+> ⚠ **Requiere una instalación manual en el VPS, una sola vez.** El workflow no ejecuta el script del
+> worktree (el usuario de deploy lo reescribe en cada `git pull`, y darle `sudo NOPASSWD` a eso sería darle
+> root a cualquiera que pueda pushear a main): ejecuta una copia instalada por root en
+> `/usr/local/sbin/magnatravel-nginx-timeout.sh`. El bloque copy-paste está en la cabecera de
+> `.github/workflows/ops-nginx.yml` y de `scripts/ops/nginx-timeout.sh`. Si esa copia falta, el workflow
+> falla temprano y lo imprime; si difiere del script del repo, avisa (sin bloquear) que está corriendo una
+> versión más vieja — hay que re-correr el mismo bloque.
+
+#### Camino manual (si el workflow no está disponible o abortó por fail-closed)
 
 ```bash
 # 1) Verificar el valor ACTUAL configurado para el location del backoffice:

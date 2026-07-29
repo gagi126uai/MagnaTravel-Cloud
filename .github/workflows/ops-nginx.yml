@@ -1,0 +1,279 @@
+name: Ops - Timeout nginx del HOST (backoffice)
+
+# ============================================================================
+# QUE ES ESTO
+# ----------------------------------------------------------------------------
+# Herramienta MANUAL, hermana de ops-diagnostico.yml y ops-restore.yml, para
+# ajustar de forma segura y auditada el nginx del HOST del VPS (Ubuntu,
+# version 1.24.0 al momento de escribir esto, FUERA de este repo, en
+# /etc/nginx/) que hace de reverse-proxy TLS hacia el contenedor "web" del
+# backoffice (https://backoffice.magnaviajesyturismo.com/).
+#
+# POR QUE HACE FALTA
+#   El default de ese nginx (proxy_read_timeout/proxy_send_timeout = 60s)
+#   corta la restauracion total del sistema (que puede tardar varios
+#   minutos): el pedido HTTP muere a los 60s pero el pg_restore real sigue
+#   vivo, huerfano, en el contenedor. Ver docs/db-operations.md, seccion
+#   "Requisito OBLIGATORIO antes de usar la restauracion total en produccion
+#   (nginx del HOST)".
+#
+# QUIEN LO DISPARA
+#   Solo manual, igual que sus hermanos. NO corre en push.
+#   `gh workflow run ops-nginx.yml -f accion=ver` (o desde la pestania Actions).
+#
+# QUE PUEDE HACER
+#   - ver       : SOLO LECTURA. nginx -v, listado de sites-enabled/available,
+#                 el location detectado con sus proxy_*timeout actuales, y la
+#                 lista de backups disponibles para revertir.
+#   - aplicar   : backup con timestamp (en /var/backups/nginx, FUERA de
+#                 /etc/nginx) del archivo que se va a tocar, inserta o
+#                 actualiza proxy_read_timeout/proxy_send_timeout a 2700s
+#                 SOLO en el location real que hace de proxy del backoffice
+#                 (detectado con certeza via nginx -T; si hay ambiguedad,
+#                 ABORTA sin tocar nada - fail-closed), corre `nginx -t`
+#                 (si falla, restaura el backup y aborta), y recien ahi hace
+#                 `systemctl reload nginx` (nunca restart). Requiere
+#                 confirmacion=APLICAR (texto exacto).
+#   - revertir  : restaura el backup MAS RECIENTE que dejo 'aplicar' para el
+#                 archivo detectado, valida con `nginx -t` y recarga.
+#                 Requiere confirmacion=REVERTIR (texto exacto).
+#
+# TODA la logica de deteccion/backup/edicion vive en un script versionado en
+# el repo: scripts/ops/nginx-timeout.sh (mismo patron que ops-restore.yml,
+# que delega en scripts/ops/restore-db.sh). Ese script corre como root
+# (via sudo -n) y NO acepta argumentos libres mas alla de accion/confirmacion:
+# la logica interna es fija y auditable, en vez de dar sudo NOPASSWD generico
+# sobre awk/grep/cp/tee (que equivaldria a root sin restricciones).
+#
+# ----------------------------------------------------------------------------
+# ⚠ INSTALACION UNA SOLA VEZ EN EL VPS (a mano, por Gaston) — SIN ESTO NO CORRE
+# ----------------------------------------------------------------------------
+# El workflow NO ejecuta el script del worktree: ejecuta una COPIA INSTALADA
+# POR ROOT en /usr/local/sbin/magnatravel-nginx-timeout.sh.
+#
+#   POR QUE: el worktree del VPS lo REESCRIBE el usuario de deploy en cada
+#   `git pull`. Darle sudo NOPASSWD a un archivo que ese mismo usuario puede
+#   reescribir es darle root efectivo a cualquiera que pueda pushear a main.
+#   Con la copia instalada (root:root 0755) el usuario de deploy puede
+#   EJECUTARLA pero no modificarla.
+#
+#   BLOQUE COPY-PASTE (correr EN EL VPS, con el usuario SSH de deploy, parado
+#   en el directorio del proyecto). Se re-corre TAL CUAL cada vez que cambie
+#   scripts/ops/nginx-timeout.sh en el repo:
+#
+#     sudo install -o root -g root -m 0755 \
+#       scripts/ops/nginx-timeout.sh \
+#       /usr/local/sbin/magnatravel-nginx-timeout.sh
+#
+#     printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/magnatravel-nginx-timeout.sh *\n' "$(whoami)" \
+#       | sudo tee /etc/sudoers.d/ops-nginx > /dev/null
+#     sudo chmod 0440 /etc/sudoers.d/ops-nginx
+#     sudo visudo -c -f /etc/sudoers.d/ops-nginx
+#
+#   El `*` del final es NECESARIO: sin comodin, sudoers exige coincidencia
+#   EXACTA de argumentos, y este script siempre recibe dos (accion y
+#   confirmacion). Y como sudoers no matchea de forma confiable un argumento
+#   VACIO, cuando no se escribe confirmacion este workflow manda "-" como
+#   marcador (el script lo traduce de vuelta a "no escribio nada").
+#
+#   Si la copia instalada no existe, el workflow FALLA temprano con este mismo
+#   bloque en pantalla. Si existe pero difiere del script del repo, AVISA
+#   (sin bloquear): esta corriendo una version mas vieja.
+#
+# QUE **NO** HACE
+#   Nunca toca contenedores, volumenes, buckets ni datos de la aplicacion.
+#   Lo unico que modifica es un archivo de configuracion de nginx del HOST
+#   (con backup previo) y recarga (reload, no restart) el servicio nginx
+#   del HOST.
+#
+# ADVERTENCIA DE PRIVACIDAD
+#   La salida de cada corrida QUEDA GUARDADA en los logs del run de Actions
+#   (rutas de archivos de configuracion, nombres de sites-enabled). No
+#   contiene secretos ni datos de negocio, pero el repositorio DEBE seguir
+#   siendo PRIVADO, igual que sus hermanos.
+#
+# SEGURIDAD TECNICA
+#   - Las entradas del usuario NO se interpolan directo en el script: viajan
+#     como variables de entorno (envs:), igual que ops-diagnostico.yml y
+#     ops-restore.yml, y de ahi se pasan como argumentos posicionales al
+#     script (nunca via eval/interpolacion de string).
+#   - 'aplicar' y 'revertir' exigen confirmacion exacta (APLICAR / REVERTIR)
+#     ANTES de tocar cualquier archivo; si no coincide, el script aborta.
+#   - El archivo/location a tocar se determina leyendo la config ACTIVA de
+#     nginx (nginx -T), nunca por convencion de nombres de archivo. Si hay
+#     mas de un candidato posible, aborta (fail-closed) en vez de adivinar.
+#   - Los backups NO van al lado del archivo: en el layout estandar de Ubuntu
+#     la config vive como symlink en sites-enabled/, que se incluye entero
+#     (include sites-enabled/*), asi que un .bak ahi seria config ACTIVA
+#     duplicada. Van a /var/backups/nginx/ (root, 0700).
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "Que quiero hacer"
+        type: choice
+        required: true
+        options:
+          - ver
+          - aplicar
+          - revertir
+      confirmacion:
+        description: "Para aplicar y revertir: escribir exactamente APLICAR o REVERTIR (segun corresponda)"
+        type: string
+        required: false
+        default: ""
+
+# Solo lectura del repo: no necesita escribir nada en GitHub.
+permissions:
+  contents: read
+
+# Grupo propio para NO encolarse ni contra los deploys (ci-cd-main), ni
+# contra el diagnostico, ni contra el restore. cancel-in-progress: false =>
+# si hay otra corrida de esto mismo en curso, la nueva espera en cola en vez
+# de pisarla a mitad de una edicion de config.
+concurrency:
+  group: ops-nginx
+  cancel-in-progress: false
+
+jobs:
+  nginx-timeout:
+    name: Timeout nginx del HOST (VPS)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ejecutar por SSH
+        uses: appleboy/ssh-action@v1.2.0
+        # Las entradas del usuario se pasan como variables de entorno del
+        # step y se reenvian al VPS via `envs:`. De ahi se pasan al script
+        # como argumentos posicionales ("$ACCION" "$CONFIRMACION_ARG"), nunca
+        # interpolados dentro de un comando armado como texto.
+        env:
+          ACCION: ${{ inputs.accion }}
+          CONFIRMACION: ${{ inputs.confirmacion }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          command_timeout: 10m
+          envs: ACCION,CONFIRMACION
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.VPS_PROJECT_DIR }}"
+
+            # Ruta de la COPIA INSTALADA POR ROOT (la unica que el sudoers
+            # autoriza). El script del worktree NO se ejecuta: solo se usa
+            # para comparar versiones y para el bloque de instalacion.
+            SCRIPT_INSTALADO="/usr/local/sbin/magnatravel-nginx-timeout.sh"
+            SCRIPT_REPO="scripts/ops/nginx-timeout.sh"
+
+            echo "== Ops-nginx: accion='${ACCION}' — $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+            echo
+
+            # ------------------------------------------------------------
+            # Bloque de instalacion/actualizacion, para imprimirlo tal cual
+            # en cualquier error de configuracion. Es copy-paste directo.
+            # ------------------------------------------------------------
+            imprimir_bloque_instalacion() {
+              echo "  # Correr EN EL VPS, con el usuario '$(whoami)', parado en ${{ secrets.VPS_PROJECT_DIR }}:"
+              echo
+              echo "  sudo install -o root -g root -m 0755 \\"
+              echo "    ${SCRIPT_REPO} \\"
+              echo "    ${SCRIPT_INSTALADO}"
+              echo
+              echo "  printf '%s ALL=(root) NOPASSWD: ${SCRIPT_INSTALADO} *\\n' \"\$(whoami)\" \\"
+              echo "    | sudo tee /etc/sudoers.d/ops-nginx > /dev/null"
+              echo "  sudo chmod 0440 /etc/sudoers.d/ops-nginx"
+              echo "  sudo visudo -c -f /etc/sudoers.d/ops-nginx"
+            }
+
+            if [ ! -f "${SCRIPT_REPO}" ]; then
+              echo "ERROR: ${SCRIPT_REPO} no existe en ${{ secrets.VPS_PROJECT_DIR }}."
+              echo "Este workflow depende de que ese script ya este desplegado en el VPS"
+              echo "(llega ahi por el flujo normal de deploy: commit + push + ci-cd.yml)."
+              exit 1
+            fi
+
+            # ------------------------------------------------------------
+            # La copia instalada por root tiene que existir. Sin ella no hay
+            # nada que sudo autorice, y el run tiene que decir POR QUE y COMO
+            # arreglarlo, no simplemente "permiso denegado".
+            # ------------------------------------------------------------
+            if [ ! -x "${SCRIPT_INSTALADO}" ]; then
+              echo "ERROR: no existe (o no es ejecutable) la copia instalada ${SCRIPT_INSTALADO}."
+              echo
+              echo "Este workflow NO corre el script del worktree a proposito: el usuario de deploy lo"
+              echo "reescribe en cada 'git pull', y darle sudo NOPASSWD a un archivo que ese mismo usuario"
+              echo "puede modificar seria darle root a cualquiera que pueda pushear a main."
+              echo
+              echo "Instalacion UNA sola vez (a mano, por Gaston):"
+              imprimir_bloque_instalacion
+              echo
+              echo "Abortando (fail-closed): no se toco nada."
+              exit 1
+            fi
+
+            # ------------------------------------------------------------
+            # Aviso (NO bloqueante) si el repo trae una version mas nueva del
+            # script que la instalada: el run va a usar la INSTALADA.
+            # ------------------------------------------------------------
+            SHA_REPO="$(sha256sum "${SCRIPT_REPO}" | cut -d' ' -f1)"
+            SHA_INSTALADO="$(sha256sum "${SCRIPT_INSTALADO}" | cut -d' ' -f1)"
+            if [ "${SHA_REPO}" != "${SHA_INSTALADO}" ]; then
+              echo "AVISO: la copia instalada DIFIERE del script del repo."
+              echo "  repo     (${SCRIPT_REPO}): ${SHA_REPO}"
+              echo "  instalado (${SCRIPT_INSTALADO}): ${SHA_INSTALADO}"
+              echo "Se va a ejecutar la version INSTALADA (la mas vieja). Para actualizarla, re-correr el"
+              echo "mismo bloque de instalacion:"
+              imprimir_bloque_instalacion
+              echo "(esto es solo un aviso: el run sigue)"
+              echo
+            else
+              echo "Copia instalada al dia (mismo sha256 que ${SCRIPT_REPO})."
+              echo
+            fi
+
+            # ------------------------------------------------------------
+            # Confirmacion: sudoers no matchea de forma confiable un
+            # argumento VACIO, asi que cuando no se escribio nada se manda
+            # "-" como marcador. El script lo traduce de vuelta a "vacio",
+            # y "-" nunca puede valer APLICAR ni REVERTIR.
+            # ------------------------------------------------------------
+            CONFIRMACION_ARG="${CONFIRMACION}"
+            if [ -z "${CONFIRMACION_ARG}" ]; then
+              CONFIRMACION_ARG="-"
+            fi
+
+            # ------------------------------------------------------------
+            # Preflight de sudo: se pregunta por el COMANDO EXACTO que se va
+            # a correr (`sudo -n -l <cmd> <args>`), no por un `sudo -n true`.
+            # Motivo: con el sudoers acotado de arriba, /usr/bin/true NO esta
+            # autorizado, asi que `sudo -n true` falla SIEMPRE y el workflow
+            # abortaria incluso con todo bien configurado. `sudo -l` no
+            # ejecuta nada: solo responde si esta permitido.
+            # ------------------------------------------------------------
+            if ! sudo -n -l "${SCRIPT_INSTALADO}" "${ACCION}" "${CONFIRMACION_ARG}" > /dev/null 2>&1; then
+              echo "ERROR: el usuario SSH '$(whoami)' no tiene autorizado, sin contrasena, correr:"
+              echo "  sudo ${SCRIPT_INSTALADO} ${ACCION} ${CONFIRMACION_ARG}"
+              echo
+              echo "Este workflow necesita correr ese script como root (nginx y 'systemctl reload nginx' del"
+              echo "HOST viven fuera de Docker y requieren privilegios de root)."
+              echo
+              echo "Configurar UNA vez en el VPS (o revisar que la regla existente tenga el '*' final, que es"
+              echo "lo que permite pasarle los dos argumentos):"
+              imprimir_bloque_instalacion
+              echo
+              echo "SI YA ESTA CONFIGURADO Y ESTO IGUAL FALLA: algunos sudo piden contrasena para el propio"
+              echo "'sudo -l' (que es lo que usa este chequeo). Verificar a mano en el VPS con:"
+              echo "  sudo -n ${SCRIPT_INSTALADO} ver -"
+              echo "Si ESE comando funciona sin pedir contrasena, el problema es solo el chequeo previo."
+              echo
+              echo "Abortando (fail-closed): no se toco nada."
+              exit 1
+            fi
+
+            sudo -n "${SCRIPT_INSTALADO}" "${ACCION}" "${CONFIRMACION_ARG}"
+
+            echo
+            echo "== Ops-nginx OK =="
