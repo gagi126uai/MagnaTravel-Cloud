@@ -111,8 +111,18 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
     {
         public bool RemoveOriginalsWasCalled { get; private set; }
 
+        /// <summary>
+        /// Cuántas veces se pidió generar un resguardo. Sirve para probar el fix del 2026-07-28: un intento
+        /// RECHAZADO no puede dejar un archivo de resguardo huérfano en el depósito, así que este contador
+        /// tiene que quedar en 0 en todos los caminos de rechazo.
+        /// </summary>
+        public int CreateBackupCallCount { get; private set; }
+
         public Task<WipeBackupResult> CreateBackupAsync(string backupFileName, string minioPrefix, CancellationToken ct)
-            => Task.FromResult(new WipeBackupResult(true, backupFileName, minioPrefix, null, new List<string> { "adjuntos/prueba.pdf" }));
+        {
+            CreateBackupCallCount++;
+            return Task.FromResult(new WipeBackupResult(true, backupFileName, minioPrefix, null, new List<string> { "adjuntos/prueba.pdf" }));
+        }
 
         public Task RemoveOriginalObjectsAsync(WipeBackupResult backupResult, CancellationToken ct)
         {
@@ -396,6 +406,8 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
         Assert.Equal(1, await verifyCtx.Customers.CountAsync());
         Assert.Equal(1, await verifyCtx.Invoices.CountAsync());
         Assert.False(backupPort.RemoveOriginalsWasCalled);
+        // Fix 2026-07-28: un intento rechazado no deja un resguardo huerfano en el deposito.
+        Assert.Equal(0, backupPort.CreateBackupCallCount);
         Assert.False(await verifyCtx.AuditLogs.AnyAsync(a => a.Action == AuditActions.SystemDataWiped));
 
         var rejectedLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataWipeRejected);
@@ -683,7 +695,8 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
 
             var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
             var userManagerMock = BuildUserManagerMock(user);
-            var service = NewWipeService(ctx, userManagerMock, new FakeBackupPort());
+            var backupPort = new FakeBackupPort();
+            var service = NewWipeService(ctx, userManagerMock, backupPort);
 
             var ex = await Assert.ThrowsAsync<SystemDataWipeRefusedException>(() =>
                 service.ExecuteWipeAsync(
@@ -693,6 +706,11 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
             Assert.Contains("avisá al equipo técnico", ex.Message);
             // T-5: el mensaje al usuario NUNCA menciona la tabla tecnica real.
             Assert.DoesNotContain("TestFkFantasma", ex.Message);
+
+            // Fix 2026-07-28 (bug "cada intento rechazado deja un resguardo huerfano"): el rechazo por foreign
+            // key sin contemplar ahora se detecta ANTES de generar el resguardo, asi que el deposito queda
+            // limpio. Este es el caso que en PROD dejaba un archivo "wipe-....dump" por cada intento fallido.
+            Assert.Equal(0, backupPort.CreateBackupCallCount);
 
             await using var verifyCtx = _fixture.CreateDbContext();
             Assert.Equal(1, await verifyCtx.Customers.CountAsync());
@@ -704,6 +722,408 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
         finally
         {
             await ctx.Database.ExecuteSqlRawAsync("""DROP TABLE IF EXISTS "TestFkFantasma";""");
+        }
+    }
+
+    // ===== Tablas LEGACY del esquema viejo (fix del bug de PROD, 2026-07-28) =====
+    //
+    // POR QUE ESTOS TESTS: el borrado {clientes + reservas y su plata} abortó en PROD porque había una foreign
+    // key "sin contemplar" desde "CupoAssignments" hacia "Reservations". La red fail-closed hizo bien su
+    // trabajo (abortó sin tocar datos), pero el mapa estaba incompleto. Ningún test podía detectarlo: la base
+    // de estos tests se construye con EnsureCreated a partir del MODELO DE EF ACTUAL, y esas tablas ya no están
+    // en el modelo — son restos del esquema anterior al "retail pivot" que ninguna migración llegó a dropear y
+    // que en la base real siguen existiendo, con sus foreign keys puestas.
+    //
+    // Por eso estos tests RECREAN a mano las tablas legacy (con las mismas foreign keys que tienen en la base
+    // real, sacadas de la migración InitialRetailPivot) antes de correr el borrado, y las dropean al final.
+
+    /// <summary>
+    /// DDL de las tablas legacy tal como quedaron en la base real (solo las columnas que importan para el
+    /// borrado). Las foreign keys y sus reglas de borrado están copiadas de la migración
+    /// <c>InitialRetailPivot</c> y coinciden con lo verificado contra producción el 2026-07-29.
+    ///
+    /// <para><b>Defensivo a propósito (hallazgo N4)</b>: arranca dropeando y crea con <c>IF NOT EXISTS</c>.
+    /// Todos los tests de esta clase comparten UN mismo Postgres (una fixture por clase), así que si una
+    /// corrida anterior se cortó a la mitad (excepción, timeout, cancelación) y no llegó a su <c>finally</c>,
+    /// estas tablas quedan colgadas y el test SIGUIENTE se pondría rojo con "relation already exists" — un
+    /// motivo FALSO que manda a investigar el lugar equivocado. Con esto, cada test arranca de cero pase lo
+    /// que pase.</para>
+    /// </summary>
+    private static async Task CreateLegacyTablesAsync(AppDbContext ctx)
+    {
+        await DropLegacyTablesAsync(ctx);
+
+        await ctx.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "Cupos" (
+                "Id" SERIAL PRIMARY KEY,
+                "Descripcion" VARCHAR(200) NULL,
+                "Reserved" INT NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS "CupoAssignments" (
+                "Id" SERIAL PRIMARY KEY,
+                "CupoId" INT NOT NULL REFERENCES "Cupos" ("Id") ON DELETE CASCADE,
+                "ReservationId" INT NULL REFERENCES "Reservations" ("Id") ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS "BspImportBatches" (
+                "Id" SERIAL PRIMARY KEY,
+                "FileName" VARCHAR(200) NULL
+            );
+            CREATE TABLE IF NOT EXISTS "BspImportRawRecords" (
+                "Id" SERIAL PRIMARY KEY,
+                "BspImportBatchId" INT NOT NULL REFERENCES "BspImportBatches" ("Id") ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS "BspNormalizedRecords" (
+                "Id" SERIAL PRIMARY KEY,
+                "BspImportBatchId" INT NOT NULL REFERENCES "BspImportBatches" ("Id") ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS "BspReconciliationEntries" (
+                "Id" SERIAL PRIMARY KEY,
+                "BspImportBatchId" INT NOT NULL REFERENCES "BspImportBatches" ("Id") ON DELETE CASCADE,
+                "BspNormalizedRecordId" INT NOT NULL REFERENCES "BspNormalizedRecords" ("Id") ON DELETE CASCADE,
+                "ReservationId" INT NULL REFERENCES "Reservations" ("Id") ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS "TreasuryReceipts" (
+                "Id" SERIAL PRIMARY KEY,
+                "Numero" VARCHAR(50) NULL
+            );
+            CREATE TABLE IF NOT EXISTS "TreasuryApplications" (
+                "Id" SERIAL PRIMARY KEY,
+                "TreasuryReceiptId" INT NOT NULL REFERENCES "TreasuryReceipts" ("Id") ON DELETE CASCADE,
+                "ReservationId" INT NOT NULL REFERENCES "Reservations" ("Id")
+            );
+            CREATE TABLE IF NOT EXISTS "InvoiceItems" (
+                "Id" SERIAL PRIMARY KEY,
+                "InvoiceId" INT NOT NULL REFERENCES "Invoices" ("Id") ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS "InvoiceTributes" (
+                "Id" SERIAL PRIMARY KEY,
+                "InvoiceId" INT NOT NULL REFERENCES "Invoices" ("Id") ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS "QuoteVersions" (
+                "Id" SERIAL PRIMARY KEY,
+                "QuoteId" INT NOT NULL REFERENCES "Quotes" ("Id") ON DELETE CASCADE
+            );
+            """);
+    }
+
+    /// <summary>
+    /// Las tablas legacy viven en el MISMO container de Postgres que el resto de los tests de esta clase (una
+    /// fixture por clase), así que hay que dropearlas siempre — si no, el test guardián
+    /// <see cref="InformationSchemaTables_CoincideExactamenteConListaBlancaMasSupervivientes"/> las vería como
+    /// "tablas sin clasificar" y se pondría rojo por un motivo que no es real.
+    /// </summary>
+    private static async Task DropLegacyTablesAsync(AppDbContext ctx)
+    {
+        await ctx.Database.ExecuteSqlRawAsync("""
+            DROP TABLE IF EXISTS "QuoteVersions";
+            DROP TABLE IF EXISTS "InvoiceTributes";
+            DROP TABLE IF EXISTS "InvoiceItems";
+            DROP TABLE IF EXISTS "TreasuryApplications";
+            DROP TABLE IF EXISTS "TreasuryReceipts";
+            DROP TABLE IF EXISTS "BspReconciliationEntries";
+            DROP TABLE IF EXISTS "BspNormalizedRecords";
+            DROP TABLE IF EXISTS "BspImportRawRecords";
+            DROP TABLE IF EXISTS "BspImportBatches";
+            DROP TABLE IF EXISTS "CupoAssignments";
+            DROP TABLE IF EXISTS "Cupos";
+            """);
+    }
+
+    private static async Task<int> CountRowsAsync(AppDbContext ctx, string table)
+    {
+        return await ctx.Database.SqlQueryRaw<int>($"""SELECT COUNT(*)::int AS "Value" FROM "{table}";""").FirstAsync();
+    }
+
+    [Fact]
+    public async Task Wipe_ClientesYReservasYPlata_ConTablasLegacyDelEsquemaViejo_BorraLasQueSonDeLaReservaYDejaElCatalogo()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+        await CreateLegacyTablesAsync(ctx);
+        try
+        {
+            var customer = new Customer { FullName = "Cliente con datos legacy colgando" };
+            ctx.Customers.Add(customer);
+            var reserva = new Reserva
+            {
+                NumeroReserva = "F-LEG-" + Guid.NewGuid().ToString("N")[..8],
+                Name = "Reserva con datos legacy",
+                Status = EstadoReserva.Confirmed,
+            };
+            ctx.Reservas.Add(reserva);
+            var invoice = new Invoice
+            {
+                TipoComprobante = 6,
+                PuntoDeVenta = 1,
+                NumeroComprobante = 1,
+                Resultado = "A",
+                CAE = "12345678901234",
+                WasIssuedInProduction = false,
+            };
+            ctx.Invoices.Add(invoice);
+            await ctx.SaveChangesAsync();
+
+            var servicio = new ServicioReserva { ReservaId = reserva.Id, DepartureDate = DateTime.UtcNow.AddDays(20) };
+            ctx.Set<ServicioReserva>().Add(servicio);
+
+            // Rastro de auditoría ANTERIOR al borrado: tiene que sobrevivir intacto (los AuditLogs no se
+            // borran nunca — son el único registro de quién hizo qué, incluido este mismo borrado).
+            ctx.AuditLogs.Add(new AuditLog
+            {
+                UserId = AdminUserId,
+                UserName = "Admin de prueba",
+                Action = "Create",
+                EntityName = "Customer",
+                EntityId = "1",
+                Timestamp = DateTime.UtcNow.AddDays(-1),
+                Category = "Business",
+            });
+            await ctx.SaveChangesAsync();
+
+            // Datos legacy REALES colgando de ese servicio/factura: esto es lo que en PROD frenaba el borrado.
+            await ctx.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "Cupos" ("Descripcion") VALUES ('Bloque de 20 lugares a Bariloche');
+                INSERT INTO "CupoAssignments" ("CupoId", "ReservationId") VALUES (1, {servicio.Id});
+                INSERT INTO "BspImportBatches" ("FileName") VALUES ('bsp-2026-01.txt');
+                INSERT INTO "BspImportRawRecords" ("BspImportBatchId") VALUES (1);
+                INSERT INTO "BspNormalizedRecords" ("BspImportBatchId") VALUES (1);
+                INSERT INTO "BspReconciliationEntries" ("BspImportBatchId", "BspNormalizedRecordId", "ReservationId")
+                    VALUES (1, 1, {servicio.Id});
+                INSERT INTO "TreasuryReceipts" ("Numero") VALUES ('REC-0001');
+                INSERT INTO "TreasuryApplications" ("TreasuryReceiptId", "ReservationId") VALUES (1, {servicio.Id});
+                INSERT INTO "InvoiceItems" ("InvoiceId") VALUES ({invoice.Id});
+                INSERT INTO "InvoiceTributes" ("InvoiceId") VALUES ({invoice.Id});
+                """);
+
+            var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+            var userManagerMock = BuildUserManagerMock(user);
+            var backupPort = new FakeBackupPort();
+            var service = NewWipeService(ctx, userManagerMock, backupPort);
+
+            // Antes del fix esto tiraba SystemDataWipeRefusedException ("avisá al equipo técnico") por la
+            // foreign key sin contemplar CupoAssignments.ReservationId -> Reservations.
+            await service.ExecuteWipeAsync(
+                AdminUserId, "cualquier-cosa", "BORRAR TODO",
+                new[] { WipeGroups.Clientes, WipeGroups.ReservasYPlata }, CancellationToken.None);
+
+            Assert.Equal(1, backupPort.CreateBackupCallCount);
+
+            await using var verifyCtx = _fixture.CreateDbContext();
+            Assert.Equal(0, await verifyCtx.Customers.CountAsync());
+            Assert.Equal(0, await verifyCtx.Reservas.CountAsync());
+
+            // Los datos legacy ligados a la reserva/plata se fueron con las reservas...
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "CupoAssignments"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "BspReconciliationEntries"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "BspNormalizedRecords"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "BspImportRawRecords"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "BspImportBatches"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "TreasuryApplications"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "TreasuryReceipts"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "InvoiceItems"));
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "InvoiceTributes"));
+
+            // ...pero el CATALOGO de cupos queda (decisión firmada 2026-07-28: el bloque de lugares en sí es
+            // catálogo, como el tarifario).
+            Assert.Equal(1, await CountRowsAsync(verifyCtx, "Cupos"));
+
+            // Los supervivientes CRITICOS siguen ahí: sin usuarios nadie entra al sistema, y sin auditoría no
+            // queda rastro de quién borró qué.
+            Assert.True(await verifyCtx.Set<ApplicationUser>().AnyAsync(u => u.Id == AdminUserId));
+            Assert.True(await verifyCtx.AuditLogs.AnyAsync(a => a.Action == "Create" && a.EntityName == "Customer"));
+
+            // Rastro de la destrucción irreversible de las tablas del esquema viejo (2026-07-29): es el ÚNICO
+            // registro que queda de que se vaciaron, porque no tienen conteo propio en la respuesta.
+            var wipeLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataWiped);
+            Assert.Contains("tablasDelEsquemaViejoVaciadas", wipeLog.Changes);
+            Assert.Contains("CupoAssignments", wipeLog.Changes);
+            Assert.Contains("TreasuryApplications", wipeLog.Changes);
+        }
+        finally
+        {
+            await using var cleanupCtx = _fixture.CreateDbContext();
+            await DropLegacyTablesAsync(cleanupCtx);
+        }
+    }
+
+    [Fact]
+    public async Task Wipe_SoloPosiblesClientes_ConTablaLegacyQuoteVersions_TambienSeLaLleva()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+        await CreateLegacyTablesAsync(ctx);
+        try
+        {
+            var quote = new Quote { Title = "Presupuesto con versiones viejas", QuoteNumber = "Q-LEG" };
+            ctx.Quotes.Add(quote);
+            await ctx.SaveChangesAsync();
+
+            await ctx.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "QuoteVersions" ("QuoteId") VALUES ({quote.Id});
+                """);
+
+            var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+            var userManagerMock = BuildUserManagerMock(user);
+            var service = NewWipeService(ctx, userManagerMock, new FakeBackupPort());
+
+            await service.ExecuteWipeAsync(
+                AdminUserId, "cualquier-cosa", "BORRAR TODO",
+                new[] { WipeGroups.PosiblesClientes }, CancellationToken.None);
+
+            await using var verifyCtx = _fixture.CreateDbContext();
+            Assert.Equal(0, await verifyCtx.Quotes.CountAsync());
+            Assert.Equal(0, await CountRowsAsync(verifyCtx, "QuoteVersions"));
+        }
+        finally
+        {
+            await using var cleanupCtx = _fixture.CreateDbContext();
+            await DropLegacyTablesAsync(cleanupCtx);
+        }
+    }
+
+    /// <summary>
+    /// M1 (2026-07-29): las tablas legacy de un grupo que NO se pidió sobreviven INTACTAS, con sus filas. Es
+    /// el espejo del test de arriba y cierra el riesgo más caro de esta obra: que agregar tablas legacy a la
+    /// lista termine borrando datos que nadie pidió. Se pide SOLO "tarifario" (que no tiene ninguna tabla
+    /// legacy asociada) con datos legacy de reservas cargados: se borra el tarifario y no se toca nada más.
+    /// </summary>
+    [Fact]
+    public async Task Wipe_SoloTarifario_ConTablasLegacyDeOtroGrupoConDatos_LasDejaIntactas()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+        await CreateLegacyTablesAsync(ctx);
+        try
+        {
+            var rate = new Rate { ServiceType = "Hotel", ProductName = "Hotel del tarifario a borrar" };
+            ctx.Rates.Add(rate);
+            var reserva = new Reserva
+            {
+                NumeroReserva = "F-LEG2-" + Guid.NewGuid().ToString("N")[..8],
+                Name = "Reserva que NO se pidió borrar",
+                Status = EstadoReserva.Confirmed,
+            };
+            ctx.Reservas.Add(reserva);
+            await ctx.SaveChangesAsync();
+
+            var servicio = new ServicioReserva
+            {
+                ReservaId = reserva.Id,
+                RateId = rate.Id,
+                DepartureDate = DateTime.UtcNow.AddDays(15),
+            };
+            ctx.Set<ServicioReserva>().Add(servicio);
+            await ctx.SaveChangesAsync();
+
+            await ctx.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "Cupos" ("Descripcion") VALUES ('Bloque de 10 lugares a Mendoza');
+                INSERT INTO "CupoAssignments" ("CupoId", "ReservationId") VALUES (1, {servicio.Id});
+                INSERT INTO "TreasuryReceipts" ("Numero") VALUES ('REC-0002');
+                INSERT INTO "TreasuryApplications" ("TreasuryReceiptId", "ReservationId") VALUES (1, {servicio.Id});
+                """);
+
+            var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+            var userManagerMock = BuildUserManagerMock(user);
+            var service = NewWipeService(ctx, userManagerMock, new FakeBackupPort());
+
+            await service.ExecuteWipeAsync(
+                AdminUserId, "cualquier-cosa", "BORRAR TODO",
+                new[] { WipeGroups.Tarifario }, CancellationToken.None);
+
+            await using var verifyCtx = _fixture.CreateDbContext();
+
+            // Lo pedido se borró...
+            Assert.Equal(0, await verifyCtx.Rates.CountAsync());
+
+            // ...y NADA de lo legacy de reservas se tocó: siguen sus filas, una por una.
+            Assert.Equal(1, await CountRowsAsync(verifyCtx, "Cupos"));
+            Assert.Equal(1, await CountRowsAsync(verifyCtx, "CupoAssignments"));
+            Assert.Equal(1, await CountRowsAsync(verifyCtx, "TreasuryReceipts"));
+            Assert.Equal(1, await CountRowsAsync(verifyCtx, "TreasuryApplications"));
+            Assert.Equal(1, await verifyCtx.Reservas.CountAsync());
+
+            // La auditoría deja escrito que en este borrado NO se vació ninguna tabla del esquema viejo.
+            var wipeLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataWiped);
+            Assert.Contains("\"tablasDelEsquemaViejoVaciadas\":\"ninguna\"", wipeLog.Changes);
+        }
+        finally
+        {
+            await using var cleanupCtx = _fixture.CreateDbContext();
+            await DropLegacyTablesAsync(cleanupCtx);
+        }
+    }
+
+    /// <summary>
+    /// M2 (2026-07-29): reproduce EXACTAMENTE el bug de producción del 2026-07-28 — una tabla del esquema
+    /// viejo que NADIE clasificó, con una foreign key apuntando a algo que se va a truncar. Verifica las tres
+    /// cosas que importan: (a) la red fail-closed aborta, (b) aborta ANTES de generar el resguardo (el
+    /// depósito no se ensucia con un dump por cada intento fallido), y (c) el mensaje al usuario es el
+    /// genérico EXACTO — regla T-5: ni el nombre de la tabla nueva ni el de la tabla destino pueden filtrarse
+    /// a la pantalla; ese detalle vive solo en el log del servidor.
+    /// </summary>
+    [Fact]
+    public async Task Wipe_ConTablaLegacySinClasificarApuntandoAReservas_AbortaAntesDelResguardoSinDelatarNombresTecnicos()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+
+        var customer = new Customer { FullName = "Cliente que no se tiene que borrar" };
+        ctx.Customers.Add(customer);
+        var reserva = new Reserva
+        {
+            NumeroReserva = "F-M2-" + Guid.NewGuid().ToString("N")[..8],
+            Name = "Reserva con dato legacy sin clasificar",
+            Status = EstadoReserva.Confirmed,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var servicio = new ServicioReserva { ReservaId = reserva.Id, DepartureDate = DateTime.UtcNow.AddDays(10) };
+        ctx.Set<ServicioReserva>().Add(servicio);
+        await ctx.SaveChangesAsync();
+
+        // Tabla del esquema viejo que el mapa NO conoce, calcada del caso real (CupoAssignments -> Reservations).
+        await ctx.Database.ExecuteSqlRawAsync("""
+            DROP TABLE IF EXISTS "TablaViejaSinClasificar";
+            CREATE TABLE "TablaViejaSinClasificar" (
+                "Id" SERIAL PRIMARY KEY,
+                "ReservationId" INT NULL REFERENCES "Reservations" ("Id") ON DELETE SET NULL
+            );
+            """);
+        try
+        {
+            await ctx.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "TablaViejaSinClasificar" ("ReservationId") VALUES ({servicio.Id});
+                """);
+
+            var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+            var userManagerMock = BuildUserManagerMock(user);
+            var backupPort = new FakeBackupPort();
+            var service = NewWipeService(ctx, userManagerMock, backupPort);
+
+            var ex = await Assert.ThrowsAsync<SystemDataWipeRefusedException>(() =>
+                service.ExecuteWipeAsync(
+                    AdminUserId, "cualquier-cosa", "BORRAR TODO",
+                    new[] { WipeGroups.Clientes, WipeGroups.ReservasYPlata }, CancellationToken.None));
+
+            // (c) T-5: mensaje genérico EXACTO, sin una sola pista técnica.
+            Assert.Equal("Hay datos relacionados que este borrado no sabe manejar todavía; avisá al equipo técnico.", ex.Message);
+            Assert.DoesNotContain("TablaViejaSinClasificar", ex.Message);
+            Assert.DoesNotContain("Reservations", ex.Message);
+
+            // (b) ni un resguardo huérfano en el depósito.
+            Assert.Equal(0, backupPort.CreateBackupCallCount);
+
+            // (a) no se tocó un solo dato.
+            await using var verifyCtx = _fixture.CreateDbContext();
+            Assert.Equal(1, await verifyCtx.Customers.CountAsync());
+            Assert.Equal(1, await verifyCtx.Reservas.CountAsync());
+            Assert.Equal(1, await CountRowsAsync(verifyCtx, "TablaViejaSinClasificar"));
+            Assert.False(await verifyCtx.AuditLogs.AnyAsync(a => a.Action == AuditActions.SystemDataWiped));
+        }
+        finally
+        {
+            await ctx.Database.ExecuteSqlRawAsync("""DROP TABLE IF EXISTS "TablaViejaSinClasificar";""");
         }
     }
 
@@ -751,10 +1171,20 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
             "AspNetUserTokens", "AspNetRoleClaims", "RolePermissions", "AuditLogs", "__EFMigrationsHistory",
         };
 
+        // Tablas del esquema VIEJO (2026-07-28): no existen en una base creada desde el modelo actual (por eso
+        // se excluyen del chequeo "clasificada pero ya no existe"), pero sí en la base real. Están clasificadas
+        // en el servicio y se aceptan acá para que este guardián no las marque como "sin clasificar" si alguien
+        // corre los tests contra una base que las tenga.
+        var legacyTables = SystemDataWipeService.ReservasYPlataLegacyTables
+            .Concat(SystemDataWipeService.PosiblesClientesLegacyTables)
+            .Concat(SystemDataWipeService.LegacyTablesThatStayAlive)
+            .ToHashSet(StringComparer.Ordinal);
+
         var expectedTables = businessTables
             .Concat(configTables)
             .Concat(handledSeparately)
             .Concat(survivors)
+            .Concat(legacyTables)
             .ToHashSet(StringComparer.Ordinal);
 
         await using var ctx = _fixture.CreateDbContext();
@@ -766,8 +1196,19 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
             .ToListAsync();
         var actualTables = actualTablesRaw.ToHashSet(StringComparer.Ordinal);
 
-        var unclassified = actualTables.Except(expectedTables).ToList();
-        var missingFromDb = expectedTables.Except(actualTables).Where(t => t != "__EFMigrationsHistory").ToList();
+        var unclassified = actualTables
+            .Except(expectedTables)
+            // Las fotos de resguardo que dejan las migraciones de reparación se aceptan por prefijo: son varias
+            // y van naciendo con cada reparación, no tiene sentido listarlas una por una.
+            .Where(t => !t.StartsWith(SystemDataWipeService.LegacyRepairBackupTablePrefix, StringComparison.Ordinal))
+            .ToList();
+
+        var missingFromDb = expectedTables
+            .Except(actualTables)
+            .Where(t => t != "__EFMigrationsHistory")
+            // Las tablas legacy NO existen en una base creada desde el modelo actual: que falten es lo esperado.
+            .Where(t => !legacyTables.Contains(t))
+            .ToList();
 
         Assert.True(unclassified.Count == 0,
             $"Tablas SIN CLASIFICAR en SystemDataWipeService (agregalas a negocio/configuracion/supervivientes): {string.Join(", ", unclassified)}");

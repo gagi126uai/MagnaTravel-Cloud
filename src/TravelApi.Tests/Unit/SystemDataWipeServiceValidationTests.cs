@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
@@ -341,6 +342,113 @@ public class SystemDataWipeServiceValidationTests
         Assert.DoesNotContain("boom", ex.Message);
         Assert.Contains("No se pudo generar el backup previo", ex.Message);
         Assert.Equal(1, await context.Customers.CountAsync());
+    }
+
+    /// <summary>
+    /// Guarda del MAPA de clasificación (2026-07-28, a raíz del bug de PROD): cada tabla tiene que estar
+    /// clasificada en UN solo lugar. Si alguien agrega una tabla a dos grupos a la vez (o repite una tabla
+    /// legacy en la lista de "quedan vivas" y en la de "se borran"), el borrado haría cosas distintas según qué
+    /// grupo se pida — este test lo caza en CI en vez de en la base real.
+    /// </summary>
+    [Fact]
+    public void ClasificacionDeTablas_NingunaTablaEstaEnDosLugaresALaVez()
+    {
+        var listas = new (string Nombre, string[] Tablas)[]
+        {
+            ("reservas y su plata", SystemDataWipeService.ReservasYPlataTables),
+            ("clientes", SystemDataWipeService.ClientesTables),
+            ("operadores", SystemDataWipeService.OperadoresTables),
+            ("tarifario", SystemDataWipeService.TarifarioTables),
+            ("paises y destinos", SystemDataWipeService.PaisesYDestinosTables),
+            ("posibles clientes", SystemDataWipeService.PosiblesClientesTables),
+            ("configuracion", WipeGroups.ConfiguracionTables),
+            ("legacy de reservas y su plata", SystemDataWipeService.ReservasYPlataLegacyTables),
+            ("legacy de posibles clientes", SystemDataWipeService.PosiblesClientesLegacyTables),
+            ("legacy que quedan vivas", SystemDataWipeService.LegacyTablesThatStayAlive),
+        };
+
+        var vistas = new Dictionary<string, string>(StringComparer.Ordinal);
+        var duplicadas = new List<string>();
+
+        foreach (var (nombre, tablas) in listas)
+        {
+            foreach (var tabla in tablas)
+            {
+                if (vistas.TryGetValue(tabla, out var listaAnterior))
+                {
+                    duplicadas.Add($"{tabla} (en '{listaAnterior}' y en '{nombre}')");
+                    continue;
+                }
+
+                vistas[tabla] = nombre;
+            }
+        }
+
+        Assert.True(duplicadas.Count == 0, $"Tablas clasificadas dos veces: {string.Join(" | ", duplicadas)}");
+
+        // Los dos casos especiales tampoco pueden estar repetidos en un grupo (se agregan aparte).
+        Assert.DoesNotContain(SystemDataWipeService.CommissionRulesTable, vistas.Keys);
+        Assert.DoesNotContain(SystemDataWipeService.RateSupplierSalesTable, vistas.Keys);
+    }
+
+    /// <summary>
+    /// Guarda extra (2026-07-29, hallazgo de la revisión): ninguna tabla de las listas QUE SE TRUNCAN puede
+    /// llamarse igual que un superviviente crítico. Los supervivientes nunca se tocan por diseño (acá se borra
+    /// por lista blanca explícita, nunca "todo lo que haya"), pero un nombre repetido por accidente — sobre
+    /// todo en las listas legacy, que se escriben a mano y no las valida el compilador porque no están en el
+    /// modelo de EF — convertiría el borrado en una destrucción de usuarios o de la auditoría misma, que es
+    /// justo el rastro que quedaría para investigarlo. Este test cuesta nada y cierra esa puerta para siempre.
+    /// </summary>
+    [Fact]
+    public void ClasificacionDeTablas_NingunaListaATruncarPisaUnSupervivienteCritico()
+    {
+        // Usuarios, auditoría y permisos: si el borrado los tocara, se perdería el acceso al sistema y el
+        // rastro de quién borró qué.
+        var supervivientesCriticos = new[] { "AspNetUsers", "AuditLogs", "RolePermissions" };
+
+        var listasATruncar = new (string Nombre, string[] Tablas)[]
+        {
+            ("reservas y su plata", SystemDataWipeService.ReservasYPlataTables),
+            ("clientes", SystemDataWipeService.ClientesTables),
+            ("operadores", SystemDataWipeService.OperadoresTables),
+            ("tarifario", SystemDataWipeService.TarifarioTables),
+            ("paises y destinos", SystemDataWipeService.PaisesYDestinosTables),
+            ("posibles clientes", SystemDataWipeService.PosiblesClientesTables),
+            ("configuracion", WipeGroups.ConfiguracionTables),
+            ("legacy de reservas y su plata", SystemDataWipeService.ReservasYPlataLegacyTables),
+            ("legacy de posibles clientes", SystemDataWipeService.PosiblesClientesLegacyTables),
+            ("caso especial CommissionRules", new[] { SystemDataWipeService.CommissionRulesTable }),
+            ("caso especial RateSupplierSales", new[] { SystemDataWipeService.RateSupplierSalesTable }),
+        };
+
+        var colisiones = new List<string>();
+        foreach (var (nombre, tablas) in listasATruncar)
+        {
+            foreach (var tabla in tablas)
+            {
+                if (Array.Exists(supervivientesCriticos, s => string.Equals(s, tabla, StringComparison.Ordinal)))
+                {
+                    colisiones.Add($"{tabla} (en '{nombre}')");
+                }
+            }
+        }
+
+        Assert.True(colisiones.Count == 0,
+            $"Hay supervivientes CRITICOS metidos en una lista que se trunca: {string.Join(" | ", colisiones)}");
+    }
+
+    /// <summary>
+    /// Verificado contra la base real de producción el 2026-07-29: el renombre de "Reservas"/"Servicios" a
+    /// "TravelFiles"/"Reservations" se hizo IN PLACE, así que esas tablas viejas NO existen (ni pueden existir
+    /// en una instalación nueva). Se sacaron de la lista legacy porque eran las entradas más riesgosas: dos
+    /// nombres genéricos en castellano que, si alguien crea una tabla propia con ese nombre, este borrado se
+    /// llevaría puesta sin que nadie lo pidiera. Este test evita que vuelvan "por las dudas".
+    /// </summary>
+    [Fact]
+    public void TablasLegacy_NoIncluyenLosNombresGenericosEnCastellanoQueNoExistenEnLaBaseReal()
+    {
+        Assert.DoesNotContain("Reservas", SystemDataWipeService.ReservasYPlataLegacyTables);
+        Assert.DoesNotContain("Servicios", SystemDataWipeService.ReservasYPlataLegacyTables);
     }
 
     [Fact]
