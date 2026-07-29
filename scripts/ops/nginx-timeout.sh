@@ -156,8 +156,14 @@ fi
 TMP_FILES=()
 limpiar_temporales() {
   local f
+  # OJO: con "if" y no con "[ ... ] &&": cuando no hay temporales (accion 'ver'), la forma con "&&"
+  # deja al bucle terminando en estado 1, y como esto corre en el trap de EXIT con set -e, ese 1
+  # pisaba el exit del script entero: 'ver' salia PERFECTO pero el run figuraba rojo (visto en el
+  # VPS real, 2026-07-29).
   for f in "${TMP_FILES[@]:-}"; do
-    [ -n "${f}" ] && rm -f -- "${f}"
+    if [ -n "${f}" ]; then
+      rm -f -- "${f}"
+    fi
   done
 }
 trap limpiar_temporales EXIT
