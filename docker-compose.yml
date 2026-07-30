@@ -143,10 +143,23 @@ services:
       # el segundo camino solo necesita cubrir el pg_restore en sí, no toda la operación; el PRIMER camino
       # cubre los pasos ANTERIORES al pg_restore, que corren bajo el reloj SIN resetear). Con los valores de
       # abajo: 10+3+5=18 y 15, ambos con más de 10 minutos de margen contra el límite de 30.
+      # IMPORTANTE: TODOS los topes Wipe__* de este bloque aplican SOLO al camino de RESTAURACIÓN TOTAL. El
+      # ARRANQUE de la app NO tiene tope de tiempo (decisión de la review: un deploy con una migración larga no
+      # puede empezar a fallar por un tope que se trajo para otro camino) — ver DatabaseSchemaUpdater.
       Wipe__PgDumpTimeoutMinutes: "10"
       Wipe__SchemaCheckTimeoutMinutes: "3"
       Wipe__MinioCopyTimeoutMinutes: "5"
       Wipe__PgRestoreTotalTimeoutMinutes: "15"
+      # Actualización de esquema DESPUÉS del pg_restore (un solo intento en el camino de restore) y su
+      # CommandTimeout por sentencia (hay migraciones con backfill crudo largo adentro).
+      Wipe__MigrateTimeoutMinutes: "10"
+      Wipe__MigrateCommandTimeoutMinutes: "5"
+      # Intercambio de nombres de bases (y su vuelta atrás): reintentos + espera, para el caso de que quede
+      # alguna conexión colgada tomando el lock. Peor caso: 5×2 s y 3×2 s, holgadamente dentro del presupuesto.
+      Wipe__SwapRetries: "5"
+      Wipe__SwapRetryDelaySeconds: "2"
+      Wipe__RollbackSwapRetries: "3"
+      Wipe__RollbackSwapRetryDelaySeconds: "2"
       Maintenance__MaxDurationMinutes: "30"
       # Path ABSOLUTO explícito (antes solo dependía del default hardcodeado en FileMaintenanceModeService) —
       # coincide con el volumen compartido api↔worker (./logs:/app/logs, ver comentario en "worker" más abajo).

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Npgsql;
 using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -19,17 +20,16 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// Obra "Restaurar TOTAL" (2026-07-28, firmada por el dueño) + ronda de hardening de seguridad/funcional del
-/// mismo día: cubre la orquestación completa del modo <c>total</c> de <see cref="SystemDataRestoreService"/> —
-/// motivo obligatorio (B6/F-16), candado de concurrencia (B4), guard de esquema (B7), candado fiscal (B2),
-/// backup previo obligatorio, desenlace incierto del <c>pg_restore</c> (B1), forzado de AFIP a homologación
-/// (B3), reposición de archivos de MinIO (B5) y auditoría best-effort (B6). El <see cref="IDatabaseRestorePort"/>
-/// y el <see cref="IWipeBackupPort"/> se inyectan como fakes (el <c>pg_dump</c>/<c>pg_restore</c> reales se
-/// prueban por construcción, mismo criterio que el resto de esta obra) — acá se verifica la ORQUESTACIÓN: en
-/// qué orden se llama a cada cosa y qué pasa cuando algo falla en cada paso. El candado fiscal (Invoices/
-/// AfipSettings) usa LINQ puro, así que corre perfecto contra InMemory — no hace falta Postgres real para
-/// estos casos (a diferencia del forzado de AFIP a homologación, que sí necesita <c>ExecuteSqlRawAsync</c>
-/// real y vive en <c>SystemDataRestoreServiceIntegrationTests</c>).
+/// Obra "Restaurar TOTAL" (2026-07-28, firmada) + ADR-052 (2026-07-29, "los resguardos de versiones anteriores
+/// se aceptan y el sistema se actualiza solo"): cubre la ORQUESTACIÓN completa del modo <c>total</c> de
+/// <see cref="SystemDataRestoreService"/> — en qué orden se llama a cada cosa y qué pasa cuando algo falla en
+/// cada paso.
+///
+/// <para><b>Qué NO vive acá</b>: el camino 100% exitoso. Un modo total exitoso termina SIEMPRE con el
+/// <c>UPDATE "AfipSettings"</c> por SQL crudo, que el proveedor InMemory no soporta — esos escenarios viven en
+/// <c>SystemDataRestoreServiceIntegrationTests</c> (Postgres real). Acá se cubren los caminos que se CORTAN
+/// antes, y los de VUELTA ATRÁS (para los que la falla del <c>ExecuteSqlRawAsync</c> de InMemory sirve, a
+/// propósito, como disparador realista de "el paso 8 falló").</para>
 /// </summary>
 public class SystemDataRestoreServiceTotalModeTests
 {
@@ -38,6 +38,10 @@ public class SystemDataRestoreServiceTotalModeTests
     private const string RequesterUserId = "admin-1";
     private const string ValidFileName = "wipe-20260727-120000.dump";
     private const string ValidMotivo = "Recuperar datos borrados por error operativo del 2026-07-28.";
+
+    /// <summary>Nombres INTERNOS de bases: ningún mensaje al usuario ni detalle de auditoría puede contenerlos (T-5).</summary>
+    private const string NewDatabaseName = "travel_restore_20260729120000";
+    private const string PreviousDatabaseName = "travel_old_20260729120001";
 
     private static AppDbContext NewContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
@@ -58,13 +62,6 @@ public class SystemDataRestoreServiceTotalModeTests
         return mock;
     }
 
-    /// <summary>
-    /// Backup previo listo para el camino feliz. NOTA: un modo total EXITOSO de punta a punta (schema
-    /// compatible + pg_restore ok) SIEMPRE corre después el UPDATE crudo que fuerza AFIP a homologación
-    /// (hallazgo B3) — <c>ExecuteSqlRawAsync</c> no lo soporta el proveedor InMemory, así que esos escenarios
-    /// (éxito completo) viven en <c>SystemDataRestoreServiceIntegrationTests</c> (Postgres real). Acá solo se
-    /// cubren los caminos que SE CORTAN antes de llegar a ese UPDATE (rechazos en cualquier paso previo).
-    /// </summary>
     private static Mock<IWipeBackupPort> NewHappyPathBackupPortMock(string backupFileName = "pre-restore-20260728-090000.dump")
     {
         var backupPortMock = new Mock<IWipeBackupPort>();
@@ -77,188 +74,558 @@ public class SystemDataRestoreServiceTotalModeTests
         return backupPortMock;
     }
 
+    /// <summary>
+    /// Puerto de base de datos con TODO el camino de ADR-052 en verde (veredicto configurable): privilegios OK,
+    /// resguardo restaurado en una base nueva, intercambio OK y vuelta atrás OK si se llegara a pedir. Cada test
+    /// re-configura SOLO el paso que quiere hacer fallar — así queda explícito qué está probando.
+    /// </summary>
+    private static Mock<IDatabaseRestorePort> NewPortMock(
+        RestoreSchemaVerdict verdict = RestoreSchemaVerdict.Identical, int missingMigrations = 0)
+    {
+        var portMock = new Mock<IDatabaseRestorePort>();
+        portMock
+            .Setup(p => p.CheckSchemaCompatibilityAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SchemaCompatibilityResult(verdict, null, missingMigrations));
+        portMock
+            .Setup(p => p.CheckDatabaseManagementPrivilegesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabasePrivilegeCheckResult(true, null));
+        portMock
+            .Setup(p => p.CleanupLeftoverRestoreDatabasesAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        portMock
+            .Setup(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new NewDatabaseRestoreResult(TotalRestoreOutcome.Completed, true, NewDatabaseName, null));
+        portMock
+            .Setup(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabaseSwapResult(true, PreviousDatabaseName, null));
+        portMock
+            .Setup(p => p.RollbackSwapAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabaseSwapRollbackResult(true, null));
+        portMock
+            .Setup(p => p.DropDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        // El resguardo previo se verifica antes de dropear la copia anterior de la base (re-review): acá se lee bien.
+        portMock
+            .Setup(p => p.VerifyBackupAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RestoreVerifyResult(true, null, 120, true));
+        return portMock;
+    }
+
+    private static Mock<ISchemaUpdatePort> NewSchemaUpdatePortMock(bool success = true, int migrationsApplied = 3)
+    {
+        var mock = new Mock<ISchemaUpdatePort>();
+        mock
+            .Setup(s => s.UpdateAsync(It.IsAny<SchemaUpdatePolicy>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SchemaUpdateResult(
+                success, success ? migrationsApplied : 0,
+                success ? null : "relation \"Payments\" does not exist"));
+        return mock;
+    }
+
     private static SystemDataRestoreService NewService(
         AppDbContext context,
         Mock<UserManager<ApplicationUser>> userManagerMock,
         Mock<IDatabaseRestorePort> portMock,
         Mock<IWipeBackupPort> backupPortMock,
         RecordingMaintenanceModeService maintenanceMode,
-        Mock<IAuditService>? auditServiceMock = null)
+        Mock<IAuditService>? auditServiceMock = null,
+        Mock<ISchemaUpdatePort>? schemaUpdatePortMock = null)
     {
         return new SystemDataRestoreService(
-            context, userManagerMock.Object, portMock.Object, backupPortMock.Object, maintenanceMode,
-            (auditServiceMock ?? new Mock<IAuditService>()).Object, NullLogger<SystemDataRestoreService>.Instance);
+            context, userManagerMock.Object, portMock.Object, backupPortMock.Object,
+            (schemaUpdatePortMock ?? NewSchemaUpdatePortMock()).Object,
+            maintenanceMode,
+            (auditServiceMock ?? new Mock<IAuditService>()).Object,
+            NullLogger<SystemDataRestoreService>.Instance);
+    }
+
+    /// <summary>T-5: ni ids de migración, ni nombres de tabla/base, ni jerga técnica en lo que ve el usuario.</summary>
+    private static void AssertSinInternals(string mensaje)
+    {
+        Assert.DoesNotContain("travel_", mensaje);
+        Assert.DoesNotContain("pg_restore", mensaje);
+        Assert.DoesNotContain("pg_dump", mensaje);
+        Assert.DoesNotContain("__EFMigrationsHistory", mensaje);
+        Assert.DoesNotContain("migration", mensaje, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AfipSettings", mensaje);
+        Assert.DoesNotContain("2026", mensaje); // ningún id de migración (que arranca con la fecha) se filtra
+    }
+
+    // ============================================================================================
+    // Gate de versión (ADR-052 D2): los cinco veredictos
+    // ============================================================================================
+
+    [Fact]
+    public async Task ModoTotal_ResguardoDeVersionMasNueva_RechazaConTextoPropioSinTocarNada()
+    {
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.NewerThanSystem);
+        var backupPortMock = new Mock<IWipeBackupPort>();
+
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Contains("MÁS NUEVA", ex.Message);
+        AssertSinInternals(ex.Message);
+        Assert.False(ex.RolledBack);
+
+        // Nada se tocó: ni base nueva, ni resguardo previo, ni intercambio.
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        portMock.Verify(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(new[] { "Activate", "Deactivate" }, maintenanceMode.Calls);
     }
 
     [Fact]
-    public async Task ModoTotal_BackupPrevioFalla_RechazaSinLlamarAlPuertoDeRestore()
+    public async Task ModoTotal_ResguardoConAgujeroEnElHistorial_RechazaConUnTextoDISTINTOAlDeVersionMasNueva()
+    {
+        // Menor M1 de la re-review: antes había UN solo texto ("es de una versión anterior") que para este caso
+        // MENTÍA. Son dos problemas distintos y se dicen distinto.
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.HistoryGap);
+
+        var service = NewService(context, BuildUserManagerMock(), portMock, new Mock<IWipeBackupPort>(), maintenanceMode);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Contains("salto en su historial", ex.Message);
+        Assert.DoesNotContain("MÁS NUEVA", ex.Message);
+        AssertSinInternals(ex.Message);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ModoTotal_BaseVivaConMigracionesPendientes_RechazaSinTocarNada()
     {
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
-        var portMock = new Mock<IDatabaseRestorePort>();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.LiveHasPendingMigrations);
+
+        var service = NewService(context, BuildUserManagerMock(), portMock, new Mock<IWipeBackupPort>(), maintenanceMode);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Contains("a mitad de una actualización", ex.Message);
+        AssertSinInternals(ex.Message);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(RestoreSchemaVerdict.DumpHistoryEmpty)]
+    [InlineData(RestoreSchemaVerdict.CouldNotDetermine)]
+    public async Task ModoTotal_SinPoderDeterminarLaVersionDelResguardo_RechazaFailClosed(RestoreSchemaVerdict verdict)
+    {
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(verdict);
+
+        var service = NewService(context, BuildUserManagerMock(), portMock, new Mock<IWipeBackupPort>(), maintenanceMode);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Contains("no se pudo determinar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSinInternals(ex.Message);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ============================================================================================
+    // Privilegios (D1.5 + C1) y pasos previos a tocar la base
+    // ============================================================================================
+
+    [Fact]
+    public async Task ModoTotal_SinPrivilegiosParaAdministrarBases_RechazaEnCriolloAntesDePagarElRestore()
+    {
+        // Condición C1: el assert (que incluye la PROPIEDAD de la base, no solo "puede crear bases") corre ANTES
+        // del pg_restore y del resguardo previo — descubrirlo 15 minutos después sería tirar el trabajo.
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock();
         portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
+            .Setup(p => p.CheckDatabaseManagementPrivilegesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabasePrivilegeCheckResult(false, "Privilegios insuficientes: superusuario=False, puedeCrearBases=True, esDueño=False."));
+        var backupPortMock = new Mock<IWipeBackupPort>();
+
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Contains("no permite hacer una restauración total desde la aplicación", ex.Message);
+        AssertSinInternals(ex.Message);
+        Assert.DoesNotContain("superusuario", ex.Message);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(new[] { "Activate", "Deactivate" }, maintenanceMode.Calls);
+    }
+
+    [Fact]
+    public async Task ModoTotal_FallaElRestoreALaBaseNueva_NoIntercambiaNiPideResguardoPrevioYReabreElSistema()
+    {
+        // Cierre del bloqueante B1 del ADR: un resguardo corrupto ya no puede dañar la base viva. Como la base
+        // viva NO se tocó, es seguro reabrir el sistema (mantenimiento OFF) — antes, este mismo fallo llegaba
+        // DESPUÉS de haber empezado a reemplazar la base.
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var backupPortMock = NewHappyPathBackupPortMock();
+        var portMock = NewPortMock();
+        portMock
+            .Setup(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new NewDatabaseRestoreResult(TotalRestoreOutcome.Completed, false, null,
+                "pg_restore: error: could not read from input file: end of file"));
+
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Contains("el sistema quedó intacto", ex.Message);
+        AssertSinInternals(ex.Message);
+        Assert.False(ex.RolledBack);
+        portMock.Verify(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.False(maintenanceMode.IsActive);
+        Assert.Equal(new[] { "Activate", "Touch", "Deactivate" }, maintenanceMode.Calls);
+    }
+
+    [Fact]
+    public async Task ModoTotal_FallaElResguardoPrevio_NoIntercambiaYDropeaLaBaseNueva()
+    {
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock();
         var backupPortMock = new Mock<IWipeBackupPort>();
         backupPortMock
             .Setup(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WipeBackupResult(false, null, null, "pg_dump exit code 1: disco lleno"));
-        var maintenanceMode = new RecordingMaintenanceModeService();
-        var auditServiceMock = new Mock<IAuditService>();
 
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, auditServiceMock);
+        var auditServiceMock = new Mock<IAuditService>();
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode, auditServiceMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
 
         Assert.Contains("No se pudo generar el resguardo", ex.Message);
-        Assert.DoesNotContain("pg_dump", ex.Message);
-        // El mantenimiento SI se activa (es el candado de concurrencia, PRIMER paso) pero se desactiva igual al fallar.
-        Assert.Equal(new[] { "Activate", "Deactivate" }, maintenanceMode.Calls);
+        AssertSinInternals(ex.Message);
+        portMock.Verify(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // La base nueva que ya se había restaurado es basura: se dropea (no se deja ocupando disco).
+        portMock.Verify(p => p.DropDatabaseAsync(NewDatabaseName, It.IsAny<CancellationToken>()), Times.Once);
         Assert.False(maintenanceMode.IsActive);
-        portMock.Verify(p => p.RestoreTotalAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         auditServiceMock.Verify(a => a.LogBusinessEventAsync(
-            AuditActions.SystemDataRestoreRejected,
-            AuditActions.SystemDataRestoreEntityName,
-            It.IsAny<string>(),
-            It.Is<string>(details => !details!.Contains("pg_dump")),
-            RequesterUserId,
-            null,
+            AuditActions.SystemDataRestoreRejected, AuditActions.SystemDataRestoreEntityName,
+            It.IsAny<string>(), It.Is<string>(d => !d!.Contains("pg_dump")), RequesterUserId, null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ============================================================================================
+    // Vuelta atrás (D4) y doble fallo (D4.5)
+    // ============================================================================================
+
     [Fact]
-    public async Task ModoTotal_PgRestoreFalla_DesactivaMantenimientoIgualYRechazaSinExponerElStderrNiElNombreDelArchivo()
+    public async Task ModoTotal_FallaElIntercambioDeNombres_VuelveAtrasYRechazaEnCriollo()
     {
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
-        var backupPortMock = NewHappyPathBackupPortMock("pre-restore-20260728-090000.dump");
-
-        var portMock = new Mock<IDatabaseRestorePort>();
+        var portMock = NewPortMock();
         portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
-        portMock
-            .Setup(p => p.RestoreTotalAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TotalRestoreResult(TotalRestoreOutcome.Completed, false,
-                "pg_restore: error: could not execute query: server closed the connection unexpectedly"));
+            .Setup(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabaseSwapResult(false, PreviousDatabaseName, "database is being accessed by other users"));
 
         var auditServiceMock = new Mock<IAuditService>();
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, auditServiceMock);
+        var service = NewService(context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode, auditServiceMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
 
-        Assert.DoesNotContain("pg_restore", ex.Message);
-        // Hallazgo de data-exposure (2026-07-28): el nombre del resguardo previo NUNCA va interpolado en un
-        // mensaje de error crudo.
-        Assert.DoesNotContain(".dump", ex.Message);
-        Assert.Contains("Volver atrás", ex.Message);
+        Assert.Contains("Quedó todo como estaba antes de intentarlo", ex.Message);
+        AssertSinInternals(ex.Message);
+        Assert.True(ex.RolledBack);
+        portMock.Verify(p => p.RollbackSwapAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.False(maintenanceMode.IsActive);
 
-        // "Touch" (hallazgo B-N2(c)) se llama SIEMPRE justo antes de RestoreTotalAsync, haya salido bien o mal.
-        Assert.Equal(new[] { "Activate", "Touch", "Deactivate" }, maintenanceMode.Calls);
+        // D7: el rechazo con vuelta atrás queda auditado con el DATO volvioAtras, no solo dentro del texto.
+        auditServiceMock.Verify(a => a.LogBusinessEventAsync(
+            AuditActions.SystemDataRestoreRejected, AuditActions.SystemDataRestoreEntityName,
+            It.IsAny<string>(), It.Is<string>(d => d!.Contains("volvioAtras") && d.Contains("true")),
+            RequesterUserId, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ModoTotal_FallaLaActualizacionDeEsquema_VuelveAtrasYNoAuditaExito()
+    {
+        // Cubre también el caso "falla un BACKFILL" (no la migración): el puerto de actualización no distingue
+        // hacia afuera —los dos devuelven Success=false— porque en restore NINGUNO se traga (B4).
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.SubsetNeedsUpdate, missingMigrations: 4);
+        var schemaUpdateMock = NewSchemaUpdatePortMock(success: false);
+
+        var auditServiceMock = new Mock<IAuditService>();
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode,
+            auditServiceMock, schemaUpdateMock);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.True(ex.RolledBack);
+        Assert.Contains("Quedó todo como estaba antes de intentarlo", ex.Message);
+        AssertSinInternals(ex.Message);
+        schemaUpdateMock.Verify(s => s.UpdateAsync(SchemaUpdatePolicy.Restore, It.IsAny<CancellationToken>()), Times.Once);
+        portMock.Verify(p => p.RollbackSwapAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Once);
         Assert.False(maintenanceMode.IsActive);
 
         auditServiceMock.Verify(a => a.LogBusinessEventAsync(
-            AuditActions.SystemDataTotallyRestored,
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            AuditActions.SystemDataTotallyRestored, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task ModoTotal_DesenlaceIncierto_NuncaDesactivaMantenimientoNiAuditaExito()
+    public async Task ModoTotal_FallaElAjusteDeAfipDespuesDelIntercambio_VuelveAtras()
     {
-        // Hallazgo BLOQUEANTE B1 de seguridad: si pg_restore excedio su propio timeout y tuvo que ser matado,
-        // el desenlace queda INCIERTO — el sistema TIENE que seguir en mantenimiento, nunca "mentirle" al
-        // usuario de que ya es seguro reabrir el sistema.
+        // B3 cerrado por ADR-052: el ajuste de AFIP pasó a estar DENTRO del sobre de vuelta atrás. Antes, no
+        // poder confirmarlo era un "desenlace incierto" sin salida; ahora hay a dónde volver.
+        // InMemory no soporta ExecuteSqlRawAsync (tira NotSupportedException) — se usa A PROPÓSITO como
+        // disparador realista de "el paso de AFIP falló".
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
-        var backupPortMock = NewHappyPathBackupPortMock();
+        var portMock = NewPortMock(RestoreSchemaVerdict.Identical);
+        var schemaUpdateMock = NewSchemaUpdatePortMock();
 
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
-        portMock
-            .Setup(p => p.RestoreTotalAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TotalRestoreResult(
-                TotalRestoreOutcome.UnknownMayStillBeRunning, false,
-                "pg_restore excedio el timeout de 15 minutos y tuvo que ser terminado a la fuerza."));
-
-        var auditServiceMock = new Mock<IAuditService>();
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, auditServiceMock);
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode,
+            schemaUpdatePortMock: schemaUpdateMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
 
-        Assert.Contains("sigue en mantenimiento", ex.Message);
-        Assert.DoesNotContain("pg_restore", ex.Message);
+        Assert.True(ex.RolledBack);
+        portMock.Verify(p => p.RollbackSwapAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Once);
 
-        // LO MAS IMPORTANTE: nunca se desactiva el mantenimiento en este camino, Y ademas queda marcado
-        // "SuppressAutoExpiry" (hallazgo B-N2(a)) - ni siquiera la auto-expiracion por tiempo lo va a reabrir
-        // solo, requiere confirmacion manual (ver el runbook en docs/db-operations.md).
-        Assert.Equal(new[] { "Activate", "Touch", "SuppressAutoExpiry" }, maintenanceMode.Calls);
-        Assert.True(maintenanceMode.IsActive);
-
-        auditServiceMock.Verify(a => a.LogBusinessEventAsync(
-            AuditActions.SystemDataTotallyRestored,
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        // Veredicto "igual": el paso de actualización NO se llama (el camino de siempre queda intacto).
+        schemaUpdateMock.Verify(s => s.UpdateAsync(It.IsAny<SchemaUpdatePolicy>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.False(maintenanceMode.IsActive);
     }
 
     [Fact]
-    public async Task ModoTotal_ElUpdateDeAfipFallaTrasElRestoreExitoso_NuncaDesactivaMantenimientoNiAuditaExito()
+    public async Task ModoTotal_UnaExcepcionINESPERADADespuesDelIntercambio_TambienVuelveAtras()
     {
-        // Hallazgo BLOQUEANTE B-N1 de seguridad (2026-07-28): si el pg_restore YA terminó con éxito pero el
-        // UPDATE que fuerza AFIP a homologación no se puede CONFIRMAR, no hay forma segura de saber si el
-        // sistema quedaría facturando en modo PRODUCTIVO real (CAE) — se trata igual que un desenlace
-        // incierto (B1): el mantenimiento NUNCA se apaga sin esa confirmación. InMemory no soporta
-        // ExecuteSqlRawAsync (tira NotSupportedException) — se aprovecha A PROPÓSITO como disparador realista
-        // de "el UPDATE falló", sin necesitar Postgres real para probar la ORQUESTACIÓN (qué hace el service
-        // ante CUALQUIER excepción de ese UPDATE es lo que importa acá).
+        // Red de seguridad: el ADR pide que TODO lo que falle entre el intercambio y el final vuelva atrás, no
+        // solo los fallos que el código enumera paso por paso. Se simula con un puerto de actualización que TIRA
+        // (su contrato dice que nunca tira, justamente por eso es "inesperado").
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
-        var backupPortMock = NewHappyPathBackupPortMock();
+        var portMock = NewPortMock(RestoreSchemaVerdict.SubsetNeedsUpdate, missingMigrations: 1);
+        var schemaUpdateMock = new Mock<ISchemaUpdatePort>();
+        schemaUpdateMock
+            .Setup(s => s.UpdateAsync(It.IsAny<SchemaUpdatePolicy>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom inesperado en el medio de la actualización"));
 
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
-        portMock
-            .Setup(p => p.RestoreTotalAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TotalRestoreResult(TotalRestoreOutcome.Completed, true, null));
-
-        var auditServiceMock = new Mock<IAuditService>();
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, auditServiceMock);
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode,
+            schemaUpdatePortMock: schemaUpdateMock);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
 
-        Assert.Contains("AFIP", ex.Message);
-        Assert.Contains("sigue en mantenimiento", ex.Message);
+        Assert.True(ex.RolledBack);
+        AssertSinInternals(ex.Message);
+        Assert.DoesNotContain("boom", ex.Message);
+        portMock.Verify(p => p.RollbackSwapAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.False(maintenanceMode.IsActive);
+    }
+
+    [Fact]
+    public async Task ModoTotal_LaVueltaAtrasFalla_DOBLEFALLO_DejaElSistemaEnMantenimientoSostenido()
+    {
+        // D4.5: el ÚNICO caso frenado a propósito. NUNCA se apaga el mantenimiento y se pide SuppressAutoExpiry
+        // (ni la auto-expiración por tiempo lo reabre: sale solo a mano por el runbook).
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.SubsetNeedsUpdate, missingMigrations: 2);
+        portMock
+            .Setup(p => p.RollbackSwapAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabaseSwapRollbackResult(false, "no se pudo renombrar la base"));
+
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode,
+            schemaUpdatePortMock: NewSchemaUpdatePortMock(success: false));
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Contains("queda en mantenimiento", ex.Message);
+        Assert.Contains("URGENTE", ex.Message);
+        AssertSinInternals(ex.Message);
+        Assert.False(ex.RolledBack); // NO volvió atrás: es doble fallo, no "quedó como antes".
         Assert.True(maintenanceMode.IsActive);
-        Assert.Equal(new[] { "Activate", "Touch", "SuppressAutoExpiry" }, maintenanceMode.Calls);
+        Assert.Contains("SuppressAutoExpiry", maintenanceMode.Calls);
+        Assert.DoesNotContain("Deactivate", maintenanceMode.Calls);
+    }
+
+    [Fact]
+    public async Task ModoTotal_LaVueltaAtrasTIRA_SeDeclaraDOBLEFALLOIgual()
+    {
+        // BLOQUEANTE de seguridad de la re-review: la vuelta atrás se conecta a Postgres, así que puede TIRAR en vez
+        // de devolver "no pude". Sin el try/catch, esa excepción salía por arriba, el finally apagaba el
+        // mantenimiento y el sistema se reabría con la base a medio actualizar y SIN AFIP forzado a homologación.
+        // Una excepción tiene que tratarse IDÉNTICO a "no pude volver atrás".
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.SubsetNeedsUpdate, missingMigrations: 2);
+        portMock
+            .Setup(p => p.RollbackSwapAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NpgsqlException("no se pudo abrir la conexión con Postgres"));
+
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode,
+            schemaUpdatePortMock: NewSchemaUpdatePortMock(success: false));
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.True(ex.DoubleFailure);
+        Assert.Contains("queda en mantenimiento", ex.Message);
+        AssertSinInternals(ex.Message);
+        Assert.DoesNotContain("Postgres", ex.Message);
+        Assert.True(maintenanceMode.IsActive);
+        Assert.Contains("SuppressAutoExpiry", maintenanceMode.Calls);
+        Assert.DoesNotContain("Deactivate", maintenanceMode.Calls);
+    }
+
+    [Fact]
+    public async Task ModoTotal_ElIntercambioTIRA_RechazaLimpioYNoDejaElMantenimientoColgado()
+    {
+        // Severidad menor del mismo bloqueante: si el intercambio tira, no puede salir un 500 con detalle técnico.
+        // Es seguro tratarlo como "no se cambió nada" (el único tramo del puerto que puede tirar corre ANTES de
+        // cualquier renombre) → rechazo limpio, auditado, y el sistema se reabre.
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock();
+        portMock
+            .Setup(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NpgsqlException("connection refused"));
+
+        var auditServiceMock = new Mock<IAuditService>();
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode, auditServiceMock);
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.False(ex.DoubleFailure);
+        Assert.False(ex.RolledBack);
+        Assert.Contains("el sistema quedó como estaba", ex.Message);
+        AssertSinInternals(ex.Message);
+        Assert.DoesNotContain("connection refused", ex.Message);
+        Assert.False(maintenanceMode.IsActive);
+        portMock.Verify(p => p.RollbackSwapAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         auditServiceMock.Verify(a => a.LogBusinessEventAsync(
-            AuditActions.SystemDataTotallyRestored,
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            AuditActions.SystemDataRestoreRejected, AuditActions.SystemDataRestoreEntityName,
+            It.IsAny<string>(), It.Is<string>(d => !d!.Contains("connection refused")),
+            RequesterUserId, null, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task ModoTotal_DobleFallo_AuditaElRechazoAUNQUEElPedidoHttpEsteCANCELADO()
+    {
+        // BLOQUEANTE 2 de seguridad: justo el PEOR desenlace era el que se quedaba sin registro, porque el audit
+        // usaba el ct del pedido (que a esa altura casi siempre está cortado: el proxy corta a los 60s). Ahora todo
+        // rechazo posterior al intercambio se audita con CancellationToken.None y con su dato distintivo.
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.SubsetNeedsUpdate, missingMigrations: 1);
+        portMock
+            .Setup(p => p.RollbackSwapAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabaseSwapRollbackResult(false, "no se pudo renombrar"));
+
+        using var requestCts = new CancellationTokenSource();
+        portMock
+            .Setup(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                // El pedido HTTP se corta justo después del intercambio, como pasa de verdad.
+                requestCts.Cancel();
+                return Task.FromResult(new DatabaseSwapResult(true, PreviousDatabaseName, null));
+            });
+
+        var auditServiceMock = new Mock<IAuditService>();
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode,
+            auditServiceMock, NewSchemaUpdatePortMock(success: false));
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, requestCts.Token));
+
+        Assert.True(ex.DoubleFailure);
+        Assert.True(maintenanceMode.IsActive);
+
+        // La constancia SE ESCRIBE, con el dato buscable y con un token que NO está cancelado.
+        auditServiceMock.Verify(a => a.LogBusinessEventAsync(
+            AuditActions.SystemDataRestoreRejected, AuditActions.SystemDataRestoreEntityName,
+            It.IsAny<string>(),
+            It.Is<string>(d => d!.Contains("dobleFallo") && d.Contains("true")),
+            RequesterUserId, null,
+            It.Is<CancellationToken>(token => !token.IsCancellationRequested)), Times.Once);
+    }
+
+    [Fact]
+    public async Task ModoTotal_LosCuatroRechazosNuevos_DevuelvenEXACTAMENTELaFraseYNuncaElMotivoInternoDelMotor()
+    {
+        // Gate de exposición de datos: el ErrorMessage interno del puerto (jerga de Postgres, ids, nombres de base)
+        // no puede aparecer NI COMO PEDAZO del mensaje que ve el usuario.
+        const string internalNoise = "42P01: relation \"__EFMigrationsHistory\" travel_restore_20260729120000 does not exist";
+
+        var casos = new (RestoreSchemaVerdict Verdict, string FraseEsperada)[]
+        {
+            (RestoreSchemaVerdict.NewerThanSystem, "Ese resguardo es de una versión MÁS NUEVA del sistema que la que está instalada: no se puede usar acá. Avisá al equipo técnico."),
+            (RestoreSchemaVerdict.HistoryGap, "Ese resguardo tiene un salto en su historial: le falta una parte del medio, así que el sistema no puede completarlo solo. No se tocó nada. Avisá al equipo técnico."),
+            (RestoreSchemaVerdict.LiveHasPendingMigrations, "El sistema quedó a mitad de una actualización, así que no se puede restaurar desde acá. No se tocó nada. Avisá al equipo técnico."),
+            (RestoreSchemaVerdict.DumpHistoryEmpty, "No se pudo determinar de qué versión del sistema es ese resguardo, así que no se restauró nada. Avisá al equipo técnico."),
+        };
+
+        foreach (var (verdict, fraseEsperada) in casos)
+        {
+            var context = NewContext();
+            var maintenanceMode = new RecordingMaintenanceModeService();
+            var portMock = new Mock<IDatabaseRestorePort>();
+            portMock
+                .Setup(p => p.CheckSchemaCompatibilityAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SchemaCompatibilityResult(verdict, internalNoise, 3));
+
+            var service = NewService(context, BuildUserManagerMock(), portMock, new Mock<IWipeBackupPort>(), maintenanceMode);
+
+            var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+                service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+            Assert.Equal(fraseEsperada, ex.Message);
+            Assert.DoesNotContain("42P01", ex.Message);
+            Assert.DoesNotContain("travel_restore_", ex.Message);
+            AssertSinInternals(ex.Message);
+        }
+    }
+
+    // ============================================================================================
+    // Candados que ya existían y NO cambian con esta obra (F-16, concurrencia, fiscal)
+    // ============================================================================================
 
     [Fact]
     public async Task ModoTotal_ConFraseIncorrecta_RechazaAntesDeValidarMotivoOActivarMantenimiento()
     {
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
         var backupPortMock = new Mock<IWipeBackupPort>();
         var portMock = new Mock<IDatabaseRestorePort>();
 
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, new Mock<IAuditService>());
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
 
         await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, "frase incorrecta", ValidFileName, RestoreModes.Total, null, null, CancellationToken.None));
@@ -271,12 +638,11 @@ public class SystemDataRestoreServiceTotalModeTests
     public async Task ModoTotal_ConContraseñaIncorrecta_RechazaSinActivarMantenimiento()
     {
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock(passwordOk: false);
         var maintenanceMode = new RecordingMaintenanceModeService();
         var backupPortMock = new Mock<IWipeBackupPort>();
         var portMock = new Mock<IDatabaseRestorePort>();
 
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, new Mock<IAuditService>());
+        var service = NewService(context, BuildUserManagerMock(passwordOk: false), portMock, backupPortMock, maintenanceMode);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
@@ -293,52 +659,26 @@ public class SystemDataRestoreServiceTotalModeTests
     [InlineData("         ")]
     public async Task ModoTotal_SinMotivoOMuyCorto_RechazaSinActivarMantenimiento(string? motivoInvalido)
     {
+        // F-16 intacto con ADR-052: el motivo de al menos 10 caracteres sigue siendo la PRIMERA puerta.
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
         var backupPortMock = new Mock<IWipeBackupPort>();
         var portMock = new Mock<IDatabaseRestorePort>();
 
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, new Mock<IAuditService>());
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, motivoInvalido, CancellationToken.None));
 
         Assert.Contains("motivo", ex.Message);
         Assert.Empty(maintenanceMode.Calls);
+        portMock.Verify(p => p.CheckSchemaCompatibilityAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ModoTotal_EsquemaIncompatible_RechazaSinLlamarAlBackupNiAlRestore()
-    {
-        var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
-        var maintenanceMode = new RecordingMaintenanceModeService();
-        var backupPortMock = new Mock<IWipeBackupPort>();
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(false, "El resguardo no tiene información de versión de esquema."));
-
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, new Mock<IAuditService>());
-
-        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
-            service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
-
-        Assert.Contains("versión anterior del sistema", ex.Message);
-        backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        portMock.Verify(p => p.RestoreTotalAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-
-        // El mantenimiento se activa (es el candado de concurrencia, PRIMERO que todo) pero se desactiva al rechazar.
-        Assert.Equal(new[] { "Activate", "Deactivate" }, maintenanceMode.Calls);
     }
 
     [Fact]
     public async Task ModoTotal_ConFacturaProductivaEnLaBaseViva_RechazaPorCandadoFiscalSinTocarNada()
     {
-        // Hallazgo B2 de seguridad: MISMO candado fiscal que "Empezar de cero" — un comprobante REAL (emitido
-        // en produccion) tiene que frenar TODO, incluso una restauracion total.
         var context = NewContext();
         context.Invoices.Add(new Invoice
         {
@@ -351,21 +691,18 @@ public class SystemDataRestoreServiceTotalModeTests
         });
         await context.SaveChangesAsync();
 
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
         var backupPortMock = new Mock<IWipeBackupPort>();
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
+        var portMock = NewPortMock();
 
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, new Mock<IAuditService>());
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
 
         Assert.Contains("productivo", ex.Message);
         backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -375,15 +712,11 @@ public class SystemDataRestoreServiceTotalModeTests
         context.AfipSettings.Add(new AfipSettings { IsProduction = true, Cuit = 20111111112 });
         await context.SaveChangesAsync();
 
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
         var backupPortMock = new Mock<IWipeBackupPort>();
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
+        var portMock = NewPortMock();
 
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, new Mock<IAuditService>());
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
@@ -398,22 +731,19 @@ public class SystemDataRestoreServiceTotalModeTests
     [InlineData(RestoreModes.Total)]
     public async Task ConMantenimientoYaActivo_CualquierModoQuedaRechazado(string modo)
     {
-        // Hallazgo B4 de seguridad ("dos restauraciones a la vez se pisan"), aplicado a LOS TRES MODOS: si ya
-        // hay una restauracion total en curso, ningun otro pedido (de NINGUN modo) puede arrancar mientras tanto.
         var context = NewContext();
-        var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
         maintenanceMode.TryActivate("Restauración total del sistema en curso.");
 
         var backupPortMock = new Mock<IWipeBackupPort>();
         var portMock = new Mock<IDatabaseRestorePort>();
-        var service = NewService(context, userManagerMock, portMock, backupPortMock, maintenanceMode, new Mock<IAuditService>());
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, modo, null, ValidMotivo, CancellationToken.None));
 
         Assert.Equal("Ya hay una restauración en curso.", ex.Message);
-        portMock.Verify(p => p.RestoreTotalAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         portMock.Verify(p => p.RestoreToShadowDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         portMock.Verify(p => p.RestoreTablesIntoLiveDatabaseAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);
         backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -434,9 +764,6 @@ public class SystemDataRestoreServiceTotalModeTests
     [Fact]
     public async Task ModoTotal_PierdeLaCarreraAtomicaDeTryActivate_RechazaSinTocarNada()
     {
-        // Cubre el candado ATOMICO (no solo el chequeo barato de arriba): aunque "IsActive" diera false en el
-        // instante del chequeo previo, TryActivate puede perder la carrera igual - este es el caso que de
-        // verdad resuelve la condicion de carrera entre DOS pedidos de modo total simultaneos.
         var context = NewContext();
         var userManagerMock = BuildUserManagerMock();
         var maintenanceMode = new RacingMaintenanceModeService();
@@ -444,7 +771,8 @@ public class SystemDataRestoreServiceTotalModeTests
         var portMock = new Mock<IDatabaseRestorePort>();
 
         var service = new SystemDataRestoreService(
-            context, userManagerMock.Object, portMock.Object, backupPortMock.Object, maintenanceMode,
+            context, userManagerMock.Object, portMock.Object, backupPortMock.Object,
+            NewSchemaUpdatePortMock().Object, maintenanceMode,
             new Mock<IAuditService>().Object, NullLogger<SystemDataRestoreService>.Instance);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
@@ -452,7 +780,34 @@ public class SystemDataRestoreServiceTotalModeTests
 
         Assert.Equal("Ya hay una restauración en curso.", ex.Message);
         backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        portMock.Verify(p => p.RestoreTotalAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ============================================================================================
+    // Lista de resguardos (D5): la marca de versión viaja al DTO tal cual la calculó el puerto
+    // ============================================================================================
+
+    [Fact]
+    public async Task ListBackupsAsync_LlevaLaMarcaDeVersionDeCadaResguardoAlDto()
+    {
+        var context = NewContext();
+        var portMock = new Mock<IDatabaseRestorePort>();
+        portMock
+            .Setup(p => p.ListBackupsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<BackupFileInfo>
+            {
+                new("wipe-20260729-120000.dump", new DateTime(2026, 7, 29, 12, 0, 0, DateTimeKind.Utc), 100, BackupVersionStates.Actual),
+                new("wipe-20260727-223313.dump", new DateTime(2026, 7, 27, 22, 33, 13, DateTimeKind.Utc), 90, BackupVersionStates.Anterior),
+                new("raro.dump", new DateTime(2026, 7, 20, 0, 0, 0, DateTimeKind.Utc), 10, BackupVersionStates.Desconocida),
+            });
+
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, new Mock<IWipeBackupPort>(), new RecordingMaintenanceModeService());
+
+        var result = await service.ListBackupsAsync(CancellationToken.None);
+
+        Assert.Equal(BackupVersionStates.Actual, result.Backups[0].VersionResguardo);
+        Assert.Equal(BackupVersionStates.Anterior, result.Backups[1].VersionResguardo);
+        Assert.Equal(BackupVersionStates.Desconocida, result.Backups[2].VersionResguardo);
+    }
 }

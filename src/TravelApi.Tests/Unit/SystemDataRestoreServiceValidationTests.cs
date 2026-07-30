@@ -66,6 +66,9 @@ public class SystemDataRestoreServiceValidationTests
             userManagerMock.Object,
             portMock.Object,
             (backupPortMock ?? new Mock<IWipeBackupPort>()).Object,
+            // ADR-052: el puerto de actualización de esquema solo se usa en el modo total con un resguardo de
+            // versión anterior; estos tests son de validación de entrada, así que un mock pelado alcanza.
+            new Mock<ISchemaUpdatePort>().Object,
             maintenanceModeService ?? new RecordingMaintenanceModeService(),
             (auditServiceMock ?? new Mock<IAuditService>()).Object,
             NullLogger<SystemDataRestoreService>.Instance);

@@ -19,12 +19,42 @@ public static class RestoreModes
     public static readonly string[] All = { Prueba, Real, Total };
 }
 
+/// <summary>
+/// ADR-052 (D5): valores del contrato de <c>versionResguardo</c> — strings en castellano, misma convención que
+/// <see cref="RestoreModes"/> ("prueba"/"real"/"total"). Es información para AVISAR, no para habilitar: ningún
+/// valor apaga el botón de restaurar (decisión firmada, cierra el menor M1 de la re-review), porque la lectura
+/// que los calcula es barata y puede equivocarse — el único veredicto que frena algo es el del motor, que avisa
+/// sin tocar nada (regla P-9).
+/// </summary>
+public static class BackupVersionStates
+{
+    /// <summary>El resguardo es de la misma versión del sistema que corre hoy: se restaura como siempre.</summary>
+    public const string Actual = "actual";
+
+    /// <summary>Resguardo de una versión ANTERIOR: se puede restaurar y el sistema se actualiza solo después.</summary>
+    public const string Anterior = "anterior";
+
+    /// <summary>Resguardo que parece ser de una versión MÁS NUEVA: muy probablemente el motor lo rechace.</summary>
+    public const string Posterior = "posterior";
+
+    /// <summary>No se pudo determinar de qué versión es (archivo ilegible, historial no parseable). NUNCA se degrada a "actual".</summary>
+    public const string Desconocida = "desconocida";
+
+    public static readonly string[] All = { Actual, Anterior, Posterior, Desconocida };
+}
+
 /// <summary>Un backup disponible para restaurar, tal como lo va a ver el usuario en la lista (Parte B).</summary>
 public sealed class BackupFileSummaryDto
 {
     public string Archivo { get; set; } = string.Empty;
     public DateTime FechaUtc { get; set; }
     public long TamanioBytes { get; set; }
+
+    /// <summary>
+    /// ADR-052 (D5): marca informativa de versión, uno de <see cref="BackupVersionStates"/>. SIN ids de
+    /// migración ni conteos internos (T-5). La pantalla la usa para avisar; el motor decide aparte.
+    /// </summary>
+    public string VersionResguardo { get; set; } = BackupVersionStates.Desconocida;
 }
 
 /// <summary>Respuesta de <c>GET /admin/danger/backups</c>: lista de resguardos disponibles, mas nuevo primero.</summary>

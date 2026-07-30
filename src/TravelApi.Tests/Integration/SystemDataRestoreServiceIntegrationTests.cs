@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
@@ -37,6 +38,10 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
     private const string AdminUserId = "restore-admin-1";
     private const string ValidFileName = "wipe-20260727-120000.dump";
     private const string ValidMotivo = "Recuperar datos borrados por error operativo del 2026-07-28.";
+
+    /// <summary>ADR-052: nombres INTERNOS de bases (el puerto real los arma; acá son fijos para poder verificar el orden).</summary>
+    private const string NewDatabaseName = "travel_restore_20260729120000";
+    private const string PreviousDatabaseName = "travel_old_20260729120001";
 
     private readonly PostgresIntegrationFixture _fixture;
 
@@ -94,7 +99,8 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         Mock<UserManager<ApplicationUser>> userManagerMock,
         Mock<IDatabaseRestorePort> portMock,
         Mock<IWipeBackupPort>? backupPortMock = null,
-        RecordingMaintenanceModeService? maintenanceModeService = null)
+        RecordingMaintenanceModeService? maintenanceModeService = null,
+        Mock<ISchemaUpdatePort>? schemaUpdatePortMock = null)
     {
         var auditService = new AuditService(new Repository<AuditLog>(ctx), NullLogger<AuditService>.Instance);
         return new SystemDataRestoreService(
@@ -102,25 +108,68 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
             userManagerMock.Object,
             portMock.Object,
             (backupPortMock ?? new Mock<IWipeBackupPort>()).Object,
+            (schemaUpdatePortMock ?? NewSchemaUpdatePortMock()).Object,
             maintenanceModeService ?? new RecordingMaintenanceModeService(),
             auditService,
             NullLogger<SystemDataRestoreService>.Instance);
     }
 
-    /// <summary>Mock de puerto listo para un modo total EXITOSO: schema compatible + pg_restore ok.</summary>
-    private static Mock<IDatabaseRestorePort> NewHappyPathTotalPortMock(RecordingMaintenanceModeService? maintenanceMode = null)
+    private static Mock<ISchemaUpdatePort> NewSchemaUpdatePortMock(bool success = true, int migrationsApplied = 4)
+    {
+        var mock = new Mock<ISchemaUpdatePort>();
+        mock
+            .Setup(s => s.UpdateAsync(It.IsAny<SchemaUpdatePolicy>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SchemaUpdateResult(success, success ? migrationsApplied : 0, success ? null : "falló un backfill"));
+        return mock;
+    }
+
+    /// <summary>
+    /// Mock de puerto listo para un modo total EXITOSO según ADR-052: veredicto de versión, privilegios OK,
+    /// resguardo restaurado en una base NUEVA e intercambio de nombres OK. El nombre del archivo se parametriza
+    /// porque algún test usa un resguardo "de otro origen".
+    /// </summary>
+    private static Mock<IDatabaseRestorePort> NewHappyPathTotalPortMock(
+        RecordingMaintenanceModeService? maintenanceMode = null,
+        string fileName = ValidFileName,
+        RestoreSchemaVerdict verdict = RestoreSchemaVerdict.Identical,
+        int missingMigrations = 0)
     {
         var portMock = new Mock<IDatabaseRestorePort>();
         portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
-        var setup = portMock
-            .Setup(p => p.RestoreTotalAsync(ValidFileName, It.IsAny<CancellationToken>()));
+            .Setup(p => p.CheckSchemaCompatibilityAsync(fileName, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SchemaCompatibilityResult(verdict, null, missingMigrations));
+        portMock
+            .Setup(p => p.CheckDatabaseManagementPrivilegesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabasePrivilegeCheckResult(true, null));
+        portMock
+            .Setup(p => p.CleanupLeftoverRestoreDatabasesAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var setup = portMock.Setup(p => p.RestoreIntoNewDatabaseAsync(fileName, It.IsAny<CancellationToken>()));
         if (maintenanceMode is not null)
         {
-            setup.Callback(() => maintenanceMode.Calls.Add("RestoreTotalAsync"));
+            setup.Callback(() => maintenanceMode.Calls.Add("RestoreIntoNewDatabaseAsync"));
         }
-        setup.ReturnsAsync(new TotalRestoreResult(TotalRestoreOutcome.Completed, true, null));
+        setup.ReturnsAsync(new NewDatabaseRestoreResult(TotalRestoreOutcome.Completed, true, NewDatabaseName, null));
+
+        var swapSetup = portMock.Setup(p => p.SwapRestoredDatabaseIntoLiveAsync(NewDatabaseName, It.IsAny<CancellationToken>()));
+        if (maintenanceMode is not null)
+        {
+            swapSetup.Callback(() => maintenanceMode.Calls.Add("SwapRestoredDatabaseIntoLiveAsync"));
+        }
+        swapSetup.ReturnsAsync(new DatabaseSwapResult(true, PreviousDatabaseName, null));
+
+        portMock
+            .Setup(p => p.RollbackSwapAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DatabaseSwapRollbackResult(true, null));
+        portMock
+            .Setup(p => p.DropDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        // Verificación del resguardo previo antes de dropear la copia anterior de la base (re-review): en el camino
+        // feliz el archivo se lee bien.
+        portMock
+            .Setup(p => p.VerifyBackupAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RestoreVerifyResult(true, null, 120, true));
         return portMock;
     }
 
@@ -310,8 +359,13 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         Assert.Contains("restauró todo el sistema", result.Mensaje);
         Assert.Contains("sesiones", result.Mensaje); // aviso de que sesiones/contraseñas tambien vuelven a ese dia.
         Assert.False(maintenanceMode.IsActive);
-        // "Touch" (hallazgo B-N2(c)) se llama SIEMPRE justo antes de RestoreTotalAsync.
-        Assert.Equal(new[] { "Activate", "Touch", "RestoreTotalAsync", "Deactivate" }, maintenanceMode.Calls);
+        // ADR-052: "Touch" antes de CADA paso largo (restaurar en la base nueva y el intercambio de nombres).
+        Assert.Equal(
+            new[] { "Activate", "Touch", "RestoreIntoNewDatabaseAsync", "Touch", "SwapRestoredDatabaseIntoLiveAsync", "Deactivate" },
+            maintenanceMode.Calls);
+
+        // La copia vieja se dropea recién al final, con todo lo demás ya confirmado (D1.6).
+        portMock.Verify(p => p.DropDatabaseAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Once);
 
         await using var verifyCtx = _fixture.CreateDbContext();
         var successLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataTotallyRestored);
@@ -319,6 +373,91 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         Assert.Contains(ValidFileName, successLog.Changes);
         Assert.Contains("pre-restore-20260728-100000.dump", successLog.Changes);
         Assert.Contains(ValidMotivo, successLog.Changes);
+        // D7: el resguardo era de la misma versión, así que NO hubo actualización de esquema.
+        Assert.Contains("\"esquemaActualizado\":false", successLog.Changes);
+        Assert.Contains("\"migracionesAplicadas\":0", successLog.Changes);
+        // C2: el resultado de la reposición de archivos queda como DATO, no solo dentro del mensaje.
+        Assert.Contains("\"archivosRepuestos\":false", successLog.Changes);
+        // T-5, verificado por PATRÓN y no solo por los dos nombres concretos (pedido del gate de exposición): ni
+        // nombres de bases internas ni ids de migración (que empiezan con 14 dígitos) pueden viajar al rastro.
+        Assert.DoesNotContain("_restore_", successLog.Changes);
+        Assert.DoesNotContain("_old_", successLog.Changes);
+        Assert.DoesNotContain("_shadow", successLog.Changes);
+        Assert.DoesNotContain("_fallido_", successLog.Changes);
+        Assert.DoesNotMatch(new Regex(@"\d{14}_"), successLog.Changes);
+        // El resguardo previo se verifica ANTES de dropear la copia anterior (cinturón contra "me equivoqué de
+        // resguardo"): acá el fake de verificación devuelve OK, así que la copia anterior se dropea.
+        Assert.Contains("\"resguardoPrevioVerificado\":true", successLog.Changes);
+    }
+
+    [Fact]
+    public async Task ExecuteRestoreAsync_ModoTotal_SiElResguardoPrevioNoSePuedeVERIFICAR_ConservaLaCopiaAnteriorDeLaBase()
+    {
+        // Recomendación aceptada en la re-review: el pre-restore dump es el ÚNICO cinturón contra "me equivoqué de
+        // resguardo". Si no se puede leer, la copia anterior de la base pasa a ser el único respaldo que queda, así
+        // que NO se dropea (y la auditoría lo deja como dato).
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+
+        var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+        var userManagerMock = BuildUserManagerMock(user);
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode);
+        portMock
+            .Setup(p => p.VerifyBackupAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RestoreVerifyResult(false, "pg_restore: error: did not find magic string in file header", 0, false));
+
+        var service = NewRestoreService(ctx, userManagerMock, portMock, NewHappyPathBackupPortMock(), maintenanceMode);
+
+        var result = await service.ExecuteRestoreAsync(
+            AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None);
+
+        Assert.Equal(RestoreModes.Total, result.Modo);
+        // La copia anterior de la base NO se dropea: es el respaldo que queda.
+        portMock.Verify(p => p.DropDatabaseAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Never);
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        var successLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataTotallyRestored);
+        Assert.Contains("\"resguardoPrevioVerificado\":false", successLog.Changes);
+    }
+
+    [Fact]
+    public async Task ExecuteRestoreAsync_ModoTotal_ResguardoDeVersionAnterior_ActualizaElEsquemaUnaVezYLoDejaEnLaAuditoria()
+    {
+        // ADR-052, caso que motivó TODA la obra: un resguardo cuyo historial es "subconjunto final" se restaura y
+        // el sistema se actualiza solo. Se verifica que la actualización se pide UNA vez, con la política de
+        // RESTORE (1 intento, sin tragarse fallos), y que la auditoría lo deja en números (T-5).
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+        ctx.AfipSettings.Add(new AfipSettings { IsProduction = false, Cuit = 20111111112 });
+        await ctx.SaveChangesAsync();
+
+        var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+        var userManagerMock = BuildUserManagerMock(user);
+        var backupPortMock = NewHappyPathBackupPortMock();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(
+            maintenanceMode, verdict: RestoreSchemaVerdict.SubsetNeedsUpdate, missingMigrations: 4);
+        var schemaUpdateMock = NewSchemaUpdatePortMock(success: true, migrationsApplied: 4);
+
+        var service = NewRestoreService(ctx, userManagerMock, portMock, backupPortMock, maintenanceMode, schemaUpdateMock);
+
+        var result = await service.ExecuteRestoreAsync(
+            AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None);
+
+        Assert.Equal(RestoreModes.Total, result.Modo);
+        Assert.Contains("el sistema se actualizó solo", result.Mensaje);
+        schemaUpdateMock.Verify(s => s.UpdateAsync(SchemaUpdatePolicy.Restore, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.False(maintenanceMode.IsActive);
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        // El ajuste de AFIP corre DESPUÉS de migrar (B3 cerrado) y sigue garantizado.
+        var afipSettings = await verifyCtx.AfipSettings.AsNoTracking().SingleAsync();
+        Assert.False(afipSettings.IsProduction);
+
+        var successLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataTotallyRestored);
+        Assert.Contains("\"esquemaActualizado\":true", successLog.Changes);
+        Assert.Contains("\"migracionesAplicadas\":4", successLog.Changes);
     }
 
     [Fact]
@@ -342,35 +481,33 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         var backupPortMock = NewHappyPathBackupPortMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
 
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode);
 
         using var requestCts = new CancellationTokenSource();
         portMock
-            .Setup(p => p.RestoreTotalAsync(ValidFileName, It.IsAny<CancellationToken>()))
+            .Setup(p => p.SwapRestoredDatabaseIntoLiveAsync(NewDatabaseName, It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
-                maintenanceMode.Calls.Add("RestoreTotalAsync");
+                maintenanceMode.Calls.Add("SwapRestoredDatabaseIntoLiveAsync");
 
-                // Simula: el pg_restore real YA TERMINÓ con éxito, pero justo en este instante el pedido HTTP
-                // original se cancela (nginx corta la conexión / se cierra la pestaña) — el "ct" que le pasamos
-                // a ExecuteRestoreAsync queda cancelado DESDE ACÁ en adelante.
+                // Simula: el intercambio de nombres YA TERMINÓ con éxito, pero justo en este instante el pedido
+                // HTTP original se cancela (nginx corta la conexión / se cierra la pestaña) — el "ct" que le
+                // pasamos a ExecuteRestoreAsync queda cancelado DESDE ACÁ en adelante.
                 requestCts.Cancel();
 
-                // Simula que el backup restaurado traía AfipSettings en modo productivo (como si pg_restore ya
-                // lo hubiera insertado así) — para verificar que el UPDATE que fuerza homologación corre IGUAL.
+                // Simula que el resguardo restaurado traía AfipSettings en modo productivo (como si el
+                // pg_restore ya lo hubiera insertado así) — para verificar que el UPDATE que fuerza homologación
+                // corre IGUAL.
                 await using var simulationCtx = _fixture.CreateDbContext();
                 await simulationCtx.Database.ExecuteSqlRawAsync("""UPDATE "AfipSettings" SET "IsProduction" = true;""");
 
-                return new TotalRestoreResult(TotalRestoreOutcome.Completed, true, null);
+                return new DatabaseSwapResult(true, PreviousDatabaseName, null);
             });
 
         var service = NewRestoreService(ctx, userManagerMock, portMock, backupPortMock, maintenanceMode);
 
         // El "ct" que recibe ExecuteRestoreAsync se cancela DURANTE la llamada (dentro del mock de arriba) —
-        // simula exactamente el escenario real: el pedido se cancela DESPUÉS de que el pg_restore ya terminó.
+        // simula exactamente el escenario real: el pedido se cancela DESPUÉS de que la base ya cambió.
         var result = await service.ExecuteRestoreAsync(
             AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, requestCts.Token);
 
@@ -381,9 +518,11 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         var afipSettings = await verifyCtx.AfipSettings.AsNoTracking().SingleAsync();
         Assert.False(afipSettings.IsProduction); // el UPDATE que fuerza homologacion corrio IGUAL (CancellationToken.None).
 
-        // El mantenimiento se desactiva igual: el restore SÍ fue exitoso Y el UPDATE de AFIP SÍ se pudo confirmar.
+        // El mantenimiento se desactiva igual: el intercambio SÍ salió bien Y el UPDATE de AFIP SÍ se confirmó.
         Assert.False(maintenanceMode.IsActive);
-        Assert.Equal(new[] { "Activate", "Touch", "RestoreTotalAsync", "Deactivate" }, maintenanceMode.Calls);
+        Assert.Equal(
+            new[] { "Activate", "Touch", "RestoreIntoNewDatabaseAsync", "Touch", "SwapRestoredDatabaseIntoLiveAsync", "Deactivate" },
+            maintenanceMode.Calls);
 
         // La auditoria tambien corrio (CancellationToken.None), pese a la cancelacion del pedido original.
         var successLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataTotallyRestored);
@@ -430,13 +569,7 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
         var userManagerMock = BuildUserManagerMock(user);
 
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(archivoDeOtroOrigen, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
-        portMock
-            .Setup(p => p.RestoreTotalAsync(archivoDeOtroOrigen, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TotalRestoreResult(TotalRestoreOutcome.Completed, true, null));
+        var portMock = NewHappyPathTotalPortMock(fileName: archivoDeOtroOrigen);
 
         var backupPortMock = NewHappyPathBackupPortMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
@@ -473,7 +606,8 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
             .ThrowsAsync(new InvalidOperationException("boom: la base de auditoria no responde"));
 
         var service = new SystemDataRestoreService(
-            ctx, userManagerMock.Object, portMock.Object, backupPortMock.Object, maintenanceMode,
+            ctx, userManagerMock.Object, portMock.Object, backupPortMock.Object,
+            NewSchemaUpdatePortMock().Object, maintenanceMode,
             auditServiceMock.Object, NullLogger<SystemDataRestoreService>.Instance);
 
         // NO debe tirar - el restore ya fue exitoso, el fallo de auditoria queda solo en el log.
@@ -485,7 +619,7 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
     }
 
     [Fact]
-    public async Task ExecuteRestoreAsync_ModoTotal_PgRestoreFalla_DesactivaMantenimientoYAuditaElRechazoConPostgresReal()
+    public async Task ExecuteRestoreAsync_ModoTotal_FallaElRestoreALaBaseNueva_DesactivaMantenimientoYAuditaElRechazoConPostgresReal()
     {
         await using var ctx = _fixture.CreateDbContext();
         await SeedAspNetUserAsync(ctx, AdminUserId);
@@ -495,15 +629,12 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
 
         var backupPortMock = NewHappyPathBackupPortMock();
 
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
-        portMock
-            .Setup(p => p.RestoreTotalAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TotalRestoreResult(TotalRestoreOutcome.Completed, false, "pg_restore: error de prueba"));
-
         var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode);
+        portMock
+            .Setup(p => p.RestoreIntoNewDatabaseAsync(ValidFileName, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new NewDatabaseRestoreResult(TotalRestoreOutcome.Completed, false, null, "pg_restore: error de prueba"));
+
         var service = NewRestoreService(ctx, userManagerMock, portMock, backupPortMock, maintenanceMode);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
@@ -511,9 +642,14 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
                 AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
 
         Assert.DoesNotContain("pg_restore", ex.Message);
-        Assert.DoesNotContain(".dump", ex.Message); // hallazgo de data-exposure: nunca el nombre del backup previo en el mensaje de error.
+        Assert.DoesNotContain(".dump", ex.Message); // data-exposure: nunca el nombre de un archivo en el mensaje de error.
+        Assert.DoesNotContain("travel_", ex.Message); // T-5: nunca un nombre de base.
         Assert.False(maintenanceMode.IsActive);
         Assert.Equal(new[] { "Activate", "Touch", "Deactivate" }, maintenanceMode.Calls);
+
+        // ADR-052/B1: como la base viva NO se tocó, ni se pidió el resguardo previo ni se intercambió nada.
+        backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        portMock.Verify(p => p.SwapRestoredDatabaseIntoLiveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         await using var verifyCtx = _fixture.CreateDbContext();
         Assert.False(await verifyCtx.AuditLogs.AnyAsync(a => a.Action == AuditActions.SystemDataTotallyRestored));
@@ -522,12 +658,47 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
     }
 
     [Fact]
+    public async Task ExecuteRestoreAsync_ModoTotal_FallaLaActualizacionYVuelveAtras_AuditaElRechazoConVolvioAtras()
+    {
+        // ADR-052 (D7) contra Postgres real: el rechazo con vuelta atrás se audita con el DATO volvioAtras=true,
+        // no solo con el texto. Es lo que después permite buscar "¿cuántas veces volvimos atrás?".
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+
+        var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+        var userManagerMock = BuildUserManagerMock(user);
+
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(
+            maintenanceMode, verdict: RestoreSchemaVerdict.SubsetNeedsUpdate, missingMigrations: 3);
+        var service = NewRestoreService(
+            ctx, userManagerMock, portMock, NewHappyPathBackupPortMock(), maintenanceMode,
+            NewSchemaUpdatePortMock(success: false));
+
+        var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(
+                AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.True(ex.RolledBack);
+        portMock.Verify(p => p.RollbackSwapAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Once);
+        // La copia vieja NO se dropea cuando hubo vuelta atrás: es la base que volvió a estar viva.
+        portMock.Verify(p => p.DropDatabaseAsync(PreviousDatabaseName, It.IsAny<CancellationToken>()), Times.Never);
+        Assert.False(maintenanceMode.IsActive);
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        Assert.False(await verifyCtx.AuditLogs.AnyAsync(a => a.Action == AuditActions.SystemDataTotallyRestored));
+        var rejectedLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataRestoreRejected);
+        Assert.Contains("\"volvioAtras\":true", rejectedLog.Changes);
+        Assert.Contains(ex.Message, rejectedLog.Changes);
+    }
+
+    [Fact]
     public async Task ExecuteRestoreAsync_ModoTotal_ConAfipProductivoEnLaBaseYaRestaurada_FuerzaHomologacionYAvisa()
     {
         // Hallazgo B3 de seguridad (2026-07-28): un resguardo viejo puede traer AfipSettings.IsProduction=true.
         // Para simular esto de verdad (sin un pg_restore real): arrancamos con AfipSettings en homologacion
-        // (para que el candado fiscal B2 NO bloquee el intento) y el CALLBACK del (fake) RestoreTotalAsync es
-        // el que muta la fila a IsProduction=true CON SQL CRUDO, en una conexion aparte — asi imitamos lo que
+        // (para que el candado fiscal B2 NO bloquee el intento) y el CALLBACK del (fake) intercambio de nombres
+        // es el que muta la fila a IsProduction=true CON SQL CRUDO, en una conexion aparte — asi imitamos lo que
         // haria el pg_restore real ANTES de que el service corra el UPDATE que fuerza homologacion despues.
         await using var ctx = _fixture.CreateDbContext();
         await SeedAspNetUserAsync(ctx, AdminUserId);
@@ -539,19 +710,16 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         var backupPortMock = NewHappyPathBackupPortMock();
         var maintenanceMode = new RecordingMaintenanceModeService();
 
-        var portMock = new Mock<IDatabaseRestorePort>();
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode);
         portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
-        portMock
-            .Setup(p => p.RestoreTotalAsync(ValidFileName, It.IsAny<CancellationToken>()))
+            .Setup(p => p.SwapRestoredDatabaseIntoLiveAsync(NewDatabaseName, It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
-                maintenanceMode.Calls.Add("RestoreTotalAsync");
+                maintenanceMode.Calls.Add("SwapRestoredDatabaseIntoLiveAsync");
                 await using var restoreSimulationCtx = _fixture.CreateDbContext();
                 await restoreSimulationCtx.Database.ExecuteSqlRawAsync(
                     """UPDATE "AfipSettings" SET "IsProduction" = true;""");
-                return new TotalRestoreResult(TotalRestoreOutcome.Completed, true, null);
+                return new DatabaseSwapResult(true, PreviousDatabaseName, null);
             });
 
         var service = NewRestoreService(ctx, userManagerMock, portMock, backupPortMock, maintenanceMode);
@@ -592,10 +760,7 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         var userManagerMock = BuildUserManagerMock(user);
         var backupPortMock = new Mock<IWipeBackupPort>();
         var maintenanceMode = new RecordingMaintenanceModeService();
-        var portMock = new Mock<IDatabaseRestorePort>();
-        portMock
-            .Setup(p => p.CheckSchemaCompatibilityAsync(ValidFileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(true, null));
+        var portMock = NewHappyPathTotalPortMock();
 
         var service = NewRestoreService(ctx, userManagerMock, portMock, backupPortMock, maintenanceMode);
 
@@ -609,6 +774,6 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         Assert.Equal(new[] { "Activate", "Deactivate" }, maintenanceMode.Calls);
         Assert.False(maintenanceMode.IsActive);
         backupPortMock.Verify(b => b.CreateBackupAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        portMock.Verify(p => p.RestoreTotalAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        portMock.Verify(p => p.RestoreIntoNewDatabaseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

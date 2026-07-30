@@ -60,4 +60,58 @@ public class RestoreTotalTimeoutConfigurationTests
             "auto-expiración se resetea (Touch) justo antes de arrancarlo, así que este es el único camino " +
             "que importa DESDE ese punto en adelante.");
     }
+
+    // ============================================================================================
+    // ADR-052 (D8, cierra el menor M3): los pasos NUEVOS también tienen que caber en el presupuesto,
+    // y el peor caso de cada uno incluye SUS REINTENTOS.
+    // ============================================================================================
+
+    [Fact]
+    public void MaxDuration_CubreElPeorCasoDeLaActualizacionDeEsquema_MedidoDesdeSuTouch()
+    {
+        // En restore la política es de UN intento (ver DatabaseSchemaUpdater.RestoreAttempts): el peor caso es su
+        // propio timeout total, una sola vez.
+        var peorCaso = DatabaseSchemaUpdater.DefaultMigrateTimeoutMinutes * DatabaseSchemaUpdater.RestoreAttempts;
+        var maxDuration = FileMaintenanceModeService.DefaultMaxMaintenanceDurationMinutes;
+
+        Assert.True(
+            maxDuration >= peorCaso + MinimumMarginMinutes,
+            $"Maintenance:MaxDurationMinutes ({maxDuration}) tiene que cubrir la actualización de esquema " +
+            $"({DatabaseSchemaUpdater.DefaultMigrateTimeoutMinutes} min × {DatabaseSchemaUpdater.RestoreAttempts} " +
+            $"intento(s) = {peorCaso}) más un margen mínimo de {MinimumMarginMinutes} minutos.");
+    }
+
+    [Fact]
+    public void MaxDuration_CubreElPeorCasoDelIntercambioDeNombres_ConSusReintentos()
+    {
+        var peorCasoMinutos = MinutosRedondeadosHaciaArriba(
+            PgDatabaseRestorePort.DefaultSwapRetries * PgDatabaseRestorePort.DefaultSwapRetryDelaySeconds);
+        var maxDuration = FileMaintenanceModeService.DefaultMaxMaintenanceDurationMinutes;
+
+        Assert.True(
+            maxDuration >= peorCasoMinutos + MinimumMarginMinutes,
+            $"Maintenance:MaxDurationMinutes ({maxDuration}) tiene que cubrir el intercambio de nombres " +
+            $"({PgDatabaseRestorePort.DefaultSwapRetries} intentos × " +
+            $"{PgDatabaseRestorePort.DefaultSwapRetryDelaySeconds}s = {peorCasoMinutos} min redondeados) más un " +
+            $"margen mínimo de {MinimumMarginMinutes} minutos.");
+    }
+
+    [Fact]
+    public void MaxDuration_CubreElPeorCasoDeLaVueltaAtras_ConSusReintentos()
+    {
+        // La vuelta atrás es el paso que NO puede quedarse sin presupuesto: si la auto-expiración reabriera el
+        // sistema mientras está reconciliando nombres de bases, el resultado sería el peor de todos.
+        var peorCasoMinutos = MinutosRedondeadosHaciaArriba(
+            PgDatabaseRestorePort.DefaultRollbackSwapRetries * PgDatabaseRestorePort.DefaultRollbackSwapRetryDelaySeconds);
+        var maxDuration = FileMaintenanceModeService.DefaultMaxMaintenanceDurationMinutes;
+
+        Assert.True(
+            maxDuration >= peorCasoMinutos + MinimumMarginMinutes,
+            $"Maintenance:MaxDurationMinutes ({maxDuration}) tiene que cubrir la vuelta atrás " +
+            $"({PgDatabaseRestorePort.DefaultRollbackSwapRetries} intentos × " +
+            $"{PgDatabaseRestorePort.DefaultRollbackSwapRetryDelaySeconds}s = {peorCasoMinutos} min redondeados) " +
+            $"más un margen mínimo de {MinimumMarginMinutes} minutos.");
+    }
+
+    private static int MinutosRedondeadosHaciaArriba(int segundos) => (segundos + 59) / 60;
 }

@@ -235,6 +235,86 @@ tocar nada**, esperar y volver a consultar. Recién cuando la consulta ya no apa
 `pg_restore` terminó (con éxito o con rollback automático — ver el hallazgo B1: ambos casos son seguros para
 reabrir el sistema; lo único inseguro es "no sé si terminó").
 
+### ADR-052 (2026-07-29): la restauración total ya NO toca la base viva — se intercambian nombres
+
+Desde ADR-052, una restauración total desde la app hace: `CREATE DATABASE travel_restore_<ts>` → `pg_restore` del
+resguardo COMPLETO ahí (si el resguardo está dañado, **la base viva no se tocó**) → resguardo previo obligatorio →
+**intercambio de nombres** (`travel` pasa a `travel_old_<ts>` y la restaurada pasa a `travel`) → si el resguardo
+era de una versión anterior, se aplican solas las migraciones que falten → AFIP a homologación → reposición de
+archivos de MinIO → se dropea `travel_old_<ts>`. Si algo falla **después** del intercambio, el sistema **vuelve
+solo** al estado anterior con otro intercambio (la base del intento fallido queda como `travel_fallido_<ts>` para
+diagnóstico y la limpia el próximo intento).
+
+**Primer comando de rescate si el sistema quedó inaccesible** (el intercambio apaga las conexiones de la base viva
+mientras renombra; si el proceso murió justo ahí, puede quedar apagada con los datos perfectos):
+
+```bash
+docker exec travel_db psql -U traveluser -d postgres -c \
+  "ALTER DATABASE \"travel\" WITH ALLOW_CONNECTIONS true;"
+```
+
+**Deshacer un intercambio a mano** (solo si la app no pudo volver atrás sola — "doble fallo": el sistema queda en
+mantenimiento y avisa que se llame al equipo técnico). Ver primero qué bases existen:
+
+```bash
+docker exec travel_db psql -U traveluser -d postgres -c \
+  "select datname, datallowconn from pg_database where datname like 'travel%';"
+
+# Con travel_old_<ts> presente: sacar del camino la base del intento fallido y devolver la original al nombre vivo.
+docker exec travel_db psql -U traveluser -d postgres -c \
+  "ALTER DATABASE \"travel\" WITH ALLOW_CONNECTIONS false;
+   SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'travel';
+   ALTER DATABASE \"travel\" RENAME TO \"travel_fallido_manual\";
+   ALTER DATABASE \"travel_old_<ts>\" RENAME TO \"travel\";
+   ALTER DATABASE \"travel\" WITH ALLOW_CONNECTIONS true;"
+```
+
+Después, borrar el archivo de estado de mantenimiento (pasos de la sección siguiente) y reiniciar `api`/`worker`
+solo si hace falta.
+
+**⚠ Reiniciar el `worker` después de una restauración total.** El esquema y las COLAS de Hangfire viven en la misma
+base, así que un resguardo viejo trae los jobs pendientes de ese momento; al salir de mantenimiento, el worker los
+ejecuta. Después de una restauración total conviene:
+
+```bash
+docker compose restart worker
+docker compose logs --tail=100 worker    # mirar si aparecen jobs viejos re-encolados
+```
+
+**⚠ La limpieza de sobras es INCONDICIONAL.** Al ARRANCAR cada restauración total se dropean `travel_restore_*`,
+`travel_old_*` y `travel_fallido_*`. Dicho con todas las letras: **un segundo intento dropea la `travel_old_*` del
+intento anterior**, así que la copia anterior de la base NO es un respaldo de largo plazo — el respaldo que queda es
+el `pre-restore-*.dump` (por eso la app lo verifica con `pg_restore --list` antes de dropear la copia anterior, y si
+no lo puede leer, la conserva y lo deja anotado en la auditoría como `resguardoPrevioVerificado: false`).
+
+**Inspeccionar `travel_fallido_*`** (la base del intento que falló, que se conserva para diagnóstico): queda con las
+conexiones DESHABILITADAS, porque el flag `datallowconn` viaja con la base en cada `RENAME`. Para poder abrirla:
+
+```bash
+docker exec travel_db psql -U traveluser -d postgres -c \
+  "ALTER DATABASE \"travel_fallido_<ts>\" WITH ALLOW_CONNECTIONS true;"
+
+docker exec travel_db psql -U traveluser -d travel_fallido_<ts> -c \
+  "select \"MigrationId\" from \"__EFMigrationsHistory\" order by 1 desc limit 5;"
+```
+
+(no hace falta volver a apagarla: la limpieza del próximo intento la dropea igual).
+
+**Espacio en disco antes de una restauración total**: durante la operación conviven hasta ~2 copias de la base
+(más el archivo del resguardo). La app no ve el volumen de Postgres, así que este chequeo es manual:
+
+```bash
+df -h /var/lib/docker   # o el filesystem donde vive el volumen de datos de Postgres
+docker exec travel_db psql -U traveluser -d postgres -c \
+  "select pg_size_pretty(pg_database_size('travel'));"
+```
+
+**Re-correr SOLO la reposición de archivos de MinIO** (cuando la auditoría del restore dice
+`"archivosRepuestos": false` y la base quedó bien: no hay que restaurar de nuevo). Los archivos del resguardo
+viven en el prefijo `pre-restore-backup-<ts>/` o `wipe-backup-<ts>/` del bucket; se copian de vuelta a la raíz con
+el mismo `mc cp --recursive` del **Paso 3** de la sección "Restaurar un backup de Empezar de cero" de más arriba,
+apuntando al prefijo del resguardo que se restauró — sin tocar Postgres.
+
 ### Salida de emergencia si el sistema queda "tapiado"
 
 El modo mantenimiento se auto-desactiva solo si sigue activo pasado `Maintenance:MaxDurationMinutes` (fijado

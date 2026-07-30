@@ -9,9 +9,12 @@ namespace TravelApi.Filters;
 /// escribiendo durante el restore"): frena CUALQUIER job de Hangfire mientras el sistema está en modo
 /// mantenimiento. Sin esto, el proceso <c>worker</c> (que corre TODOS los jobs en background: recordatorios,
 /// vencimientos, reconciliaciones, etc. — ver <c>docker-compose.yml</c>, <c>Hangfire__ServerEnabled=true</c>
-/// SOLO ahí) seguiría escribiendo en la base mientras <c>pg_restore</c> la reemplaza entera, y sus conexiones
-/// nuevas podrían además trabar los <c>DROP TABLE</c> del <c>--clean</c> (justo lo que
-/// <c>IDatabaseRestorePort.RestoreTotalAsync</c> corta ANTES de restaurar).
+/// SOLO ahí) seguiría escribiendo en la base durante toda la operación.
+///
+/// <para><b>ADR-052 (2026-07-29)</b>: la restauración ya no reemplaza la base viva con <c>--clean</c>, pero este
+/// filtro se vuelve MÁS importante, no menos: el intercambio de nombres necesita que NADIE esté conectado a la
+/// base viva en la ventana del <c>RENAME</c>, y el worker de Hangfire (que vive en la MISMA base) reconecta solo.
+/// Frenar sus jobs es la primera línea; <c>ALLOW_CONNECTIONS false</c> durante el intercambio es la segunda.</para>
 ///
 /// <para><b>Por qué tirar una excepción en vez de "cancelar" el job</b>: Hangfire distingue "cancelado"
 /// (<c>PerformingContext.Canceled = true</c>, el job queda marcado como succeeded SIN haber corrido — se

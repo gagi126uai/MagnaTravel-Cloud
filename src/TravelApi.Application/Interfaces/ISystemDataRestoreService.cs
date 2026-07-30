@@ -9,9 +9,33 @@ namespace TravelApi.Application.Interfaces;
 /// </summary>
 public sealed class SystemDataRestoreRefusedException : Exception
 {
-    public SystemDataRestoreRefusedException(string message) : base(message)
+    public SystemDataRestoreRefusedException(string message, bool rolledBack = false, bool doubleFailure = false)
+        : base(message)
     {
+        RolledBack = rolledBack;
+        DoubleFailure = doubleFailure;
     }
+
+    /// <summary>
+    /// ADR-052 (D7): true SOLO cuando el rechazo llega DESPUÉS de haber tocado la base y haber vuelto atrás con
+    /// éxito (el sistema quedó exacto como antes del intento). Se usa para que la auditoría del rechazo lo diga
+    /// con un dato (<c>volvioAtras: true</c>) y no solo dentro del texto.
+    /// </summary>
+    public bool RolledBack { get; }
+
+    /// <summary>
+    /// ADR-052 (D4.5): true en el DOBLE FALLO — la restauración falló y la vuelta atrás tampoco se pudo
+    /// completar, así que el sistema queda en mantenimiento sostenido. Es el peor desenlace posible, y por eso
+    /// tiene su propio dato en la auditoría (<c>dobleFallo: true</c>): es lo primero que hay que poder buscar.
+    /// </summary>
+    public bool DoubleFailure { get; }
+
+    /// <summary>
+    /// Cualquier rechazo que llegue DESPUÉS de haber tocado la base viva. Para estos, la constancia no puede
+    /// depender de que el pedido HTTP siga vivo (a esa altura casi siempre está cortado): se auditan con
+    /// <see cref="CancellationToken.None"/>.
+    /// </summary>
+    public bool HappenedAfterTouchingTheDatabase => RolledBack || DoubleFailure;
 }
 
 /// <summary>

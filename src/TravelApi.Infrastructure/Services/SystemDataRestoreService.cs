@@ -66,10 +66,43 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     private const string AfipProductionModeRestoreMessage =
         "AFIP está en modo productivo: pasá a homologación antes de restaurar. Los comprobantes reales no se tocan.";
 
+    /// <summary>
+    /// ADR-052 (D2/D6): los DOS rechazos NUEVOS del gate de versión, en criollo y SEPARADOS a propósito (menor M1
+    /// de la re-review). Antes había un solo texto que, para el caso "le falta una migración del medio", mentía
+    /// diciendo "es de una versión anterior". T-5: ni un id de migración, ni "esquema", ni nombres de base.
+    /// </summary>
+    private const string NewerBackupRejectionMessage =
+        "Ese resguardo es de una versión MÁS NUEVA del sistema que la que está instalada: no se puede usar acá. " +
+        "Avisá al equipo técnico.";
+
+    /// <summary>Ver <see cref="NewerBackupRejectionMessage"/>.</summary>
+    private const string HistoryGapRejectionMessage =
+        "Ese resguardo tiene un salto en su historial: le falta una parte del medio, así que el sistema no puede " +
+        "completarlo solo. No se tocó nada. Avisá al equipo técnico.";
+
+    /// <summary>ADR-052 (D2.1): la base viva quedó a mitad de una actualización, así que no hay referencia confiable para comparar.</summary>
+    private const string LivePendingMigrationsRejectionMessage =
+        "El sistema quedó a mitad de una actualización, así que no se puede restaurar desde acá. No se tocó nada. " +
+        "Avisá al equipo técnico.";
+
+    /// <summary>ADR-052 (D1.5): el servidor no permite crear/renombrar bases con el usuario actual. Fail-closed, sin jerga.</summary>
+    private const string InsufficientPrivilegesRejectionMessage =
+        "Este servidor no permite hacer una restauración total desde la aplicación. No se tocó nada. Avisá al equipo técnico.";
+
+    /// <summary>ADR-052 (D4.4): el intento falló DESPUÉS de tocar la base y el sistema volvió solo a como estaba.</summary>
+    private const string RolledBackRejectionMessage =
+        "No se pudo actualizar el sistema con ese resguardo. Quedó todo como estaba antes de intentarlo.";
+
+    /// <summary>ADR-052 (D4.5): DOBLE FALLO — el único caso que deja el sistema frenado a propósito.</summary>
+    private const string DoubleFailureRejectionMessage =
+        "No se pudo actualizar el sistema con ese resguardo y tampoco se pudo volver atrás sola. Por seguridad, el " +
+        "sistema queda en mantenimiento. Avisá URGENTE al equipo técnico.";
+
     private readonly AppDbContext _context;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IDatabaseRestorePort _restorePort;
     private readonly IWipeBackupPort _backupPort;
+    private readonly ISchemaUpdatePort _schemaUpdatePort;
     private readonly IMaintenanceModeService _maintenanceMode;
     private readonly IAuditService _auditService;
     private readonly ILogger<SystemDataRestoreService> _logger;
@@ -79,6 +112,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         UserManager<ApplicationUser> userManager,
         IDatabaseRestorePort restorePort,
         IWipeBackupPort backupPort,
+        ISchemaUpdatePort schemaUpdatePort,
         IMaintenanceModeService maintenanceMode,
         IAuditService auditService,
         ILogger<SystemDataRestoreService> logger)
@@ -87,6 +121,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         _userManager = userManager;
         _restorePort = restorePort;
         _backupPort = backupPort;
+        _schemaUpdatePort = schemaUpdatePort;
         _maintenanceMode = maintenanceMode;
         _auditService = auditService;
         _logger = logger;
@@ -103,6 +138,8 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                     Archivo = b.FileName,
                     FechaUtc = b.LastWriteTimeUtc,
                     TamanioBytes = b.SizeBytes,
+                    // ADR-052 (D5): marca INFORMATIVA. La pantalla avisa con ella; nunca decide con ella.
+                    VersionResguardo = b.VersionState,
                 })
                 .ToList(),
         };
@@ -119,7 +156,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         }
         catch (SystemDataRestoreRefusedException ex)
         {
-            await AuditRejectionAsync(ex.Message, requesterUserId, ct);
+            await AuditRejectionAsync(ex, requesterUserId, ct);
             throw;
         }
     }
@@ -164,7 +201,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         }
         catch (SystemDataRestoreRefusedException ex)
         {
-            await AuditRejectionAsync(ex.Message, requesterUserId, ct);
+            await AuditRejectionAsync(ex, requesterUserId, ct);
             throw;
         }
     }
@@ -174,25 +211,50 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     /// camino de excepción — si además el intento de auditarlo fallara sin este try/catch, el error real
     /// (frase incorrecta, candado fiscal, etc.) quedaría tapado por un 500 genérico. El intento de auditar
     /// SIEMPRE se loguea (haya salido bien o mal), nunca se pierde en silencio.
+    ///
+    /// <para><b>ADR-052 (D7)</b>: cuando el rechazo llega después de una VUELTA ATRÁS exitosa, el detalle pasa a
+    /// ser un JSON con <c>volvioAtras: true</c> además del texto. En los demás rechazos se sigue guardando el
+    /// texto pelado (mismo formato que antes de esta obra, para no romper la lectura del historial existente).</para>
     /// </summary>
-    private async Task AuditRejectionAsync(string motivo, string requesterUserId, CancellationToken ct)
+    private async Task AuditRejectionAsync(SystemDataRestoreRefusedException refusal, string requesterUserId, CancellationToken ct)
     {
+        // ADR-052 (D7): el DOBLE FALLO y la vuelta atrás tienen cada uno su propio dato buscable, además del
+        // texto. El resto de los rechazos sigue guardando el texto pelado (mismo formato que antes de esta obra).
+        string details;
+        if (refusal.DoubleFailure)
+        {
+            details = JsonSerializer.Serialize(new { motivo = refusal.Message, dobleFallo = true }, AuditJsonOptions);
+        }
+        else if (refusal.RolledBack)
+        {
+            details = JsonSerializer.Serialize(new { motivo = refusal.Message, volvioAtras = true }, AuditJsonOptions);
+        }
+        else
+        {
+            details = refusal.Message;
+        }
+
+        // Si el rechazo llegó DESPUÉS de tocar la base, dejar constancia no puede depender de que el pedido HTTP
+        // siga vivo — a esa altura casi siempre está cortado (el proxy corta a los 60s, o el admin cerró la
+        // pestaña). Sin esto, justo el PEOR desenlace (doble fallo) era el que se quedaba sin registro.
+        var auditCt = refusal.HappenedAfterTouchingTheDatabase ? CancellationToken.None : ct;
+
         try
         {
             await _auditService.LogBusinessEventAsync(
                 action: AuditActions.SystemDataRestoreRejected,
                 entityName: AuditActions.SystemDataRestoreEntityName,
                 entityId: DateTime.UtcNow.ToString("O"),
-                details: motivo,
+                details: details,
                 userId: requesterUserId,
                 userName: null,
-                ct);
+                auditCt);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Restaurar: no se pudo auditar un RECHAZO (motivo real del rechazo, en este log: {Motivo}). UserId={UserId}.",
-                motivo, requesterUserId);
+                refusal.Message, requesterUserId);
         }
     }
 
@@ -381,6 +443,9 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     }
 
     /// <summary>
+    /// (Documentación histórica de la obra anterior, conservada porque explica POR QUÉ existe cada candado; la
+    /// secuencia vigente es la de ADR-052, ver el comentario del método.)
+    ///
     /// Obra "Restaurar TOTAL" (2026-07-28, firmada por el dueño) + ronda de hardening de seguridad/funcional
     /// del mismo día: reemplaza TODA la base viva por la foto de <paramref name="fileName"/>. Pasos, EN ORDEN
     /// (cada uno con su propio log estructurado — hallazgo B6, "que el rastro quede aunque falle la
@@ -396,7 +461,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     ///   <item><b>2) Candado fiscal</b> (hallazgo B2): MISMA regla que "Empezar de cero" (<see cref="FiscalLockEvaluator"/>).</item>
     ///   <item><b>a) Backup previo OBLIGATORIO del estado ACTUAL</b> — el "deshacer el deshacer".</item>
     ///   <item><b>c+d) Cortar conexiones y <c>pg_restore</c></b> — delegado ENTERO al puerto
-    ///   (<see cref="IDatabaseRestorePort.RestoreTotalAsync"/>), con timeout PROPIO (hallazgo B1).</item>
+    ///   (con ADR-052, <c>RestoreIntoNewDatabaseAsync</c>), con timeout PROPIO (hallazgo B1).</item>
     ///   <item><b>b3) Forzar AFIP a homologación</b> (hallazgo B3): MISMO criterio que el modo <c>real</c> — un
     ///   resguardo viejo puede traer <c>AfipSettings.IsProduction=true</c> y dejar el sistema emitiendo CAE
     ///   real en silencio.</item>
@@ -420,6 +485,28 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     /// consuman ese presupuesto); <see cref="IMaintenanceModeService.SuppressAutoExpiry"/> exime a una sesión
     /// de la auto-expiración cuando el desenlace queda incierto (timeout del <c>pg_restore</c>, o el UPDATE de
     /// AFIP no se pudo confirmar) — esos casos SOLO se resuelven con intervención manual.</para>
+    ///
+    /// <para><b>ADR-052 (2026-07-29, rev. 2, firmada) — SECUENCIA VIGENTE</b>, con el número de paso del ADR:
+    /// <list type="number">
+    ///   <item><b>0</b> Motivo ≥10 (F-16) → candado de concurrencia atómico.</item>
+    ///   <item><b>1</b> Gate de versión (5 veredictos): igual / anterior / más nueva / con agujero / base viva a
+    ///   medio actualizar. Los dos rechazos nuevos tienen textos DISTINTOS y en criollo (T-5).</item>
+    ///   <item><b>2</b> Candado fiscal (misma regla que "Empezar de cero").</item>
+    ///   <item><b>3</b> Assert de privilegios (incluye PROPIEDAD de la base) + limpieza de sobras. Va ANTES de
+    ///   pagar el <c>pg_restore</c> y el resguardo previo (condición C1 de la re-review).</item>
+    ///   <item><b>4</b> Restaurar el resguardo en una base NUEVA al costado. Si falla: NADA se tocó.</item>
+    ///   <item><b>5</b> Resguardo previo obligatorio del estado actual (se toma DESPUÉS del paso 4: si el
+    ///   resguardo elegido está corrupto, no se pagan minutos de mantenimiento para nada).</item>
+    ///   <item><b>6</b> INTERCAMBIO DE NOMBRES. Desde acá, cualquier fallo vuelve atrás.</item>
+    ///   <item><b>7</b> Actualizar el esquema si el resguardo era de una versión anterior (bootstrappers →
+    ///   migraciones → backfills, sin tragarse fallos).</item>
+    ///   <item><b>8</b> AFIP a homologación (ahora DESPUÉS de migrar y DENTRO del sobre de vuelta atrás).</item>
+    ///   <item><b>9</b> Reponer archivos de MinIO — best-effort, FUERA del sobre de vuelta atrás (desvío
+    ///   declarado y aceptado: la reposición es aditiva y no tiene rollback propio; tirar abajo una base entera
+    ///   porque no volvieron unos vouchers sería peor que el aviso honesto). La auditoría lleva
+    ///   <c>archivosRepuestos</c> como DATO (condición C2), no solo dentro del mensaje.</item>
+    ///   <item><b>10</b> Auditoría → dropear la copia vieja → mantenimiento OFF.</item>
+    /// </list></para>
     /// </summary>
     private async Task<SystemDataRestoreResponse> ExecuteTotalRestoreAsync(
         ApplicationUser requester, string fileName, string? motivo, CancellationToken ct)
@@ -440,29 +527,74 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             throw new SystemDataRestoreRefusedException(ConcurrentRestoreMessage);
         }
 
-        // Sentinela B1: se pone en true SOLO si el desenlace del pg_restore queda INCIERTO — en ese caso el
-        // finally de abajo NO desactiva el mantenimiento (el sistema tiene que seguir "tapiado" hasta que el
-        // equipo tecnico confirme el estado real de la base, o hasta la auto-expiracion de
-        // FileMaintenanceModeService como ultimo recurso).
+        // Sentinela B1: se pone en true SOLO si el sistema NO puede reabrirse solo (doble fallo de la vuelta
+        // atrás, o AFIP sin confirmar) — en ese caso el finally de abajo NO desactiva el mantenimiento.
         var maintenanceOutcomeUnknown = false;
         string? backupPrevioFileName = null;
+
+        // Se llena SOLO cuando el intercambio de nombres ya se hizo: es el "estamos del otro lado del puente".
+        // Cualquier excepción INESPERADA a partir de ese punto tiene que volver atrás igual (ver el catch de
+        // abajo) — el ADR pide que TODO lo que falle entre el intercambio y el final vuelva atrás, no solo los
+        // fallos que el código enumera paso por paso.
+        string? swappedPreviousDatabaseName = null;
 
         _logger.LogWarning(
             "Restaurar TOTAL: INICIADO por {UserId} ({UserName}). Archivo={Archivo}. Motivo={Motivo}.",
             requester.Id, requester.UserName, fileName, motivoNormalizado);
 
+        // ADR-052 (D4): vuelta atrás. Es una función LOCAL a propósito: necesita poder marcar
+        // "maintenanceOutcomeUnknown" (el sentinela que decide si el finally reabre el sistema o lo deja
+        // frenado), y esa decisión no puede vivir en otro lado. SIEMPRE termina lanzando.
+        async Task RollbackAndThrowAsync(string pasoQueFallo, string? internalError, string previousDatabaseName)
+        {
+            _logger.LogCritical(
+                "Restaurar TOTAL: falló {Paso} DESPUÉS del intercambio de nombres. Se vuelve atrás. UserId={UserId}, " +
+                "Archivo={Archivo}, BackupPrevio={BackupPrevio}, BaseAnterior={BaseAnterior}. Motivo interno: {Error}",
+                pasoQueFallo, requester.Id, fileName, backupPrevioFileName, previousDatabaseName, internalError);
+
+            // BLOQUEANTE de seguridad (re-review): la vuelta atrás puede TIRAR (no solo devolver "no pude"): se
+            // conecta a Postgres, y una conexión que no abre es una excepción, no un false. Sin este try/catch, esa
+            // excepción salía por arriba, el "finally" apagaba el mantenimiento y el sistema se reabría con la base
+            // a medio actualizar y SIN el forzado de AFIP a homologación. Una excepción se trata IDÉNTICO a
+            // "no pude volver atrás": doble fallo, mantenimiento sostenido.
+            DatabaseSwapRollbackResult rollback;
+            try
+            {
+                _maintenanceMode.Touch();
+                rollback = await _restorePort.RollbackSwapAsync(previousDatabaseName, CancellationToken.None);
+            }
+            catch (Exception rollbackEx)
+            {
+                _logger.LogCritical(rollbackEx,
+                    "Restaurar TOTAL: la vuelta atrás TIRÓ una excepción. Se trata como doble fallo (el sistema queda en mantenimiento).");
+                rollback = new DatabaseSwapRollbackResult(false, rollbackEx.Message);
+            }
+
+            if (rollback.Success)
+            {
+                // El sistema quedó EXACTAMENTE como antes del intento (mismos datos, mismo esquema): es seguro
+                // reabrirlo, así que el finally desactiva el mantenimiento y el rechazo se audita con
+                // volvioAtras=true.
+                throw new SystemDataRestoreRefusedException(RolledBackRejectionMessage, rolledBack: true);
+            }
+
+            // DOBLE FALLO (D4.5): el ÚNICO caso que deja el sistema frenado a propósito. Ni la auto-expiración lo
+            // reabre: sale solo a mano por el runbook (docs/db-operations.md).
+            maintenanceOutcomeUnknown = true;
+            _maintenanceMode.SuppressAutoExpiry(
+                "Restauración total: la actualización falló y la vuelta atrás no se pudo completar. Requiere intervención manual.");
+            _logger.LogCritical(
+                "Restaurar TOTAL: DOBLE FALLO. UserId={UserId}, Archivo={Archivo}, BackupPrevio={BackupPrevio}, " +
+                "BaseAnterior={BaseAnterior}. El sistema QUEDA en mantenimiento. Motivo interno de la vuelta atrás: {Error}",
+                requester.Id, fileName, backupPrevioFileName, previousDatabaseName, rollback.ErrorMessage);
+            throw new SystemDataRestoreRefusedException(DoubleFailureRejectionMessage, doubleFailure: true);
+        }
+
         try
         {
-            // 1) Guard de compatibilidad de esquema (hallazgo B7), fail-closed, ANTES de tocar la base.
+            // 1) Gate de versión (ADR-052 D2), fail-closed, ANTES de tocar la base.
             var schemaCheck = await _restorePort.CheckSchemaCompatibilityAsync(fileName, ct);
-            if (!schemaCheck.Compatible)
-            {
-                _logger.LogError(
-                    "Restaurar TOTAL: guard de compatibilidad de esquema RECHAZO el archivo. Motivo interno: {Error}",
-                    schemaCheck.ErrorMessage);
-                throw new SystemDataRestoreRefusedException(
-                    "Ese resguardo es de una versión anterior del sistema; no se puede restaurar sobre la versión actual. Avisá al equipo técnico.");
-            }
+            var needsSchemaUpdate = EnsureBackupVersionIsUsable(schemaCheck, fileName);
 
             // 2) Candado fiscal (hallazgo B2), MISMA regla que "Empezar de cero".
             var fiscalLockReason = await FiscalLockEvaluator.EvaluateAsync(_context, ct);
@@ -474,10 +606,41 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                     throw new SystemDataRestoreRefusedException(AfipProductionModeRestoreMessage);
             }
 
-            // a) Backup previo OBLIGATORIO del estado ACTUAL — el "deshacer el deshacer". Prefijo PROPIO
-            // "pre-restore-" (hallazgo menor, revisión funcional: "era indistinguible de un Empezar de cero en
-            // la lista") — PgDumpAndMinioWipeBackupPort igual lo reconoce como backup existente (no lo re-copia
-            // en una operación futura, ver KnownBackupPrefixMarkers).
+            // 3) Assert de privilegios (ADR-052 D1.5 + C1): va ANTES de pagar el pg_restore y el resguardo
+            // previo, porque de nada sirve descubrir 15 minutos después que el usuario no puede renombrar bases.
+            var privileges = await _restorePort.CheckDatabaseManagementPrivilegesAsync(ct);
+            if (!privileges.CanManage)
+            {
+                _logger.LogError(
+                    "Restaurar TOTAL: el usuario de Postgres no puede administrar bases (crear/renombrar). Motivo interno: {Error}",
+                    privileges.ErrorMessage);
+                throw new SystemDataRestoreRefusedException(InsufficientPrivilegesRejectionMessage);
+            }
+
+            // 3b) Limpieza de sobras de intentos anteriores (D1.6). Best-effort dentro del puerto: no puede
+            // frenar una restauración que recién arranca.
+            await _restorePort.CleanupLeftoverRestoreDatabasesAsync(ct);
+
+            // 4) Restaurar el resguardo en una base NUEVA al costado. Si esto falla, la base viva NUNCA se tocó.
+            _maintenanceMode.Touch();
+            var newDatabaseRestore = await _restorePort.RestoreIntoNewDatabaseAsync(fileName, ct);
+            if (!newDatabaseRestore.Success || string.IsNullOrWhiteSpace(newDatabaseRestore.NewDatabaseName))
+            {
+                _logger.LogError(
+                    "Restaurar TOTAL: falló restaurar el resguardo en una base nueva (desenlace {Outcome}). La base viva NO se tocó. Motivo interno: {Error}",
+                    newDatabaseRestore.Outcome, newDatabaseRestore.ErrorMessage);
+                // Mejora real de ADR-052 sobre el diseño anterior: acá el sistema se puede reabrir tranquilo
+                // (mantenimiento OFF por el finally) porque lo único afectado fue una base descartable. Antes,
+                // el mismo fallo tocaba la base viva antes de saber si el resguardo servía.
+                throw new SystemDataRestoreRefusedException(
+                    "No se pudo leer ese resguardo completo, así que no se restauró nada: el sistema quedó intacto. " +
+                    "Probá con otro resguardo o avisá al equipo técnico.");
+            }
+
+            var newDatabaseName = newDatabaseRestore.NewDatabaseName;
+
+            // 5) Resguardo previo OBLIGATORIO del estado ACTUAL — el "deshacer el deshacer". Se toma DESPUÉS de
+            // que el resguardo elegido demostró que se puede restaurar (cambio deliberado de ADR-052 D1.9).
             var timestamp = DateTime.UtcNow;
             var backupFileName = BuildPreviousStateBackupFileName(timestamp);
             var minioBackupPrefix = BuildPreviousStateBackupMinioPrefix(timestamp);
@@ -486,77 +649,84 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             if (!backupResult.Success)
             {
                 _logger.LogError(
-                    "Restaurar TOTAL: el backup previo del estado actual fallo, se aborta sin tocar nada. Motivo interno: {Error}",
+                    "Restaurar TOTAL: el resguardo previo del estado actual falló, se aborta sin tocar nada. Motivo interno: {Error}",
                     backupResult.ErrorMessage);
+                await _restorePort.DropDatabaseAsync(newDatabaseName, CancellationToken.None);
                 throw new SystemDataRestoreRefusedException(
                     "No se pudo generar el resguardo de tu estado actual. No se restauró nada. Volvé a intentarlo o avisá al equipo técnico.");
             }
 
             backupPrevioFileName = backupResult.BackupFileName ?? backupFileName;
             _logger.LogWarning(
-                "Restaurar TOTAL: backup previo generado ({BackupPrevio}). Cortando conexiones y arrancando pg_restore.",
+                "Restaurar TOTAL: resguardo previo generado ({BackupPrevio}). Arrancando el intercambio de nombres.",
                 backupPrevioFileName);
 
-            // B-N2(c): renovar el reloj de mantenimiento justo ANTES de arrancar el pg_restore real — desde
-            // este punto, el presupuesto de auto-expiración (Maintenance:MaxDurationMinutes) mide el tiempo
-            // DESDE ACÁ (acotado por el timeout propio del pg_restore), no desde el arranque de TODA la
-            // operación (que ya consumió tiempo en el guard de esquema + candado fiscal + backup previo, cada
-            // uno con su PROPIO timeout — ver el comentario de clase de FileMaintenanceModeService).
+            // 6) INTERCAMBIO DE NOMBRES (D1.4). Desde acá en adelante la base viva YA cambió: todo usa
+            // CancellationToken.None (B-N1) y todo fallo pasa por la vuelta atrás.
             _maintenanceMode.Touch();
 
-            // c+d) Cortar conexiones + pg_restore --clean --if-exists --single-transaction, con timeout PROPIO
-            // (hallazgo B1 — ver el comentario XML del puerto).
-            var restoreResult = await _restorePort.RestoreTotalAsync(fileName, ct);
-
-            if (restoreResult.Outcome == TotalRestoreOutcome.UnknownMayStillBeRunning)
+            // El puerto tiene su propia red (devuelve un resultado con el nombre de la base anterior incluso si algo
+            // explota adentro). Este try/catch es el cinturón de acá: si AUN ASÍ tirara, no puede salir un 500 con
+            // detalle técnico — se rechaza limpio y auditado. Es seguro tratarlo como "no se intercambió nada":
+            // el único tramo del puerto que puede tirar antes de devolver resultado corre ANTES de cualquier rename.
+            DatabaseSwapResult swap;
+            try
             {
-                maintenanceOutcomeUnknown = true;
-                // Hallazgo B-N2(a): un desenlace incierto NUNCA puede auto-expirar solo — sería repetir
-                // exactamente el error que el hallazgo B1 vino a corregir (reabrir el sistema sin certeza de
-                // que sea seguro). La única salida es manual (ver docs/db-operations.md).
-                _maintenanceMode.SuppressAutoExpiry(
-                    "Restauración total: desenlace incierto tras el timeout de pg_restore. Requiere confirmación manual.");
-                _logger.LogCritical(
-                    "Restaurar TOTAL: DESENLACE INCIERTO tras timeout de pg_restore. UserId={UserId}, Archivo={Archivo}, " +
-                    "BackupPrevio={BackupPrevio}. El sistema QUEDA en mantenimiento hasta confirmar el estado real de la base.",
+                swap = await _restorePort.SwapRestoredDatabaseIntoLiveAsync(newDatabaseName, CancellationToken.None);
+            }
+            catch (Exception swapEx)
+            {
+                _logger.LogCritical(swapEx,
+                    "Restaurar TOTAL: el intercambio de nombres TIRÓ una excepción. Se rechaza sin haber cambiado la base viva. " +
+                    "UserId={UserId}, Archivo={Archivo}, BackupPrevio={BackupPrevio}.",
                     requester.Id, fileName, backupPrevioFileName);
                 throw new SystemDataRestoreRefusedException(
-                    "No se pudo confirmar que la restauración terminó a tiempo. Por seguridad, el sistema sigue en mantenimiento. Avisá urgente al equipo técnico.");
+                    "No se pudo poner en marcha ese resguardo, así que no se cambió nada: el sistema quedó como estaba. " +
+                    "Volvé a intentarlo o avisá al equipo técnico.");
             }
 
-            if (!restoreResult.Success)
+            if (!swap.Success)
             {
-                _logger.LogError(
-                    "Restaurar TOTAL: fallo el pg_restore total. Motivo interno: {Error}", restoreResult.ErrorMessage);
-                // Hallazgo de data-exposure (2026-07-28): NUNCA interpolar el nombre de archivo del resguardo
-                // previo en un mensaje de error crudo — el nombre queda disponible para el usuario en el
-                // flujo normal de "Volver atrás" (misma pantalla que lista los resguardos), no hace falta
-                // repetirlo acá con jerga tecnica de nombre de archivo.
-                throw new SystemDataRestoreRefusedException(
-                    "No se pudo completar la restauración total. El sistema quedó exactamente como estaba antes de " +
-                    "intentarlo (la operación se deshizo sola). Avisá al equipo técnico. Tu estado de antes de este " +
-                    "intento igual quedó a salvo: vas a poder elegirlo desde \"Volver atrás\".");
+                // Ojo: el intercambio pudo haber quedado a mitad de camino. La vuelta atrás reconcilia POR ESTADO
+                // y es idempotente (condición C1), así que llamarla acá es seguro incluso si el intercambio no
+                // llegó a hacer nada: en ese caso no toca NADA y devuelve éxito.
+                await RollbackAndThrowAsync(
+                    pasoQueFallo: "el intercambio de nombres",
+                    internalError: swap.ErrorMessage,
+                    previousDatabaseName: swap.PreviousDatabaseName);
             }
 
-            // ============================================================================================
-            // A PARTIR DE ACÁ: restoreResult.Success == true — la base viva YA se reemplazó exitosamente.
-            //
-            // Hallazgo BLOQUEANTE B-N1 de seguridad (2026-07-28, "gravísimo"): TODO lo que sigue usa
-            // CancellationToken.None, NUNCA el "ct" del pedido HTTP. Si el pedido se cancela DESPUÉS de que
-            // el pg_restore terminó bien (el admin cierra la pestaña, el proxy corta la conexión — pasa
-            // AdminDangerController.Restore le pasa RequestAborted como "ct"), estos pasos NO pueden abortarse
-            // a mitad de camino: dejarían el AFIP forzado a medias, los archivos de MinIO sin reponer, sin
-            // auditoría, y —lo peor— el "finally" de abajo desactivaría el mantenimiento IGUAL (porque
-            // "maintenanceOutcomeUnknown" seguiría en false), reabriendo el sistema con AFIP potencialmente en
-            // modo PRODUCTIVO. Una vez que la base YA se reemplazó, cancelar el PEDIDO no puede cancelar la
-            // CONSECUENCIA de esa restauración.
-            // ============================================================================================
+            swappedPreviousDatabaseName = swap.PreviousDatabaseName;
 
-            // b3) Forzar AFIP a homologacion (hallazgo B3) — MISMO criterio que el modo real: un resguardo
-            // viejo puede traer un AfipSettings productivo y dejar el sistema facturando CAE real en silencio.
-            // Si esto no se puede CONFIRMAR, no hay forma segura de saber si el sistema quedaria facturando en
-            // modo productivo real - se trata como desenlace incierto (igual que B1), nunca se sale de
-            // mantenimiento sin esa confirmacion.
+            // 7) Actualizar el esquema si el resguardo era de una versión anterior (D3/B4).
+            var migracionesAplicadas = 0;
+            if (needsSchemaUpdate)
+            {
+                _maintenanceMode.Touch();
+                var schemaUpdate = await _schemaUpdatePort.UpdateAsync(SchemaUpdatePolicy.Restore, CancellationToken.None);
+                if (!schemaUpdate.Success)
+                {
+                    await RollbackAndThrowAsync(
+                        pasoQueFallo: "la actualización del sistema",
+                        internalError: schemaUpdate.ErrorMessage,
+                        previousDatabaseName: swap.PreviousDatabaseName);
+                }
+
+                migracionesAplicadas = schemaUpdate.MigrationsApplied;
+                _logger.LogWarning(
+                    "Restaurar TOTAL: esquema actualizado. Migraciones aplicadas={Migraciones}.", migracionesAplicadas);
+            }
+
+            // 8) Forzar AFIP a homologación (B3), ahora DESPUÉS de migrar (contra el esquema ya al día) y DENTRO
+            // del sobre de vuelta atrás: si no se puede confirmar, ya hay a dónde volver — antes era un
+            // desenlace incierto sin salida.
+            //
+            // Antes del UPDATE, un calentamiento explícito de la conexión (recomendación aceptada en la re-review):
+            // el intercambio mató todas las conexiones y vació el pool, así que ESTA es la primera consulta contra
+            // la base nueva. Un parpadeo justo acá haría volver atrás un restore que salió PERFECTO, y eso sería
+            // tirar el trabajo a la basura por nada.
+            await WarmUpDatabaseConnectionAsync();
+
             try
             {
                 await _context.Database.ExecuteSqlRawAsync(
@@ -564,31 +734,32 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             }
             catch (Exception ex)
             {
-                maintenanceOutcomeUnknown = true;
-                _maintenanceMode.SuppressAutoExpiry(
-                    "Restauración total: la base ya se reemplazó pero no se pudo confirmar que AFIP quedó en homologación. Requiere confirmación manual.");
                 _logger.LogCritical(ex,
-                    "Restaurar TOTAL: la base YA se reemplazo pero el UPDATE que fuerza AFIP a homologacion FALLO. " +
-                    "UserId={UserId}, Archivo={Archivo}, BackupPrevio={BackupPrevio}. El sistema QUEDA en mantenimiento " +
-                    "hasta confirmar a mano el estado real de AfipSettings.",
-                    requester.Id, fileName, backupPrevioFileName);
-                throw new SystemDataRestoreRefusedException(
-                    "La base ya se restauró, pero no se pudo confirmar que AFIP quedó en modo homologación. Por seguridad, el sistema sigue en mantenimiento. Avisá urgente al equipo técnico.");
+                    "Restaurar TOTAL: no se pudo confirmar que AFIP quedó en homologación después del intercambio. Se vuelve atrás.");
+                await RollbackAndThrowAsync(
+                    pasoQueFallo: "la verificación de la conexión con AFIP",
+                    internalError: ex.Message,
+                    previousDatabaseName: swap.PreviousDatabaseName);
             }
 
-            // b5) Reponer archivos de MinIO (hallazgo B5) si se puede determinar el resguardo correspondiente.
-            // CancellationToken.None (B-N1): best-effort, pero tiene que intentarse completo aunque el pedido
-            // original ya se haya cancelado.
-            var archivosMensaje = await TryRestoreMinioObjectsAsync(fileName, CancellationToken.None);
+            // 9) Reponer archivos de MinIO (B5): best-effort y FUERA del sobre de vuelta atrás (desvío declarado
+            // en el ADR y aceptado en la re-review). La condición C2 pide que el resultado quede como DATO en la
+            // auditoría, no solo dentro del mensaje al usuario.
+            var (archivosMensaje, archivosRepuestos) = await TryRestoreMinioObjectsAsync(fileName, CancellationToken.None);
 
             _logger.LogWarning(
-                "Restaurar TOTAL: EXITOSO. UserId={UserId}, Archivo={Archivo}, BackupPrevio={BackupPrevio}.",
-                requester.Id, fileName, backupPrevioFileName);
+                "Restaurar TOTAL: EXITOSO. UserId={UserId}, Archivo={Archivo}, BackupPrevio={BackupPrevio}, " +
+                "EsquemaActualizado={EsquemaActualizado}, MigracionesAplicadas={Migraciones}, ArchivosRepuestos={ArchivosRepuestos}.",
+                requester.Id, fileName, backupPrevioFileName, needsSchemaUpdate, migracionesAplicadas, archivosRepuestos);
 
-            // f) Auditoria DESPUES del restore, BEST-EFFORT (hallazgo B6) — ver el comentario completo de
-            // AuditActions.SystemDataTotallyRestored sobre por que no puede escribirse antes ni durante, y por
-            // que un fallo ACA no puede convertir un restore YA exitoso en un 500 para el usuario.
-            // CancellationToken.None (B-N1): mismo criterio que arriba.
+            // 10a) ANTES de dropear la copia anterior: verificar que el resguardo previo se pueda leer
+            // (recomendación aceptada en la re-review). Cuesta segundos y es el ÚNICO cinturón contra "me
+            // equivoqué de resguardo": si el archivo saliera ilegible, la copia anterior de la base es lo único
+            // que queda, así que NO se dropea.
+            var resguardoPrevioVerificado = await VerifyPreviousStateBackupAsync(backupPrevioFileName);
+
+            // 10b) Auditoría DESPUÉS del restore, BEST-EFFORT (B6): un restore YA exitoso no puede convertirse en
+            // un 500 para el usuario porque falló el INSERT del AuditLog.
             try
             {
                 await _auditService.LogBusinessEventAsync(
@@ -602,6 +773,11 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                         backupPrevio = backupPrevioFileName,
                         motivo = motivoNormalizado,
                         afipForzadoAHomologacion = true,
+                        // ADR-052 (D7): números y booleanos, nunca ids de migración ni nombres de base (T-5).
+                        esquemaActualizado = needsSchemaUpdate,
+                        migracionesAplicadas = migracionesAplicadas,
+                        archivosRepuestos = archivosRepuestos,
+                        resguardoPrevioVerificado = resguardoPrevioVerificado,
                     }, AuditJsonOptions),
                     userId: requester.Id,
                     userName: string.IsNullOrWhiteSpace(requester.FullName) ? requester.Email : requester.FullName,
@@ -615,6 +791,33 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                     requester.Id, fileName, backupPrevioFileName);
             }
 
+            // La copia vieja se dropea recién ACÁ, con todo lo demás ya confirmado (D1.6) y SOLO si el resguardo
+            // previo quedó verificado. Si el drop falla es basura en disco, NUNCA una pérdida de datos: no puede
+            // convertir un restore exitoso en error (y por eso tampoco tiene que caer en la red de seguridad que
+            // vuelve atrás, más abajo).
+            if (resguardoPrevioVerificado)
+            {
+                try
+                {
+                    await _restorePort.DropDatabaseAsync(swap.PreviousDatabaseName, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Restaurar TOTAL: la restauración fue exitosa pero no se pudo dropear la copia anterior ({BaseAnterior}). " +
+                        "Queda ocupando disco hasta la limpieza del próximo intento.",
+                        swap.PreviousDatabaseName);
+                }
+            }
+            else
+            {
+                _logger.LogCritical(
+                    "Restaurar TOTAL: el resguardo previo ({BackupPrevio}) NO se pudo verificar, así que la copia anterior de la " +
+                    "base ({BaseAnterior}) se CONSERVA como único respaldo. OJO: la limpieza de sobras del próximo intento la " +
+                    "dropea — ver el runbook en docs/db-operations.md.",
+                    backupPrevioFileName, swap.PreviousDatabaseName);
+            }
+
             return new SystemDataRestoreResponse
             {
                 Modo = RestoreModes.Total,
@@ -623,18 +826,149 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                 Mensaje =
                     "Se restauró todo el sistema a la foto del resguardo elegido. Lo que se cargó después se perdió. " +
                     "Las sesiones y las contraseñas también volvieron a como estaban en ese momento. " +
+                    (needsSchemaUpdate
+                        ? "Como el resguardo era más viejo, el sistema se actualizó solo después de restaurarlo. "
+                        : string.Empty) +
                     archivosMensaje,
             };
         }
+        catch (Exception ex) when (ex is not SystemDataRestoreRefusedException && swappedPreviousDatabaseName is not null)
+        {
+            // Red de seguridad: una excepción que el código NO previó, ya del otro lado del intercambio. Sin este
+            // catch, el finally apagaría el mantenimiento y dejaría el sistema abierto con la base restaurada a
+            // medio terminar — justo lo que la vuelta atrás existe para evitar.
+            await RollbackAndThrowAsync(
+                pasoQueFallo: "un paso posterior al intercambio de nombres",
+                internalError: ex.Message,
+                previousDatabaseName: swappedPreviousDatabaseName);
+            throw; // inalcanzable: RollbackAndThrowAsync siempre lanza. El compilador igual lo pide.
+        }
         finally
         {
-            // e) Desactivar modo mantenimiento SIEMPRE, EXCEPTO si el desenlace quedo incierto (hallazgo B1) —
-            // ahi el sistema tiene que seguir en mantenimiento hasta que se confirme el estado real de la base.
+            // Desactivar modo mantenimiento SIEMPRE, EXCEPTO si el sistema no puede reabrirse solo (doble fallo
+            // de la vuelta atrás): ahí tiene que seguir frenado hasta que el equipo técnico lo revise.
             if (!maintenanceOutcomeUnknown)
             {
                 _maintenanceMode.Deactivate();
                 _logger.LogWarning("Restaurar TOTAL: modo mantenimiento DESACTIVADO.");
             }
+        }
+    }
+
+    /// <summary>
+    /// ADR-052 (recomendación aceptada en la re-review): abre y descarta una conexión contra la base que acaba de
+    /// quedar viva, con reintentos cortos, ANTES de la primera consulta que importa.
+    ///
+    /// <para><b>Por qué existe</b>: el intercambio de nombres mata todas las conexiones y vacía el pool. La primera
+    /// consulta después de eso es la que paga el reconectar, y si justo ahí hay un parpadeo, el sistema volvería
+    /// atrás un restore que salió PERFECTO. Este calentamiento absorbe ese parpadeo. Si igual no se puede conectar,
+    /// NO se rechaza acá: se sigue y decide el paso siguiente (que ya sabe volver atrás) — así hay un solo lugar
+    /// que decide, no dos.</para>
+    /// </summary>
+    private async Task WarmUpDatabaseConnectionAsync()
+    {
+        const int intentos = 3;
+        for (var intento = 1; intento <= intentos; intento++)
+        {
+            try
+            {
+                if (await _context.Database.CanConnectAsync(CancellationToken.None))
+                {
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Restaurar TOTAL: la conexión a la base recién intercambiada falló en el intento {Intento}/{Intentos} del calentamiento.",
+                    intento, intentos);
+            }
+
+            if (intento < intentos)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
+            }
+        }
+
+        _logger.LogError(
+            "Restaurar TOTAL: no se pudo confirmar la conexión a la base recién intercambiada después de {Intentos} intentos. " +
+            "Se sigue igual: el paso siguiente decide (y sabe volver atrás).",
+            intentos);
+    }
+
+    /// <summary>
+    /// ADR-052 (recomendación aceptada en la re-review): verifica que el resguardo previo (el "deshacer el
+    /// deshacer") se pueda LEER, antes de dropear la copia anterior de la base. Cuesta segundos y es el único
+    /// cinturón contra "me equivoqué de resguardo". Best-effort: si la verificación misma explota, se considera NO
+    /// verificado (fail-closed: se conserva la copia anterior).
+    /// </summary>
+    private async Task<bool> VerifyPreviousStateBackupAsync(string? backupPrevioFileName)
+    {
+        if (string.IsNullOrWhiteSpace(backupPrevioFileName) || !IsSafeFileName(backupPrevioFileName))
+        {
+            return false;
+        }
+
+        try
+        {
+            var verify = await _restorePort.VerifyBackupAsync(backupPrevioFileName, CancellationToken.None);
+            if (verify.Success)
+            {
+                return true;
+            }
+
+            _logger.LogError(
+                "Restaurar TOTAL: el resguardo previo ({BackupPrevio}) NO se pudo verificar. Motivo interno: {Error}",
+                backupPrevioFileName, verify.ErrorMessage);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Restaurar TOTAL: falló la verificación del resguardo previo ({BackupPrevio}).", backupPrevioFileName);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// ADR-052 (D2/D6): traduce el veredicto del gate a "se puede seguir o se rechaza", y si se puede seguir dice
+    /// si HAY QUE ACTUALIZAR el esquema después de restaurar. Los textos son en criollo y SEPARADOS por caso
+    /// (T-5 + menor M1): "versión más nueva" y "historial con agujero" son problemas distintos y un solo texto
+    /// para los dos mentiría en uno de ellos.
+    /// </summary>
+    /// <returns><c>true</c> si el resguardo es de una versión anterior y el sistema tiene que actualizarse solo.</returns>
+    private bool EnsureBackupVersionIsUsable(SchemaCompatibilityResult schemaCheck, string fileName)
+    {
+        switch (schemaCheck.Verdict)
+        {
+            case RestoreSchemaVerdict.Identical:
+                return false;
+
+            case RestoreSchemaVerdict.SubsetNeedsUpdate:
+                _logger.LogWarning(
+                    "Restaurar TOTAL: el resguardo {Archivo} es de una versión anterior; después de restaurarlo se van a aplicar {Faltantes} migración(es).",
+                    fileName, schemaCheck.MissingMigrationsCount);
+                return true;
+
+            case RestoreSchemaVerdict.NewerThanSystem:
+                _logger.LogError("Restaurar TOTAL: RECHAZADO — el resguardo {Archivo} es de una versión más nueva que el sistema.", fileName);
+                throw new SystemDataRestoreRefusedException(NewerBackupRejectionMessage);
+
+            case RestoreSchemaVerdict.HistoryGap:
+                _logger.LogError("Restaurar TOTAL: RECHAZADO — el historial del resguardo {Archivo} tiene un salto en el medio.", fileName);
+                throw new SystemDataRestoreRefusedException(HistoryGapRejectionMessage);
+
+            case RestoreSchemaVerdict.LiveHasPendingMigrations:
+                _logger.LogError("Restaurar TOTAL: RECHAZADO — el sistema quedó a mitad de una actualización (hay migraciones pendientes).");
+                throw new SystemDataRestoreRefusedException(LivePendingMigrationsRejectionMessage);
+
+            case RestoreSchemaVerdict.DumpHistoryEmpty:
+            default:
+                _logger.LogError(
+                    "Restaurar TOTAL: RECHAZADO — no se pudo determinar la versión del resguardo {Archivo} (veredicto {Verdict}). Motivo interno: {Error}",
+                    fileName, schemaCheck.Verdict, schemaCheck.ErrorMessage);
+                throw new SystemDataRestoreRefusedException(
+                    "No se pudo determinar de qué versión del sistema es ese resguardo, así que no se restauró nada. Avisá al equipo técnico.");
         }
     }
 
@@ -645,13 +979,18 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     /// determinar el resguardo (backup de otro origen, ej. el sidecar diario de <c>docker-compose.yml</c>, o
     /// un backup viejo de "Empezar de cero"), o si la reposición falla, el mensaje AVISA CLARO — nunca se
     /// sugiere falsamente que los archivos volvieron.
+    ///
+    /// <para><b>ADR-052, condición C2 de la re-review</b>: además del mensaje, devuelve un BOOLEANO
+    /// (<c>archivosRepuestos</c>) que va a la auditoría como dato. Sin eso, "los archivos no volvieron" quedaba
+    /// solo dentro de un texto y era imposible de buscar después. Cómo re-correr la reposición sin restaurar de
+    /// nuevo: <c>docs/db-operations.md</c>.</para>
     /// </summary>
-    private async Task<string> TryRestoreMinioObjectsAsync(string fileName, CancellationToken ct)
+    private async Task<(string Mensaje, bool ArchivosRepuestos)> TryRestoreMinioObjectsAsync(string fileName, CancellationToken ct)
     {
         var minioPrefix = TryDeriveMinioBackupPrefix(fileName);
         if (minioPrefix is null)
         {
-            return "Los archivos subidos (vouchers, adjuntos) no se recuperan con esta restauración: no se pudo determinar su resguardo.";
+            return ("Los archivos subidos (vouchers, adjuntos) no se recuperan con esta restauración: no se pudo determinar su resguardo.", false);
         }
 
         int restoredCount;
@@ -662,12 +1001,12 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Restaurar TOTAL: fallo reponiendo los archivos de MinIO desde {Prefix}.", minioPrefix);
-            return "Los archivos subidos (vouchers, adjuntos) no se pudieron recuperar con esta restauración.";
+            return ("Los archivos subidos (vouchers, adjuntos) no se pudieron recuperar con esta restauración.", false);
         }
 
         return restoredCount > 0
-            ? "Los archivos subidos (vouchers, adjuntos) se repusieron desde el resguardo de ese momento."
-            : "Los archivos subidos (vouchers, adjuntos) no se recuperaron con esta restauración: no se encontró un resguardo de archivos para ese momento.";
+            ? ("Los archivos subidos (vouchers, adjuntos) se repusieron desde el resguardo de ese momento.", true)
+            : ("Los archivos subidos (vouchers, adjuntos) no se recuperaron con esta restauración: no se encontró un resguardo de archivos para ese momento.", false);
     }
 
     /// <summary>
@@ -786,13 +1125,13 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         string.IsNullOrEmpty(text) ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>
-    /// Path traversal + consistencia de extensión: mismo criterio que el puerto (defensa en profundidad en el
-    /// borde del servicio) — el nombre tiene que terminar en ".dump", igual que <c>ListBackupsAsync</c> filtra.
+    /// ADR-052 (recomendación N1 de seguridad de la re-review): LISTA BLANCA de nombres de archivo, no solo
+    /// "sin separadores de carpeta y termina en .dump".
+    ///
+    /// <para><b>Por qué importa</b>: el nombre viaja hasta la línea de comandos de <c>pg_restore</c>
+    /// (entrecomillado). Un nombre con una comilla doble adentro podría cerrar el entrecomillado y meter FLAGS
+    /// propios en el comando. Con la lista blanca, lo único que existe son letras, números, punto, guion y guion
+    /// bajo — ninguno de esos caracteres puede escapar de las comillas.</para>
     /// </summary>
-    private static bool IsSafeFileName(string fileName)
-    {
-        return !string.IsNullOrWhiteSpace(fileName)
-            && Path.GetFileName(fileName) == fileName
-            && fileName.EndsWith(".dump", StringComparison.Ordinal);
-    }
+    internal static bool IsSafeFileName(string fileName) => SafeBackupFileNameRules.IsSafe(fileName);
 }

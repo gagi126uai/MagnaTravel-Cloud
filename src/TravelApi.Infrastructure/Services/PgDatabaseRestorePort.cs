@@ -1,8 +1,12 @@
 using System.Diagnostics;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -13,6 +17,12 @@ namespace TravelApi.Infrastructure.Services;
 /// <c>PgDumpAndMinioWipeBackupPort</c>) y administra la base sombra con un <see cref="NpgsqlConnection"/>
 /// directo (no via EF: crear/borrar una base de datos completa no es algo que <c>AppDbContext</c> sepa hacer,
 /// y además <c>CREATE DATABASE</c>/<c>DROP DATABASE</c> no pueden correr dentro de una transacción).
+///
+/// <para><b>ADR-052 (2026-07-29)</b>: la restauración total dejó de hacerse sobre la base VIVA. Ahora se
+/// restaura en una base NUEVA al costado y se INTERCAMBIAN LOS NOMBRES (<see cref="RestoreIntoNewDatabaseAsync"/>
+/// + <see cref="SwapRestoredDatabaseIntoLiveAsync"/>), con vuelta atrás por otro intercambio
+/// (<see cref="RollbackSwapAsync"/>). Todo lo que toca nombres de bases reconcilia POR ESTADO consultando
+/// <c>pg_database</c>, nunca ejecutando una secuencia ciega de pasos.</para>
 /// </summary>
 public class PgDatabaseRestorePort : IDatabaseRestorePort
 {
@@ -27,32 +37,229 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
     /// <summary>Ver <see cref="DefaultPgRestoreTotalTimeoutMinutes"/>. Hallazgo B-N2(b): el chequeo de esquema no tenía timeout propio antes de esta obra.</summary>
     internal const int DefaultSchemaCheckTimeoutMinutes = 3;
 
+    /// <summary>
+    /// ADR-052 (D1.4 y D8): intentos del intercambio de nombres y espera entre intentos. El único motivo
+    /// esperable de fallo es una conexión que entró justo en la ventana, así que reintentar poco y rápido es lo
+    /// correcto (el peor caso entra de sobra en el presupuesto de mantenimiento).
+    /// </summary>
+    internal const int DefaultSwapRetries = 5;
+
+    /// <summary>Ver <see cref="DefaultSwapRetries"/>.</summary>
+    internal const int DefaultSwapRetryDelaySeconds = 2;
+
+    /// <summary>ADR-052 (D4/M2): intentos de la VUELTA ATRÁS antes de declarar doble fallo (mantenimiento sostenido).</summary>
+    internal const int DefaultRollbackSwapRetries = 3;
+
+    /// <summary>Ver <see cref="DefaultRollbackSwapRetries"/>.</summary>
+    internal const int DefaultRollbackSwapRetryDelaySeconds = 2;
+
+    /// <summary>
+    /// ADR-052 (D5): timeout de la lectura BARATA del historial de un resguardo para la lista. Corta y por
+    /// archivo: si un archivo tarda más que esto, su marca queda "desconocida" y la lista sigue andando.
+    /// </summary>
+    private const int CheapHistoryReadTimeoutSeconds = 30;
+
+    /// <summary>
+    /// ADR-052 (D5): cuánto se recuerda un intento FALLIDO de leer el historial. Los dumps son inmutables, así
+    /// que un éxito se puede cachear para siempre (la clave lleva tamaño+fecha y se auto-invalida); un fallo, en
+    /// cambio, puede ser transitorio (el binario ocupado, un timeout), y cachearlo para siempre dejaría el
+    /// archivo marcado "desconocida" hasta que alguien reinicie la app.
+    /// </summary>
+    private static readonly TimeSpan FailedHistoryReadCacheDuration = TimeSpan.FromMinutes(2);
+
     private readonly IConfiguration _configuration;
+    private readonly AppDbContext _context;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<PgDatabaseRestorePort> _logger;
 
-    public PgDatabaseRestorePort(IConfiguration configuration, ILogger<PgDatabaseRestorePort> logger)
+    public PgDatabaseRestorePort(
+        IConfiguration configuration,
+        AppDbContext context,
+        IMemoryCache cache,
+        ILogger<PgDatabaseRestorePort> logger)
     {
         _configuration = configuration;
+        _context = context;
+        _cache = cache;
         _logger = logger;
     }
 
     private string BackupDirectory => _configuration["Wipe:BackupDirectory"] ?? "/backups/wipe";
 
-    public Task<IReadOnlyList<BackupFileInfo>> ListBackupsAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<BackupFileInfo>> ListBackupsAsync(CancellationToken ct)
     {
         var directory = BackupDirectory;
         if (!Directory.Exists(directory))
         {
-            return Task.FromResult<IReadOnlyList<BackupFileInfo>>(Array.Empty<BackupFileInfo>());
+            return Array.Empty<BackupFileInfo>();
         }
 
         var files = Directory.GetFiles(directory, "*.dump")
             .Select(path => new FileInfo(path))
-            .Select(info => new BackupFileInfo(info.Name, info.LastWriteTimeUtc, info.Length))
             .OrderByDescending(info => info.LastWriteTimeUtc)
             .ToList();
 
-        return Task.FromResult<IReadOnlyList<BackupFileInfo>>(files);
+        // ADR-052 (D5): la lista de migraciones del sistema se lee UNA vez para todos los archivos (viene del
+        // ensamblado, no de la base: es una lista compilada, gratis de leer). El veredicto se recalcula SIEMPRE
+        // contra ella; lo único que se cachea es el historial del archivo. Si se cacheara el veredicto, el
+        // primer deploy posterior dejaría toda la lista mintiendo.
+        List<string> assemblyMigrations;
+        try
+        {
+            assemblyMigrations = _context.Database.GetMigrations().ToList();
+        }
+        catch (Exception ex)
+        {
+            // GetMigrations es una extensión RELACIONAL. En producción el proveedor siempre es Npgsql, pero si algún
+            // día no lo fuera, la lista de resguardos tiene que seguir funcionando: sin referencia contra la cual
+            // comparar, TODOS quedan "desconocida" (nunca "actual").
+            _logger.LogWarning(ex, "Marca de versión de resguardos: no se pudo leer la lista de migraciones del sistema.");
+            assemblyMigrations = new List<string>();
+        }
+
+        var result = new List<BackupFileInfo>(files.Count);
+        foreach (var info in files)
+        {
+            var dumpMigrations = await TryReadDumpMigrationIdsCachedAsync(info, ct);
+            var versionState = dumpMigrations is null
+                ? BackupVersionStates.Desconocida
+                : RestoreSchemaVerdictRules.ToVersionState(
+                    RestoreSchemaVerdictRules.Evaluate(assemblyMigrations, dumpMigrations, liveHasPendingMigrations: false));
+
+            result.Add(new BackupFileInfo(info.Name, info.LastWriteTimeUtc, info.Length, versionState));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// ADR-052 (D5), camino INFORMATIVO: lee el historial de migraciones de un dump SIN base de datos
+    /// (<c>pg_restore --data-only --table=__EFMigrationsHistory -f -</c> imprime el bloque <c>COPY</c> por salida
+    /// estándar) y lo cachea por archivo.
+    ///
+    /// <para><b>Clave de caché</b>: nombre + tamaño + fecha de modificación. Los dumps son inmutables una vez
+    /// escritos, así que la clave se auto-invalida sola y no hace falta TTL para el caso exitoso.</para>
+    ///
+    /// <para><b>Riesgo asumido, declarado en el ADR</b>: parsear la salida de <c>pg_restore</c> ya nos falló una
+    /// vez (el índice lista los nombres SIN comillas). Acá, si algo no cierra, devuelve <c>null</c> y el archivo
+    /// queda marcado "no se pudo determinar" — JAMÁS "compatible". Este camino no habilita ninguna restauración.</para>
+    /// </summary>
+    private async Task<ISet<string>?> TryReadDumpMigrationIdsCachedAsync(FileInfo info, CancellationToken ct)
+    {
+        var cacheKey = $"adr052-dump-migrations::{info.Name}::{info.Length}::{info.LastWriteTimeUtc.Ticks}";
+        if (_cache.TryGetValue(cacheKey, out ISet<string>? cached))
+        {
+            return cached;
+        }
+
+        var ids = await TryReadDumpMigrationIdsAsync(info.FullName, ct);
+        if (ids is null)
+        {
+            _cache.Set(cacheKey, (ISet<string>?)null, FailedHistoryReadCacheDuration);
+            return null;
+        }
+
+        _cache.Set(cacheKey, ids);
+        return ids;
+    }
+
+    /// <summary>
+    /// La lectura en sí (un <c>pg_restore</c> por archivo). Es <c>protected virtual</c> para que el test de la CACHÉ
+    /// pueda contar cuántas veces se lee de verdad cada archivo sin depender de los binarios de Postgres.
+    /// </summary>
+    protected virtual async Task<ISet<string>?> TryReadDumpMigrationIdsAsync(string fullPath, CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(CheapHistoryReadTimeoutSeconds));
+
+        var (success, stdout, errorMessage) = await RunProcessAsync(
+            "pg_restore",
+            $"--data-only --no-owner --no-acl --table=__EFMigrationsHistory -f - \"{fullPath}\"",
+            timeoutCts.Token);
+
+        if (!success || string.IsNullOrWhiteSpace(stdout))
+        {
+            _logger.LogDebug(
+                "Marca de versión de resguardo: no se pudo leer el historial de {Archivo}. Motivo interno: {Error}",
+                Path.GetFileName(fullPath), errorMessage);
+            return null;
+        }
+
+        var ids = ParseMigrationIdsFromDumpText(stdout);
+        return ids.Count == 0 ? null : ids;
+    }
+
+    /// <summary>
+    /// Saca los ids de migración del texto SQL que imprime <c>pg_restore --data-only ... -f -</c>. El formato
+    /// normal es un bloque <c>COPY</c>:
+    /// <code>
+    /// COPY public."__EFMigrationsHistory" ("MigrationId", "ProductVersion") FROM stdin;
+    /// 20260322010000_AddOperationalFinanceAndTreasury	8.0.13
+    /// \.
+    /// </code>
+    /// Se soporta también la variante <c>INSERT INTO</c> (algunos dumps se generan con <c>--inserts</c>) por si
+    /// aparece: es texto ajeno, así que conviene ser tolerante y NUNCA tirar excepción — un formato inesperado
+    /// devuelve lista vacía y el archivo queda "desconocida".
+    /// </summary>
+    internal static ISet<string> ParseMigrationIdsFromDumpText(string dumpText)
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var insideCopyBlock = false;
+
+        foreach (var rawLine in dumpText.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+
+            if (insideCopyBlock)
+            {
+                if (line == "\\.")
+                {
+                    insideCopyBlock = false;
+                    continue;
+                }
+
+                // Dentro de un COPY las columnas van separadas por TAB y la primera es "MigrationId".
+                var migrationId = line.Split('\t')[0].Trim();
+                if (migrationId.Length > 0)
+                {
+                    ids.Add(migrationId);
+                }
+
+                continue;
+            }
+
+            if (line.StartsWith("COPY ", StringComparison.Ordinal)
+                && line.Contains("__EFMigrationsHistory", StringComparison.Ordinal)
+                && line.EndsWith("FROM stdin;", StringComparison.Ordinal))
+            {
+                insideCopyBlock = true;
+                continue;
+            }
+
+            if (line.StartsWith("INSERT INTO ", StringComparison.Ordinal)
+                && line.Contains("__EFMigrationsHistory", StringComparison.Ordinal))
+            {
+                var valuesIndex = line.IndexOf("VALUES", StringComparison.Ordinal);
+                if (valuesIndex < 0)
+                {
+                    continue;
+                }
+
+                var firstQuote = line.IndexOf('\'', valuesIndex);
+                if (firstQuote < 0)
+                {
+                    continue;
+                }
+
+                var secondQuote = line.IndexOf('\'', firstQuote + 1);
+                if (secondQuote > firstQuote + 1)
+                {
+                    ids.Add(line[(firstQuote + 1)..secondQuote]);
+                }
+            }
+        }
+
+        return ids;
     }
 
     public async Task<RestoreVerifyResult> VerifyBackupAsync(string fileName, CancellationToken ct)
@@ -214,62 +421,496 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
         return new LiveTableRestoreResult(true, null, restored, skippedNonEmpty);
     }
 
-    public async Task<TotalRestoreResult> RestoreTotalAsync(string fileName, CancellationToken ct)
+    public async Task<NewDatabaseRestoreResult> RestoreIntoNewDatabaseAsync(string fileName, CancellationToken ct)
     {
         var fullPath = ResolveSafeBackupPath(fileName);
         if (fullPath is null || !File.Exists(fullPath))
         {
-            return new TotalRestoreResult(TotalRestoreOutcome.Completed, false, "El archivo de backup no existe.");
+            return new NewDatabaseRestoreResult(TotalRestoreOutcome.Completed, false, null, "El archivo de backup no existe.");
         }
 
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            return new TotalRestoreResult(TotalRestoreOutcome.Completed, false, "No hay connection string configurada.");
+            return new NewDatabaseRestoreResult(TotalRestoreOutcome.Completed, false, null, "No hay connection string configurada.");
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        var newDatabaseName = BuildTimestampedDatabaseName(builder.Database!, "restore");
+
+        try
+        {
+            await CreateEmptyDatabaseAsync(builder, newDatabaseName, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Restaurar TOTAL: no se pudo crear la base nueva {NuevaBase} para restaurar el resguardo.", newDatabaseName);
+            return new NewDatabaseRestoreResult(TotalRestoreOutcome.Completed, false, null, $"No se pudo crear la base nueva: {ex.Message}");
+        }
+
+        // ADR-052 (D1.2): el dump COMPLETO en una base VACÍA. No hace falta --clean ni --if-exists (no hay nada
+        // previo que dropear) y por eso NO puede quedar esquema híbrido — el defecto de fondo del diseño anterior.
+        // --no-owner/--no-acl: un dump tomado con OTRO rol de Postgres trae órdenes "ALTER ... OWNER TO <rol>";
+        // si ese rol no existe acá, dentro de --single-transaction UN solo fallo aborta la restauración COMPLETA.
+        var restoreArgs = $"--no-owner --no-acl --single-transaction -h {builder.Host} -p {builder.Port} " +
+                           $"-U {builder.Username} -d {newDatabaseName} \"{fullPath}\"";
+        var result = await RunPgRestoreTotalProcessAsync(restoreArgs, builder.Password, ct);
+
+        if (result.Success)
+        {
+            return new NewDatabaseRestoreResult(result.Outcome, true, newDatabaseName, null);
+        }
+
+        // La base viva NUNCA se tocó: lo único que queda es una base a medio poblar, que es basura. Se intenta
+        // dropear ya (best-effort); si no se puede —por ejemplo porque el pg_restore que matamos por timeout
+        // todavía la tiene tomada— la limpieza del próximo intento la levanta (D1.6).
+        await DropDatabaseAsync(newDatabaseName, CancellationToken.None);
+        return new NewDatabaseRestoreResult(result.Outcome, false, null, result.ErrorMessage);
+    }
+
+    public async Task<DatabaseSwapResult> SwapRestoredDatabaseIntoLiveAsync(string newDatabaseName, CancellationToken ct)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return new DatabaseSwapResult(false, string.Empty, "No hay connection string configurada.");
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        var liveDatabaseName = builder.Database!;
+        var previousDatabaseName = BuildTimestampedDatabaseName(liveDatabaseName, "old");
+
+        var retries = _configuration.GetValue<int?>("Wipe:SwapRetries") ?? DefaultSwapRetries;
+        var delaySeconds = _configuration.GetValue<int?>("Wipe:SwapRetryDelaySeconds") ?? DefaultSwapRetryDelaySeconds;
+
+        string? lastError = null;
+        try
+        {
+            // Sin esto, el worker de Hangfire (que vive en la MISMA base y reconecta solo) se mete entre el
+            // pg_terminate_backend y el RENAME, y el rename falla con "database is being accessed by other users".
+            //
+            // Recomendación N1 de backend (re-review): con su propio try/catch. Este paso es el PRIMERO y todavía no
+            // renombró nada; si falla (Postgres no responde, privilegios), lo correcto es devolver un resultado
+            // "no pude" —que el caller rechaza limpio y auditado— en vez de dejar salir una excepción cruda.
+            try
+            {
+                await SetAllowConnectionsAsync(builder, liveDatabaseName, allow: false, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Restaurar TOTAL: no se pudo cerrar la puerta de entrada de la base viva antes del intercambio. No se renombró nada.");
+                return new DatabaseSwapResult(false, previousDatabaseName,
+                    $"No se pudo preparar el intercambio de nombres: {ex.Message}");
+            }
+
+            for (var attempt = 1; attempt <= retries; attempt++)
+            {
+                try
+                {
+                    var done = await ReconcileSwapStepAsync(builder, liveDatabaseName, newDatabaseName, previousDatabaseName, ct);
+                    if (done)
+                    {
+                        _logger.LogWarning(
+                            "Restaurar TOTAL: intercambio de nombres COMPLETO en el intento {Attempt}. La base anterior quedó como {BaseAnterior}.",
+                            attempt, previousDatabaseName);
+                        return new DatabaseSwapResult(true, previousDatabaseName, null);
+                    }
+
+                    lastError = "El intercambio de nombres no terminó de aplicarse.";
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    _logger.LogWarning(ex,
+                        "Restaurar TOTAL: falló el intento {Attempt}/{Retries} del intercambio de nombres.", attempt, retries);
+                }
+
+                if (attempt < retries)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), CancellationToken.None);
+                }
+            }
+
+            // Los reintentos se agotaron. Si quedamos a mitad de camino (la base original ya está estacionada
+            // bajo el nombre "old" y el nombre vivo no existe), lo DESHACEMOS acá mismo: el nombre vivo tiene que
+            // volver a apuntar a la base original antes de devolver el fallo.
+            await TryUndoHalfDoneSwapAsync(builder, liveDatabaseName, previousDatabaseName);
+            _logger.LogError(
+                "Restaurar TOTAL: el intercambio de nombres FALLÓ tras {Retries} intentos. Motivo interno del último intento: {Error}",
+                retries, lastError);
+            return new DatabaseSwapResult(false, previousDatabaseName, lastError);
+        }
+        catch (Exception ex)
+        {
+            // Red del PUERTO (bloqueante 1 de la re-review, atacado también en el origen): este método NUNCA tira.
+            // Devolver un resultado —y no una excepción— es lo que garantiza que el caller siempre reciba el nombre
+            // bajo el que quedó (o iba a quedar) la base anterior, que es lo único que necesita para reconciliar.
+            _logger.LogCritical(ex, "Restaurar TOTAL: excepción inesperada durante el intercambio de nombres.");
+            await TryUndoHalfDoneSwapAsync(builder, liveDatabaseName, previousDatabaseName);
+            return new DatabaseSwapResult(false, previousDatabaseName, ex.Message);
+        }
+        finally
+        {
+            // INVARIANTE CRÍTICA (riesgo nuevo más serio de esta obra): la base que tenga el NOMBRE VIVO queda
+            // SIEMPRE con ALLOW_CONNECTIONS true, pase lo que pase. Si esto se olvidara, el sistema queda muerto
+            // para todos aunque los datos estén perfectos. Salida de emergencia en docs/db-operations.md.
+            await TryAllowConnectionsToLiveNameAsync(builder, liveDatabaseName);
+        }
+    }
+
+    public async Task<DatabaseSwapRollbackResult> RollbackSwapAsync(string previousDatabaseName, CancellationToken ct)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return new DatabaseSwapRollbackResult(false, "No hay connection string configurada.");
+        }
+
+        if (string.IsNullOrWhiteSpace(previousDatabaseName))
+        {
+            return new DatabaseSwapRollbackResult(false, "No se sabe con qué nombre quedó la base anterior.");
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        var liveDatabaseName = builder.Database!;
+        var failedDatabaseName = BuildTimestampedDatabaseName(liveDatabaseName, "fallido");
+
+        // Guard ESPEJO del de DropDatabaseAsync (recomendación N4 de seguridad): si un caller futuro pasara el
+        // nombre de la base VIVA como "la base anterior", la reconciliación la renombraría a "_fallido_" y después
+        // buscaría una base anterior que no existe → sistema sin base viva. Fail-closed: no se toca nada y se
+        // devuelve "no pude" (el caller lo trata como doble fallo, que deja el sistema frenado y avisando).
+        if (string.Equals(previousDatabaseName, liveDatabaseName, StringComparison.Ordinal))
+        {
+            _logger.LogCritical(
+                "Restaurar TOTAL: se pidió volver atrás usando el nombre de la base VIVA como base anterior. Se ignora el pedido.");
+            return new DatabaseSwapRollbackResult(false, "El nombre de la base anterior no puede ser el de la base viva.");
+        }
+
+        var retries = _configuration.GetValue<int?>("Wipe:RollbackSwapRetries") ?? DefaultRollbackSwapRetries;
+        var delaySeconds = _configuration.GetValue<int?>("Wipe:RollbackSwapRetryDelaySeconds") ?? DefaultRollbackSwapRetryDelaySeconds;
+
+        string? lastError = null;
+        try
+        {
+            await using (var probe = new NpgsqlConnection(BuildMaintenanceConnectionString(builder)))
+            {
+                await probe.OpenAsync(ct);
+
+                // RECONCILIACIÓN POR ESTADO (condición C1): si la base original NO está estacionada bajo el
+                // nombre "old", entonces YA tiene el nombre vivo (el intercambio nunca llegó a hacerse, o esta
+                // vuelta atrás ya corrió). No hay nada que deshacer y es SEGURO llamar a este método igual, sin
+                // averiguar antes "¿hasta dónde llegué?". Sin este chequeo, una vuelta atrás disparada por las
+                // dudas renombraría la base BUENA a "fallido" y dejaría el sistema sin base viva.
+                if (!await DatabaseExistsAsync(probe, previousDatabaseName, ct))
+                {
+                    _logger.LogWarning(
+                        "Restaurar TOTAL: no hace falta volver atrás — la base original ya tiene el nombre vivo (no existe {BaseAnterior}).",
+                        previousDatabaseName);
+                    return new DatabaseSwapRollbackResult(true, null);
+                }
+            }
+
+            await SetAllowConnectionsAsync(builder, liveDatabaseName, allow: false, ct);
+
+            for (var attempt = 1; attempt <= retries; attempt++)
+            {
+                try
+                {
+                    var done = await ReconcileRollbackStepAsync(builder, liveDatabaseName, previousDatabaseName, failedDatabaseName, ct);
+                    if (done)
+                    {
+                        _logger.LogWarning(
+                            "Restaurar TOTAL: VUELTA ATRÁS completa en el intento {Attempt}. La base del intento fallido quedó como {BaseFallida} para diagnóstico.",
+                            attempt, failedDatabaseName);
+                        return new DatabaseSwapRollbackResult(true, null);
+                    }
+
+                    lastError = "La vuelta atrás no terminó de aplicarse.";
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    _logger.LogWarning(ex,
+                        "Restaurar TOTAL: falló el intento {Attempt}/{Retries} de la vuelta atrás.", attempt, retries);
+                }
+
+                if (attempt < retries)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), CancellationToken.None);
+                }
+            }
+
+            _logger.LogCritical(
+                "Restaurar TOTAL: DOBLE FALLO — la vuelta atrás no se pudo completar tras {Retries} intentos. Motivo interno del último intento: {Error}",
+                retries, lastError);
+            return new DatabaseSwapRollbackResult(false, lastError);
+        }
+        catch (Exception ex)
+        {
+            // Red del PUERTO (bloqueante 1 de la re-review, atacado en el origen): la vuelta atrás NUNCA tira. Los
+            // tramos que están fuera del try por intento (abrir la conexión de sondeo, cerrar la puerta de entrada)
+            // son justamente los que podían tirar y hacer que el doble fallo no se declarara nunca.
+            _logger.LogCritical(ex, "Restaurar TOTAL: excepción inesperada durante la vuelta atrás. Se declara doble fallo.");
+            return new DatabaseSwapRollbackResult(false, ex.Message);
+        }
+        finally
+        {
+            await TryAllowConnectionsToLiveNameAsync(builder, liveDatabaseName);
+        }
+    }
+
+    /// <summary>
+    /// UN paso del intercambio, decidido por el ESTADO real de <c>pg_database</c> (nunca "el paso 3 de 5"):
+    /// libera el nombre vivo estacionando la base original, y después le pone el nombre vivo a la base nueva.
+    /// Devuelve true cuando el estado final ya está alcanzado, así un intento a medias lo termina el siguiente.
+    /// </summary>
+    private async Task<bool> ReconcileSwapStepAsync(
+        NpgsqlConnectionStringBuilder builder,
+        string liveDatabaseName,
+        string newDatabaseName,
+        string previousDatabaseName,
+        CancellationToken ct)
+    {
+        // Las conexiones ociosas que el propio pool de Npgsql guardó para reusar bloquean el RENAME igual que
+        // cualquier otra: hay que vaciarlo DESDE ADENTRO del proceso, en cada intento.
+        NpgsqlConnection.ClearAllPools();
+
+        await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(builder));
+        await connection.OpenAsync(ct);
+
+        await TerminateConnectionsToAsync(connection, liveDatabaseName, ct);
+        await TerminateConnectionsToAsync(connection, newDatabaseName, ct);
+
+        var liveExists = await DatabaseExistsAsync(connection, liveDatabaseName, ct);
+        var previousExists = await DatabaseExistsAsync(connection, previousDatabaseName, ct);
+
+        if (liveExists && !previousExists)
+        {
+            await RenameDatabaseAsync(connection, liveDatabaseName, previousDatabaseName, ct);
+            liveExists = false;
+        }
+
+        if (!liveExists && await DatabaseExistsAsync(connection, newDatabaseName, ct))
+        {
+            await RenameDatabaseAsync(connection, newDatabaseName, liveDatabaseName, ct);
+        }
+
+        return await DatabaseExistsAsync(connection, liveDatabaseName, ct)
+               && !await DatabaseExistsAsync(connection, newDatabaseName, ct);
+    }
+
+    /// <summary>
+    /// UN paso de la vuelta atrás, también por estado: estaciona la base del intento fallido (se CONSERVA para
+    /// diagnóstico) y devuelve el nombre vivo a la base original.
+    /// </summary>
+    private async Task<bool> ReconcileRollbackStepAsync(
+        NpgsqlConnectionStringBuilder builder,
+        string liveDatabaseName,
+        string previousDatabaseName,
+        string failedDatabaseName,
+        CancellationToken ct)
+    {
+        NpgsqlConnection.ClearAllPools();
+
+        await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(builder));
+        await connection.OpenAsync(ct);
+
+        await TerminateConnectionsToAsync(connection, liveDatabaseName, ct);
+        await TerminateConnectionsToAsync(connection, previousDatabaseName, ct);
+
+        if (await DatabaseExistsAsync(connection, liveDatabaseName, ct)
+            && !await DatabaseExistsAsync(connection, failedDatabaseName, ct))
+        {
+            await RenameDatabaseAsync(connection, liveDatabaseName, failedDatabaseName, ct);
+        }
+
+        if (!await DatabaseExistsAsync(connection, liveDatabaseName, ct)
+            && await DatabaseExistsAsync(connection, previousDatabaseName, ct))
+        {
+            await RenameDatabaseAsync(connection, previousDatabaseName, liveDatabaseName, ct);
+        }
+
+        return await DatabaseExistsAsync(connection, liveDatabaseName, ct)
+               && !await DatabaseExistsAsync(connection, previousDatabaseName, ct);
+    }
+
+    /// <summary>
+    /// Si el intercambio quedó a mitad de camino (la original estacionada y el nombre vivo libre), le devuelve el
+    /// nombre vivo a la original. Best-effort: si esto tampoco sale, el caller ya va a pedir la vuelta atrás
+    /// formal, que reconcilia el mismo estado con reintentos.
+    /// </summary>
+    private async Task TryUndoHalfDoneSwapAsync(
+        NpgsqlConnectionStringBuilder builder, string liveDatabaseName, string previousDatabaseName)
+    {
+        try
+        {
+            NpgsqlConnection.ClearAllPools();
+            await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(builder));
+            await connection.OpenAsync(CancellationToken.None);
+
+            if (!await DatabaseExistsAsync(connection, liveDatabaseName, CancellationToken.None)
+                && await DatabaseExistsAsync(connection, previousDatabaseName, CancellationToken.None))
+            {
+                await TerminateConnectionsToAsync(connection, previousDatabaseName, CancellationToken.None);
+                await RenameDatabaseAsync(connection, previousDatabaseName, liveDatabaseName, CancellationToken.None);
+                _logger.LogWarning(
+                    "Restaurar TOTAL: el intercambio había quedado a mitad de camino y se deshizo — el nombre vivo volvió a la base original.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Restaurar TOTAL: no se pudo deshacer un intercambio a medias. La vuelta atrás formal lo reintenta.");
+        }
+    }
+
+    public async Task<DatabasePrivilegeCheckResult> CheckDatabaseManagementPrivilegesAsync(CancellationToken ct)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return new DatabasePrivilegeCheckResult(false, "No hay connection string configurada.");
         }
 
         var builder = new NpgsqlConnectionStringBuilder(connectionString);
 
-        // Paso "c" del plan firmado: cortar TODO lo que pueda tener un lock sobre la base viva ANTES de
-        // restaurar. ClearAllPools vacia, DESDE ADENTRO del proceso de la API, las conexiones ociosas que el
-        // propio pool de Npgsql tenia guardadas para reusar. pg_terminate_backend, DESDE AFUERA (via SQL
-        // contra la base de mantenimiento "postgres", nunca contra la base viva misma), mata cualquier
-        // conexion que en ese instante siguiera activa (un pedido que ya estaba en vuelo cuando se activo el
-        // modo mantenimiento, por ejemplo). Sin esto, "pg_restore --clean" se queda esperando para siempre el
-        // lock de un DROP TABLE contra una tabla que otra conexion todavia tiene abierta. Esta parte SI usa el
-        // "ct" del pedido (son operaciones rapidas de metadata, no el pg_restore largo de abajo) — si se
-        // cancela antes de llegar a lanzar pg_restore, nada riesgoso paso todavia.
-        NpgsqlConnection.ClearAllPools();
-
         try
         {
-            await using var maintenanceConnection = new NpgsqlConnection(BuildMaintenanceConnectionString(builder));
-            await maintenanceConnection.OpenAsync(ct);
-            await TerminateConnectionsToAsync(maintenanceConnection, builder.Database!, ct);
+            await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(builder));
+            await connection.OpenAsync(ct);
+
+            await using var command = connection.CreateCommand();
+            // Postgres exige, para renombrar una base, ser DUEÑO de ella y además tener CREATEDB (o ser
+            // superusuario). Por eso el chequeo mira las tres cosas — con solo rolcreatedb, el RENAME fallaría
+            // recién DESPUÉS de haber pagado el pg_restore completo y el resguardo previo (condición C1).
+            command.CommandText = """
+                SELECT
+                    current_setting('is_superuser') = 'on' AS is_superuser,
+                    COALESCE((SELECT rolcreatedb FROM pg_roles WHERE rolname = current_user), false) AS can_create_db,
+                    COALESCE((SELECT pg_get_userbyid(datdba) = current_user FROM pg_database WHERE datname = @db), false) AS is_owner;
+                """;
+            command.Parameters.AddWithValue("db", builder.Database!);
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+            {
+                return new DatabasePrivilegeCheckResult(false, "No se pudo leer los privilegios del usuario de base de datos.");
+            }
+
+            var isSuperuser = reader.GetBoolean(0);
+            var canCreateDatabase = reader.GetBoolean(1);
+            var isOwnerOfLiveDatabase = reader.GetBoolean(2);
+
+            if (isSuperuser || (canCreateDatabase && isOwnerOfLiveDatabase))
+            {
+                return new DatabasePrivilegeCheckResult(true, null);
+            }
+
+            return new DatabasePrivilegeCheckResult(false,
+                $"Privilegios insuficientes: superusuario={isSuperuser}, puedeCrearBases={canCreateDatabase}, esDueño={isOwnerOfLiveDatabase}.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Restaurar (modo total): no se pudieron cortar las conexiones activas antes de restaurar.");
-            return new TotalRestoreResult(TotalRestoreOutcome.Completed, false, $"No se pudieron cortar las conexiones activas: {ex.Message}");
+            // Fail-closed: si no se puede CONFIRMAR que alcanza, no se intenta.
+            _logger.LogError(ex, "Restaurar TOTAL: no se pudieron verificar los privilegios de administración de bases.");
+            return new DatabasePrivilegeCheckResult(false, ex.Message);
+        }
+    }
+
+    public async Task CleanupLeftoverRestoreDatabasesAsync(CancellationToken ct)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return;
         }
 
-        // Paso "d": pg_restore reemplaza TODO el contenido de la base viva por el del dump, dentro de UNA sola
-        // transaccion de Postgres (--single-transaction). --clean --if-exists dropea cada objeto del dump
-        // antes de recrearlo (si no existiera en la base viva, "--if-exists" evita que eso sea un error). Si
-        // algo falla a mitad de camino (una fila invalida, se corta la conexion, lo que sea), Postgres hace
-        // ROLLBACK automatico de TODO: la base queda EXACTAMENTE como estaba antes de este intento, como si
-        // nunca se hubiera llamado a este metodo.
-        //
-        // --no-owner (hallazgo menor #4, revision de infra 2026-07-28): un dump generado con OTRO rol de
-        // Postgres (ej. un backup viejo tomado con un usuario admin distinto al que usa la app) trae ordenes
-        // "ALTER ... OWNER TO <ese-rol-viejo>" - si ese rol no existe en la base viva, esas ordenes fallan, y
-        // dentro de --single-transaction UN SOLO fallo aborta la transaccion COMPLETA (toda la restauracion,
-        // no solo esa orden). --no-owner le dice a pg_restore "no restaures el dueño de los objetos, dejalos
-        // con el usuario de la conexion actual" - evita ese fallo entero. El modo prueba (RestoreToShadowDatabaseAsync)
-        // ya lo usaba; a este metodo se lo agrega recien ahora.
-        var restoreArgs = $"--no-owner --clean --if-exists --single-transaction -h {builder.Host} -p {builder.Port} " +
-                           $"-U {builder.Username} -d {builder.Database} \"{fullPath}\"";
-        return await RunPgRestoreTotalProcessAsync(restoreArgs, builder.Password, ct);
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        var liveDatabaseName = builder.Database!;
+
+        try
+        {
+            await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(builder));
+            await connection.OpenAsync(ct);
+
+            var leftovers = new List<string>();
+            await using (var query = connection.CreateCommand())
+            {
+                // Solo las sobras de ESTA obra, y nunca la base viva ni la sombra del modo prueba: los tres
+                // prefijos se arman con el nombre de la base viva + un sufijo fijo con timestamp.
+                //
+                // ESCAPE (recomendación N3 de seguridad, re-review): en un LIKE de SQL, el guion bajo es un
+                // COMODÍN de "cualquier carácter". Sin escaparlo, "travel_old_%" también matchearía "travelXoldY..."
+                // — improbable pero real, y en una función que DROPEA bases no se juega con improbables.
+                var live = EscapeLikeLiteral(liveDatabaseName);
+                query.CommandText = """
+                    SELECT datname FROM pg_database
+                    WHERE datname LIKE @restorePattern ESCAPE '\'
+                       OR datname LIKE @oldPattern ESCAPE '\'
+                       OR datname LIKE @failedPattern ESCAPE '\';
+                    """;
+                query.Parameters.AddWithValue("restorePattern", $@"{live}\_restore\_%");
+                query.Parameters.AddWithValue("oldPattern", $@"{live}\_old\_%");
+                query.Parameters.AddWithValue("failedPattern", $@"{live}\_fallido\_%");
+
+                await using var reader = await query.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    leftovers.Add(reader.GetString(0));
+                }
+            }
+
+            foreach (var leftover in leftovers)
+            {
+                try
+                {
+                    await TerminateConnectionsToAsync(connection, leftover, ct);
+                    await DropDatabaseIfExistsAsync(connection, leftover, ct);
+                    _logger.LogWarning("Restaurar TOTAL: se dropeó una base sobrante de un intento anterior ({Base}).", leftover);
+                }
+                catch (Exception ex)
+                {
+                    // Best-effort POR BASE: una que no se puede dropear es basura en disco, nunca motivo para
+                    // abortar la restauración que recién arranca.
+                    _logger.LogWarning(ex, "Restaurar TOTAL: no se pudo dropear la base sobrante {Base}.", leftover);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Restaurar TOTAL: no se pudo limpiar las bases sobrantes de intentos anteriores.");
+        }
+    }
+
+    public async Task DropDatabaseAsync(string databaseName, CancellationToken ct)
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(connectionString) || string.IsNullOrWhiteSpace(databaseName))
+        {
+            return;
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        if (string.Equals(databaseName, builder.Database, StringComparison.Ordinal))
+        {
+            // Candado de seguridad: este método NUNCA puede dropear la base viva, ni por un bug del caller.
+            _logger.LogError("Restaurar TOTAL: se intentó dropear la base VIVA. Se ignora el pedido.");
+            return;
+        }
+
+        try
+        {
+            await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(builder));
+            await connection.OpenAsync(ct);
+            await TerminateConnectionsToAsync(connection, databaseName, ct);
+            await DropDatabaseIfExistsAsync(connection, databaseName, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Restaurar TOTAL: no se pudo dropear la base {Base} (queda basura en disco, no hay pérdida de datos).", databaseName);
+        }
     }
 
     /// <summary>
@@ -300,7 +941,13 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
     /// colgarse hasta que se agote nuestro timeout completo (igual acotado por ese timeout como red de
     /// seguridad final, pero esto da un fallo más rápido y más claro en el caso común).</para>
     /// </summary>
-    private async Task<TotalRestoreResult> RunPgRestoreTotalProcessAsync(string arguments, string? password, CancellationToken ct)
+    /// <summary>
+    /// Desenlace del proceso <c>pg_restore</c> largo. Es un tipo INTERNO del puerto: el contrato que ve la capa
+    /// de aplicación es <see cref="NewDatabaseRestoreResult"/> (que además lleva el nombre de la base nueva).
+    /// </summary>
+    private sealed record PgRestoreProcessResult(TotalRestoreOutcome Outcome, bool Success, string? ErrorMessage);
+
+    private async Task<PgRestoreProcessResult> RunPgRestoreTotalProcessAsync(string arguments, string? password, CancellationToken ct)
     {
         var timeoutMinutes = _configuration.GetValue<int?>("Wipe:PgRestoreTotalTimeoutMinutes") ?? DefaultPgRestoreTotalTimeoutMinutes;
         var lockTimeoutSeconds = _configuration.GetValue<int?>("Wipe:PgRestoreTotalLockTimeoutSeconds") ?? 30;
@@ -368,10 +1015,10 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
                 _logger.LogError(
                     "Restaurar TOTAL: pg_restore termino con codigo {ExitCode}. Stderr: {Stderr}",
                     exitCode, stderr);
-                return new TotalRestoreResult(TotalRestoreOutcome.Completed, false, $"pg_restore exit code {exitCode}: {stderr}");
+                return new PgRestoreProcessResult(TotalRestoreOutcome.Completed, false, $"pg_restore exit code {exitCode}: {stderr}");
             }
 
-            return new TotalRestoreResult(TotalRestoreOutcome.Completed, true, null);
+            return new PgRestoreProcessResult(TotalRestoreOutcome.Completed, true, null);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
@@ -380,7 +1027,7 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
                 "Restaurar TOTAL: pg_restore excedio el timeout propio de {Timeout} minutos. Se mato el proceso, " +
                 "pero NO hay certeza de que la base haya terminado de revertir la transaccion en curso.",
                 timeoutMinutes);
-            return new TotalRestoreResult(
+            return new PgRestoreProcessResult(
                 TotalRestoreOutcome.UnknownMayStillBeRunning, false,
                 $"pg_restore excedio el timeout de {timeoutMinutes} minutos y tuvo que ser terminado a la fuerza.");
         }
@@ -391,7 +1038,7 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
             // fallo CONOCIDO (nada toco la base).
             TryKillProcess(process);
             _logger.LogError(ex, "Restaurar TOTAL: fallo al ejecutar pg_restore.");
-            return new TotalRestoreResult(TotalRestoreOutcome.Completed, false, $"No se pudo ejecutar pg_restore: {ex.Message}");
+            return new PgRestoreProcessResult(TotalRestoreOutcome.Completed, false, $"No se pudo ejecutar pg_restore: {ex.Message}");
         }
     }
 
@@ -412,24 +1059,28 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
     }
 
     /// <summary>
-    /// Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B7 de seguridad, "guard de compatibilidad de
-    /// esquema"): compara el conjunto de migraciones EF ya aplicadas en el backup contra las de la base viva.
-    /// Restaura SOLO la tabla <c>__EFMigrationsHistory</c> (liviana: un par de columnas, decenas de filas) a
-    /// la base sombra descartable — mucho más barato que restaurar el backup completo solo para leer una
-    /// tabla chica.
+    /// ADR-052 (D2), reescrito sobre el guard de compatibilidad de la obra anterior (hallazgo B7): lee el
+    /// historial de migraciones del resguardo restaurando SOLO la tabla <c>__EFMigrationsHistory</c> (liviana: un
+    /// par de columnas, decenas de filas) a la base sombra descartable, y lo compara contra la lista del
+    /// ENSAMBLADO más el estado de la base viva.
+    ///
+    /// <para><b>Qué cambió respecto de la versión anterior</b>: antes exigía igualdad EXACTA contra el historial
+    /// de la BASE VIVA, así que cada deploy con una migración dejaba inservibles todos los resguardos anteriores.
+    /// Ahora la referencia es <c>Database.GetMigrations()</c> (el ensamblado, que es quien realmente aplica las
+    /// migraciones) y un resguardo "subconjunto final" se acepta para restaurar + actualizar solo.</para>
     /// </summary>
     public async Task<SchemaCompatibilityResult> CheckSchemaCompatibilityAsync(string fileName, CancellationToken ct)
     {
         var fullPath = ResolveSafeBackupPath(fileName);
         if (fullPath is null || !File.Exists(fullPath))
         {
-            return new SchemaCompatibilityResult(false, "El archivo de backup no existe.");
+            return new SchemaCompatibilityResult(RestoreSchemaVerdict.CouldNotDetermine, "El archivo de backup no existe.");
         }
 
         var connectionString = _configuration.GetConnectionString("DefaultConnection");
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            return new SchemaCompatibilityResult(false, "No hay connection string configurada.");
+            return new SchemaCompatibilityResult(RestoreSchemaVerdict.CouldNotDetermine, "No hay connection string configurada.");
         }
 
         var builder = new NpgsqlConnectionStringBuilder(connectionString);
@@ -442,7 +1093,7 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
         catch (Exception ex)
         {
             _logger.LogError(ex, "Restaurar TOTAL: no se pudo preparar la base sombra para el chequeo de compatibilidad de esquema.");
-            return new SchemaCompatibilityResult(false, $"No se pudo preparar la verificación de compatibilidad: {ex.Message}");
+            return new SchemaCompatibilityResult(RestoreSchemaVerdict.CouldNotDetermine, $"No se pudo preparar la verificación de compatibilidad: {ex.Message}");
         }
 
         try
@@ -465,40 +1116,35 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
                 _logger.LogError(
                     "Restaurar TOTAL: no se pudo leer __EFMigrationsHistory del resguardo para el chequeo de compatibilidad. Motivo interno: {Error}",
                     errorMessage);
-                return new SchemaCompatibilityResult(false, "No se pudo verificar la versión del resguardo.");
+                return new SchemaCompatibilityResult(RestoreSchemaVerdict.CouldNotDetermine, "No se pudo verificar la versión del resguardo.");
             }
 
             var shadowConnectionString = new NpgsqlConnectionStringBuilder(connectionString) { Database = shadowDatabaseName }.ConnectionString;
 
             HashSet<string> dumpMigrations;
-            HashSet<string> liveMigrations;
+            bool liveHasPendingMigrations;
             try
             {
                 dumpMigrations = await ReadMigrationIdsAsync(shadowConnectionString, ct);
-                liveMigrations = await ReadMigrationIdsAsync(connectionString, ct);
+                // La base VIVA se consulta SOLO para saber si está al día (no para comparar versiones): el
+                // veredicto se calcula contra el ensamblado, ver el comentario de RestoreSchemaVerdictRules.
+                liveHasPendingMigrations = (await _context.Database.GetPendingMigrationsAsync(ct)).Any();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Restaurar TOTAL: no se pudo leer __EFMigrationsHistory para comparar versiones de esquema.");
-                return new SchemaCompatibilityResult(false, "No se pudo verificar la versión del resguardo.");
+                _logger.LogError(ex, "Restaurar TOTAL: no se pudo leer el historial de migraciones para calcular el veredicto de versión.");
+                return new SchemaCompatibilityResult(RestoreSchemaVerdict.CouldNotDetermine, "No se pudo verificar la versión del resguardo.");
             }
 
-            if (dumpMigrations.Count == 0)
-            {
-                _logger.LogError(
-                    "Restaurar TOTAL: el resguardo no tiene registros en __EFMigrationsHistory (posible version muy anterior o dump incompleto).");
-                return new SchemaCompatibilityResult(false, "El resguardo no tiene información de versión de esquema.");
-            }
+            var assemblyMigrations = _context.Database.GetMigrations().ToList();
+            var verdict = RestoreSchemaVerdictRules.Evaluate(assemblyMigrations, dumpMigrations, liveHasPendingMigrations);
+            var missing = RestoreSchemaVerdictRules.CountMissingMigrations(assemblyMigrations, dumpMigrations);
 
-            if (!dumpMigrations.SetEquals(liveMigrations))
-            {
-                _logger.LogError(
-                    "Restaurar TOTAL: version de esquema incompatible. Migraciones del dump={DumpCount}, migraciones actuales={LiveCount}.",
-                    dumpMigrations.Count, liveMigrations.Count);
-                return new SchemaCompatibilityResult(false, "La versión de esquema del resguardo no coincide con la versión actual.");
-            }
+            _logger.LogWarning(
+                "Restaurar TOTAL: veredicto de versión = {Verdict}. Migraciones del resguardo={DumpCount}, del sistema={AssemblyCount}, faltantes={Missing}, base viva con pendientes={LivePending}.",
+                verdict, dumpMigrations.Count, assemblyMigrations.Count, missing, liveHasPendingMigrations);
 
-            return new SchemaCompatibilityResult(true, null);
+            return new SchemaCompatibilityResult(verdict, null, missing);
         }
         finally
         {
@@ -572,6 +1218,122 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
         await create.ExecuteNonQueryAsync(ct);
     }
 
+    /// <summary>
+    /// ADR-052 (D1.1): crea la base NUEVA donde se va a restaurar el resguardo. A diferencia de
+    /// <see cref="RecreateEmptyDatabaseAsync"/> (que dropea y recrea la sombra, que es SIEMPRE la misma), acá el
+    /// nombre lleva timestamp y no debería existir: si existiera, es una sobra que la limpieza no alcanzó a
+    /// borrar, y se dropea antes para no restaurar sobre datos ajenos.
+    /// </summary>
+    private static async Task CreateEmptyDatabaseAsync(
+        NpgsqlConnectionStringBuilder primaryBuilder, string databaseName, CancellationToken ct)
+    {
+        await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(primaryBuilder));
+        await connection.OpenAsync(ct);
+
+        if (await DatabaseExistsAsync(connection, databaseName, ct))
+        {
+            await TerminateConnectionsToAsync(connection, databaseName, ct);
+            await DropDatabaseIfExistsAsync(connection, databaseName, ct);
+        }
+
+        await using var create = connection.CreateCommand();
+        create.CommandText = $"CREATE DATABASE \"{EnsureSafeDatabaseIdentifier(databaseName)}\";";
+        await create.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// Nombres de las bases que administra esta obra: <c>&lt;base viva&gt;_&lt;rol&gt;_&lt;yyyyMMddHHmmss&gt;</c>.
+    /// El timestamp hace que dos intentos nunca choquen y que la limpieza pueda reconocerlas por prefijo.
+    /// </summary>
+    private static string BuildTimestampedDatabaseName(string liveDatabaseName, string role) =>
+        $"{liveDatabaseName}_{role}_{DateTime.UtcNow:yyyyMMddHHmmss}";
+
+    private static async Task<bool> DatabaseExistsAsync(NpgsqlConnection connection, string databaseName, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = @db);";
+        command.Parameters.AddWithValue("db", databaseName);
+        var result = await command.ExecuteScalarAsync(ct);
+        return result is bool exists && exists;
+    }
+
+    private static async Task RenameDatabaseAsync(
+        NpgsqlConnection connection, string fromName, string toName, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            $"ALTER DATABASE \"{EnsureSafeDatabaseIdentifier(fromName)}\" RENAME TO \"{EnsureSafeDatabaseIdentifier(toName)}\";";
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// Prende o apaga la puerta de entrada de una base. Apagarla es lo que hace posible el <c>RENAME</c> con un
+    /// worker de Hangfire reconectando solo; prenderla de nuevo es la INVARIANTE crítica de esta obra.
+    /// </summary>
+    private static async Task SetAllowConnectionsAsync(
+        NpgsqlConnectionStringBuilder primaryBuilder, string databaseName, bool allow, CancellationToken ct)
+    {
+        await using var connection = new NpgsqlConnection(BuildMaintenanceConnectionString(primaryBuilder));
+        await connection.OpenAsync(ct);
+
+        if (!await DatabaseExistsAsync(connection, databaseName, ct))
+        {
+            return;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            $"ALTER DATABASE \"{EnsureSafeDatabaseIdentifier(databaseName)}\" WITH ALLOW_CONNECTIONS {(allow ? "true" : "false")};";
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// El <c>finally</c> obligatorio del ADR (D1.4): deja SIEMPRE con <c>ALLOW_CONNECTIONS true</c> a la base que
+    /// tenga el NOMBRE VIVO, sin importar cómo salió el intercambio. Ojo con la trampa: el flag es una propiedad
+    /// de la BASE, no del nombre — viaja con ella en cada <c>RENAME</c>, así que hay que prenderlo sobre el
+    /// nombre vivo DESPUÉS de los renombres, no antes.
+    /// </summary>
+    private async Task TryAllowConnectionsToLiveNameAsync(NpgsqlConnectionStringBuilder builder, string liveDatabaseName)
+    {
+        try
+        {
+            await SetAllowConnectionsAsync(builder, liveDatabaseName, allow: true, CancellationToken.None);
+            NpgsqlConnection.ClearAllPools();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex,
+                "Restaurar TOTAL: NO se pudo dejar la base viva aceptando conexiones. El sistema puede quedar inaccesible " +
+                "con los datos intactos: hay que ejecutar a mano el primer comando de rescate del runbook " +
+                "(docs/db-operations.md, sección de salida de emergencia).");
+        }
+    }
+
+    /// <summary>
+    /// Defensa en profundidad para los identificadores que se interpolan en DDL (<c>CREATE</c>/<c>DROP</c>/
+    /// <c>ALTER DATABASE</c> no aceptan parámetros bindeados). Todos estos nombres los arma ESTE archivo, nunca
+    /// vienen del usuario; igual se valida el juego de caracteres para que un bug futuro no se convierta en una
+    /// inyección de SQL.
+    /// </summary>
+    private static string EnsureSafeDatabaseIdentifier(string databaseName)
+    {
+        if (string.IsNullOrWhiteSpace(databaseName)
+            || databaseName.Length > 63
+            || !databaseName.All(c => char.IsAsciiLetterOrDigit(c) || c == '_' || c == '-' || c == '.'))
+        {
+            throw new InvalidOperationException("Nombre de base de datos no admitido para una operación administrativa.");
+        }
+
+        return databaseName;
+    }
+
+    /// <summary>
+    /// Escapa los comodines de un LIKE (<c>_</c> y <c>%</c>) para que el texto se compare LITERAL. Va de la mano
+    /// del <c>ESCAPE '\'</c> de la consulta (ver <see cref="CleanupLeftoverRestoreDatabasesAsync"/>).
+    /// </summary>
+    private static string EscapeLikeLiteral(string value) =>
+        value.Replace(@"\", @"\\").Replace("_", @"\_").Replace("%", @"\%");
+
     private static string BuildMaintenanceConnectionString(NpgsqlConnectionStringBuilder primaryBuilder) =>
         new NpgsqlConnectionStringBuilder(primaryBuilder.ConnectionString) { Database = "postgres" }.ConnectionString;
 
@@ -586,9 +1348,10 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
     private static async Task DropDatabaseIfExistsAsync(NpgsqlConnection connection, string databaseName, CancellationToken ct)
     {
         await using var drop = connection.CreateCommand();
-        // El nombre de la base sombra lo armamos nosotros ("{db}_shadow", nunca viene del usuario), asi que
-        // interpolarlo en el DDL es seguro — DROP DATABASE no admite parametros bindeados.
-        drop.CommandText = $"DROP DATABASE IF EXISTS \"{databaseName}\";";
+        // DROP DATABASE no admite parametros bindeados, asi que el nombre va interpolado. Recomendacion N2 de
+        // seguridad (re-review): pasa por la MISMA validacion de identificador que el resto del DDL de esta clase —
+        // aca tambien llegan nombres LEIDOS de pg_database (la limpieza de sobras), no solo los que armamos nosotros.
+        drop.CommandText = $"DROP DATABASE IF EXISTS \"{EnsureSafeDatabaseIdentifier(databaseName)}\";";
         await drop.ExecuteNonQueryAsync(ct);
     }
 
@@ -620,9 +1383,11 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
     /// </summary>
     private string? ResolveSafeBackupPath(string fileName)
     {
-        if (string.IsNullOrWhiteSpace(fileName)
-            || Path.GetFileName(fileName) != fileName
-            || !fileName.EndsWith(".dump", StringComparison.Ordinal))
+        // Recomendación N1 de seguridad (re-review): LISTA BLANCA compartida con el servicio
+        // (<see cref="SafeBackupFileNameRules"/>). Antes alcanzaba con "sin carpetas y termina en .dump", así que un
+        // nombre con una comilla doble adentro podía cerrar el entrecomillado del argumento de pg_restore y meter
+        // flags propios en el comando.
+        if (!SafeBackupFileNameRules.IsSafe(fileName))
         {
             return null;
         }

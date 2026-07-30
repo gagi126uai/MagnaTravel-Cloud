@@ -627,6 +627,11 @@ builder.Services.AddScoped<ISystemDataWipeService, SystemDataWipeService>();
 builder.Services.AddScoped<IDatabaseRestorePort, PgDatabaseRestorePort>();
 builder.Services.AddScoped<ISystemDataRestoreService, SystemDataRestoreService>();
 
+// ADR-052 (2026-07-29, firmada): "poner el esquema al dia" pasa a ser un puerto compartido por los DOS caminos
+// que lo necesitan - el arranque de la app (mas abajo, donde antes vivia esta secuencia escrita a mano) y la
+// restauracion de un resguardo de una version anterior. Ver DatabaseSchemaUpdater para las dos politicas.
+builder.Services.AddScoped<ISchemaUpdatePort, DatabaseSchemaUpdater>();
+
 // Obra "Restaurar TOTAL" (2026-07-28, firmada): singleton a proposito - el flag de mantenimiento tiene que ser
 // UNA sola instancia compartida por TODO el proceso (el middleware de todos los pedidos y el servicio de
 // restauracion tienen que ver el MISMO estado), no una instancia nueva por request como los servicios Scoped.
@@ -747,160 +752,26 @@ if (migrateOnly || applyMigrationsOnStartup)
 {
     using (var scope = app.Services.CreateScope())
     {
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        // ADR-052 (D3): esta secuencia (3 bootstrappers de SQL crudo -> MigrateAsync -> 3 backfills idempotentes)
+        // vivia escrita a mano ACA. Se movio ENTERA a DatabaseSchemaUpdater para que la restauracion de un
+        // resguardo de una version anterior corra EXACTAMENTE lo mismo que un deploy limpio, sin una segunda copia
+        // que se pueda desincronizar. La politica "Startup" conserva el comportamiento historico: 5 intentos con
+        // espera, y los backfills que fallan se loguean y no abortan el arranque.
+        var schemaUpdater = scope.ServiceProvider.GetRequiredService<ISchemaUpdatePort>();
+        var schemaUpdate = await schemaUpdater.UpdateAsync(SchemaUpdatePolicy.Startup, CancellationToken.None);
 
-        try
+        if (!schemaUpdate.Success)
         {
-            app.Logger.LogInformation("Bootstrapping operational finance schema via raw SQL...");
-            await OperationalFinanceSchemaBootstrapper.EnsureAsync(db);
-            await OperationalFinanceSchemaBootstrapper.MarkOperationalFinanceMigrationAsAppliedAsync(db);
-            app.Logger.LogInformation("Operational finance bootstrap finished.");
-        }
-        catch (Exception ex)
-        {
-            app.Logger.LogWarning("Operational finance bootstrap skipped or failed: {Message}", ex.Message);
-        }
-
-        try
-        {
-            app.Logger.LogInformation("Bootstrapping refresh token schema via raw SQL...");
-            await RefreshTokenSchemaBootstrapper.EnsureAsync(db);
-            await RefreshTokenSchemaBootstrapper.MarkRefreshTokenMigrationAsAppliedAsync(db);
-            app.Logger.LogInformation("Refresh token bootstrap finished.");
-        }
-        catch (Exception ex)
-        {
-            app.Logger.LogWarning("Refresh token bootstrap skipped or failed: {Message}", ex.Message);
+            app.Logger.LogError(
+                "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS AFTER MULTIPLE ATTEMPTS. Motivo interno: {Message}",
+                schemaUpdate.ErrorMessage);
+            throw new InvalidOperationException(
+                $"No se pudieron aplicar las migraciones de base de datos al arrancar: {schemaUpdate.ErrorMessage}");
         }
 
-        try
-        {
-            app.Logger.LogInformation("Bootstrapping BNA exchange rate snapshot schema via raw SQL...");
-            await BnaExchangeRateSchemaBootstrapper.EnsureAsync(db);
-            app.Logger.LogInformation("BNA exchange rate snapshot bootstrap finished.");
-        }
-        catch (Exception ex)
-        {
-            app.Logger.LogWarning("BNA exchange rate snapshot bootstrap skipped or failed: {Message}", ex.Message);
-        }
-
-        int retries = 5;
-        while (retries > 0)
-        {
-            try
-            {
-                app.Logger.LogInformation("Applying EF Core Migrations (Attempts remaining: {Retries})...", retries);
-                await db.Database.MigrateAsync();
-                app.Logger.LogInformation("EF Core Migrations applied successfully.");
-
-                // ADR-021 Capa 2 (multimoneda): backfill IDEMPOTENTE de las tablas hijas por moneda
-                // (ReservaMoneyByCurrency / SupplierBalanceByCurrency). La migracion M1 las crea vacias;
-                // hasta poblarlas, los consumidores que las leen verian saldo 0 (dato silencioso falso).
-                // Se ejecuta SOLO si queda algo pendiente (chequeo barato) y reusa los persisters
-                // consolidados, asi que es seguro correrlo en cada arranque. Si falla, no aborta el
-                // arranque: la hija se auto-completa en el proximo recalculo o re-deploy (es derivada).
-                try
-                {
-                    var supplierService = scope.ServiceProvider.GetRequiredService<ISupplierService>();
-                    var backfill = new MultiCurrencyBackfillService(
-                        db,
-                        supplierService,
-                        scope.ServiceProvider.GetService<ILogger<MultiCurrencyBackfillService>>());
-
-                    if (await backfill.NeedsBackfillAsync())
-                    {
-                        app.Logger.LogInformation("ADR-021: running multicurrency child-table backfill...");
-                        var (reservasDone, suppliersDone) = await backfill.RunAsync();
-                        app.Logger.LogInformation(
-                            "ADR-021 backfill finished. Reservas={Reservas}, Proveedores={Suppliers}.",
-                            reservasDone, suppliersDone);
-                    }
-                    else
-                    {
-                        app.Logger.LogInformation("ADR-021: multicurrency child tables already populated, skipping backfill.");
-                    }
-                }
-                catch (Exception backfillEx)
-                {
-                    app.Logger.LogError(backfillEx,
-                        "ADR-021 multicurrency backfill failed. Startup continues; child tables will be completed on next recalculation or re-deploy.");
-                }
-
-                // ADR-022 Capa 3 (Libro de Caja): backfill IDEMPOTENTE de los asientos historicos. La
-                // migracion crea la tabla vacia; este job crea UN asiento por hecho vivo (cobro / pago a
-                // proveedor / movimiento manual incluyendo cancelacion) con la moneda real. Se corre DESPUES
-                // del backfill multimoneda (por prolijidad: las columnas Currency ya estan garantizadas y
-                // los saldos recalculados), con su propio NeedsBackfillAsync y try/catch no-abortante.
-                try
-                {
-                    var cashLedgerBackfill = new CashLedgerBackfillService(
-                        db,
-                        scope.ServiceProvider.GetService<ILogger<CashLedgerBackfillService>>());
-
-                    if (await cashLedgerBackfill.NeedsBackfillAsync())
-                    {
-                        app.Logger.LogInformation("ADR-022: running cash ledger backfill...");
-                        var (paymentsDone, supplierPaymentsDone, manualsDone) = await cashLedgerBackfill.RunAsync();
-                        app.Logger.LogInformation(
-                            "ADR-022 cash ledger backfill finished. Cobros={Payments}, PagosProveedor={SupplierPayments}, Manuales={Manuals}.",
-                            paymentsDone, supplierPaymentsDone, manualsDone);
-                    }
-                    else
-                    {
-                        app.Logger.LogInformation("ADR-022: cash ledger already populated, skipping backfill.");
-                    }
-                }
-                catch (Exception cashLedgerEx)
-                {
-                    app.Logger.LogError(cashLedgerEx,
-                        "ADR-022 cash ledger backfill failed. Startup continues; the ledger will be completed on next re-deploy.");
-                }
-
-                // ADR-025 (DT.1.3): backfill IDEMPOTENTE de las lineas de cancelacion. La migracion Adr028_M1
-                // crea la tabla vacia; el modelo nuevo asume que todo BC tiene al menos una linea (mono-operador
-                // = 1 BC = 1 linea). Este job crea UNA linea sintetica por BC historico sin lineas (centinela
-                // ServiceId=0). Propio NeedsBackfillAsync + try/catch no-abortante (es derivada/historica).
-                try
-                {
-                    var lineBackfill = new BookingCancellationLineBackfillService(
-                        db,
-                        scope.ServiceProvider.GetService<ILogger<BookingCancellationLineBackfillService>>());
-
-                    if (await lineBackfill.NeedsBackfillAsync())
-                    {
-                        app.Logger.LogInformation("ADR-025: running booking cancellation line backfill...");
-                        var linesDone = await lineBackfill.RunAsync();
-                        app.Logger.LogInformation(
-                            "ADR-025 booking cancellation line backfill finished. Lineas={Lines}.", linesDone);
-                    }
-                    else
-                    {
-                        app.Logger.LogInformation("ADR-025: cancellation lines already populated, skipping backfill.");
-                    }
-                }
-                catch (Exception lineBackfillEx)
-                {
-                    app.Logger.LogError(lineBackfillEx,
-                        "ADR-025 cancellation line backfill failed. Startup continues; lines will be completed on next re-deploy.");
-                }
-
-                break;
-            }
-            catch (Exception ex)
-            {
-                retries--;
-                if (retries == 0)
-                {
-                    app.Logger.LogError(ex, "CRITICAL: FAILED TO APPLY EF CORE MIGRATIONS AFTER MULTIPLE ATTEMPTS");
-                    throw;
-                }
-                else
-                {
-                    app.Logger.LogWarning("Migration failed, retrying in 5 seconds... Error: {Message}", ex.Message);
-                    await Task.Delay(5000);
-                }
-            }
-        }
+        app.Logger.LogInformation(
+            "Esquema de base de datos al dia. Migraciones aplicadas en este arranque: {Migraciones}.",
+            schemaUpdate.MigrationsApplied);
     }
 
     if (migrateOnly)
