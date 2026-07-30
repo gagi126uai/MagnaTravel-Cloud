@@ -344,7 +344,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             // (columnas/tablas que cambiaron desde entonces). No es un error del usuario: se informa como
             // advertencia, nunca como el detalle tecnico crudo de Postgres/EF.
             _logger.LogWarning(ex, "Restaurar (modo prueba): no se pudieron calcular todos los conteos de la base sombra (posible backup de una version anterior).");
-            advertencia = "No se pudieron calcular todos los conteos: el backup podría ser de una versión anterior del sistema.";
+            advertencia = "No se pudieron calcular todos los conteos: la copia podría ser de una versión anterior del sistema.";
         }
         finally
         {

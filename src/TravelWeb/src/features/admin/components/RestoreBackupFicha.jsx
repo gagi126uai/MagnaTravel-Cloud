@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Loader2, RotateCcw, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, RotateCcw } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatDateTime } from "../../../lib/utils";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { activateMaintenance, deactivateMaintenance } from "../../../maintenanceState";
+import { RestoreResultadoInline } from "./RestoreResultadoInline";
 import {
     FRASE_CONFIRMACION_RESTORE,
     MOTIVO_RESTAURAR_TODO_MIN_LENGTH,
@@ -18,8 +19,6 @@ import {
     construirMotivoRestaurarTodoDeshabilitado,
     motivoRestaurarTodoEsValido,
     construirConfirmacionRestore,
-    construirResumenExitoPruebaRestore,
-    construirResumenExitoRealRestore,
     construirResumenExitoTotalRestore,
     construirAvisoVersionResguardo,
     construirTextoMarcaRechazo,
@@ -42,8 +41,10 @@ const clasesAvisoVersion = (color) => AVISO_VERSION_CLASSES[color] ?? AVISO_VERS
  *   mantenimiento global (ver maintenanceState.js) porque el motor tumba toda la API.
  * - "Ver qué contiene" / "Reponer configuración" (acciones secundarias, links chicos al
  *   costado, spec P6=A): restauran a una base de prueba o solo la configuración vacía,
- *   respectivamente. Su resultado se muestra ACÁ ADENTRO, reemplazando el formulario, con un
- *   botón para volver a la ficha.
+ *   respectivamente. Su resultado se muestra EN UN PANEL DENTRO de esta misma ficha
+ *   (RestoreResultadoInline), sin desmontar los campos — retoque en vivo de Gastón
+ *   (2026-07-30): antes el resultado reemplazaba toda la ficha y se perdía lo tipeado
+ *   (frase/contraseña/motivo), rozando P-7.
  *
  * Misma frase+contraseña "a prueba de dedos" que Empezar de cero, mismo "¿Seguro?" de
  * siempre (showConfirm) y mismo Cartel emergente único para el rechazo del motor (P-4/P-13).
@@ -128,85 +129,6 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
         }
     };
 
-    // Resultado inline de "Ver qué contiene" / "Reponer configuración": reemplaza el
-    // formulario (no toda la ficha) mientras el admin lee el detalle.
-    if (resultadoInline) {
-        const esPrueba = resultadoInline.modo === RESTORE_MODO_PRUEBA;
-        const resumen = esPrueba
-            ? construirResumenExitoPruebaRestore(resultadoInline.data)
-            : construirResumenExitoRealRestore(resultadoInline.data);
-
-        return (
-            <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-bold text-emerald-800 dark:text-emerald-300">
-                    <CheckCircle2 className="h-4 w-4" />
-                    {esPrueba ? "Ver qué contiene" : "Configuración restaurada"}
-                </div>
-                {esPrueba ? (
-                    <>
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
-                            {/* Fix de review (encabezado duplicado): el título de esta caja lo arma el
-                                helper (resumen.encabezado), no un texto hardcodeado acá que decía casi lo
-                                mismo que la línea de arriba. */}
-                            <p className="mb-1.5 font-semibold">{resumen.encabezado}</p>
-                            {resumen.sinDatos ? (
-                                <p>{resumen.mensajeSinDatos}</p>
-                            ) : (
-                                <ul className="space-y-0.5">
-                                    {resumen.filas.map((fila) => (
-                                        <li key={fila.clave}>{fila.cantidad} {fila.etiqueta}</li>
-                                    ))}
-                                </ul>
-                            )}
-                            <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-                                Esto se hizo en una base de prueba separada: no se tocó ningún dato real.
-                            </p>
-                        </div>
-                        {/* Fix de review (no bloqueante, hallazgo del dueño "no deja en claro cómo lo
-                            hace"): explica el proceso en criollo, separado del resultado — el spec solo
-                            pedía sacar el bloque "Qué hace cada acción" de arriba de los botones, nunca
-                            este detalle post-resultado. */}
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                            {resumen.comoSeHizo}
-                        </div>
-                    </>
-                ) : (
-                    <div
-                        className={`rounded-xl border p-4 text-sm whitespace-pre-line ${
-                            resumen.incluyeAfip
-                                ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
-                                : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
-                        }`}
-                    >
-                        {resumen.incluyeAfip && (
-                            <p className="mb-1.5 flex items-center gap-1.5 font-bold uppercase text-xs tracking-wide">
-                                <AlertTriangle className="h-3.5 w-3.5" />
-                                Se tocó la conexión con AFIP
-                            </p>
-                        )}
-                        <p className="font-semibold">{resumen.mensaje}</p>
-                    </div>
-                )}
-                {/* Fix de review (P-13/P-6, hallazgo bloqueante): la advertencia del motor (ej. "backup
-                    de una versión anterior, no se pudieron calcular todos los conteos") aplica a las DOS
-                    acciones ("Ver qué contiene" y "Reponer configuración") — el modal viejo la mostraba
-                    siempre, tal cual, fuera del bloque específico de cada modo. */}
-                {resumen.advertencia && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
-                        {resumen.advertencia}
-                    </div>
-                )}
-                <button
-                    type="button"
-                    onClick={() => setResultadoInline(null)}
-                    className="text-xs font-bold text-slate-600 hover:underline dark:text-slate-300"
-                >
-                    Cerrar
-                </button>
-            </div>
-        );
-    }
-
     return (
         <div className="space-y-4">
             {/* Fix de review (accesibilidad, hallazgo bloqueante — patrón que ya tenía el modal viejo):
@@ -250,6 +172,13 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
                         Ver el motivo
                     </button>
                 </div>
+            )}
+
+            {/* Retoque en vivo de Gastón (2026-07-30): el resultado de "Ver qué contiene" /
+                "Reponer configuración" ya NO reemplaza la ficha — es un panel más, arriba de
+                los campos, que se puede cerrar sin perder nada de lo tipeado abajo (P-7). */}
+            {resultadoInline && (
+                <RestoreResultadoInline resultadoInline={resultadoInline} onCerrar={() => setResultadoInline(null)} />
             )}
 
             <div>

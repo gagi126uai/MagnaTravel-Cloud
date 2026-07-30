@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { Loader2, AlertOctagon, AlertTriangle, Trash2, CheckCircle2, ShieldAlert, CheckSquare } from "lucide-react";
+import { Loader2, AlertOctagon, AlertTriangle, Trash2, CheckCircle2, ShieldAlert, CheckSquare, ChevronDown } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -31,8 +31,15 @@ import {
  * Regla del dueño (2026-07-27, "tilda solo y avisa"): si un grupo elegido arrastra a otro
  * (ej. "clientes" arrastra a "reservas y su plata"), ese otro se tilda solo y queda
  * bloqueado mientras el que lo arrastra siga tildado.
+ *
+ * Retoque en vivo de Gastón (2026-07-30, "es horrible"): el formulario entero ocupaba media
+ * pantalla siempre desplegado. Ahora arranca PLEGADO (bloque compacto: título + una línea de
+ * resumen) y el botón "Empezar de cero…" lo despliega ahí mismo, mismo patrón que la ficha de
+ * una copia (P-5, en línea, sin ventana). Es independiente de cualquier ficha de copia que
+ * esté abierta arriba — no son excluyentes, pueden convivir las dos a la vez.
  */
 export function EmpezarDeCeroInline({ onBorradoExitoso }) {
+    const [desplegado, setDesplegado] = useState(false);
     const [preview, setPreview] = useState(null);
     const [loadingPreview, setLoadingPreview] = useState(true);
     const [previewError, setPreviewError] = useState(null);
@@ -140,22 +147,58 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
 
     return (
         <div className="rounded-2xl border-2 border-rose-200 bg-rose-50/40 p-6 shadow-sm dark:border-rose-900/50 dark:bg-rose-950/10">
-            <div className="flex items-start gap-3">
-                <div className="rounded-xl bg-rose-100 p-2 dark:bg-rose-900/40">
-                    <AlertOctagon className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex items-start gap-3">
+                    <div className="rounded-xl bg-rose-100 p-2 dark:bg-rose-900/40">
+                        <AlertOctagon className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+                    </div>
+                    <div>
+                        <h2 className="text-lg font-bold text-rose-900 dark:text-rose-200">Empezar de cero</h2>
+                        {/* Plegado: UNA línea de resumen (qué hace, usuarios/auditoría a salvo, backup
+                            previo). Desplegado: la explicación completa de siempre, con el detalle de
+                            los grupos — "todo lo actual queda igual" (retoque en vivo de Gastón). */}
+                        {desplegado ? (
+                            <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-slate-300">
+                                Elegí qué grupos borrar: reservas y su plata, clientes, operadores, tarifario, países y
+                                destinos, clientes potenciales o la configuración de la agencia. Los usuarios y la
+                                auditoría <span className="font-semibold">siempre quedan</span>. Antes de borrar se hace
+                                una copia completa, que después vas a poder usar desde la lista de arriba.
+                            </p>
+                        ) : (
+                            <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-slate-300">
+                                Borra por grupos lo cargado en el sistema. Los usuarios y la auditoría{" "}
+                                <span className="font-semibold">siempre quedan</span>, y antes de borrar se guarda
+                                una copia completa.
+                            </p>
+                        )}
+                    </div>
                 </div>
-                <div>
-                    <h2 className="text-lg font-bold text-rose-900 dark:text-rose-200">Empezar de cero</h2>
-                    <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-slate-300">
-                        Elegí qué grupos borrar: reservas y su plata, clientes, operadores, tarifario, países y
-                        destinos, clientes potenciales o la configuración de la agencia. Los usuarios y la
-                        auditoría <span className="font-semibold">siempre quedan</span>. Antes de borrar se hace
-                        una copia completa, que después vas a poder usar desde la lista de arriba.
-                    </p>
-                </div>
+
+                <button
+                    type="button"
+                    onClick={() => setDesplegado((actual) => !actual)}
+                    disabled={ejecutando}
+                    aria-expanded={desplegado}
+                    aria-controls="danger-wipe-formulario"
+                    data-testid="danger-wipe-toggle"
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border-2 border-rose-200 bg-white px-5 py-2.5 text-sm font-bold text-rose-700 transition-all hover:bg-rose-50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-900/50 dark:bg-transparent dark:text-rose-300 dark:hover:bg-rose-950/30"
+                >
+                    {desplegado ? (
+                        <>
+                            Cerrar
+                            <ChevronDown className="h-4 w-4 rotate-180 transition-transform" aria-hidden="true" />
+                        </>
+                    ) : (
+                        <>
+                            <Trash2 className="h-4 w-4" />
+                            Empezar de cero…
+                        </>
+                    )}
+                </button>
             </div>
 
-            <div className="mt-5 space-y-4">
+            {desplegado && (
+              <div id="danger-wipe-formulario" className="mt-5 space-y-4">
                 {resumenWipeExitoso ? (
                     <div className="space-y-4">
                         <div className="flex items-center gap-2 text-sm font-bold text-emerald-800 dark:text-emerald-300">
@@ -339,6 +382,7 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                     </>
                 )}
             </div>
+            )}
 
             <CartelEmergente
                 isOpen={Boolean(rejectionMessage)}
