@@ -132,12 +132,16 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         RecordingMaintenanceModeService? maintenanceMode = null,
         string fileName = ValidFileName,
         RestoreSchemaVerdict verdict = RestoreSchemaVerdict.Identical,
-        int missingMigrations = 0)
+        int missingMigrations = 0,
+        int toleratedOrphanMigrations = 0)
     {
         var portMock = new Mock<IDatabaseRestorePort>();
         portMock
             .Setup(p => p.CheckSchemaCompatibilityAsync(fileName, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SchemaCompatibilityResult(verdict, null, missingMigrations));
+            .ReturnsAsync(new SchemaCompatibilityResult(
+                verdict, null,
+                MissingMigrationsCount: missingMigrations,
+                ToleratedOrphanMigrationsCount: toleratedOrphanMigrations));
         portMock
             .Setup(p => p.CheckDatabaseManagementPrivilegesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DatabasePrivilegeCheckResult(true, null));
@@ -376,6 +380,9 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         // D7: el resguardo era de la misma versión, así que NO hubo actualización de esquema.
         Assert.Contains("\"esquemaActualizado\":false", successLog.Changes);
         Assert.Contains("\"migracionesAplicadas\":0", successLog.Changes);
+        // B1 de la revisión de riesgo de datos: el gate tolera filas de historial desconocidas pero VIEJAS;
+        // acá no hubo ninguna, y el dato tiene que estar igual (que sea cero también es información).
+        Assert.Contains("\"historialHuerfanasToleradas\":0", successLog.Changes);
         // C2: el resultado de la reposición de archivos queda como DATO, no solo dentro del mensaje.
         Assert.Contains("\"archivosRepuestos\":false", successLog.Changes);
         // T-5, verificado por PATRÓN y no solo por los dos nombres concretos (pedido del gate de exposición): ni
@@ -458,6 +465,37 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         var successLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataTotallyRestored);
         Assert.Contains("\"esquemaActualizado\":true", successLog.Changes);
         Assert.Contains("\"migracionesAplicadas\":4", successLog.Changes);
+    }
+
+    [Fact]
+    public async Task ExecuteRestoreAsync_ModoTotal_ConFilasDeHistorialDesconocidasPeroVIEJAS_DejaCuantasSeToleraronEnLaAuditoria()
+    {
+        // Hallazgo B1 de la revisión de riesgo de datos (2026-07-30): desde el arreglo del bug de producción, el
+        // gate de versión ya no bloquea cuando el resguardo trae filas de historial que el sistema no conoce pero
+        // son ANTERIORES a su última migración (en producción hay una desde febrero). Que el gate haya aflojado
+        // —y cuánto— tiene que quedar en el rastro de auditoría; el NÚMERO alcanza, los ids nunca viajan (T-5).
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+
+        var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+        var userManagerMock = BuildUserManagerMock(user);
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode, toleratedOrphanMigrations: 1);
+
+        var service = NewRestoreService(ctx, userManagerMock, portMock, NewHappyPathBackupPortMock(), maintenanceMode);
+
+        var result = await service.ExecuteRestoreAsync(
+            AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None);
+
+        Assert.Equal(RestoreModes.Total, result.Modo);
+        // Al usuario no le cambia NADA: la tolerancia es un detalle interno, no una advertencia para él.
+        Assert.DoesNotContain("huérfan", result.Mensaje, StringComparison.OrdinalIgnoreCase);
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        var successLog = await verifyCtx.AuditLogs.SingleAsync(a => a.Action == AuditActions.SystemDataTotallyRestored);
+        Assert.Contains("\"historialHuerfanasToleradas\":1", successLog.Changes);
+        // T-5: en el rastro va el número, jamás el id de la migración (que empieza con 14 dígitos y guion bajo).
+        Assert.DoesNotMatch(new Regex(@"\d{14}_"), successLog.Changes);
     }
 
     [Fact]

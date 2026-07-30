@@ -409,6 +409,42 @@ fallo no se puede verificar en PROD**: queda cubierto solo por tests (11) y así
 - **Extra del reviewer**: hay test de integración que demuestra que el `finally` de `ALLOW_CONNECTIONS true` cubre
   el **camino de fallo** — el único que dejaría el sistema muerto con los datos sanos.
 
+## 7.ter Anexo (2026-07-30) — filas HUÉRFANAS en el historial: el gate las tolera si son viejas
+
+**Qué pasó (verificado contra PROD, no es hipótesis).** Con D2 recién puesto en producción, el dueño quedó
+sin poder restaurar NADA: todo resguardo se rechazaba con "es de una versión MÁS NUEVA". Era falso. La tabla
+`__EFMigrationsHistory` de PROD tiene **169 filas = las 168 del ensamblado + una huérfana**:
+`20260216190818_AddAttachmentsTable`. Ese día de febrero la migración se regeneró como
+`20260216191956_AddAttachmentsTable` (esa sí está en el código) y la fila vieja quedó anotada. No falta
+ninguna. Como **todos** los dumps salen de esa base, todos traen la huérfana, y la regla original leía
+cualquier id desconocido como "esquema del futuro".
+
+**Regla nueva (misma función pura, `RestoreSchemaVerdictRules.Evaluate`).** Los ids de EF empiezan con el
+sello `yyyyMMddHHmmss`, y eso alcanza para separar los dos casos:
+
+| Id del resguardo que el sistema no conoce | Veredicto |
+| --- | --- |
+| Sello **posterior** al de la última migración del ensamblado | `NewerThanSystem` — se sigue rechazando: ese es el peligro real (esquema de una versión más nueva). |
+| Sello **anterior o igual** | **Huérfana**: se aparta del conjunto y NO bloquea. El resto se clasifica como siempre (`Identical` / `SubsetNeedsUpdate` / `HistoryGap`). |
+| **Sin sello legible** | `CouldNotDetermine` — fail-closed: no se puede DEMOSTRAR que sea vieja, así que se avisa honestamente en vez de aceptarla. |
+
+**Por qué tolerarla es seguro.** Una fila huérfana restaurada es inofensiva para EF: lo pendiente se calcula
+como "ensamblado MENOS lo aplicado", así que una fila que EF no conoce simplemente se ignora. No aporta ni
+saca nada del esquema.
+
+**Salvaguardas que se mantienen.** Se clasifican TODAS las desconocidas antes de decidir (el veredicto no
+puede depender del orden del conjunto) y si hay a la vez una del futuro y una huérfana **manda el rechazo**.
+Un resguardo cuyo historial no tenga NINGUNA migración conocida cae en `CouldNotDetermine`, nunca en
+"anterior, se actualiza solo".
+
+**Auditoría (B1 de la revisión de riesgo de datos).** Que el gate haya aflojado no puede ser invisible: el
+`AuditLog` del restore exitoso lleva `historialHuerfanasToleradas` como **número**, junto a
+`migracionesAplicadas`. Los ids concretos se quedan en el log interno del servidor; al usuario no le llega
+nada (T-5) ni le cambia ningún texto.
+
+**No se limpia la base.** No se escribe ninguna migración que borre la fila de PROD: los resguardos YA
+existentes la traen igual, así que la regla tiene que seguir tolerándola de todos modos.
+
 ### Deuda anotada (obra futura, NO parte de esta)
 
 - **Purgar las colas de Hangfire después de una restauración total.** El esquema y las colas de Hangfire viajan en el

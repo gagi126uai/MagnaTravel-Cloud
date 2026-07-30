@@ -776,6 +776,11 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                         // ADR-052 (D7): números y booleanos, nunca ids de migración ni nombres de base (T-5).
                         esquemaActualizado = needsSchemaUpdate,
                         migracionesAplicadas = migracionesAplicadas,
+                        // Auditabilidad (hallazgo B1 de la revisión de riesgo de datos, 2026-07-30): el gate de
+                        // versión tolera filas de historial que el sistema no conoce cuando son VIEJAS. Que el
+                        // gate haya aflojado —y cuánto— tiene que quedar registrado; el número alcanza, los ids
+                        // se quedan en el log interno (T-5).
+                        historialHuerfanasToleradas = schemaCheck.ToleratedOrphanMigrationsCount,
                         archivosRepuestos = archivosRepuestos,
                         resguardoPrevioVerificado = resguardoPrevioVerificado,
                     }, AuditJsonOptions),

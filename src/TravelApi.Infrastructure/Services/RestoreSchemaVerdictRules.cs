@@ -31,7 +31,25 @@ public static class RestoreSchemaVerdictRules
         IReadOnlyList<string> assemblyMigrations,
         ISet<string> dumpMigrations,
         bool liveHasPendingMigrations)
+        => Evaluate(assemblyMigrations, dumpMigrations, liveHasPendingMigrations, out _);
+
+    /// <summary>
+    /// Igual que la otra <c>Evaluate</c>, pero además devuelve las migraciones HUÉRFANAS que se toleraron (ver
+    /// abajo). Sirve SOLO para el log interno del motor; esos nombres jamás se le muestran al usuario (T-5).
+    /// </summary>
+    /// <param name="toleratedOrphanMigrations">
+    /// Filas del historial del resguardo que el sistema no conoce pero que son VIEJAS (anteriores o iguales a la
+    /// última migración del ensamblado), así que no bloquean.
+    /// </param>
+    public static RestoreSchemaVerdict Evaluate(
+        IReadOnlyList<string> assemblyMigrations,
+        ISet<string> dumpMigrations,
+        bool liveHasPendingMigrations,
+        out IReadOnlyList<string> toleratedOrphanMigrations)
     {
+        var orphans = new List<string>();
+        toleratedOrphanMigrations = orphans;
+
         // (1) La base viva a medio actualizar se rechaza ANTES que todo: sin esto, el veredicto se calcularía
         // para una base que ni ella misma está al día, y la actualización posterior arrastraría migraciones que
         // el deploy dejó a medias.
@@ -54,30 +72,138 @@ public static class RestoreSchemaVerdictRules
             return RestoreSchemaVerdict.CouldNotDetermine;
         }
 
+        // (3) Migraciones del resguardo que el sistema NO conoce. Hasta 2026-07-30 cualquiera de ellas se leía
+        // como "resguardo del futuro" y bloqueaba TODA restauración. Eso resultó falso y dejó al dueño sin poder
+        // restaurar nada: el historial de producción tenía una fila HUÉRFANA —una migración que ese mismo día se
+        // regeneró con otro timestamp, y la fila vieja quedó anotada— y como todos los resguardos salen de esa
+        // base, todos la traían.
+        //
+        // La fecha de la propia migración es lo que separa un caso del otro (los ids de EF empiezan con
+        // yyyyMMddHHmmss):
+        //   • posterior a la última que conoce el sistema ⇒ el peligro REAL (esquema de una versión más nueva);
+        //   • anterior o igual ⇒ huérfana: se aparta y no bloquea. Restaurarla es INOFENSIVO para EF, porque EF
+        //     calcula lo pendiente como "ensamblado MENOS lo aplicado" e ignora las filas que no conoce;
+        //   • sin fecha legible ⇒ no se puede DEMOSTRAR que sea vieja, así que se avisa honestamente.
+        //
+        // Se clasifican TODAS antes de decidir (en vez de cortar en la primera rara) para que el veredicto no
+        // dependa del orden en que el conjunto devuelva sus elementos: un mismo resguardo tiene que dar siempre
+        // el mismo resultado. Si hay de los dos tipos, manda "más nueva", que es el diagnóstico más grave.
         var known = new HashSet<string>(assemblyMigrations, StringComparer.Ordinal);
-        var dumpHasUnknownMigration = dumpMigrations.Any(id => !known.Contains(id));
-        if (dumpHasUnknownMigration)
+        var newestAssemblyTimestamp = FindNewestTimestamp(assemblyMigrations);
+        var recognizedDumpMigrations = new HashSet<string>(StringComparer.Ordinal);
+        var foundNewerThanSystem = false;
+        var foundUnknownWithoutReadableDate = false;
+
+        foreach (var id in dumpMigrations)
+        {
+            if (known.Contains(id))
+            {
+                recognizedDumpMigrations.Add(id);
+                continue;
+            }
+
+            var timestamp = TryGetTimestamp(id);
+            if (timestamp is null || newestAssemblyTimestamp is null)
+            {
+                foundUnknownWithoutReadableDate = true;
+            }
+            else if (string.CompareOrdinal(timestamp, newestAssemblyTimestamp) > 0)
+            {
+                // Mismo largo fijo (14 dígitos) ⇒ comparar el texto es comparar la fecha.
+                foundNewerThanSystem = true;
+            }
+            else
+            {
+                orphans.Add(id);
+            }
+        }
+
+        // Orden estable para que el log interno (y los tests) no dependan del orden del conjunto.
+        orphans.Sort(StringComparer.Ordinal);
+
+        if (foundNewerThanSystem)
         {
             return RestoreSchemaVerdict.NewerThanSystem;
         }
 
-        if (dumpMigrations.Count == assemblyMigrations.Count)
+        if (foundUnknownWithoutReadableDate)
+        {
+            return RestoreSchemaVerdict.CouldNotDetermine;
+        }
+
+        if (recognizedDumpMigrations.Count == 0)
+        {
+            // Trajo historial, pero NADA que el sistema reconozca: no hay con qué ubicar de qué versión es.
+            return RestoreSchemaVerdict.CouldNotDetermine;
+        }
+
+        if (recognizedDumpMigrations.Count == assemblyMigrations.Count)
         {
             // Mismo tamaño y todas conocidas ⇒ son exactamente las mismas.
             return RestoreSchemaVerdict.Identical;
         }
 
-        // Lo que falta tiene que ser el FINAL de la fila: las primeras N del ensamblado (N = las del dump) tienen
-        // que estar todas en el dump. Si alguna de esas N no está, falta una del MEDIO.
-        for (var i = 0; i < dumpMigrations.Count; i++)
+        // Lo que falta tiene que ser el FINAL de la fila: las primeras N del ensamblado (N = las conocidas del
+        // dump) tienen que estar todas en el dump. Si alguna de esas N no está, falta una del MEDIO.
+        for (var i = 0; i < recognizedDumpMigrations.Count; i++)
         {
-            if (!dumpMigrations.Contains(assemblyMigrations[i]))
+            if (!recognizedDumpMigrations.Contains(assemblyMigrations[i]))
             {
                 return RestoreSchemaVerdict.HistoryGap;
             }
         }
 
         return RestoreSchemaVerdict.SubsetNeedsUpdate;
+    }
+
+    /// <summary>Largo del sello de fecha con el que EF Core arranca cada id de migración (<c>yyyyMMddHHmmss</c>).</summary>
+    private const int EfTimestampLength = 14;
+
+    /// <summary>
+    /// Devuelve el sello de fecha del id, o <c>null</c> si no lo tiene con la forma esperada. Que sea
+    /// <c>null</c> nunca se interpreta como "está bien": el que llama elige el camino conservador.
+    /// </summary>
+    private static string? TryGetTimestamp(string migrationId)
+    {
+        if (string.IsNullOrEmpty(migrationId) || migrationId.Length < EfTimestampLength)
+        {
+            return null;
+        }
+
+        for (var i = 0; i < EfTimestampLength; i++)
+        {
+            if (!char.IsAsciiDigit(migrationId[i]))
+            {
+                return null;
+            }
+        }
+
+        return migrationId[..EfTimestampLength];
+    }
+
+    /// <summary>
+    /// Sello de fecha MÁS ALTO del ensamblado. Se busca el máximo en vez de mirar el último de la lista a
+    /// propósito: la regla recibe la lista en el orden de EF y nunca asume que ese orden sea cronológico
+    /// (ver el comentario de <see cref="Evaluate(IReadOnlyList{string}, ISet{string}, bool)"/> sobre el orden).
+    /// </summary>
+    private static string? FindNewestTimestamp(IReadOnlyList<string> assemblyMigrations)
+    {
+        string? newest = null;
+        foreach (var id in assemblyMigrations)
+        {
+            var timestamp = TryGetTimestamp(id);
+            if (timestamp is null)
+            {
+                continue;
+            }
+
+            if (newest is null || string.CompareOrdinal(timestamp, newest) > 0)
+            {
+                newest = timestamp;
+            }
+        }
+
+        return newest;
     }
 
     /// <summary>

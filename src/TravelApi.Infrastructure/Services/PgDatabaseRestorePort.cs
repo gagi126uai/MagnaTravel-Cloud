@@ -1137,14 +1137,30 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
             }
 
             var assemblyMigrations = _context.Database.GetMigrations().ToList();
-            var verdict = RestoreSchemaVerdictRules.Evaluate(assemblyMigrations, dumpMigrations, liveHasPendingMigrations);
+            var verdict = RestoreSchemaVerdictRules.Evaluate(
+                assemblyMigrations, dumpMigrations, liveHasPendingMigrations, out var toleratedOrphans);
             var missing = RestoreSchemaVerdictRules.CountMissingMigrations(assemblyMigrations, dumpMigrations);
 
             _logger.LogWarning(
                 "Restaurar TOTAL: veredicto de versión = {Verdict}. Migraciones del resguardo={DumpCount}, del sistema={AssemblyCount}, faltantes={Missing}, base viva con pendientes={LivePending}.",
                 verdict, dumpMigrations.Count, assemblyMigrations.Count, missing, liveHasPendingMigrations);
 
-            return new SchemaCompatibilityResult(verdict, null, missing);
+            if (toleratedOrphans.Count > 0)
+            {
+                // Log INTERNO (T-5): acá sí van los nombres, porque son la pista para limpiar el historial de la
+                // base algún día. Al usuario nunca se le muestra ninguno de estos ids.
+                _logger.LogWarning(
+                    "Restaurar TOTAL: el resguardo trae {OrphanCount} fila(s) de historial que el sistema no conoce pero son anteriores a su última migración; se toleran y no bloquean. Ids internos: {OrphanIds}.",
+                    toleratedOrphans.Count, string.Join(", ", toleratedOrphans));
+            }
+
+            // Argumentos nombrados a propósito: los dos últimos son int y uno al lado del otro; sin nombres, un
+            // intercambio futuro compilaría igual y ensuciaría la auditoría en silencio.
+            return new SchemaCompatibilityResult(
+                verdict,
+                null,
+                MissingMigrationsCount: missing,
+                ToleratedOrphanMigrationsCount: toleratedOrphans.Count);
         }
         finally
         {

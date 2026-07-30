@@ -123,10 +123,16 @@ public enum RestoreSchemaVerdict
 /// aplicar después de restaurar (0 si el resguardo está al día); se usa para el log y la auditoría como
 /// NÚMERO, jamás como lista de ids.
 /// </summary>
+/// <param name="ToleratedOrphanMigrationsCount">
+/// Cuántas filas del historial del resguardo el sistema no conoce pero se toleraron por ser ANTERIORES a su
+/// última migración (ver la regla en <c>RestoreSchemaVerdictRules</c>). Va a la auditoría como NÚMERO para que
+/// quede constancia de que el gate aflojó y cuánto; los ids se quedan en el log interno (T-5).
+/// </param>
 public sealed record SchemaCompatibilityResult(
     RestoreSchemaVerdict Verdict,
     string? ErrorMessage,
-    int MissingMigrationsCount = 0);
+    int MissingMigrationsCount = 0,
+    int ToleratedOrphanMigrationsCount = 0);
 
 /// <summary>
 /// ADR-052 (D1): resultado de restaurar el dump COMPLETO en una base NUEVA al costado. Si esto falla, la base

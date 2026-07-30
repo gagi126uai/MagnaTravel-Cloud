@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Infrastructure.Services;
@@ -125,6 +126,91 @@ public class RestoreSchemaVerdictRulesTests
     public void SinListaDeMigracionesDelSistema_FailClosed()
     {
         var verdict = RestoreSchemaVerdictRules.Evaluate(new List<string>(), Conjunto("20260101000000_A"), liveHasPendingMigrations: false);
+
+        Assert.Equal(RestoreSchemaVerdict.CouldNotDetermine, verdict);
+        Assert.Equal(BackupVersionStates.Desconocida, RestoreSchemaVerdictRules.ToVersionState(verdict));
+    }
+
+    // ============================================================================================
+    // Filas HUÉRFANAS del historial (bug real de producción, 2026-07-30)
+    // ============================================================================================
+
+    /// <summary>
+    /// El id huérfano REAL que dejó al dueño sin poder restaurar nada: ese día la migración se regeneró como
+    /// <c>20260216191956_AddAttachmentsTable</c> (esa sí está en el código) y la fila vieja quedó anotada en la
+    /// base de producción. Como todos los resguardos salen de ahí, todos la traen.
+    /// </summary>
+    private const string HuerfanaReal = "20260216190818_AddAttachmentsTable";
+
+    [Fact]
+    public void ResguardoConUnaFilaHuerfanaVieja_YElRestoIgual_SigueSiendoLaVersionActual()
+    {
+        var dump = Conjunto(SistemaHoy.Append(HuerfanaReal).ToArray());
+
+        var verdict = RestoreSchemaVerdictRules.Evaluate(
+            SistemaHoy, dump, liveHasPendingMigrations: false, out var huerfanasToleradas);
+
+        Assert.Equal(RestoreSchemaVerdict.Identical, verdict);
+        Assert.Equal(BackupVersionStates.Actual, RestoreSchemaVerdictRules.ToVersionState(verdict));
+        Assert.Equal(new[] { HuerfanaReal }, huerfanasToleradas);
+        // La huérfana no es del sistema, así que no cuenta como "le falta aplicar algo".
+        Assert.Equal(0, RestoreSchemaVerdictRules.CountMissingMigrations(SistemaHoy, dump));
+    }
+
+    [Fact]
+    public void ResguardoViejoConUnaFilaHuerfana_SigueSiendoDeVersionAnteriorYSePuedeActualizarSolo()
+    {
+        var dump = Conjunto(SistemaHoy[0], SistemaHoy[1], SistemaHoy[2], HuerfanaReal);
+
+        var verdict = RestoreSchemaVerdictRules.Evaluate(SistemaHoy, dump, liveHasPendingMigrations: false);
+
+        Assert.Equal(RestoreSchemaVerdict.SubsetNeedsUpdate, verdict);
+        Assert.Equal(2, RestoreSchemaVerdictRules.CountMissingMigrations(SistemaHoy, dump));
+        Assert.Equal(BackupVersionStates.Anterior, RestoreSchemaVerdictRules.ToVersionState(verdict));
+    }
+
+    [Fact]
+    public void ResguardoConHuerfanaVieja_PeroConAgujeroEnElMedio_SigueSiendoHistorialConAgujero()
+    {
+        // Tolerar la huérfana no puede tapar el problema de verdad: falta la 2da de la fila.
+        var dump = Conjunto(SistemaHoy[0], SistemaHoy[2], SistemaHoy[3], HuerfanaReal);
+
+        var verdict = RestoreSchemaVerdictRules.Evaluate(SistemaHoy, dump, liveHasPendingMigrations: false);
+
+        Assert.Equal(RestoreSchemaVerdict.HistoryGap, verdict);
+    }
+
+    [Fact]
+    public void ResguardoConUnaMigracionPOSTERIORALaUltimaDelSistema_SigueSiendoDeVersionMasNueva()
+    {
+        // El peligro REAL que la tolerancia de huérfanas no debe ablandar: esquema de una versión más nueva.
+        // Va mezclado con una huérfana vieja para fijar que gana el caso peligroso.
+        var dump = Conjunto(SistemaHoy.Append(HuerfanaReal).Append("20260801000000_AlgoDelFuturo").ToArray());
+
+        var verdict = RestoreSchemaVerdictRules.Evaluate(SistemaHoy, dump, liveHasPendingMigrations: false);
+
+        Assert.Equal(RestoreSchemaVerdict.NewerThanSystem, verdict);
+        Assert.Equal(BackupVersionStates.Posterior, RestoreSchemaVerdictRules.ToVersionState(verdict));
+    }
+
+    [Fact]
+    public void ResguardoConUnaFilaDesconocidaSinFechaLegible_NoSePuedeDeterminar()
+    {
+        // Sin fecha no se puede DEMOSTRAR que sea vieja ⇒ nunca se acepta a la fuerza: se avisa honestamente.
+        var dump = Conjunto(SistemaHoy.Append("SinFechaAlPrincipio_LoQueSea").ToArray());
+
+        var verdict = RestoreSchemaVerdictRules.Evaluate(SistemaHoy, dump, liveHasPendingMigrations: false);
+
+        Assert.Equal(RestoreSchemaVerdict.CouldNotDetermine, verdict);
+        Assert.Equal(BackupVersionStates.Desconocida, RestoreSchemaVerdictRules.ToVersionState(verdict));
+    }
+
+    [Fact]
+    public void ResguardoQueSoloTraeFilasQueElSistemaNoConoce_NoSePuedeDeterminar()
+    {
+        // Trae historial, pero nada reconocible: no hay con qué ubicar de qué versión es.
+        var verdict = RestoreSchemaVerdictRules.Evaluate(
+            SistemaHoy, Conjunto(HuerfanaReal), liveHasPendingMigrations: false);
 
         Assert.Equal(RestoreSchemaVerdict.CouldNotDetermine, verdict);
         Assert.Equal(BackupVersionStates.Desconocida, RestoreSchemaVerdictRules.ToVersionState(verdict));
