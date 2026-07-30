@@ -75,3 +75,32 @@ El ciclo entero (borrar → resguardo → restaurar) funciona de punta a punta d
    de backup-symlink); se está rehaciendo con esos arreglos. Nota: con el tamaño actual de la
    base, "Restaurar todo" tardó 3 segundos — el timeout de 60s de nginx no molesta HOY, pero
    va a molestar cuando la base crezca.
+
+## Anexo (misma noche): la obra de fondo también quedó construida (ADR-052)
+
+La deuda estrella de la mañana ("los resguardos vencen con cada deploy que trae una migración")
+se diseñó, se desafió, se construyó y se deployó EN EL DÍA, con las tres decisiones firmadas por
+el dueño: aceptar resguardos de versiones anteriores con actualización automática del esquema,
+volver solo atrás si esa actualización falla, y aviso claro sin fricción extra (más una línea en
+el "¿Seguro?" final).
+
+Cómo funciona ahora "Restaurar todo": el resguardo se restaura a una base NUEVA al costado (un
+archivo dañado ya no puede tocar la base viva — antes sí podía), recién si todo salió bien se
+intercambian los nombres, se aplican las actualizaciones de esquema que falten con sus rellenos
+de datos, y se fuerza AFIP a homologación. Si algo falla después del intercambio, la vuelta
+atrás es el intercambio inverso: segundos, sin segunda restauración. El único caso que deja el
+sistema frenado en mantenimiento es el doble fallo (falla la actualización Y falla la vuelta),
+y queda auditado siempre, aunque el navegador ya se haya desconectado.
+
+La pantalla marca cada resguardo con su versión ("Versión anterior" / "Versión más nueva" /
+"Versión desconocida") y avisa en criollo qué va a pasar. Ningún botón se apaga por una
+sospecha: el único freno es el chequeo definitivo del motor, que rechaza sin tocar nada.
+
+Números del cierre: 2 rondas de arquitectura (4 bloqueantes de diseño cazados antes de codear),
+4 revisiones + 2 re-verificaciones (2 bloqueantes graves de seguridad + 2 de front + 1 de
+backend, todos cerrados), 4244 tests unitarios y 10 tests de integración del intercambio de
+bases contra Postgres real, CI verde y deploy automático.
+
+Queda para el dueño la verificación manual del ADR §7 en su navegador: restaurar el resguardo
+del 27/07 (el que hoy a la mañana era imposible) viendo el badge, el cartel y el sistema
+poniéndose al día solo — y comprobar que los saldos y la caja no quedaron en cero.
