@@ -65,13 +65,32 @@ public sealed class PgDatabaseRestorePortSwapIntegrationTests : IClassFixture<Po
             NullLogger<PgDatabaseRestorePort>.Instance);
     }
 
-    private async Task<NpgsqlConnection> OpenMaintenanceConnectionAsync()
+    /// <summary>
+    /// TODAS las conexiones que abre ESTE test van SIN POOL, a propósito.
+    ///
+    /// <para><b>Por qué</b>: el pool de Npgsql guarda conexiones FÍSICAS por connection string. Después de un
+    /// <c>RENAME</c>, una conexión guardada bajo "Database=travel_tests" sigue enchufada a la base física que TENÍA
+    /// ese nombre cuando se abrió (ahora <c>travel_tests_old_*</c>). Reusarla haría leer la base equivocada y el test
+    /// pasaría o fallaría según el timing — la definición de flaky. El motor hace <c>ClearAllPools()</c> de lo suyo
+    /// (y es global al proceso, así que también limpia lo del test), pero no hay que depender de ESE detalle para
+    /// que un test diga la verdad: sin pool, cada consulta resuelve el nombre en el momento.</para>
+    /// </summary>
+    private string UnpooledConnectionStringFor(string databaseName) =>
+        new NpgsqlConnectionStringBuilder(_fixture.ConnectionString)
+        {
+            Database = databaseName,
+            Pooling = false,
+        }.ConnectionString;
+
+    private async Task<NpgsqlConnection> OpenUnpooledAsync(string databaseName)
     {
-        var builder = new NpgsqlConnectionStringBuilder(_fixture.ConnectionString) { Database = "postgres" };
-        var connection = new NpgsqlConnection(builder.ConnectionString);
+        var connection = new NpgsqlConnection(UnpooledConnectionStringFor(databaseName));
         await connection.OpenAsync();
         return connection;
     }
+
+    /// <summary>Conexión a la base de mantenimiento ("postgres"), que existe siempre y nunca se renombra.</summary>
+    private Task<NpgsqlConnection> OpenMaintenanceConnectionAsync() => OpenUnpooledAsync("postgres");
 
     /// <summary>Crea una base "restaurada" de mentira, con una tabla marca para poder reconocerla después del intercambio.</summary>
     private async Task<string> CreateFakeRestoredDatabaseAsync(string marker)
@@ -82,9 +101,7 @@ public sealed class PgDatabaseRestorePortSwapIntegrationTests : IClassFixture<Po
         await ExecuteAsync(maintenance, $"DROP DATABASE IF EXISTS \"{name}\";");
         await ExecuteAsync(maintenance, $"CREATE DATABASE \"{name}\";");
 
-        var builder = new NpgsqlConnectionStringBuilder(_fixture.ConnectionString) { Database = name };
-        await using var inNewDatabase = new NpgsqlConnection(builder.ConnectionString);
-        await inNewDatabase.OpenAsync();
+        await using var inNewDatabase = await OpenUnpooledAsync(name);
         await ExecuteAsync(inNewDatabase, $"CREATE TABLE \"MarcaDeLaCopia\" (\"Marca\" text NOT NULL);");
         await ExecuteAsync(inNewDatabase, $"INSERT INTO \"MarcaDeLaCopia\" VALUES ('{marker}');");
 
@@ -114,19 +131,35 @@ public sealed class PgDatabaseRestorePortSwapIntegrationTests : IClassFixture<Po
         return (bool)(await command.ExecuteScalarAsync())!;
     }
 
-    /// <summary>Devuelve la marca de la base que TIENE EL NOMBRE VIVO ahora mismo, o null si esa base no tiene tabla marca.</summary>
+    /// <summary>
+    /// Devuelve la marca de la base que TIENE EL NOMBRE VIVO ahora mismo, o <c>null</c> si esa base no tiene tabla
+    /// marca (o sea: es la base ORIGINAL de la app).
+    ///
+    /// <para><b>Trampa de Postgres que hizo fallar este test en CI</b> (2026-07-29): la versión anterior consultaba
+    /// <c>SELECT (SELECT "Marca" FROM "MarcaDeLaCopia" ...) WHERE EXISTS (... information_schema ...)</c> creyendo que
+    /// el <c>WHERE</c> "protegía" del caso "la tabla no existe". NO protege: Postgres RESUELVE los nombres de tablas
+    /// al PARSEAR la sentencia, antes de ejecutar nada, así que si la tabla no existe tira <c>42P01</c> igual. Por eso
+    /// la existencia se pregunta en una sentencia APARTE con <c>to_regclass</c> (que recibe el nombre como TEXTO y
+    /// devuelve NULL si no existe, sin parsear ninguna referencia a la tabla).</para>
+    /// </summary>
     private async Task<string?> ReadLiveMarkerAsync()
     {
         NpgsqlConnection.ClearAllPools();
-        await using var connection = new NpgsqlConnection(_fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT (SELECT "Marca" FROM "MarcaDeLaCopia" LIMIT 1)
-            WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'MarcaDeLaCopia');
-            """;
-        var result = await command.ExecuteScalarAsync();
-        return result as string;
+        await using var connection = await OpenUnpooledAsync(LiveDatabaseName);
+
+        await using (var exists = connection.CreateCommand())
+        {
+            exists.CommandText = """SELECT to_regclass('public."MarcaDeLaCopia"') IS NOT NULL;""";
+            var hasMarkerTable = (bool)(await exists.ExecuteScalarAsync())!;
+            if (!hasMarkerTable)
+            {
+                return null;
+            }
+        }
+
+        await using var read = connection.CreateCommand();
+        read.CommandText = """SELECT "Marca" FROM "MarcaDeLaCopia" LIMIT 1;""";
+        return await read.ExecuteScalarAsync() as string;
     }
 
     /// <summary>
@@ -219,10 +252,14 @@ public sealed class PgDatabaseRestorePortSwapIntegrationTests : IClassFixture<Po
             // Y la base original volvió al nombre vivo: no quedó estacionada bajo el nombre "old".
             Assert.False(await DatabaseExistsAsync(maintenance, swap.PreviousDatabaseName));
 
-            // Prueba final de que el sistema sigue usable: se puede abrir una conexión nueva con la MISMA connection string.
+            // Prueba final de que el sistema sigue usable: se puede abrir una conexión NUEVA con el MISMO nombre de
+            // base y hacer una consulta. Sin pool (ver UnpooledConnectionStringFor): con pool, esta aserción podría
+            // pasar reusando una conexión vieja incluso si el nombre vivo estuviera roto — o sea, mintiendo.
             NpgsqlConnection.ClearAllPools();
-            await using var ctx = _fixture.CreateDbContext();
-            Assert.True(await ctx.Database.CanConnectAsync());
+            await using var live = await OpenUnpooledAsync(LiveDatabaseName);
+            await using var ping = live.CreateCommand();
+            ping.CommandText = "SELECT 1;";
+            Assert.Equal(1, Convert.ToInt32(await ping.ExecuteScalarAsync()));
         }
         finally
         {
@@ -265,6 +302,11 @@ public sealed class PgDatabaseRestorePortSwapIntegrationTests : IClassFixture<Po
         }
         finally
         {
+            // ORDEN IMPORTANTE: primero se devuelve el nombre vivo a la base ORIGINAL (no-op si la vuelta atrás ya
+            // corrió), y DESPUÉS se limpia. Al revés, si una aserción hubiera fallado antes de la vuelta atrás, la
+            // limpieza dropearía la base original (que estaría estacionada como "_old_") y se llevaría puestos todos
+            // los tests siguientes de la clase.
+            await RestoreOriginalLayoutAsync(previous);
             await port.CleanupLeftoverRestoreDatabasesAsync(CancellationToken.None);
             await DropIfExistsAsync(newDatabase);
             NpgsqlConnection.ClearAllPools();
