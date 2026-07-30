@@ -41,6 +41,14 @@ export const RESTORE_MODO_PRUEBA = "prueba";
 export const RESTORE_MODO_REAL = "real";
 export const RESTORE_MODO_TOTAL = "total";
 
+// ADR-052 (2026-07-29, "Restaurar todo acepta resguardos de versiones anteriores"): valores
+// exactos que manda el motor en `versionResguardo` (GET /admin/danger/backups), contrato en
+// castellano igual que RESTORE_MODO_*. "actual" es el único caso sin marca ni aviso.
+export const VERSION_RESGUARDO_ACTUAL = "actual";
+export const VERSION_RESGUARDO_ANTERIOR = "anterior";
+export const VERSION_RESGUARDO_POSTERIOR = "posterior";
+export const VERSION_RESGUARDO_DESCONOCIDA = "desconocida";
+
 // Bug reportado por el dueño (2026-07-28): el motor YA exigía este motivo (contrato
 // SystemDataRestoreRequest.Motivo, obligatorio y con este mínimo SOLO para modo "total" —
 // hallazgo de seguridad B6/F-16: la operación más destructiva del sistema tiene que quedar
@@ -106,6 +114,101 @@ export function construirEtiquetaBackup(backup, formatearFecha) {
     const fecha = formatearFecha(backup.fechaUtc);
     const tamanio = formatearTamanioArchivo(backup.tamanioBytes);
     return `Resguardo del ${fecha} — ${tamanio}`;
+}
+
+/**
+ * Fix ADR-052 (2026-07-29): traduce el `versionResguardo` que manda el motor a uno de los
+ * 4 valores conocidos. Compatibilidad hacia atrás: si el campo viene ausente (API vieja,
+ * o cualquier valor que no reconozcamos) se trata IGUAL que "desconocida" — nunca como
+ * "actual", porque eso afirmaría una compatibilidad que en realidad no se pudo determinar.
+ *
+ * @param {string|null|undefined} versionResguardo
+ * @returns {"actual"|"anterior"|"posterior"|"desconocida"}
+ */
+export function normalizarVersionResguardo(versionResguardo) {
+    const valoresConocidos = [
+        VERSION_RESGUARDO_ACTUAL,
+        VERSION_RESGUARDO_ANTERIOR,
+        VERSION_RESGUARDO_POSTERIOR,
+        VERSION_RESGUARDO_DESCONOCIDA,
+    ];
+    return valoresConocidos.includes(versionResguardo) ? versionResguardo : VERSION_RESGUARDO_DESCONOCIDA;
+}
+
+/**
+ * Marca de la fila de la lista de resguardos (ADR-052 §D5/§D6, gate UX 2026-07-29): un
+ * badge chico con texto real (nunca solo color, P-9/P-10). La fila NUNCA se atenúa por
+ * esto — es información, no un impedimento (decisión firmada: ningún estado apaga nada).
+ * "actual" devuelve `null` a propósito: es el camino de hoy, sin marca.
+ *
+ * `color` es una clave semántica ("ambar"/"rosa"/"gris"), no clases de Tailwind — el
+ * componente decide las clases visuales, esta lógica no sabe nada de CSS.
+ *
+ * @param {string|null|undefined} versionResguardo
+ * @returns {{texto: string, color: "ambar"|"rosa"|"gris"}|null}
+ */
+export function construirBadgeVersionResguardo(versionResguardo) {
+    switch (normalizarVersionResguardo(versionResguardo)) {
+        case VERSION_RESGUARDO_ANTERIOR:
+            return { texto: "Versión anterior", color: "ambar" };
+        case VERSION_RESGUARDO_POSTERIOR:
+            return { texto: "Versión más nueva", color: "rosa" };
+        case VERSION_RESGUARDO_DESCONOCIDA:
+            return { texto: "Versión desconocida", color: "gris" };
+        default:
+            return null;
+    }
+}
+
+/**
+ * Cartel informativo debajo de la lista, cuando el resguardo ELEGIDO no es de la versión
+ * de hoy (ADR-052 §D6). Un solo cartel por vez (el del resguardo seleccionado), nunca uno
+ * por fila. Ningún botón se apaga por esto — el freno real es el chequeo del motor al
+ * confirmar, que revisa antes de tocar nada y avisa en el Cartel emergente de siempre si
+ * rechaza (P-13). "actual" devuelve `null`: nada que avisar.
+ *
+ * Fix de review (B1, bloqueante): estos textos son los LITERALES firmados por el gate UX
+ * en `docs/ux/guia-ux-gaston.md`, sección "Textos finales implementados (2026-07-29)" — la
+ * versión anterior de este archivo tenía una paráfrasis propia, no la firmada. La guía marca
+ * en NEGRITA la primera oración de cada cartel (ahí vive el mensaje central); por eso acá se
+ * separa en `titulo` (esa primera oración, para negrita) y `texto` (el resto). El cartel
+ * "anterior" incluye la cláusula de alcance agregada por el hallazgo B2 del reviewer anterior
+ * ("esto vale para 'Restaurar todo'...") — ya no hace falta una función aparte para ese punto.
+ *
+ * @param {string|null|undefined} versionResguardo
+ * @returns {{titulo: string, texto: string, color: "ambar"|"rosa"|"gris"}|null}
+ */
+export function construirAvisoVersionResguardo(versionResguardo) {
+    switch (normalizarVersionResguardo(versionResguardo)) {
+        case VERSION_RESGUARDO_ANTERIOR:
+            return {
+                color: "ambar",
+                titulo: "Este resguardo es más viejo que el sistema de hoy.",
+                texto:
+                    "Se puede usar igual: primero se traen los datos y después el sistema se pone al " +
+                    "día solo. Puede tardar un poco más de lo normal. Si ese último paso falla, el " +
+                    "sistema vuelve solo a como está ahora, sin perder nada. Esto vale para " +
+                    "\"Restaurar todo\": las otras dos acciones pueden avisarte que este resguardo no " +
+                    "les sirve.",
+            };
+        case VERSION_RESGUARDO_POSTERIOR:
+            return {
+                color: "rosa",
+                titulo: "Este resguardo parece de una versión más nueva que el sistema de hoy.",
+                texto:
+                    "Lo más probable es que no se pueda usar: antes de tocar nada, el sistema lo " +
+                    "revisa y, si es así, lo rechaza y te avisa sin haber cambiado nada. Si igual " +
+                    "necesitás volver a este punto, avisale al equipo técnico.",
+            };
+        case VERSION_RESGUARDO_DESCONOCIDA:
+            return {
+                color: "gris",
+                titulo: "No pudimos determinar de qué versión es este resguardo.",
+                texto: "Podés intentar igual: si no se puede usar, te lo avisamos antes de tocar nada.",
+            };
+        default:
+            return null;
+    }
 }
 
 /**
@@ -190,19 +293,30 @@ export function construirMotivoRestaurarTodoDeshabilitado(motivoRestaurarTodo) {
  * modo "total", para que el aviso durísimo diga a qué momento exacto vuelve el sistema — en
  * los otros dos modos se ignora sin problema si se manda igual.
  *
+ * `versionResguardo` (ADR-052, 2026-07-29): también solo aplica al modo "total". Cuando el
+ * resguardo elegido es "anterior", el dueño firmó una LÍNEA EXTRA al final de este mismo
+ * "¿Seguro?" (no un paso de confirmación aparte) avisando que el sistema se actualiza solo
+ * después de traer los datos. Para "actual"/"posterior"/"desconocida" el texto no cambia.
+ *
  * @param {"prueba"|"real"|"total"} modo
- * @param {{fechaBackup?: string|null}} [contexto]
+ * @param {{fechaBackup?: string|null, versionResguardo?: string|null}} [contexto]
  * @returns {{title: string, text: string, confirmText: string, confirmColor: string}}
  */
-export function construirConfirmacionRestore(modo, { fechaBackup } = {}) {
+export function construirConfirmacionRestore(modo, { fechaBackup, versionResguardo } = {}) {
     if (modo === RESTORE_MODO_TOTAL) {
         const fechaTexto = fechaBackup || "de este resguardo";
+        let text =
+            `Esto devuelve TODO el sistema a como estaba el ${fechaTexto}. Lo que hayas cargado ` +
+            "después se pierde. Antes se guarda un resguardo del estado actual, así podés volver " +
+            "a este momento si te arrepentís.";
+
+        if (normalizarVersionResguardo(versionResguardo) === VERSION_RESGUARDO_ANTERIOR) {
+            text += " Este resguardo es más viejo: después de traer los datos, el sistema se pone al día solo.";
+        }
+
         return {
             title: "¿Restaurar TODO el sistema?",
-            text:
-                `Esto devuelve TODO el sistema a como estaba el ${fechaTexto}. Lo que hayas cargado ` +
-                "después se pierde. Antes se guarda un resguardo del estado actual, así podés volver " +
-                "a este momento si te arrepentís.",
+            text,
             confirmText: "Sí, restaurar todo",
             confirmColor: "red",
         };

@@ -24,7 +24,23 @@ import {
     construirResumenExitoPruebaRestore,
     construirResumenExitoRealRestore,
     construirResumenExitoTotalRestore,
+    construirBadgeVersionResguardo,
+    construirAvisoVersionResguardo,
 } from "../lib/dangerRestoreLogic";
+
+// ADR-052 (2026-07-29): mismos 3 colores que el badge de la fila (BackupListItem), pero en
+// formato caja informativa — coherente con las demás cajas de aviso que ya tiene este modal
+// (ej. la caja gris del resguardo previo, la caja ámbar del aviso de AFIP).
+const AVISO_VERSION_CLASSES = {
+    ambar: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300",
+    rosa: "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200",
+    gris: "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300",
+};
+
+// Fix de review (menor, punto 4): si algún día `avisoVersion.color` trajera un valor que no
+// está en el mapa de arriba (ej. el motor manda un `versionResguardo` nuevo que todavía no
+// contemplamos acá), mejor caer al estilo gris/neutro que romper con clases `undefined`.
+const clasesAvisoVersion = (color) => AVISO_VERSION_CLASSES[color] ?? AVISO_VERSION_CLASSES.gris;
 
 /**
  * Modal "Volver atrás" (Zona peligrosa, Mantenimiento → Administración, obra 2026-07-27
@@ -93,6 +109,12 @@ export function RestaurarResguardoModal({ onClose }) {
         setArchivoSeleccionado(archivo);
     };
 
+    // ADR-052 (2026-07-29): el aviso de versión depende del resguardo QUE EL USUARIO ELIGIÓ,
+    // no de la lista entera — por eso se busca acá, una sola vez, y se reusa tanto para el
+    // cartel de abajo como para la línea extra del "¿Seguro?" de Restaurar todo.
+    const backupSeleccionado = backups.find((backup) => backup.archivo === archivoSeleccionado) || null;
+    const avisoVersion = backupSeleccionado ? construirAvisoVersionResguardo(backupSeleccionado.versionResguardo) : null;
+
     const ejecutando = Boolean(accionEnCurso);
     const puedeConfirmar = Boolean(archivoSeleccionado)
         && !ejecutando
@@ -127,14 +149,18 @@ export function RestaurarResguardoModal({ onClose }) {
         if (!puedeConfirmarEsteModo) return;
 
         // Para el aviso durísimo del modo "total" hace falta la fecha del resguardo elegido
-        // (ya formateada) — se busca en la lista que ya se tiene cargada, no hace falta
-        // pedirla de nuevo. En los otros dos modos este dato se ignora sin problema.
-        const backupElegido = backups.find((backup) => backup.archivo === archivoSeleccionado) || null;
-        const fechaBackup = backupElegido ? formatDateTime(backupElegido.fechaUtc) : null;
+        // (ya formateada) — se reusa `backupSeleccionado` (calculado más arriba a partir del
+        // mismo `archivoSeleccionado`), sin repetir el mismo `backups.find` dos veces (fix de
+        // review, punto 4: antes había un segundo `find` acá adentro que buscaba lo mismo).
+        const fechaBackup = backupSeleccionado ? formatDateTime(backupSeleccionado.fechaUtc) : null;
 
         // Doble confirmación explícita, mismo criterio que Empezar de cero: el texto
-        // cambia según el modo porque el alcance real es MUY distinto.
-        const confirmado = await showConfirm(construirConfirmacionRestore(modo, { fechaBackup }));
+        // cambia según el modo porque el alcance real es MUY distinto. `versionResguardo`
+        // solo lo usa el modo "total" (ADR-052, línea extra firmada cuando es "anterior");
+        // en los otros dos modos se ignora sin problema.
+        const confirmado = await showConfirm(
+            construirConfirmacionRestore(modo, { fechaBackup, versionResguardo: backupSeleccionado?.versionResguardo })
+        );
         if (!confirmado) return;
 
         const esModoTotal = modo === RESTORE_MODO_TOTAL;
@@ -368,12 +394,43 @@ export function RestaurarResguardoModal({ onClose }) {
                                             key={backup.archivo}
                                             archivo={backup.archivo}
                                             etiqueta={construirEtiquetaBackup(backup, formatDateTime)}
+                                            badge={construirBadgeVersionResguardo(backup.versionResguardo)}
                                             isSelected={archivoSeleccionado === backup.archivo}
                                             onSelect={seleccionarBackup}
                                             disabled={ejecutando}
                                         />
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* ADR-052 (2026-07-29): un solo cartel, del resguardo elegido. role="status"
+                                (no "alert") porque es informativo, no un error — y ningún botón de abajo
+                                se apaga por esto: el freno real es el chequeo del motor al confirmar.
+                                Fix de review (accesibilidad, punto 3): el contenedor con role="status"
+                                queda SIEMPRE montado (vacío y oculto visualmente con "sr-only" cuando no
+                                hay resguardo elegido o el elegido es "actual"). Si el `div` recién se
+                                monta AL MISMO TIEMPO que aparece el texto, algunos lectores de pantalla no
+                                llegan a "engancharse" a la región y no anuncian esa primera aparición —
+                                mantenerlo siempre en el DOM garantiza que el cambio de contenido se
+                                anuncie también la primera vez que el usuario elige un resguardo. Los
+                                textos son los literales firmados en guia-ux-gaston.md: la primera oración
+                                va en negrita como título del cartel. */}
+                            <div
+                                role="status"
+                                aria-live="polite"
+                                data-testid="danger-restore-aviso-version"
+                                className={
+                                    avisoVersion
+                                        ? `rounded-lg border p-3 text-xs ${clasesAvisoVersion(avisoVersion.color)}`
+                                        : "sr-only"
+                                }
+                            >
+                                {avisoVersion && (
+                                    <>
+                                        <p className="font-bold">{avisoVersion.titulo}</p>
+                                        <p>{avisoVersion.texto}</p>
+                                    </>
+                                )}
                             </div>
 
                             {/* Fix de hallazgo del dueño ("no deja en claro... qué conecta"): explica, en

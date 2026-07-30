@@ -1969,3 +1969,65 @@ más de una factura, y viene escondido con defaults.
   agencia** (los leads son compartidos hasta que alguien los toma; un conteo no expone plata).
 - **(2026-07-27) El período inicial de Reservas queda en "Mes en curso"** aunque la pestaña arranque
   en "Todas" (pestaña y contadores son consistentes entre sí; el período se amplía a mano si hace falta).
+
+## "Volver atrás": resguardos de versiones anteriores del sistema (ADR-052, 2026-07-29)
+
+> **Origen:** hasta hoy, cada actualización del sistema dejaba inservibles TODOS los resguardos
+> anteriores (el 2026-07-29 hubo que recuperar datos por afuera de la app porque la pantalla rechazó,
+> bien según la regla vieja, un resguardo de 2 días). ADR-052 hace que "Restaurar todo" acepte
+> resguardos más viejos y que el sistema se ponga al día solo después de traer los datos.
+
+**Decisión de Gastón firmada el 2026-07-29 (marco fijo, NO reabrir):**
+
+- **(2026-07-29) Aviso claro, SIN paso extra de confirmación.** La lista de resguardos **marca**
+  cuáles son de una versión anterior y el modal **avisa en criollo** que al restaurarlo el sistema se
+  actualiza solo. La confirmación sigue siendo **la misma de siempre**: frase exacta + contraseña +
+  motivo (mínimo 10 caracteres). No se agrega ningún casillero ni ningún "¿seguro?" adicional.
+- **(2026-07-29) Cuatro situaciones posibles por resguardo:**
+  - **Al día** (mismo sistema): se restaura como hasta ahora, **sin marca ni aviso**.
+  - **De una versión anterior**: se restaura, con **marca en la fila + aviso en el modal** (el sistema
+    se pone al día solo después de traer los datos).
+  - **De una versión más nueva**: la fila se marca y el modal avisa que **lo más probable es que no se
+    pueda usar**, pero el botón **queda habilitado**. El único que frena es el chequeo final del motor,
+    que revisa antes de tocar nada y avisa en el cartel emergente de siempre (P-13). **Por qué no se
+    apaga el botón:** la marca de la lista sale de una lectura rápida que puede equivocarse, y apagar
+    "Restaurar todo" por una marca equivocada dejaría al dueño sin su resguardo justo en una
+    emergencia (hallazgo del revisor de arquitectura, aceptado el 2026-07-29).
+  - **No se pudo determinar la versión**: se comporta como hasta hoy (el chequeo final decide y, si
+    rechaza, no toca nada), con un aviso neutro que lo dice.
+
+- **(2026-07-29) Ningún botón de este modal se apaga por la versión del resguardo.** Los tres botones
+  siguen con el gate de siempre (elegir resguardo + frase + contraseña, y el motivo para "Restaurar
+  todo"). La marca y el aviso son informativos; el freno real es el chequeo final del motor.
+
+**Textos y ubicación exactos:** los definió el gate UX el 2026-07-29 aplicando reglas ya firmadas
+(P3=A "con el badge alcanza" · P-13 · P-15 · voz de los avisos 2026-07-08 · colores 2026-07-08
+naranja-acción / rosa-sin-acción). **Quedan pendientes del OK de Gastón mirando la pantalla real**
+(regla de siempre: el OK final es suyo).
+
+**Aclaración firmada el mismo día**: Gastón eligió que el "¿Seguro?" EXISTENTE de "Restaurar todo"
+sume UNA línea cuando el resguardo es de una versión anterior (no es un paso nuevo — es una línea
+más en el cartel de siempre): *"Este resguardo es más viejo: después de traer los datos, el sistema
+se pone al día solo."*
+
+**Textos finales implementados (2026-07-29, fuente única — si se cambian, se cambia acá primero):**
+
+- Badge en la fila (texto real, nunca solo color; "al día" no lleva): **Versión anterior** (ámbar) ·
+  **Versión más nueva** (rosa) · **Versión desconocida** (gris).
+- Cartel bajo la lista, uno solo por vez, según el resguardo elegido:
+  - *anterior* (ámbar): "**Este resguardo es más viejo que el sistema de hoy.** Se puede usar igual:
+    primero se traen los datos y después el sistema se pone al día solo. Puede tardar un poco más de
+    lo normal. Si ese último paso falla, el sistema vuelve solo a como está ahora, sin perder nada.
+    Esto vale para "Restaurar todo": las otras dos acciones pueden avisarte que este resguardo no les
+    sirve."
+    **(Cláusula de alcance agregada el 2026-07-29 por el hallazgo B2 del frontend-reviewer, aceptado —
+    regla P-20 "un aviso no promete de más":** el cartel vive ARRIBA de los tres botones, pero
+    "ponerse al día solo" lo cumple únicamente "Restaurar todo"; verificado en el motor que
+    "Restaurar configuración" puede rechazar un resguardo viejo y que "Ver qué contiene" solo avisa
+    conteos incompletos.)
+  - *posterior* (rosa): "**Este resguardo parece de una versión más nueva que el sistema de hoy.**
+    Lo más probable es que no se pueda usar: antes de tocar nada, el sistema lo revisa y, si es así,
+    lo rechaza y te avisa sin haber cambiado nada. Si igual necesitás volver a este punto, avisale
+    al equipo técnico."
+  - *desconocida* (gris, neutro): "**No pudimos determinar de qué versión es este resguardo.**
+    Podés intentar igual: si no se puede usar, te lo avisamos antes de tocar nada."

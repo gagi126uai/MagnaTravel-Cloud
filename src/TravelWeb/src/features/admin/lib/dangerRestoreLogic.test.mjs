@@ -7,6 +7,10 @@ import {
     RESTORE_MODO_REAL,
     RESTORE_MODO_TOTAL,
     TABLAS_CONFIGURACION_RESTORE,
+    VERSION_RESGUARDO_ACTUAL,
+    VERSION_RESGUARDO_ANTERIOR,
+    VERSION_RESGUARDO_POSTERIOR,
+    VERSION_RESGUARDO_DESCONOCIDA,
     formatearTamanioArchivo,
     construirEtiquetaBackup,
     puedeConfirmarRestore,
@@ -19,6 +23,9 @@ import {
     construirResumenExitoPruebaRestore,
     construirResumenExitoRealRestore,
     construirResumenExitoTotalRestore,
+    normalizarVersionResguardo,
+    construirBadgeVersionResguardo,
+    construirAvisoVersionResguardo,
 } from "./dangerRestoreLogic.js";
 
 test("formatearTamanioArchivo: bytes chicos se muestran en B", () => {
@@ -154,6 +161,30 @@ test("construirConfirmacionRestore: modo total sin fecha (no deberia pasar) no r
     assert.ok(confirmacion.text.includes("como estaba el de este resguardo"));
 });
 
+test("construirConfirmacionRestore: ADR-052, resguardo 'anterior' en modo total agrega la linea extra firmada", () => {
+    const confirmacion = construirConfirmacionRestore(RESTORE_MODO_TOTAL, {
+        fechaBackup: "27/07/2026 22:33",
+        versionResguardo: VERSION_RESGUARDO_ANTERIOR,
+    });
+    assert.ok(confirmacion.text.includes(
+        "Este resguardo es más viejo: después de traer los datos, el sistema se pone al día solo."
+    ));
+});
+
+test("construirConfirmacionRestore: 'actual'/'posterior'/'desconocida'/sin dato en modo total NO agregan la linea extra", () => {
+    for (const version of [VERSION_RESGUARDO_ACTUAL, VERSION_RESGUARDO_POSTERIOR, VERSION_RESGUARDO_DESCONOCIDA, undefined]) {
+        const confirmacion = construirConfirmacionRestore(RESTORE_MODO_TOTAL, { fechaBackup: "27/07/2026 22:33", versionResguardo: version });
+        assert.equal(confirmacion.text.includes("se pone al día solo"), false, `no deberia agregar la linea para version=${version}`);
+    }
+});
+
+test("construirConfirmacionRestore: la linea extra de ADR-052 SOLO aplica al modo total, no a prueba/real", () => {
+    const confirmacionPrueba = construirConfirmacionRestore(RESTORE_MODO_PRUEBA, { versionResguardo: VERSION_RESGUARDO_ANTERIOR });
+    const confirmacionReal = construirConfirmacionRestore(RESTORE_MODO_REAL, { versionResguardo: VERSION_RESGUARDO_ANTERIOR });
+    assert.equal(confirmacionPrueba.text.includes("se pone al día solo"), false);
+    assert.equal(confirmacionReal.text.includes("se pone al día solo"), false);
+});
+
 test("esErrorDeMantenimiento: 503 + code MAINTENANCE es mantenimiento", () => {
     assert.equal(esErrorDeMantenimiento({ status: 503, code: "MAINTENANCE" }), true);
 });
@@ -283,4 +314,101 @@ test("TABLAS_CONFIGURACION_RESTORE: son las 5 tablas conocidas del backend (Wipe
         "OperationalFinanceSettings",
         "WhatsAppBotConfigs",
     ].sort());
+});
+
+// ADR-052 (2026-07-29, "Restaurar todo acepta resguardos de versiones anteriores"): la lista
+// marca la versión del resguardo, el modal avisa, y NINGÚN botón se apaga por esto.
+
+test("normalizarVersionResguardo: los 4 valores conocidos pasan tal cual", () => {
+    assert.equal(normalizarVersionResguardo(VERSION_RESGUARDO_ACTUAL), VERSION_RESGUARDO_ACTUAL);
+    assert.equal(normalizarVersionResguardo(VERSION_RESGUARDO_ANTERIOR), VERSION_RESGUARDO_ANTERIOR);
+    assert.equal(normalizarVersionResguardo(VERSION_RESGUARDO_POSTERIOR), VERSION_RESGUARDO_POSTERIOR);
+    assert.equal(normalizarVersionResguardo(VERSION_RESGUARDO_DESCONOCIDA), VERSION_RESGUARDO_DESCONOCIDA);
+});
+
+test("normalizarVersionResguardo: compatibilidad hacia atras, ausente/invalido se trata como 'desconocida' (NUNCA 'actual')", () => {
+    assert.equal(normalizarVersionResguardo(undefined), VERSION_RESGUARDO_DESCONOCIDA);
+    assert.equal(normalizarVersionResguardo(null), VERSION_RESGUARDO_DESCONOCIDA);
+    assert.equal(normalizarVersionResguardo(""), VERSION_RESGUARDO_DESCONOCIDA);
+    assert.equal(normalizarVersionResguardo("algo-que-no-existe"), VERSION_RESGUARDO_DESCONOCIDA);
+});
+
+test("construirBadgeVersionResguardo: 'actual' no lleva badge (null, es el camino de hoy)", () => {
+    assert.equal(construirBadgeVersionResguardo(VERSION_RESGUARDO_ACTUAL), null);
+});
+
+test("construirBadgeVersionResguardo: 'anterior' es ambar con texto real, nunca solo color", () => {
+    assert.deepEqual(construirBadgeVersionResguardo(VERSION_RESGUARDO_ANTERIOR), { texto: "Versión anterior", color: "ambar" });
+});
+
+test("construirBadgeVersionResguardo: 'posterior' es rosa", () => {
+    assert.deepEqual(construirBadgeVersionResguardo(VERSION_RESGUARDO_POSTERIOR), { texto: "Versión más nueva", color: "rosa" });
+});
+
+test("construirBadgeVersionResguardo: 'desconocida' es gris", () => {
+    assert.deepEqual(construirBadgeVersionResguardo(VERSION_RESGUARDO_DESCONOCIDA), { texto: "Versión desconocida", color: "gris" });
+});
+
+test("construirBadgeVersionResguardo: campo ausente (API vieja/cache) se comporta como 'desconocida', CON badge gris", () => {
+    assert.deepEqual(construirBadgeVersionResguardo(undefined), { texto: "Versión desconocida", color: "gris" });
+    assert.deepEqual(construirBadgeVersionResguardo(null), { texto: "Versión desconocida", color: "gris" });
+});
+
+test("construirAvisoVersionResguardo: 'actual' no muestra cartel (null)", () => {
+    assert.equal(construirAvisoVersionResguardo(VERSION_RESGUARDO_ACTUAL), null);
+});
+
+// Textos literales de guia-ux-gaston.md, sección "Textos finales implementados (2026-07-29,
+// fuente única — si se cambian, se cambia acá primero)" — fix de review B1 (bloqueante): la
+// versión anterior de este archivo tenía una paráfrasis, no el texto firmado.
+
+test("construirAvisoVersionResguardo: 'anterior' — titulo+texto literales de la guia (cartel *anterior*, ámbar)", () => {
+    const aviso = construirAvisoVersionResguardo(VERSION_RESGUARDO_ANTERIOR);
+    assert.equal(aviso.color, "ambar");
+    assert.equal(aviso.titulo, "Este resguardo es más viejo que el sistema de hoy.");
+    assert.equal(
+        aviso.texto,
+        "Se puede usar igual: primero se traen los datos y después el sistema se pone al " +
+        "día solo. Puede tardar un poco más de lo normal. Si ese último paso falla, el " +
+        "sistema vuelve solo a como está ahora, sin perder nada. Esto vale para " +
+        "\"Restaurar todo\": las otras dos acciones pueden avisarte que este resguardo no " +
+        "les sirve."
+    );
+});
+
+test("construirAvisoVersionResguardo: 'posterior' — titulo+texto literales de la guia (cartel *posterior*, rosa)", () => {
+    const aviso = construirAvisoVersionResguardo(VERSION_RESGUARDO_POSTERIOR);
+    assert.equal(aviso.color, "rosa");
+    assert.equal(aviso.titulo, "Este resguardo parece de una versión más nueva que el sistema de hoy.");
+    assert.equal(
+        aviso.texto,
+        "Lo más probable es que no se pueda usar: antes de tocar nada, el sistema lo " +
+        "revisa y, si es así, lo rechaza y te avisa sin haber cambiado nada. Si igual " +
+        "necesitás volver a este punto, avisale al equipo técnico."
+    );
+});
+
+test("construirAvisoVersionResguardo: 'desconocida' — titulo+texto literales de la guia (cartel *desconocida*, gris)", () => {
+    const aviso = construirAvisoVersionResguardo(VERSION_RESGUARDO_DESCONOCIDA);
+    assert.equal(aviso.color, "gris");
+    assert.equal(aviso.titulo, "No pudimos determinar de qué versión es este resguardo.");
+    assert.equal(aviso.texto, "Podés intentar igual: si no se puede usar, te lo avisamos antes de tocar nada.");
+});
+
+test("construirAvisoVersionResguardo: campo ausente se comporta como 'desconocida'", () => {
+    assert.deepEqual(construirAvisoVersionResguardo(undefined), construirAvisoVersionResguardo(VERSION_RESGUARDO_DESCONOCIDA));
+});
+
+test("T-5: ningun texto de badge ni de cartel nombra 'migracion', 'esquema' ni 'version de base de datos'", () => {
+    const textos = [
+        ...[VERSION_RESGUARDO_ANTERIOR, VERSION_RESGUARDO_POSTERIOR, VERSION_RESGUARDO_DESCONOCIDA].map(
+            (v) => construirBadgeVersionResguardo(v).texto
+        ),
+        ...[VERSION_RESGUARDO_ANTERIOR, VERSION_RESGUARDO_POSTERIOR, VERSION_RESGUARDO_DESCONOCIDA].flatMap(
+            (v) => [construirAvisoVersionResguardo(v).titulo, construirAvisoVersionResguardo(v).texto]
+        ),
+    ].join(" ").toLowerCase();
+    assert.equal(textos.includes("migraci"), false);
+    assert.equal(textos.includes("esquema"), false);
+    assert.equal(textos.includes("base de datos"), false);
 });
