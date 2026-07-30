@@ -18,7 +18,6 @@ import {
     motivoRestaurarTodoEsValido,
     construirMotivoRestaurarTodoDeshabilitado,
     construirConfirmacionRestore,
-    construirExplicacionAccionesRestore,
     esErrorDeMantenimiento,
     construirResumenExitoPruebaRestore,
     construirResumenExitoRealRestore,
@@ -26,6 +25,15 @@ import {
     normalizarVersionResguardo,
     construirBadgeVersionResguardo,
     construirAvisoVersionResguardo,
+    construirTextoMarcaRechazo,
+    construirPasosEsperaRestoreTotal,
+    resolverPorQueSeGuardo,
+    PASO_RESTORE_DATOS,
+    PASO_RESTORE_RESGUARDO,
+    PASO_RESTORE_ACTUALIZACION,
+    ORIGEN_BACKUP_EMPEZAR_DE_CERO,
+    ORIGEN_BACKUP_VOLVER_A_COPIA,
+    ORIGEN_BACKUP_MANUAL,
 } from "./dangerRestoreLogic.js";
 
 test("formatearTamanioArchivo: bytes chicos se muestran en B", () => {
@@ -109,11 +117,11 @@ test("motivoRestaurarTodoEsValido: exactamente el minimo (recortando espacios) y
     assert.equal(motivoRestaurarTodoEsValido(" ".repeat(MOTIVO_RESTAURAR_TODO_MIN_LENGTH)), false);
 });
 
-test("construirMotivoRestaurarTodoDeshabilitado: motivo vacio, pide escribirlo nombrando la accion (fila de 3 botones, P-9)", () => {
+test("construirMotivoRestaurarTodoDeshabilitado: motivo vacio, pide escribirlo nombrando la accion nueva 'Volver a esta copia' (rediseño 2026-07-30, P-9)", () => {
     const motivo = construirMotivoRestaurarTodoDeshabilitado("");
     assert.equal(
         motivo,
-        `Para "Restaurar todo" falta escribir el motivo (mínimo ${MOTIVO_RESTAURAR_TODO_MIN_LENGTH} caracteres).`
+        `Para "Volver a esta copia" falta escribir el motivo (mínimo ${MOTIVO_RESTAURAR_TODO_MIN_LENGTH} caracteres).`
     );
 });
 
@@ -198,19 +206,9 @@ test("esErrorDeMantenimiento: el code MAINTENANCE en otro status (ej. 500) no cu
     assert.equal(esErrorDeMantenimiento({ status: 500, code: "MAINTENANCE" }), false);
 });
 
-test("construirExplicacionAccionesRestore: explica las 3 acciones sin nombres tecnicos", () => {
-    const lineas = construirExplicacionAccionesRestore();
-    assert.equal(lineas.length, 3);
-    assert.ok(lineas[0].startsWith("Ver qué contiene"));
-    assert.ok(lineas[1].startsWith("Restaurar configuración"));
-    assert.ok(lineas[2].startsWith("Restaurar todo"));
-    // P-1: nunca se dice "tabla" en pantalla, es jerga de base de datos.
-    assert.equal(lineas.join(" ").toLowerCase().includes("tabla"), false);
-});
-
 test("construirResumenExitoPruebaRestore: reusa las mismas filas de conteo que Empezar de cero, en una lista", () => {
     const resumen = construirResumenExitoPruebaRestore({ conteos: { reservas: 30, clientes: 16 }, advertencia: null });
-    assert.equal(resumen.encabezado, "Esto es lo que contiene el resguardo:");
+    assert.equal(resumen.encabezado, "Esto es lo que contiene la copia:");
     assert.equal(resumen.sinDatos, false);
     assert.deepEqual(resumen.filas, [
         { clave: "reservas", etiqueta: "reservas", cantidad: 30 },
@@ -239,7 +237,7 @@ test("construirResumenExitoPruebaRestore: conteos todos en cero, dice claramente
     const resumen = construirResumenExitoPruebaRestore({ conteos: { reservas: 0, clientes: 0 }, advertencia: null });
     assert.equal(resumen.sinDatos, true);
     assert.deepEqual(resumen.filas, []);
-    assert.equal(resumen.mensajeSinDatos, "El resguardo no tiene datos de negocio cargados.");
+    assert.equal(resumen.mensajeSinDatos, "La copia no tiene datos de negocio cargados.");
 });
 
 test("construirResumenExitoRealRestore: muestra el mensaje del motor TAL CUAL (no lo arma ni lo traduce)", () => {
@@ -363,6 +361,9 @@ test("construirAvisoVersionResguardo: 'actual' no muestra cartel (null)", () => 
 // versión anterior de este archivo tenía una paráfrasis, no el texto firmado.
 
 test("construirAvisoVersionResguardo: 'anterior' — titulo+texto literales de la guia (cartel *anterior*, ámbar)", () => {
+    // Fix de review (item 12, firmado por Gastón el 2026-07-30): la única mención que cambió en este
+    // literal es el nombre del botón ("Restaurar todo" → "Volver a esta copia"); el resto es palabra por
+    // palabra igual al firmado en guia-ux-gaston.md.
     const aviso = construirAvisoVersionResguardo(VERSION_RESGUARDO_ANTERIOR);
     assert.equal(aviso.color, "ambar");
     assert.equal(aviso.titulo, "Este resguardo es más viejo que el sistema de hoy.");
@@ -371,7 +372,7 @@ test("construirAvisoVersionResguardo: 'anterior' — titulo+texto literales de l
         "Se puede usar igual: primero se traen los datos y después el sistema se pone al " +
         "día solo. Puede tardar un poco más de lo normal. Si ese último paso falla, el " +
         "sistema vuelve solo a como está ahora, sin perder nada. Esto vale para " +
-        "\"Restaurar todo\": las otras dos acciones pueden avisarte que este resguardo no " +
+        "\"Volver a esta copia\": las otras dos acciones pueden avisarte que este resguardo no " +
         "les sirve."
     );
 });
@@ -411,4 +412,76 @@ test("T-5: ningun texto de badge ni de cartel nombra 'migracion', 'esquema' ni '
     assert.equal(textos.includes("migraci"), false);
     assert.equal(textos.includes("esquema"), false);
     assert.equal(textos.includes("base de datos"), false);
+});
+
+// Rediseño 2026-07-30 ("Copias de seguridad", solapa propia en Administración, spec
+// docs/ux/2026-07-30-rediseno-pantalla-copias-de-seguridad.md, 12 respuestas 1A..12A).
+
+test("construirTextoMarcaRechazo: modo total (P10=A, texto literal de la spec)", () => {
+    assert.equal(construirTextoMarcaRechazo(RESTORE_MODO_TOTAL), "No se pudo volver a esta copia. No se cambió nada.");
+});
+
+test("construirTextoMarcaRechazo: modo real y modo prueba tienen su propio texto, nombrando la accion que fallo", () => {
+    assert.ok(construirTextoMarcaRechazo(RESTORE_MODO_REAL).toLowerCase().includes("reponer"));
+    assert.ok(construirTextoMarcaRechazo(RESTORE_MODO_PRUEBA).toLowerCase().includes("ver el contenido"));
+});
+
+test("resolverPorQueSeGuardo: las 3 frases conocidas pasan tal cual (lista blanca, mismo criterio que normalizarVersionResguardo)", () => {
+    assert.equal(resolverPorQueSeGuardo(ORIGEN_BACKUP_EMPEZAR_DE_CERO), ORIGEN_BACKUP_EMPEZAR_DE_CERO);
+    assert.equal(resolverPorQueSeGuardo(ORIGEN_BACKUP_VOLVER_A_COPIA), ORIGEN_BACKUP_VOLVER_A_COPIA);
+    assert.equal(resolverPorQueSeGuardo(ORIGEN_BACKUP_MANUAL), ORIGEN_BACKUP_MANUAL);
+});
+
+test("resolverPorQueSeGuardo: vacio/ausente cae en 'Guardada a mano', nunca undefined", () => {
+    assert.equal(resolverPorQueSeGuardo(undefined), ORIGEN_BACKUP_MANUAL);
+    assert.equal(resolverPorQueSeGuardo(null), ORIGEN_BACKUP_MANUAL);
+    assert.equal(resolverPorQueSeGuardo(""), ORIGEN_BACKUP_MANUAL);
+});
+
+test("resolverPorQueSeGuardo: un valor DESCONOCIDO (origen nuevo que este front no contempla) tambien cae en 'Guardada a mano', nunca se muestra tal cual", () => {
+    assert.equal(resolverPorQueSeGuardo("Un origen inventado que el motor todavia no manda"), ORIGEN_BACKUP_MANUAL);
+    assert.equal(resolverPorQueSeGuardo("antes de empezar de cero"), ORIGEN_BACKUP_MANUAL); // no admite variaciones de mayus/minus
+});
+
+test("construirPasosEsperaRestoreTotal: paso null (sin restauracion en curso) no marca ningun estado (spec 8A)", () => {
+    const pasos = construirPasosEsperaRestoreTotal({ paso: null, pasoTexto: null });
+    assert.equal(pasos.length, 3);
+    assert.ok(pasos.every((paso) => paso.estado === "pending"));
+});
+
+test("construirPasosEsperaRestoreTotal: paso 'datos' (el primero, orden real del motor) marca solo el actual", () => {
+    const pasos = construirPasosEsperaRestoreTotal({ paso: PASO_RESTORE_DATOS, pasoTexto: "Trayendo los datos de la copia elegida" });
+    assert.deepEqual(pasos.map((paso) => [paso.codigo, paso.estado]), [
+        [PASO_RESTORE_DATOS, "doing"],
+        [PASO_RESTORE_RESGUARDO, "pending"],
+        [PASO_RESTORE_ACTUALIZACION, "pending"],
+    ]);
+});
+
+test("construirPasosEsperaRestoreTotal: paso 'resguardo' (el del medio) marca 'datos' como hecho", () => {
+    const pasos = construirPasosEsperaRestoreTotal({ paso: PASO_RESTORE_RESGUARDO, pasoTexto: "Guardamos una copia de cómo está el sistema ahora" });
+    assert.deepEqual(pasos.map((paso) => [paso.codigo, paso.estado]), [
+        [PASO_RESTORE_DATOS, "done"],
+        [PASO_RESTORE_RESGUARDO, "doing"],
+        [PASO_RESTORE_ACTUALIZACION, "pending"],
+    ]);
+});
+
+test("construirPasosEsperaRestoreTotal: paso 'actualizacion' (el ultimo) marca los otros dos como hechos", () => {
+    const pasos = construirPasosEsperaRestoreTotal({ paso: PASO_RESTORE_ACTUALIZACION, pasoTexto: "Poniendo el sistema al día" });
+    assert.deepEqual(pasos.map((paso) => [paso.codigo, paso.estado]), [
+        [PASO_RESTORE_DATOS, "done"],
+        [PASO_RESTORE_RESGUARDO, "done"],
+        [PASO_RESTORE_ACTUALIZACION, "doing"],
+    ]);
+});
+
+test("construirPasosEsperaRestoreTotal: el paso EN CURSO usa el texto que manda el motor (P-13), no lo reescribe", () => {
+    const pasos = construirPasosEsperaRestoreTotal({ paso: PASO_RESTORE_DATOS, pasoTexto: "texto de prueba distinto" });
+    assert.equal(pasos[0].texto, "texto de prueba distinto");
+});
+
+test("construirPasosEsperaRestoreTotal: un codigo desconocido (version vieja del motor) tampoco marca nada", () => {
+    const pasos = construirPasosEsperaRestoreTotal({ paso: "algo-que-no-existe", pasoTexto: "x" });
+    assert.ok(pasos.every((paso) => paso.estado === "pending"));
 });

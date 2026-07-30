@@ -28,11 +28,19 @@ public class SystemStatusController : ControllerBase
     [HttpGet]
     public ActionResult<SystemStatusResponse> Get()
     {
+        // Se lee UNA vez: el servicio releé el archivo cada 2 segundos, y leer la propiedad tres veces podría
+        // devolver un paso de una lectura y el resto de otra (una foto incoherente por nada).
+        var currentStep = _maintenanceMode.CurrentStep;
+
         return Ok(new SystemStatusResponse
         {
             EnMantenimiento = _maintenanceMode.IsActive,
             Motivo = _maintenanceMode.Reason,
             Desde = _maintenanceMode.SinceUtc,
+            // Rediseño 2026-07-30 (§7 punto 2): si el código no es uno de los tres conocidos, TextFor devuelve
+            // null y no se manda el paso — un valor raro nunca llega a la pantalla como texto crudo (T-5).
+            Paso = RestoreProgressSteps.TextFor(currentStep) is null ? null : currentStep,
+            PasoTexto = RestoreProgressSteps.TextFor(currentStep),
         });
     }
 }

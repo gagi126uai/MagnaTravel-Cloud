@@ -42,6 +42,23 @@ public interface IMaintenanceModeService
     DateTime? SinceUtc { get; }
 
     /// <summary>
+    /// Rediseño de la pantalla de resguardos (2026-07-30, firmado, §7 punto 2): código del paso en curso de la
+    /// restauración total (uno de <c>RestoreProgressSteps</c>), o <c>null</c> si no hay ninguno publicado.
+    ///
+    /// <para><b>Por qué viaja por acá y no por un canal nuevo</b>: este servicio YA es el único lugar que sabe
+    /// que hay una restauración corriendo, YA sobrevive a un reinicio del proceso y YA está expuesto por el
+    /// único endpoint que el mantenimiento deja pasar (<c>GET /api/system/status</c>, ver
+    /// <c>MaintenanceModeMiddleware</c>). Un canal aparte tendría que resolver esos tres problemas de nuevo.</para>
+    /// </summary>
+    string? CurrentStep { get; }
+
+    /// <summary>
+    /// Publica el paso en curso (ver <see cref="CurrentStep"/>). No hace nada si el mantenimiento no está
+    /// activo: un paso sin restauración en curso no significa nada y solo podría confundir a la pantalla.
+    /// </summary>
+    void SetStep(string step);
+
+    /// <summary>
     /// Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B4 de seguridad, "dos restauraciones a la vez se
     /// pisan"): intenta activar el modo mantenimiento de forma ATÓMICA. Si YA estaba activo (otra restauración
     /// en curso, sea del mismo o de otro pedido concurrente), NO hace nada y devuelve <c>false</c> — el caller

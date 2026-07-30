@@ -181,6 +181,64 @@ public class PgDatabaseRestorePortListingTests : IDisposable
         Assert.Equal(esperado, SystemDataRestoreService.IsSafeFileName(fileName));
     }
 
+    // ============================================================================================
+    // "Por qué se guardó" (rediseño de la pantalla de resguardos, 2026-07-30, §7 punto 1)
+    // ============================================================================================
+
+    /// <summary>
+    /// Los TRES orígenes posibles, derivados del prefijo del archivo. La lista tiene que traer la frase en
+    /// criollo ya armada — el prefijo es interno y se queda del lado del servidor (T-5).
+    /// </summary>
+    [Theory]
+    [InlineData("wipe-20260727-223313.dump", BackupOriginLabels.AfterWipe)]
+    [InlineData("pre-restore-20260728-090000.dump", BackupOriginLabels.BeforeRestore)]
+    [InlineData("backup_manual.2026.dump", BackupOriginLabels.Manual)]
+    public async Task Listado_TraeElPorQueSeGuardoEnCriollo(string fileName, string frenteEsperado)
+    {
+        await using var context = NewRelationalContextWithoutServer();
+        WriteFakeDump(fileName, "x");
+        var port = NewCountingPort(context, _ => null);
+
+        var backups = await port.ListBackupsAsync(CancellationToken.None);
+
+        var soloArchivo = Assert.Single(backups);
+        Assert.Equal(frenteEsperado, soloArchivo.OriginLabel);
+        // T-5: la frase nunca puede filtrar el prefijo interno ni el nombre del archivo.
+        Assert.DoesNotContain("wipe", soloArchivo.OriginLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("restore", soloArchivo.OriginLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(".dump", soloArchivo.OriginLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// El círculo cerrado: el nombre que el motor ESCRIBE al crear cada tipo de resguardo tiene que ser el que
+    /// la columna SABE leer. Sin este test, alguien podría renombrar un prefijo en el servicio que crea el
+    /// archivo y la columna empezaría a decir "Guardada a mano" para todo, sin que nada falle.
+    /// </summary>
+    [Fact]
+    public void ElNombreQueEscribeElMotor_EsElQueLaColumnaSabeLeer()
+    {
+        var momento = new DateTime(2026, 7, 30, 15, 4, 5, DateTimeKind.Utc);
+
+        Assert.Equal(
+            BackupOriginLabels.AfterWipe,
+            BackupOriginRules.DescribeOrigin(SystemDataWipeService.BuildBackupFileName(momento)));
+
+        Assert.Equal(
+            BackupOriginLabels.BeforeRestore,
+            BackupOriginRules.DescribeOrigin(SystemDataRestoreService.BuildPreviousStateBackupFileName(momento)));
+    }
+
+    /// <summary>Sin nombre no se adivina nada: cae en el origen genérico, nunca en uno inventado.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("resguardo-diario-20260730.dump")]
+    public void SinPrefijoConocido_ElOrigenEsElGenerico(string? fileName)
+    {
+        Assert.Equal(BackupOriginLabels.Manual, BackupOriginRules.DescribeOrigin(fileName));
+    }
+
     [Fact]
     public async Task Listado_SinDirectorioDeResguardos_DevuelveListaVaciaSinTirar()
     {

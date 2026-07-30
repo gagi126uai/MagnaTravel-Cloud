@@ -143,7 +143,7 @@ export default function RolesPermissionsTab() {
       view_all: "Ver todas",
       cancel: "Anular",
       data_wipe: "Empezar de cero",
-      data_restore: "Volver atrás (restaurar resguardo)",
+      data_restore: "Copias de seguridad (volver a una copia)",
       force_arca_confirmation: "Forzar confirmación ARCA",
       classify_agency_penalty: "Clasificar multa de agencia",
       receipt_void: "Anular recibo",

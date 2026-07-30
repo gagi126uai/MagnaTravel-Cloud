@@ -140,6 +140,8 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                     TamanioBytes = b.SizeBytes,
                     // ADR-052 (D5): marca INFORMATIVA. La pantalla avisa con ella; nunca decide con ella.
                     VersionResguardo = b.VersionState,
+                    // Rediseño 2026-07-30 (§7 punto 1): frase en criollo ya armada por el motor.
+                    PorQueSeGuardo = b.OriginLabel,
                 })
                 .ToList(),
         };
@@ -623,6 +625,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
 
             // 4) Restaurar el resguardo en una base NUEVA al costado. Si esto falla, la base viva NUNCA se tocó.
             _maintenanceMode.Touch();
+            _maintenanceMode.SetStep(RestoreProgressSteps.Datos);
             var newDatabaseRestore = await _restorePort.RestoreIntoNewDatabaseAsync(fileName, ct);
             if (!newDatabaseRestore.Success || string.IsNullOrWhiteSpace(newDatabaseRestore.NewDatabaseName))
             {
@@ -645,6 +648,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             var backupFileName = BuildPreviousStateBackupFileName(timestamp);
             var minioBackupPrefix = BuildPreviousStateBackupMinioPrefix(timestamp);
 
+            _maintenanceMode.SetStep(RestoreProgressSteps.Resguardo);
             var backupResult = await _backupPort.CreateBackupAsync(backupFileName, minioBackupPrefix, ct);
             if (!backupResult.Success)
             {
@@ -697,6 +701,11 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             }
 
             swappedPreviousDatabaseName = swap.PreviousDatabaseName;
+
+            // Desde el intercambio hasta el final, TODO lo que queda es acomodar el sistema ya cambiado
+            // (actualizarlo si hacía falta, dejar AFIP en homologación, reponer archivos, auditar): un solo
+            // paso para el usuario, "poniendo el sistema al día".
+            _maintenanceMode.SetStep(RestoreProgressSteps.Actualizacion);
 
             // 7) Actualizar el esquema si el resguardo era de una versión anterior (D3/B4).
             var migracionesAplicadas = 0;
@@ -826,8 +835,6 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             return new SystemDataRestoreResponse
             {
                 Modo = RestoreModes.Total,
-                RestauradoDe = fileName,
-                BackupPrevio = backupPrevioFileName,
                 Mensaje =
                     "Se restauró todo el sistema a la foto del resguardo elegido. Lo que se cargó después se perdió. " +
                     "Las sesiones y las contraseñas también volvieron a como estaban en ese momento. " +
@@ -1057,8 +1064,13 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     /// Prefijo PROPIO de esta obra (hallazgo menor, revisión funcional: "el resguardo previo de un restore
     /// total era indistinguible de un Empezar de cero en la lista de backups") — antes usaba el mismo esquema
     /// "wipe-" que <c>SystemDataWipeService.BuildBackupFileName</c>.
+    ///
+    /// <para><b>Rediseño 2026-07-30</b>: el prefijo sale de <see cref="BackupOriginRules"/>, que es el MISMO
+    /// lugar del que lo lee la columna "Por qué se guardó" de la pantalla. Es <c>internal</c> para que el test
+    /// pueda cerrar el círculo (el nombre que el motor ESCRIBE tiene que ser el que la columna SABE leer).</para>
     /// </summary>
-    private static string BuildPreviousStateBackupFileName(DateTime utcNow) => $"pre-restore-{utcNow:yyyyMMdd-HHmmss}.dump";
+    internal static string BuildPreviousStateBackupFileName(DateTime utcNow) =>
+        $"{BackupOriginRules.PreRestoreFileNamePrefix}{utcNow:yyyyMMdd-HHmmss}.dump";
 
     /// <summary>Ver <see cref="BuildPreviousStateBackupFileName"/>.</summary>
     private static string BuildPreviousStateBackupMinioPrefix(DateTime utcNow) => $"pre-restore-backup-{utcNow:yyyyMMdd-HHmmss}/";

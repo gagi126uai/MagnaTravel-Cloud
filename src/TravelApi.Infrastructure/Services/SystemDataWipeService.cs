@@ -1240,7 +1240,13 @@ public class SystemDataWipeService : ISystemDataWipeService
             """, ct);
     }
 
-    private static string BuildBackupFileName(DateTime utcNow) => $"wipe-{utcNow:yyyyMMdd-HHmmss}.dump";
+    /// <summary>
+    /// Rediseño de la pantalla de resguardos (2026-07-30): el prefijo sale de <see cref="BackupOriginRules"/>,
+    /// que es el MISMO lugar del que lo lee la columna "Por qué se guardó". Es <c>internal</c> para que el test
+    /// pueda cerrar el círculo (el nombre que el motor ESCRIBE tiene que ser el que la columna SABE leer).
+    /// </summary>
+    internal static string BuildBackupFileName(DateTime utcNow) =>
+        $"{BackupOriginRules.WipeFileNamePrefix}{utcNow:yyyyMMdd-HHmmss}.dump";
 
     private static string BuildMinioPrefix(DateTime utcNow) => $"wipe-backup-{utcNow:yyyyMMdd-HHmmss}/";
 }

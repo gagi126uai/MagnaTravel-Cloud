@@ -1,20 +1,17 @@
 import { useState } from "react";
-import { Wrench, Play, ArrowUpRight, CheckCircle2, AlertCircle, Clock, AlertOctagon, Trash2, RotateCcw } from "lucide-react";
+import { Wrench, Play, ArrowUpRight, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
-import { EmpezarDeCeroModal } from "../features/admin/components/EmpezarDeCeroModal";
-import { RestaurarResguardoModal } from "../features/admin/components/RestaurarResguardoModal";
 
 /**
  * Solapa de Mantenimiento del panel Admin: agrupa acciones manuales que el
  * sistema normalmente corre en background (Hangfire). Pensada para que un
  * admin pueda intervenir sin esperar al schedule diario.
  *
- * Por ahora incluye:
- * - Lifecycle de reservas (Reservado -> Operativo y Operativo -> Cerrado).
- * - Zona peligrosa: "Empezar de cero" (borrado por grupos de datos de negocio, con
- *   backup automático) y "Volver atrás" (restaurar un resguardo, en modo prueba o real).
+ * Por ahora incluye solo Lifecycle de reservas (Reservado -> Operativo y Operativo ->
+ * Cerrado). "Empezar de cero" y "Volver atrás" (rebautizado "Copias de seguridad", rediseño
+ * 2026-07-30) se mudaron a su propia solapa en Administración — ver CopiasDeSeguridadTab.jsx.
  *
  * Si en el futuro se suman mas jobs (limpieza de pendientes, recompute de
  * balances, etc.), se agregan como nuevas "Cards" con la misma estructura.
@@ -22,8 +19,6 @@ import { RestaurarResguardoModal } from "../features/admin/components/RestaurarR
 export default function MaintenanceTab() {
     const [running, setRunning] = useState(false);
     const [lastResult, setLastResult] = useState(null); // { promoted, closed, ranAt, error? }
-    const [showWipeModal, setShowWipeModal] = useState(false);
-    const [showRestoreModal, setShowRestoreModal] = useState(false);
 
     const runLifecycle = async () => {
         setRunning(true);
@@ -163,54 +158,6 @@ export default function MaintenanceTab() {
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
                 <strong className="font-bold">Nota:</strong> el cierre automatico solo aplica a reservas que tengan <span className="font-semibold">fecha de regreso</span> cargada. Si una reserva quedo en Operativo de un viaje viejo, revisa primero que la fecha de regreso este completa desde el detalle de la reserva.
             </div>
-
-            {/* Zona peligrosa: siempre al final de la solapa, con paleta roja bien diferenciada
-                del resto (mismos tokens que ConfirmModal/CartelEmergente para "bloqueo"), para
-                que nadie la confunda con una accion de mantenimiento comun. */}
-            <div className="rounded-2xl border-2 border-rose-200 bg-rose-50/60 p-6 shadow-sm dark:border-rose-900/50 dark:bg-rose-950/20">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="flex items-start gap-3">
-                        <div className="rounded-xl bg-rose-100 p-2 dark:bg-rose-900/40">
-                            <AlertOctagon className="h-5 w-5 text-rose-600 dark:text-rose-400" />
-                        </div>
-                        <div>
-                            <h2 className="text-lg font-bold text-rose-900 dark:text-rose-200">Zona peligrosa</h2>
-                            <h3 className="mt-2 text-base font-bold text-slate-900 dark:text-white">Empezar de cero</h3>
-                            <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-slate-300">
-                                Elegí qué grupos borrar: reservas y su plata, clientes, operadores, tarifario, países y destinos, clientes potenciales o la configuración de la agencia. Los usuarios y la auditoría <span className="font-semibold">siempre quedan</span>. Antes de borrar se hace un backup completo, que después podés probar o restaurar vos mismo desde "Volver atrás".
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2 lg:min-w-[220px]">
-                        <button
-                            type="button"
-                            data-testid="danger-wipe-open"
-                            onClick={() => setShowWipeModal(true)}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-rose-200 transition-all hover:bg-rose-700 active:scale-95 dark:shadow-none"
-                        >
-                            <Trash2 className="h-4 w-4" />
-                            Empezar de cero...
-                        </button>
-                        <button
-                            type="button"
-                            data-testid="danger-restore-open"
-                            onClick={() => setShowRestoreModal(true)}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-rose-200 bg-white px-5 py-2.5 text-sm font-bold text-rose-700 transition-all hover:bg-rose-50 active:scale-95 dark:border-rose-900/50 dark:bg-transparent dark:text-rose-300 dark:hover:bg-rose-950/30"
-                        >
-                            <RotateCcw className="h-4 w-4" />
-                            Volver atrás...
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {showWipeModal && (
-                <EmpezarDeCeroModal onClose={() => setShowWipeModal(false)} />
-            )}
-            {showRestoreModal && (
-                <RestaurarResguardoModal onClose={() => setShowRestoreModal(false)} />
-            )}
         </div>
     );
 }

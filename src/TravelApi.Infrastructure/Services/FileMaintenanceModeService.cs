@@ -106,6 +106,11 @@ public sealed class FileMaintenanceModeService : IMaintenanceModeService
         get { lock (_lock) { RefreshAndEnforceExpiryLocked(); return _state.SinceUtc; } }
     }
 
+    public string? CurrentStep
+    {
+        get { lock (_lock) { RefreshAndEnforceExpiryLocked(); return _state.Step; } }
+    }
+
     public bool TryActivate(string reason)
     {
         lock (_lock)
@@ -116,13 +121,33 @@ public sealed class FileMaintenanceModeService : IMaintenanceModeService
                 return false;
             }
 
-            _state = new MaintenanceModeState(true, reason, _timeProvider.GetUtcNow().UtcDateTime, RequiresManualClear: false);
+            // Step arranca en null: los pasos los publica quien corre la operación, a medida que ocurren.
+            _state = new MaintenanceModeState(
+                true, reason, _timeProvider.GetUtcNow().UtcDateTime, RequiresManualClear: false, Step: null);
             _lastDiskReadUtc = _timeProvider.GetUtcNow().UtcDateTime;
             PersistToDiskBestEffort();
         }
 
         _logger.LogWarning("Modo mantenimiento ACTIVADO. Motivo: {Reason}", reason);
         return true;
+    }
+
+    public void SetStep(string step)
+    {
+        lock (_lock)
+        {
+            RefreshAndEnforceExpiryLocked();
+            if (!_state.Active)
+            {
+                return;
+            }
+
+            _state = _state with { Step = step };
+            _lastDiskReadUtc = _timeProvider.GetUtcNow().UtcDateTime;
+            PersistToDiskBestEffort();
+        }
+
+        _logger.LogInformation("Modo mantenimiento: paso en curso = {Paso}.", step);
     }
 
     public void Touch()
@@ -151,7 +176,10 @@ public sealed class FileMaintenanceModeService : IMaintenanceModeService
                 return;
             }
 
-            _state = _state with { Reason = reason, RequiresManualClear = true };
+            // El paso se BORRA a propósito: desde acá ya no hay una restauración avanzando, hay una espera de
+            // intervención humana. Dejar el último paso publicado haría que la pantalla siguiera mostrando
+            // "poniendo el sistema al día" para siempre, que es justo lo contrario de lo que pasa.
+            _state = _state with { Reason = reason, RequiresManualClear = true, Step = null };
             _lastDiskReadUtc = _timeProvider.GetUtcNow().UtcDateTime;
             PersistToDiskBestEffort();
         }
@@ -289,9 +317,16 @@ public sealed class FileMaintenanceModeService : IMaintenanceModeService
     /// cambio, nunca se muta in-place. <see cref="RequiresManualClear"/> (hallazgo B-N2(a)): distingue una
     /// sesión de mantenimiento "normal" (puede auto-expirar si algo salió mal) de una con desenlace INCIERTO
     /// (nunca se auto-desactiva sola, ver <see cref="SuppressAutoExpiry"/>).
+    ///
+    /// <para><b>Trampa de framework (rediseño 2026-07-30)</b>: <see cref="Step"/> se agregó al final del record
+    /// DESPUÉS de que ya había archivos escritos con la forma vieja. <c>System.Text.Json</c>, cuando deserializa
+    /// sobre un constructor con parámetros, a los que no encuentra en el JSON les pasa su valor por defecto —
+    /// así que un archivo viejo (sin "Step") se lee perfecto y queda con <c>Step = null</c>. Por eso agregar un
+    /// campo NUEVO al final es seguro; sacar o renombrar uno existente NO lo sería.</para>
     /// </summary>
-    private sealed record MaintenanceModeState(bool Active, string? Reason, DateTime? SinceUtc, bool RequiresManualClear)
+    private sealed record MaintenanceModeState(
+        bool Active, string? Reason, DateTime? SinceUtc, bool RequiresManualClear, string? Step)
     {
-        public static readonly MaintenanceModeState Inactive = new(false, null, null, false);
+        public static readonly MaintenanceModeState Inactive = new(false, null, null, false, null);
     }
 }

@@ -2018,13 +2018,17 @@ se pone al día solo."*
   - *anterior* (ámbar): "**Este resguardo es más viejo que el sistema de hoy.** Se puede usar igual:
     primero se traen los datos y después el sistema se pone al día solo. Puede tardar un poco más de
     lo normal. Si ese último paso falla, el sistema vuelve solo a como está ahora, sin perder nada.
-    Esto vale para "Restaurar todo": las otras dos acciones pueden avisarte que este resguardo no les
-    sirve."
+    Esto vale para "Volver a esta copia": las otras dos acciones pueden avisarte que este resguardo no
+    les sirve."
     **(Cláusula de alcance agregada el 2026-07-29 por el hallazgo B2 del frontend-reviewer, aceptado —
     regla P-20 "un aviso no promete de más":** el cartel vive ARRIBA de los tres botones, pero
-    "ponerse al día solo" lo cumple únicamente "Restaurar todo"; verificado en el motor que
-    "Restaurar configuración" puede rechazar un resguardo viejo y que "Ver qué contiene" solo avisa
-    conteos incompletos.)
+    "ponerse al día solo" lo cumple únicamente el botón principal (ex "Restaurar todo"); verificado en
+    el motor que "Reponer configuración" puede rechazar un resguardo viejo y que "Ver qué contiene"
+    solo avisa conteos incompletos.
+    **Ajuste 2026-07-30 (firmado por Gastón): la ÚNICA mención que cambió en este literal es el nombre
+    del botón — "Restaurar todo" pasó a llamarse "Volver a esta copia" (rediseño "Copias de seguridad",
+    P7=A). El resto del texto queda palabra por palabra, sin reabrir nada más de lo firmado el
+    2026-07-29.**)
   - *posterior* (rosa): "**Este resguardo parece de una versión más nueva que el sistema de hoy.**
     Lo más probable es que no se pueda usar: antes de tocar nada, el sistema lo revisa y, si es así,
     lo rechaza y te avisa sin haber cambiado nada. Si igual necesitás volver a este punto, avisale
@@ -2090,12 +2094,18 @@ DÓNDE viven esos textos, nunca QUÉ dicen.
 
 - **(2026-07-30, P8=A) La pantalla de espera NO promete tiempo y muestra en qué paso va.** Se saca el
   "Volvemos en un minuto" (prometer un minuto y tardar cinco es exactamente el mal feedback). Queda:
-  *"Estamos volviendo a la copia del {fecha}. No cierres esta ventana."* + los pasos con su tilde
-  (✓ guardamos una copia de cómo está el sistema ahora · ◐ trayendo los datos de la copia elegida ·
-  ○ poniendo el sistema al día). **Sin jerga**: nada de "esquema", "migración" ni "base de datos"
-  (P-17). Las otras dos acciones no toman el sistema: su espera sigue siendo el botón con
-  "Buscando…" / "Reponiendo…". *(El paso en curso lo tiene que mandar el motor; si no está, va el
-  mismo texto sin los pasos.)*
+  *"Estamos volviendo a la copia del {fecha}. No cierres esta ventana."* + los pasos, en el ORDEN
+  REAL en el que el motor los hace (① trayendo los datos de la copia elegida · ② guardamos una copia
+  de cómo está el sistema ahora · ③ poniendo el sistema al día). **Sin jerga**: nada de "esquema",
+  "migración" ni "base de datos" (P-17). Las otras dos acciones no toman el sistema: su espera sigue
+  siendo el botón con "Buscando…" / "Reponiendo…". *(El paso en curso lo tiene que mandar el motor;
+  si no está, va el mismo texto sin los pasos.)*
+  **Ajuste post-firma 2026-07-30 (ver spec §4.5):** la primera redacción de esta sección tenía el
+  orden invertido ("guardamos una copia" antes de "trayendo los datos"). El orden REAL del motor es
+  al revés — primero trae los datos a una base aparte (sin tocar nada real todavía), RECIÉN DESPUÉS
+  guarda la copia del estado actual (ADR-052 D1.9: así no se gastan minutos de mantenimiento si el
+  archivo elegido está roto) y al final actualiza el sistema. Los textos de cada paso no cambiaron,
+  solo el orden en que la pantalla los lista.
 
 - **(2026-07-30, P9=A) Éxito: cartel verde arriba de la lista, en la misma página.** No hay ventana
   de "listo" que haya que cerrar. El cartel dice que el sistema volvió a la fecha de esa copia, que

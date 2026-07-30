@@ -755,7 +755,9 @@ public class SystemDataRestoreServiceTotalModeTests
         public bool IsActive => false;
         public string? Reason => null;
         public DateTime? SinceUtc => null;
+        public string? CurrentStep => null;
         public bool TryActivate(string reason) => false;
+        public void SetStep(string step) { }
         public void Touch() { }
         public void SuppressAutoExpiry(string reason) { }
         public void Deactivate() { }
@@ -796,9 +798,9 @@ public class SystemDataRestoreServiceTotalModeTests
             .Setup(p => p.ListBackupsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<BackupFileInfo>
             {
-                new("wipe-20260729-120000.dump", new DateTime(2026, 7, 29, 12, 0, 0, DateTimeKind.Utc), 100, BackupVersionStates.Actual),
-                new("wipe-20260727-223313.dump", new DateTime(2026, 7, 27, 22, 33, 13, DateTimeKind.Utc), 90, BackupVersionStates.Anterior),
-                new("raro.dump", new DateTime(2026, 7, 20, 0, 0, 0, DateTimeKind.Utc), 10, BackupVersionStates.Desconocida),
+                new("wipe-20260729-120000.dump", new DateTime(2026, 7, 29, 12, 0, 0, DateTimeKind.Utc), 100, BackupVersionStates.Actual, BackupOriginLabels.AfterWipe),
+                new("pre-restore-20260727-223313.dump", new DateTime(2026, 7, 27, 22, 33, 13, DateTimeKind.Utc), 90, BackupVersionStates.Anterior, BackupOriginLabels.BeforeRestore),
+                new("raro.dump", new DateTime(2026, 7, 20, 0, 0, 0, DateTimeKind.Utc), 10, BackupVersionStates.Desconocida, BackupOriginLabels.Manual),
             });
 
         var service = NewService(
@@ -809,5 +811,87 @@ public class SystemDataRestoreServiceTotalModeTests
         Assert.Equal(BackupVersionStates.Actual, result.Backups[0].VersionResguardo);
         Assert.Equal(BackupVersionStates.Anterior, result.Backups[1].VersionResguardo);
         Assert.Equal(BackupVersionStates.Desconocida, result.Backups[2].VersionResguardo);
+
+        // Rediseño 2026-07-30 (§7 punto 1): el "por qué se guardó" viaja al DTO tal cual lo armó el motor.
+        Assert.Equal(BackupOriginLabels.AfterWipe, result.Backups[0].PorQueSeGuardo);
+        Assert.Equal(BackupOriginLabels.BeforeRestore, result.Backups[1].PorQueSeGuardo);
+        Assert.Equal(BackupOriginLabels.Manual, result.Backups[2].PorQueSeGuardo);
+    }
+
+    // ============================================================================================
+    // Paso en curso de la restauración total (rediseño 2026-07-30, §7 punto 2)
+    // ============================================================================================
+
+    /// <summary>
+    /// Los tres pasos se publican EN EL ORDEN EN QUE REALMENTE OCURREN (datos → resguardo → al día), que por
+    /// ADR-052 (D1.9) no es el del dibujo firmado: el resguardo del estado actual se toma DESPUÉS de comprobar
+    /// que el resguardo elegido se puede restaurar. La pantalla tiene que listarlos en este orden.
+    ///
+    /// <para>Este escenario llega hasta el ajuste de AFIP y ahí falla (InMemory no soporta SQL crudo), que es
+    /// justo lo que necesitamos: el tercer paso se publica APENAS termina el intercambio, así que para cuando
+    /// falla ya se publicaron los tres.</para>
+    /// </summary>
+    [Fact]
+    public async Task ModoTotal_PublicaLosTresPasosEnElOrdenRealYLosLimpiaAlTerminar()
+    {
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock();
+        var backupPortMock = NewHappyPathBackupPortMock();
+
+        var service = NewService(context, BuildUserManagerMock(), portMock, backupPortMock, maintenanceMode);
+
+        await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(
+                RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Equal(
+            new[] { RestoreProgressSteps.Datos, RestoreProgressSteps.Resguardo, RestoreProgressSteps.Actualizacion },
+            maintenanceMode.PublishedSteps);
+
+        // Al apagarse el mantenimiento no queda ningún paso colgado (si no, la pantalla seguiría mostrando
+        // "poniendo el sistema al día" para siempre).
+        Assert.Null(maintenanceMode.CurrentStep);
+    }
+
+    /// <summary>
+    /// Los tres pasos tienen un texto en criollo cerrado (no lo escribe el front) y ninguno filtra jerga
+    /// técnica (T-5/P-17).
+    /// </summary>
+    [Fact]
+    public void LosTresPasos_TienenTextoEnCriolloYNingunoFiltraJerga()
+    {
+        foreach (var paso in RestoreProgressSteps.All)
+        {
+            var texto = RestoreProgressSteps.TextFor(paso);
+
+            Assert.False(string.IsNullOrWhiteSpace(texto));
+            AssertSinInternals(texto!);
+            Assert.DoesNotContain("base de datos", texto!, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("esquema", texto!, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("dump", texto!, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Un código que no es de los tres NO tiene texto: nunca se muestra un valor crudo.
+        Assert.Null(RestoreProgressSteps.TextFor("cualquier-otra-cosa"));
+        Assert.Null(RestoreProgressSteps.TextFor(null));
+    }
+
+    /// <summary>Un rechazo ANTES de tocar nada no publica ningún paso: no hay nada en curso que mostrar.</summary>
+    [Fact]
+    public async Task ModoTotal_RechazadoPorElGateDeVersion_NoPublicaNingunPaso()
+    {
+        var context = NewContext();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewPortMock(RestoreSchemaVerdict.NewerThanSystem);
+
+        var service = NewService(
+            context, BuildUserManagerMock(), portMock, NewHappyPathBackupPortMock(), maintenanceMode);
+
+        await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
+            service.ExecuteRestoreAsync(
+                RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));
+
+        Assert.Empty(maintenanceMode.PublishedSteps);
     }
 }

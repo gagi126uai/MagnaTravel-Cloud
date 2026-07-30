@@ -341,7 +341,7 @@ test("construirResumenExitoWipe: NUNCA muestra el nombre tecnico del archivo de 
     });
     assert.equal(resumen.mensajeBackup.includes("wipe-20260727-101500.dump"), false);
     assert.equal(resumen.mensajeBackup.includes(".dump"), false);
-    assert.ok(resumen.mensajeBackup.includes("Volver atrás"));
+    assert.ok(resumen.mensajeBackup.includes("Copias de seguridad"));
     assert.ok(resumen.mensajeBackup.includes("FECHA(2026-07-27T22:33:00Z)"));
 });
 

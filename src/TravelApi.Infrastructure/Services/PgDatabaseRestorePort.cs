@@ -126,7 +126,11 @@ public class PgDatabaseRestorePort : IDatabaseRestorePort
                 : RestoreSchemaVerdictRules.ToVersionState(
                     RestoreSchemaVerdictRules.Evaluate(assemblyMigrations, dumpMigrations, liveHasPendingMigrations: false));
 
-            result.Add(new BackupFileInfo(info.Name, info.LastWriteTimeUtc, info.Length, versionState));
+            // Rediseño 2026-07-30 (§7 punto 1): el POR QUÉ se guardó sale del prefijo del nombre y se traduce
+            // ACÁ, del lado del servidor — el prefijo nunca cruza a la respuesta de la API (T-5).
+            var originLabel = BackupOriginRules.DescribeOrigin(info.Name);
+
+            result.Add(new BackupFileInfo(info.Name, info.LastWriteTimeUtc, info.Length, versionState, originLabel));
         }
 
         return result;

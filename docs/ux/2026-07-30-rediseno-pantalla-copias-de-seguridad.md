@@ -195,10 +195,18 @@ existe, con el texto corregido para que no prometa de más (P-20; ver pregunta P
         │             Estamos volviendo a la copia                   │
         │       del 27/07/2026 10:04. No cierres esta ventana.       │
         │                                                            │
-        │   ✓ Guardamos una copia de cómo está el sistema ahora      │
-        │   ◐ Trayendo los datos de la copia elegida                 │
+        │   ✓ Trayendo los datos de la copia elegida                 │
+        │   ◐ Guardamos una copia de cómo está el sistema ahora      │
         │   ○ Poniendo el sistema al día                             │
         └────────────────────────────────────────────────────────────┘
+```
+
+> **Ajuste 2026-07-30 (post-firma, orden real del motor):** el motor primero trae los datos a una
+> base aparte (sin tocar nada), DESPUÉS guarda la copia del estado actual y al final se pone al
+> día (ADR-052 D1.9: así no se gastan minutos de mantenimiento si el archivo estaba dañado).
+> La pantalla muestra ese orden real; los textos de cada paso no cambian.
+
+```
 ```
 
 Las otras dos acciones ("Ver qué contiene" / "Reponer configuración") **no** toman el sistema: su
@@ -494,9 +502,10 @@ dice "Volvemos en un minuto". ¿Qué querés que diga?**
            Estamos volviendo a la copia del 27/07/2026 10:04
                    No cierres esta ventana.
 
-     ✓ Guardamos una copia de cómo está el sistema ahora
-     ◐ Trayendo los datos de la copia elegida
+     ✓ Trayendo los datos de la copia elegida
+     ◐ Guardamos una copia de cómo está el sistema ahora
      ○ Poniendo el sistema al día
+     (orden real del motor — ver ajuste post-firma en §4.5)
 ```
   *Por qué: prometer "un minuto" y tardar cinco es exactamente el "mal feedback". Ver el paso te
   dice que está vivo.*

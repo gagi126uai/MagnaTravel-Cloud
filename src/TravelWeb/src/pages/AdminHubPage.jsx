@@ -29,7 +29,8 @@ import {
   TerminalSquare,
   Settings2,
   ShieldAlert,
-  Wrench
+  Wrench,
+  ShieldCheck
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
@@ -40,6 +41,7 @@ import OperationalFinanceSettingsTab from "../components/OperationalFinanceSetti
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
 import RolesPermissionsTab from "../components/RolesPermissionsTab";
 import MaintenanceTab from "../components/MaintenanceTab";
+import CopiasDeSeguridadTab from "../features/admin/components/CopiasDeSeguridadTab";
 import AuditPage from "./AuditPage";
 import { getPublicId } from "../lib/publicIds";
 
@@ -166,7 +168,8 @@ const tabs = [
   { id: "roles", label: "Roles y Permisos", icon: Shield },
   { id: "commissions", label: "Comisiones", icon: Briefcase },
   { id: "audit", label: "Auditoría Central", icon: ShieldAlert },
-  { id: "maintenance", label: "Mantenimiento", icon: Wrench }
+  { id: "maintenance", label: "Mantenimiento", icon: Wrench },
+  { id: "backups", label: "Copias de seguridad", icon: ShieldCheck }
 ];
 
 export default function AdminHubPage() {
@@ -236,7 +239,7 @@ export default function AdminHubPage() {
   const [showAdvancedBot, setShowAdvancedBot] = useState(false);
 
   const isTabVisible = (tabId) => {
-    if (["users", "roles", "logs", "programming", "maintenance"].includes(tabId)) {
+    if (["users", "roles", "logs", "programming", "maintenance", "backups"].includes(tabId)) {
       return adminUser;
     }
 
@@ -969,6 +972,9 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
 
         {/* --- MAINTENANCE TAB --- */}
         {activeTab === "maintenance" && <MaintenanceTab />}
+
+        {/* --- COPIAS DE SEGURIDAD TAB --- */}
+        {activeTab === "backups" && <CopiasDeSeguridadTab />}
     </div>
   );
 }

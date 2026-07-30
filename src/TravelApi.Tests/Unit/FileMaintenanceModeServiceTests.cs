@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using TravelApi.Application.DTOs;
 using TravelApi.Infrastructure.Services;
 using Xunit;
 
@@ -202,5 +203,82 @@ public class FileMaintenanceModeServiceTests : IDisposable
         timeProvider.Advance(TimeSpan.FromMinutes(10));
 
         Assert.True(service.IsActive);
+    }
+
+    // ============================================================================================
+    // Paso en curso (rediseño de la pantalla de resguardos, 2026-07-30, §7 punto 2)
+    // ============================================================================================
+
+    [Fact]
+    public void SetStep_PublicaElPasoYLoPersisteParaQueOtraInstanciaLoLea()
+    {
+        var service = NewService();
+        service.TryActivate("Restauración total del sistema en curso.");
+
+        // Recién activado no hay paso: los publica quien corre la operación, a medida que ocurren.
+        Assert.Null(service.CurrentStep);
+
+        service.SetStep(RestoreProgressSteps.Datos);
+        Assert.Equal(RestoreProgressSteps.Datos, service.CurrentStep);
+
+        service.SetStep(RestoreProgressSteps.Actualizacion);
+        Assert.Equal(RestoreProgressSteps.Actualizacion, service.CurrentStep);
+
+        // Mismo canal que ya usa el resto del estado: el archivo, así lo ve otro proceso (o este después de un reinicio).
+        var otraInstancia = NewService();
+        Assert.Equal(RestoreProgressSteps.Actualizacion, otraInstancia.CurrentStep);
+    }
+
+    [Fact]
+    public void SetStep_SinMantenimientoActivo_NoPublicaNada()
+    {
+        var service = NewService();
+
+        service.SetStep(RestoreProgressSteps.Datos);
+
+        Assert.Null(service.CurrentStep);
+    }
+
+    [Fact]
+    public void Deactivate_LimpiaElPaso()
+    {
+        var service = NewService();
+        service.TryActivate("Restauración total del sistema en curso.");
+        service.SetStep(RestoreProgressSteps.Actualizacion);
+
+        service.Deactivate();
+
+        Assert.Null(service.CurrentStep);
+    }
+
+    [Fact]
+    public void SuppressAutoExpiry_BorraElPaso_PorqueYaNoHayNadaAvanzando()
+    {
+        // Doble fallo (ADR-052 D4.5): el sistema queda esperando intervención humana. Dejar publicado el
+        // último paso haría que la pantalla siguiera diciendo "poniendo el sistema al día" para siempre.
+        var service = NewService();
+        service.TryActivate("Restauración total del sistema en curso.");
+        service.SetStep(RestoreProgressSteps.Actualizacion);
+
+        service.SuppressAutoExpiry("Requiere intervención manual.");
+
+        Assert.Null(service.CurrentStep);
+        Assert.True(service.IsActive);
+    }
+
+    [Fact]
+    public void ArchivoDeLaFormaVIEJA_SinElCampoDelPaso_SeLeeIgualSinRomperse()
+    {
+        // Trampa de framework: el campo "Step" se agregó al final del record DESPUÉS de que ya había archivos
+        // escritos con la forma vieja. System.Text.Json le pasa el valor por defecto a los parámetros que no
+        // encuentra en el JSON, así que un archivo viejo se lee perfecto y queda sin paso.
+        File.WriteAllText(
+            _tempFilePath,
+            """{"Active":true,"Reason":"Restauración total del sistema en curso.","SinceUtc":"2026-07-30T00:00:00Z","RequiresManualClear":true}""");
+
+        var service = NewService();
+
+        Assert.True(service.IsActive);
+        Assert.Null(service.CurrentStep);
     }
 }

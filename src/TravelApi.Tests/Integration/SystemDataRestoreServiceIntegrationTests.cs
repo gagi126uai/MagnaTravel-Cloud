@@ -358,8 +358,8 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
             AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None);
 
         Assert.Equal(RestoreModes.Total, result.Modo);
-        Assert.Equal("pre-restore-20260728-100000.dump", result.BackupPrevio);
-        Assert.Equal(ValidFileName, result.RestauradoDe);
+        // Fix de review (rediseño 2026-07-30): el DTO ya no manda BackupPrevio/RestauradoDe (nombres de
+        // dump crudos que el front nunca mostró) — lo que importa para el front es el mensaje en criollo.
         Assert.Contains("restauró todo el sistema", result.Mensaje);
         Assert.Contains("sesiones", result.Mensaje); // aviso de que sesiones/contraseñas tambien vuelven a ese dia.
         Assert.False(maintenanceMode.IsActive);

@@ -43,6 +43,32 @@ public static class BackupVersionStates
     public static readonly string[] All = { Actual, Anterior, Posterior, Desconocida };
 }
 
+/// <summary>
+/// Rediseño de la pantalla de resguardos (2026-07-30, firmado, §7 punto 1): las TRES frases posibles de la
+/// columna "Por qué se guardó". A diferencia de <see cref="BackupVersionStates"/> (que son códigos y la
+/// pantalla traduce), acá el motor manda la frase YA ESCRITA en criollo: el origen sale de un detalle interno
+/// (el prefijo con el que se bautizó el archivo) que no puede cruzar la frontera de la API (T-5), así que la
+/// traducción tiene que pasar del lado del servidor. Los textos son los FIRMADOS en el rediseño: no se
+/// reescriben ni se resumen (P-13).
+/// </summary>
+public static class BackupOriginLabels
+{
+    /// <summary>La copia la generó "Empezar de cero", justo antes de borrar.</summary>
+    public const string AfterWipe = "Antes de empezar de cero";
+
+    /// <summary>La copia la generó "Restaurar todo", como foto del estado anterior (el "deshacer el deshacer").</summary>
+    public const string BeforeRestore = "Antes de volver a una copia";
+
+    /// <summary>
+    /// Cualquier otro origen que el motor no pueda determinar (un archivo dejado a mano en el volumen, el
+    /// resguardo diario del sidecar, etc.). Es el valor por DEFECTO a propósito: un origen que no consta jamás
+    /// se adivina.
+    /// </summary>
+    public const string Manual = "Guardada a mano";
+
+    public static readonly string[] All = { AfterWipe, BeforeRestore, Manual };
+}
+
 /// <summary>Un backup disponible para restaurar, tal como lo va a ver el usuario en la lista (Parte B).</summary>
 public sealed class BackupFileSummaryDto
 {
@@ -55,6 +81,12 @@ public sealed class BackupFileSummaryDto
     /// migración ni conteos internos (T-5). La pantalla la usa para avisar; el motor decide aparte.
     /// </summary>
     public string VersionResguardo { get; set; } = BackupVersionStates.Desconocida;
+
+    /// <summary>
+    /// Rediseño 2026-07-30 (§7 punto 1): POR QUÉ se guardó esta copia, en criollo y listo para mostrar tal cual
+    /// (uno de <see cref="BackupOriginLabels"/>). Nunca el nombre del archivo ni su prefijo (T-5).
+    /// </summary>
+    public string PorQueSeGuardo { get; set; } = BackupOriginLabels.Manual;
 }
 
 /// <summary>Respuesta de <c>GET /admin/danger/backups</c>: lista de resguardos disponibles, mas nuevo primero.</summary>
@@ -131,13 +163,10 @@ public sealed class SystemDataRestoreResponse
     /// </summary>
     public string? Advertencia { get; set; }
 
-    /// <summary>
-    /// Modo <see cref="RestoreModes.Total"/>: nombre del backup que se generó AUTOMÁTICAMENTE del estado
-    /// ACTUAL (antes de sobrescribirlo) — es el "deshacer el deshacer": si la restauración total no era lo
-    /// que el usuario quería, este archivo permite volver a como estaba justo antes de ejecutarla.
-    /// </summary>
-    public string? BackupPrevio { get; set; }
-
-    /// <summary>Modo <see cref="RestoreModes.Total"/>: nombre del archivo de backup que se restauró.</summary>
-    public string? RestauradoDe { get; set; }
+    // Fix de review (rediseño 2026-07-30, hallazgo frontend-reviewer): este DTO tenía dos campos más,
+    // `BackupPrevio` y `RestauradoDe`, con el nombre CRUDO del archivo de dump (ej.
+    // "pre-restore-20260728-100000.dump"). El front nunca los mostró en pantalla (T-5: arma su propia
+    // etiqueta a partir del resguardo que el usuario eligió, no del nombre técnico) y, desde el rediseño de
+    // "Copias de seguridad", tampoco los lee para nada — se sacan de la respuesta en vez de mandar un nombre
+    // de archivo interno que no hace falta y que un futuro consumidor podría terminar mostrando por error.
 }

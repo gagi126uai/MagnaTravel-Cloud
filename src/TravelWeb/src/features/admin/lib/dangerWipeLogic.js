@@ -1,6 +1,7 @@
 /**
- * Lógica pura (sin React, sin fetch) de la pantalla "Empezar de cero" (Zona peligrosa,
- * Administración → Mantenimiento). Se usa desde EmpezarDeCeroModal.jsx.
+ * Lógica pura (sin React, sin fetch) del bloque "Empezar de cero" (solapa "Copias de
+ * seguridad" en Administración, rediseño 2026-07-30 — antes vivía en una ventana flotante
+ * dentro de Mantenimiento → Zona peligrosa). Se usa desde EmpezarDeCeroInline.jsx.
  *
  * Reglas del negocio que vive acá (para poder testearlas sin renderizar el modal):
  * - la frase de confirmación tiene que coincidir EXACTO, letra por letra (P-9/T-5:
@@ -177,7 +178,7 @@ export function construirDetalleConteoGrupoWipe(grupo, conteos) {
 
 /**
  * Arma la lista de los 7 grupos ya lista para pintar en pantalla: etiqueta, descripción,
- * y el detalle de conteo de cada uno. Es la fuente única que usa EmpezarDeCeroModal para
+ * y el detalle de conteo de cada uno. Es la fuente única que usa EmpezarDeCeroInline para
  * dibujar los checkboxes (no arma disponibilidad/bloqueo, eso lo resuelven las funciones
  * de dependencias de más abajo, que necesitan además saber qué tildó el usuario).
  *
@@ -434,11 +435,11 @@ export function construirConfirmacionEmpezarDeCero(gruposSeleccionados) {
  *
  * Fix de review (T-5, "nombre de archivo técnico"): el backend devuelve `backupArchivo`
  * como un nombre de archivo técnico (ej. "wipe-20260727-101500.dump") que NUNCA se muestra
- * en pantalla. En su lugar, se arma un mensaje que apunta a la pantalla "Volver atrás" con
- * la MISMA etiqueta de fecha que usa esa lista (ver `construirEtiquetaBackup` en
- * dangerRestoreLogic.js) — el `ahora`/`formatearFecha` se inyectan (en vez de usar
- * `new Date()` acá adentro) para que este armado siga siendo testeable sin depender del
- * reloj real ni de la zona horaria del entorno que corre los tests.
+ * en pantalla. En su lugar, se arma un mensaje que apunta a la solapa "Copias de seguridad"
+ * (rediseño 2026-07-30 — antes decía "Volver atrás") con la MISMA fecha que va a mostrar esa
+ * lista — el `ahora`/`formatearFecha` se inyectan (en vez de usar `new Date()` acá adentro)
+ * para que este armado siga siendo testeable sin depender del reloj real ni de la zona
+ * horaria del entorno que corre los tests.
  *
  * @param {object} params
  * @param {object} params.borrado - conteos de lo efectivamente borrado, mismo shape que el preview.
@@ -455,8 +456,9 @@ export function construirResumenExitoWipe({ borrado, backupArchivo, gruposBorrad
         ? "También se borró la configuración: antes de facturar hay que volver a cargar AFIP y las reglas de la agencia."
         : "La configuración de la agencia (AFIP, reglas, cuentas bancarias) se conservó tal cual estaba.";
 
+    // Fix de review (Guía P7=A, vocabulario de esta pantalla): "resguardo" → "copia".
     const mensajeBackup = backupArchivo && typeof formatearFecha === "function"
-        ? `El resguardo quedó guardado. Lo vas a encontrar en "Volver atrás" como "Resguardo del ${formatearFecha(ahora)}".`
+        ? `La copia quedó guardada. Lo vas a encontrar en "Copias de seguridad" con la fecha ${formatearFecha(ahora)}.`
         : null;
 
     return {

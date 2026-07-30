@@ -18,6 +18,27 @@ public sealed class RecordingMaintenanceModeService : IMaintenanceModeService
 
     public DateTime? SinceUtc { get; private set; }
 
+    public string? CurrentStep { get; private set; }
+
+    /// <summary>
+    /// Todos los pasos publicados, EN ORDEN: así el test puede verificar la secuencia, no solo el último. Van
+    /// en una lista APARTE de <see cref="Calls"/> a propósito: <see cref="Calls"/> es el ciclo de vida del
+    /// mantenimiento (activar/renovar/desactivar) y varios tests fijan su secuencia EXACTA — publicar un paso
+    /// no es un evento de ese ciclo de vida y no tiene por qué romperlos.
+    /// </summary>
+    public List<string> PublishedSteps { get; } = new();
+
+    public void SetStep(string step)
+    {
+        if (!IsActive)
+        {
+            return;
+        }
+
+        CurrentStep = step;
+        PublishedSteps.Add(step);
+    }
+
     /// <summary>Hallazgo B-N2(a): si true, esta sesión está exenta de la auto-expiración (nunca aplica en este fake, que no la simula — solo se graba para que los tests verifiquen que se pidió).</summary>
     public bool RequiresManualClear { get; private set; }
 
@@ -57,6 +78,7 @@ public sealed class RecordingMaintenanceModeService : IMaintenanceModeService
 
         Reason = reason;
         RequiresManualClear = true;
+        CurrentStep = null;
         Calls.Add(nameof(SuppressAutoExpiry));
     }
 
@@ -66,6 +88,7 @@ public sealed class RecordingMaintenanceModeService : IMaintenanceModeService
         Reason = null;
         SinceUtc = null;
         RequiresManualClear = false;
+        CurrentStep = null;
         Calls.Add(nameof(Deactivate));
     }
 }

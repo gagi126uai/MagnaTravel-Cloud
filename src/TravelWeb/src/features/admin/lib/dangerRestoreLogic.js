@@ -1,24 +1,22 @@
 /**
- * Lógica pura (sin React, sin fetch) de "Volver atrás" (Zona peligrosa, Administración →
- * Mantenimiento, obra 2026-07-27 Parte B "restaurar desde la app", firma del dueño "el
- * usuario tiene que poder volver atrás"). Se usa desde RestaurarResguardoModal.jsx.
+ * Lógica pura (sin React, sin fetch) de la solapa "Copias de seguridad" (Administración,
+ * rediseño 2026-07-30 — antes vivía en una ventana flotante dentro de Mantenimiento → Zona
+ * peligrosa → "Volver atrás"). Se usa desde CopiasDeSeguridadTab.jsx y sus fichas.
  *
- * TRES modos de restauración, bien distintos en alcance (esto lo decide el motor, acá solo
- * se arman los textos y las validaciones de habilitación):
- * - "prueba" (botón "Ver qué contiene"): restaura el resguardo COMPLETO a una base
+ * TRES acciones sobre un resguardo elegido, bien distintas en alcance (esto lo decide el
+ * motor, acá solo se arman los textos y las validaciones de habilitación):
+ * - "prueba" (link chico "Ver qué contiene"): restaura el resguardo COMPLETO a una base
  *   separada, de mentira, cuenta lo que trae y la borra. Sirve para comprobar "¿este
  *   resguardo tiene lo que necesito?" sin tocar los datos reales.
- * - "real" (botón "Restaurar configuración"): restaura SOLO la configuración de la
+ * - "real" (link chico "Reponer configuración"): restaura SOLO la configuración de la
  *   agencia (AFIP, políticas, bot de WhatsApp, reglas de multas/comisiones) sobre los
  *   datos reales, y solo si esas partes están vacías ahora mismo.
- * - "total" (botón "Restaurar todo", obra 2026-07-27 "Restaurar todo desde la app"):
- *   devuelve TODO el sistema al estado del resguardo elegido. A diferencia de los otros
- *   dos modos, mientras esta restauración corre el motor tumba TODA la API con 503
- *   ({code: "MAINTENANCE"}) — por eso este modo prende la pantalla de mantenimiento
- *   global (ver maintenanceState.js y MaintenanceScreen.jsx) apenas se confirma. Además,
- *   por ser la operación más destructiva del sistema, el motor exige un motivo (mínimo
- *   10 caracteres) de por qué se ejecuta — bug reportado por el dueño 2026-07-28: esto ya
- *   se exigía en el motor pero la pantalla nunca tuvo el campo para cargarlo.
+ * - "total" (botón principal "Volver a esta copia", ex "Restaurar todo"): devuelve TODO el
+ *   sistema al estado del resguardo elegido. A diferencia de los otros dos modos, mientras
+ *   esta restauración corre el motor tumba TODA la API con 503 ({code: "MAINTENANCE"}) —
+ *   por eso este modo prende la pantalla de mantenimiento global (ver maintenanceState.js y
+ *   MaintenanceScreen.jsx) apenas se confirma. Además, por ser la operación más destructiva
+ *   del sistema, el motor exige un motivo (mínimo 10 caracteres) de por qué se ejecuta.
  *
  * T-5 (nunca nombres técnicos en pantalla): el PEDIDO (POST /restore) todavía manda los 5
  * nombres técnicos de tabla en `tablas` (son la lista blanca que valida el backend contra
@@ -184,11 +182,14 @@ export function construirAvisoVersionResguardo(versionResguardo) {
             return {
                 color: "ambar",
                 titulo: "Este resguardo es más viejo que el sistema de hoy.",
+                // Fix de review (item 12, firmado por Gastón el 2026-07-30): SOLO se actualiza la mención
+                // del nombre del botón ("Restaurar todo" → "Volver a esta copia", el nombre nuevo de la
+                // acción principal). El resto del aviso queda palabra por palabra, sin tocar.
                 texto:
                     "Se puede usar igual: primero se traen los datos y después el sistema se pone al " +
                     "día solo. Puede tardar un poco más de lo normal. Si ese último paso falla, el " +
                     "sistema vuelve solo a como está ahora, sin perder nada. Esto vale para " +
-                    "\"Restaurar todo\": las otras dos acciones pueden avisarte que este resguardo no " +
+                    "\"Volver a esta copia\": las otras dos acciones pueden avisarte que este resguardo no " +
                     "les sirve.",
             };
         case VERSION_RESGUARDO_POSTERIOR:
@@ -260,12 +261,12 @@ export function motivoRestaurarTodoEsValido(motivo) {
 }
 
 /**
- * Motivo por el que el botón "Restaurar todo" en particular sigue apagado, en el mismo
- * criterio "prohibido tooltip" (P-9) que `construirMotivoRestoreDeshabilitado`. A diferencia
- * de aquel (compartido por los tres botones: resguardo/frase/contraseña), este helper es
- * SOLO el delta extra que exige el modo "total" — el motivo del porqué. El componente decide
- * cuándo conviene mostrar este texto (nunca junto al motivo genérico de los tres botones, así
- * no queda duplicado): acá no hace falta saber nada de ese otro gate.
+ * Motivo por el que el botón principal ("Volver a esta copia", el ex "Restaurar todo") sigue
+ * apagado, en el mismo criterio "prohibido tooltip" (P-9) que `construirMotivoRestoreDeshabilitado`.
+ * A diferencia de aquel (compartido por las tres acciones: resguardo/frase/contraseña), este
+ * helper es SOLO el delta extra que exige el modo "total" — el motivo del porqué. El componente
+ * decide cuándo conviene mostrar este texto (nunca junto al motivo genérico de las tres
+ * acciones, así no queda duplicado): acá no hace falta saber nada de ese otro gate.
  *
  * Fix de review (B4): antes esta función recibía también `motivoAccionDeshabilitada` y lo
  * reenviaba tal cual cuando estaba presente — una rama que nunca se alcanzaba en la práctica,
@@ -273,15 +274,111 @@ export function motivoRestaurarTodoEsValido(motivo) {
  * siquiera mirar este valor. Se saca esa rama muerta y el helper queda como lo que
  * realmente es: la validación del motivo, nada más.
  *
- * @param {string} motivoRestaurarTodo - lo que el usuario tipeó en "¿Por qué restaurás?".
+ * Rediseño 2026-07-30 (P7=A): el texto nombra el botón con su nombre NUEVO ("Volver a esta
+ * copia"), porque en la pantalla vieja decía "Restaurar todo" y ese botón ya no existe así.
+ *
+ * @param {string} motivoRestaurarTodo - lo que el usuario tipeó en "¿Por qué volvés a esta copia?".
  * @returns {string|null}
  */
 export function construirMotivoRestaurarTodoDeshabilitado(motivoRestaurarTodo) {
     if (motivoRestaurarTodoEsValido(motivoRestaurarTodo)) return null;
-    // Fix de review (B2/P-9): el hint vive debajo de una fila de TRES botones — sin nombrar
-    // la acción, el admin no sabe a cuál de los tres se refiere. Unificamos "caracteres" acá
-    // (antes decía "letras"), igual que el error inline de este mismo campo.
-    return `Para "Restaurar todo" falta escribir el motivo (mínimo ${MOTIVO_RESTAURAR_TODO_MIN_LENGTH} caracteres).`;
+    // Fix de review (B2/P-9): el hint vive debajo de la acción principal — sin nombrarla, el
+    // admin no sabe a qué botón se refiere. Unificamos "caracteres" acá (antes decía "letras"),
+    // igual que el error inline de este mismo campo.
+    return `Para "Volver a esta copia" falta escribir el motivo (mínimo ${MOTIVO_RESTAURAR_TODO_MIN_LENGTH} caracteres).`;
+}
+
+/**
+ * Texto fijo de la marca roja que queda pegada a la ficha de una copia cuando el motor
+ * rechaza la acción (rediseño 2026-07-30 §4.7/P10=A). No es el mensaje del motor (ese va
+ * TAL CUAL dentro del Cartel emergente, P-13) — es solo el rótulo corto de la ficha que
+ * invita a releerlo con "Ver el motivo". Cambia según qué acción falló, para no decir "no
+ * se cambió nada" en una acción que de entrada no cambia nada real (Ver qué contiene).
+ *
+ * @param {"prueba"|"real"|"total"} modo
+ * @returns {string}
+ */
+export function construirTextoMarcaRechazo(modo) {
+    if (modo === RESTORE_MODO_TOTAL) return "No se pudo volver a esta copia. No se cambió nada.";
+    if (modo === RESTORE_MODO_REAL) return "No se pudo reponer la configuración desde esta copia. No se cambió nada.";
+    return "No se pudo ver el contenido de esta copia.";
+}
+
+// Rediseño 2026-07-30 (§4.5, ajuste post-firma): ORDEN REAL en el que el motor hace los 3
+// pasos de "Volver a esta copia" — primero trae los datos a una base aparte (sin tocar nada
+// real todavía), RECIÉN DESPUÉS guarda el resguardo del estado actual (así, si el archivo
+// elegido está roto, no se gastan minutos de mantenimiento al pedo) y al final actualiza el
+// sistema. Mismo orden y mismos 3 códigos que el backend (TravelApi.Application.DTOs.
+// RestoreProgressSteps) — el texto de cada paso es el mismo que el motor ya manda cuando le
+// toca ser el paso EN CURSO (acá queda repetido para poder pintar, en negro, los pasos que
+// YA pasaron y los que todavía faltan, que el motor no manda).
+export const PASO_RESTORE_DATOS = "datos";
+export const PASO_RESTORE_RESGUARDO = "resguardo";
+export const PASO_RESTORE_ACTUALIZACION = "actualizacion";
+
+const ORDEN_PASOS_RESTORE_TOTAL = [
+    { codigo: PASO_RESTORE_DATOS, texto: "Trayendo los datos de la copia elegida" },
+    { codigo: PASO_RESTORE_RESGUARDO, texto: "Guardamos una copia de cómo está el sistema ahora" },
+    { codigo: PASO_RESTORE_ACTUALIZACION, texto: "Poniendo el sistema al día" },
+];
+
+/**
+ * Arma la checklist de 3 pasos de la pantalla de espera de "Volver a esta copia" (única
+ * operación del producto donde el usuario no puede seguir trabajando mientras corre, spec
+ * 2026-07-30 §4.5). El CÓDIGO de cada paso (que manda el motor en `GET /system/status`)
+ * decide el orden (fijo) y el estado de cada línea: "done" (✓) para los que ya pasaron,
+ * "doing" (◐) para el que está en curso, "pending" (○) para los que faltan.
+ *
+ * El TEXTO del paso en curso se toma de `pasoTexto` (lo que manda el motor, P-13: nunca se
+ * reescribe); los demás usan el mismo texto fijo de arriba — es el MISMO texto que el motor
+ * ya mostró (o va a mostrar) cuando a ellos les tocó ser el paso actual, no una redacción
+ * propia del front.
+ *
+ * Si `paso` es `null` o no es ninguno de los 3 códigos conocidos (sin restauración en curso,
+ * o un valor viejo que este front todavía no contempla), NINGÚN paso se marca — spec 8A: "si
+ * paso es null, checklist sin estado marcado", todo en "pending".
+ *
+ * @param {{paso: string|null|undefined, pasoTexto: string|null|undefined}} estado
+ * @returns {{codigo: string, texto: string, estado: "done"|"doing"|"pending"}[]}
+ */
+export function construirPasosEsperaRestoreTotal({ paso, pasoTexto } = {}) {
+    const indiceActual = ORDEN_PASOS_RESTORE_TOTAL.findIndex((item) => item.codigo === paso);
+
+    return ORDEN_PASOS_RESTORE_TOTAL.map((item, indice) => {
+        if (indiceActual === -1) {
+            return { codigo: item.codigo, texto: item.texto, estado: "pending" };
+        }
+        if (indice < indiceActual) {
+            return { codigo: item.codigo, texto: item.texto, estado: "done" };
+        }
+        if (indice === indiceActual) {
+            return { codigo: item.codigo, texto: pasoTexto || item.texto, estado: "doing" };
+        }
+        return { codigo: item.codigo, texto: item.texto, estado: "pending" };
+    });
+}
+
+// Rediseño 2026-07-30 (§7 punto 1): los 3 valores exactos que manda el motor en
+// `porQueSeGuardo` (GET /admin/danger/backups), calcados de BackupOriginLabels en el backend
+// (TravelApi.Application.DTOs.SystemDataRestoreDtos.cs). "Guardada a mano" es el default del
+// propio backend para cualquier origen que no pueda determinar.
+export const ORIGEN_BACKUP_EMPEZAR_DE_CERO = "Antes de empezar de cero";
+export const ORIGEN_BACKUP_VOLVER_A_COPIA = "Antes de volver a una copia";
+export const ORIGEN_BACKUP_MANUAL = "Guardada a mano";
+
+/**
+ * Fix de review (mismo criterio que `normalizarVersionResguardo`): el motor ya manda
+ * `porQueSeGuardo` traducido en criollo, pero acá se normaliza contra la lista blanca de las
+ * 3 frases firmadas — un valor que no sea ninguna de esas tres (API vieja, caché, un origen
+ * nuevo que este front todavía no contempla, vacío o ausente) cae SIEMPRE en "Guardada a
+ * mano", nunca se muestra tal cual un texto que no reconocemos.
+ *
+ * @param {string|null|undefined} porQueSeGuardo
+ * @returns {string}
+ */
+export function resolverPorQueSeGuardo(porQueSeGuardo) {
+    const valoresConocidos = [ORIGEN_BACKUP_EMPEZAR_DE_CERO, ORIGEN_BACKUP_VOLVER_A_COPIA, ORIGEN_BACKUP_MANUAL];
+    return valoresConocidos.includes(porQueSeGuardo) ? porQueSeGuardo : ORIGEN_BACKUP_MANUAL;
 }
 
 /**
@@ -345,28 +442,6 @@ export function construirConfirmacionRestore(modo, { fechaBackup, versionResguar
         confirmText: "Sí, ver contenido",
         confirmColor: "indigo",
     };
-}
-
-/**
- * Explicación fija de qué hace cada acción de este modal, para el hallazgo del dueño
- * "tampoco deja en claro cómo lo hace o qué conecta". Se muestra siempre, arriba de los
- * botones, antes de que el usuario toque nada. No depende de ningún dato de la pantalla
- * (es texto fijo) pero vive acá — no hardcodeado en el JSX — para poder testearlo igual
- * que el resto de los textos de esta pantalla, y para que quien lo cambie tenga que
- * pensarlo como un texto de negocio, no como un detalle visual suelto.
- *
- * Fix de review (unificación 2026-07-27, firmado): "Ver qué contiene" pasó a hacer lo mismo
- * que antes hacía "Probar en una copia" (esa acción por separado desapareció, era lo mismo
- * con otro nombre), y se agregó "Restaurar todo".
- *
- * @returns {string[]}
- */
-export function construirExplicacionAccionesRestore() {
-    return [
-        "Ver qué contiene: arma una copia de prueba con este resguardo, te muestra el detalle y la borra al terminar. Pide la frase y la contraseña de abajo para confirmar.",
-        "Restaurar configuración: repone en el sistema real solo las partes de configuración que estén vacías.",
-        "Restaurar todo: vuelve TODO el sistema al estado de este resguardo. Antes guarda un resguardo del estado actual.",
-    ];
 }
 
 /**
@@ -441,10 +516,13 @@ export function construirResumenExitoPruebaRestore({ conteos, advertencia }) {
     const filas = construirFilasConteosWipe(conteos).filter((fila) => fila.cantidad > 0);
 
     return {
-        encabezado: "Esto es lo que contiene el resguardo:",
+        // Fix de review (Guía P7=A, vocabulario de esta pantalla): "resguardo" → "copia" — este texto es
+        // propio de la pantalla nueva (no es un literal firmado ADR-052 ni un "¿Seguro?"), así que sigue el
+        // vocabulario nuevo de "Copias de seguridad".
+        encabezado: "Esto es lo que contiene la copia:",
         filas,
         sinDatos: filas.length === 0,
-        mensajeSinDatos: "El resguardo no tiene datos de negocio cargados.",
+        mensajeSinDatos: "La copia no tiene datos de negocio cargados.",
         comoSeHizo:
             "Cómo se hizo: armamos una copia aparte de tu base, le cargamos el resguardo, contamos lo que " +
             "tiene y borramos la copia. Tus datos no se tocaron en ningún momento.",

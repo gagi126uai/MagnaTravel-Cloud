@@ -12,12 +12,19 @@ namespace TravelApi.Application.Interfaces;
 /// camino que se olvide de calcularlo NUNCA puede terminar diciendo "actual"). Esta marca JAMÁS habilita ni
 /// bloquea una restauración: el único veredicto que frena algo es el gate autoritativo del puerto
 /// (<see cref="IDatabaseRestorePort.CheckSchemaCompatibilityAsync"/>).</para>
+///
+/// <para><b>Rediseño de la pantalla de resguardos (2026-07-30, firmado, §7 punto 1)</b>:
+/// <paramref name="OriginLabel"/> es el POR QUÉ se guardó esta copia, YA traducido a criollo por el motor (ver
+/// <c>BackupOriginRules</c>). Viaja como frase lista para mostrar; el prefijo del archivo del que se deriva se
+/// queda del lado del servidor (T-5). El default es "guardada a mano" a propósito: un origen que no consta
+/// nunca se adivina.</para>
 /// </summary>
 public sealed record BackupFileInfo(
     string FileName,
     DateTime LastWriteTimeUtc,
     long SizeBytes,
-    string VersionState = BackupVersionStates.Desconocida);
+    string VersionState = BackupVersionStates.Desconocida,
+    string OriginLabel = BackupOriginLabels.Manual);
 
 /// <summary>
 /// Resultado de validar un backup con <c>pg_restore --list</c> (lee el índice del archivo, NO restaura nada).

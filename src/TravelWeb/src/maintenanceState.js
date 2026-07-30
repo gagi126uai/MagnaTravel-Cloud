@@ -6,7 +6,7 @@ import { useSyncExternalStore } from "react";
  * para que CUALQUIER parte de la app pueda prenderlo — incluido api.js, que no es un
  * componente y no puede usar Context/Provider.
  *
- * Se prende de DOS formas (ver App.jsx y RestaurarResguardoModal.jsx):
+ * Se prende de DOS formas (ver App.jsx y RestoreBackupFicha.jsx):
  *  a) El admin que ejecuta "Restaurar todo" lo prende de entrada, apenas confirma la acción
  *     (no espera a que la API le devuelva un 503 para recién ahí avisar).
  *  b) api.js lo prende automáticamente cuando CUALQUIER pedido a la API responde 503 con
@@ -22,6 +22,12 @@ import { useSyncExternalStore } from "react";
  * usuario que llegó acá porque un pedido suyo chocó con el 503 (caso b), no hay ningún
  * resumen que mostrar — ahí sí conviene recargar entero apenas el sistema vuelve, para no
  * quedarse con pantallas armadas con datos de antes de la restauración.
+ *
+ * fechaResguardo (rediseño 2026-07-30 §4.5): SOLO quien dispara "Volver a esta copia" en
+ * esta pestaña conoce, de antemano, la fecha del resguardo elegido (la vio en la lista antes
+ * de tocar el botón) — por eso solo el caso (a) la manda. Cualquier OTRO usuario que cae acá
+ * por el caso (b) nunca la tiene: MaintenanceScreen.jsx muestra un título genérico en ese
+ * caso, en vez de inventar o adivinar una fecha que no le consta.
  */
 
 const listeners = new Set();
@@ -29,6 +35,7 @@ const listeners = new Set();
 let maintenanceState = {
   active: false,
   awaitingLocalResult: false,
+  fechaResguardo: null,
 };
 
 function emitChange() {
@@ -50,7 +57,7 @@ export function useMaintenanceState() {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-export function activateMaintenance({ awaitingLocalResult = false } = {}) {
+export function activateMaintenance({ awaitingLocalResult = false, fechaResguardo = null } = {}) {
   maintenanceState = {
     active: true,
     // OR, nunca sobreescribir con AND: si esta pestaña ya estaba esperando el resumen de
@@ -58,12 +65,14 @@ export function activateMaintenance({ awaitingLocalResult = false } = {}) {
     // chocó con el 503 en el medio (ej. un fetch de background de otra pantalla abierta)
     // no puede "bajar" esa bandera y hacer que después se dispare un reload de más.
     awaitingLocalResult: maintenanceState.awaitingLocalResult || awaitingLocalResult,
+    // Mismo criterio: no pisar con null una fecha que ya se había guardado.
+    fechaResguardo: fechaResguardo || maintenanceState.fechaResguardo,
   };
   emitChange();
 }
 
 export function deactivateMaintenance() {
-  maintenanceState = { active: false, awaitingLocalResult: false };
+  maintenanceState = { active: false, awaitingLocalResult: false, fechaResguardo: null };
   emitChange();
 }
 
