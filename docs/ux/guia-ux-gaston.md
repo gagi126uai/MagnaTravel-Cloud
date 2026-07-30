@@ -2031,3 +2031,100 @@ se pone al día solo."*
     al equipo técnico."
   - *desconocida* (gris, neutro): "**No pudimos determinar de qué versión es este resguardo.**
     Podés intentar igual: si no se puede usar, te lo avisamos antes de tocar nada."
+
+## Copias de seguridad — rediseño de "Volver atrás" (2026-07-30, respuestas de Gastón P1..P12 = A)
+
+> **Origen:** Gastón probó la pantalla en vivo y la rechazó de plano: *"no me gusta nada como está
+> hecho esto, es confuso y raro"*, *"la ux/ui es la peor que vi en mi vida"*, *"el modal es un asco,
+> yo no le pondría modal"*, *"da un mal feedback, no me cierra"*, *"es un horror, es un cáncer
+> visual"*. La función vivía en una ventana flotante grande y, al fallar, abría OTRA ventana encima.
+> Se le hicieron 12 preguntas con dibujos: **respondió las 12 con la opción recomendada (1A a 12A)**
+> y además **miró la maqueta interactiva de la pantalla nueva y le gustó**. Spec completa con todos
+> los dibujos: `docs/ux/2026-07-30-rediseno-pantalla-copias-de-seguridad.md` (esa spec es la que
+> sigue el frontend; esta sección es la fuente de verdad de las decisiones).
+
+**⚠️ Lo firmado el 2026-07-29 (ADR-052) NO CAMBIA: solo se MUEVE DE LUGAR.** Los textos literales de
+los tres carteles de versión (ámbar/rosa/gris), los tres badges ("Versión anterior" / "Versión más
+nueva" / "Versión desconocida"), los tres "¿Seguro?" y la línea extra del "¿Seguro?" cuando la copia
+es más vieja **quedan palabra por palabra como están**. Sigue valiendo que **ningún botón se apaga
+por la marca de versión** y que el único freno real es el chequeo del motor. Este rediseño cambia
+DÓNDE viven esos textos, nunca QUÉ dicen.
+
+- **(2026-07-30, P1=A) Solapa propia "Copias de seguridad" en Administración; adentro NO hay ninguna
+  ventana flotante.** Se suma como sexta solapa (Usuarios · Roles y Permisos · Comisiones · Auditoría
+  Central · Mantenimiento · **Copias de seguridad**). La solapa Mantenimiento queda solo con el
+  trabajo de todos los días (Lifecycle de reservas). Sigue siendo pantalla de Admin, como hasta hoy.
+
+- **(2026-07-30, P2=A) "Empezar de cero" se muda a esa misma solapa y también deja de ser ventana.**
+  Son la misma familia (una borra y guarda copia, la otra vuelve a la copia): tenerlas en dos
+  lugares y con dos formas distintas confunde. Dentro de la solapa quedan dos bloques: "Volver a una
+  copia" (la lista) y "Empezar de cero".
+
+- **(2026-07-30, P3=A) La lista de copias es una TABLA con columnas y un botón por fila.** Columnas:
+  **Cuándo se guardó · Por qué se guardó · Tamaño**, y a la derecha de cada fila el botón
+  **"Usar esta"**. Se terminan los botoncitos redondos de elegir (radio) y el renglón corrido tipo
+  formulario. **El badge de versión va en la misma fila** (ya firmado 2026-07-29, P3=A "con el badge
+  alcanza") y **la fila nunca se atenúa ni se apaga por eso**.
+
+- **(2026-07-30, P4=A) Columna "Por qué se guardó", en criollo.** Cada copia dice para qué nació:
+  **"Antes de empezar de cero" / "Antes de volver a una copia" / "Guardada a mano"**. En una
+  emergencia, saber cuál es "la de antes del desastre" es lo primero que se busca. **El texto lo
+  manda el motor ya traducido** (nunca el nombre del archivo ni nada técnico — T-5).
+
+- **(2026-07-30, P5=A) Antigüedad: fecha y hora completas + "hace cuánto" debajo.** Ej.
+  `29/07/2026 22:33` y debajo, chiquito, `hace 1 día`. Formato argentino y **hora argentina siempre**
+  (P-2, T-14). Es el mismo recurso ya usado en las bandejas (2026-07-08: "reserva · qué falta · hace
+  cuánto").
+
+- **(2026-07-30, P6=A) Una acción principal y dos secundarias chicas.** El botón grande es
+  **"Volver a esta copia"** (lo que hoy se llama "Restaurar todo"); **"Ver qué contiene"** y
+  **"Reponer configuración"** quedan como acciones chiquitas al costado. Se terminan los tres
+  botones del mismo tamaño: el 95% de las veces se quiere volver a la copia entera, y los casos
+  raros no pueden competir con el camino normal.
+
+- **(2026-07-30, P7=A) Renombres.** La función se llama **"Copias de seguridad"** (nombre de la
+  solapa) y el botón final **"Volver a esta copia"**. Muere el nombre **"Volver atrás"** para esta
+  función: esas mismas palabras ya significan otra cosa en el producto (retroceder una reserva de
+  etapa, 2026-06-08) y usarlas para dos cosas distintas confunde. En los textos de la pantalla se
+  habla de **"copia"**, no de "resguardo".
+
+- **(2026-07-30, P8=A) La pantalla de espera NO promete tiempo y muestra en qué paso va.** Se saca el
+  "Volvemos en un minuto" (prometer un minuto y tardar cinco es exactamente el mal feedback). Queda:
+  *"Estamos volviendo a la copia del {fecha}. No cierres esta ventana."* + los pasos con su tilde
+  (✓ guardamos una copia de cómo está el sistema ahora · ◐ trayendo los datos de la copia elegida ·
+  ○ poniendo el sistema al día). **Sin jerga**: nada de "esquema", "migración" ni "base de datos"
+  (P-17). Las otras dos acciones no toman el sistema: su espera sigue siendo el botón con
+  "Buscando…" / "Reponiendo…". *(El paso en curso lo tiene que mandar el motor; si no está, va el
+  mismo texto sin los pasos.)*
+
+- **(2026-07-30, P9=A) Éxito: cartel verde arriba de la lista, en la misma página.** No hay ventana
+  de "listo" que haya que cerrar. El cartel dice que el sistema volvió a la fecha de esa copia, que
+  se guardó una copia de cómo estaba hasta recién (y que es la primera de la lista) y que los demás
+  usuarios van a tener que volver a entrar. La lista se refresca sola debajo. Mismo patrón ya
+  firmado en H2 (2026-06-24): PROCESANDO → ÉXITO → RECHAZO, todo en línea.
+
+- **(2026-07-30, P10=A) Rechazo del motor: el cartel emergente único, y al cerrarlo queda una marca
+  roja pegada a esa copia.** Primero el **Cartel emergente único en rojo** con el motivo **tal cual
+  lo manda el motor** (P-4, P-13) — nunca una segunda ventana encima de otra. Al cerrarlo, la ficha
+  de esa copia **queda abierta con todo lo cargado intacto** (P-7) y con la línea roja fija:
+  **"No se pudo volver a esta copia. No se cambió nada. [Ver el motivo]"**, que reabre el mismo
+  cartel. Así el error queda pegado a lo que lo causó y no se pierde de vista al cerrar (P-6).
+
+- **(2026-07-30, P11=A) La frase, la contraseña y el motivo se escriben EN LÍNEA, dentro de la ficha
+  de la copia elegida.** Al tocar "Usar esta", debajo de esa fila se abre la ficha de trabajo (P-5)
+  con: el aviso de versión (si corresponde), **"Escribí RESTAURAR TODO"**, **"Tu contraseña"** y
+  **"¿Por qué volvés a esta copia?"** (obligatorio solo para "Volver a esta copia", como hasta hoy).
+  El **"¿Seguro?" queda como la ÚNICA ventana de todo el flujo**. Esto **no agrega ningún paso**: es
+  la confirmación de siempre (frase + contraseña + motivo ≥10), fiel a lo firmado el 2026-07-29.
+  Solo puede haber **una ficha abierta a la vez**. El motivo por el que un botón está apagado va
+  **siempre a la vista, debajo, nombrando la acción** (P-9/P-10, nunca tooltip).
+
+- **(2026-07-30, P12=A) Se ELIMINA el bloque "Qué hace cada acción" (las tres viñetas).** Si un botón
+  necesita un párrafo al lado para entenderse, el problema es el botón (P-15). Cada acción se explica
+  **en su propio "¿Seguro?"**, que es donde importa: justo antes de apretar, no antes de elegir. Los
+  textos de esos tres "¿Seguro?" ya existen y no cambian.
+
+- **(2026-07-30) Estados de la pantalla, completos:** cargando ("Buscando las copias guardadas…") ·
+  vacío ("Todavía no hay ninguna copia guardada") · **no se pudo traer la lista → cartel rojo CON
+  botón "Probar de nuevo"** (hoy no tenía salida: había que cerrar y volver a abrir) · en proceso ·
+  éxito · rechazo. Nunca un globito que se va solo para un error (P-6).
