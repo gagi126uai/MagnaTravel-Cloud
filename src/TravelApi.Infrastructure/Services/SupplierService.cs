@@ -5,6 +5,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -228,6 +229,17 @@ public class SupplierService : ISupplierService
             throw new ArgumentException("El nombre del proveedor es requerido.");
         }
 
+        // Hallazgo H2 (barrido E2E 2026-07-25), extension a operadores: el alta de proveedor aceptaba
+        // CUALQUIER numero de 11 digitos como CUIT aunque el digito verificador no cerrara. Mismo riesgo
+        // que en el cliente: ese CUIT viaja despues a la liquidacion del operador y a los papeles de la
+        // agencia. Se usa EL MISMO validador y EL MISMO mensaje que en CustomerService — una sola regla
+        // de CUIT para todo el sistema. Un TaxId vacio sigue siendo valido (hay operadores sin CUIT
+        // cargado, sobre todo los del exterior).
+        if (!CuitValidator.IsValidOrEmpty(supplier.TaxId))
+        {
+            throw new ArgumentException(CuitValidator.InvalidCuitMessage);
+        }
+
         // ADR-041 TANDA 5: el plazo de pago es opcional, pero si viene no puede ser negativo (un plazo
         // negativo no tiene sentido y daria un vencimiento sugerido anterior a la compra).
         ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
@@ -312,6 +324,19 @@ public class SupplierService : ISupplierService
 
         var taxIdChanged = !string.Equals(existing.TaxId, supplier.TaxId, StringComparison.Ordinal);
         var taxConditionChanged = !string.Equals(existing.TaxCondition, incomingTaxCondition, StringComparison.Ordinal);
+
+        // Hallazgo H2 (barrido E2E 2026-07-25), extension a operadores: mismo bloqueo que el alta, pero SOLO
+        // cuando el CUIT realmente cambia en este PUT. Si no se toco, no lo re-validamos: bloquear ediciones
+        // NO relacionadas (ej. cambiar el telefono del operador) por un CUIT viejo mal cargado ANTES de este
+        // fix seria una sorpresa desproporcionada. La primera vez que alguien intente poner o corregir un CUIT
+        // invalido, ahi si se bloquea. Identico criterio que CustomerService.UpdateCustomerAsync.
+        //
+        // Va ANTES del guard fiscal de abajo (validate-before-mutate): si el CUIT esta mal escrito ni siquiera
+        // llegamos a preguntar si el operador tiene facturas vivas — el mensaje util es "corregi el numero".
+        if (taxIdChanged && !CuitValidator.IsValidOrEmpty(supplier.TaxId))
+        {
+            throw new ArgumentException(CuitValidator.InvalidCuitMessage);
+        }
 
         if (taxIdChanged)
         {

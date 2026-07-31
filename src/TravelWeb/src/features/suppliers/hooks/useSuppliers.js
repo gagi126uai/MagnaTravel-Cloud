@@ -3,7 +3,7 @@ import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
-import { isDatabaseUnavailableError } from "../../../lib/errors";
+import { isDatabaseUnavailableError, getApiErrorMessage } from "../../../lib/errors";
 
 const emptyPage = {
     items: [],
@@ -77,7 +77,9 @@ export function useSuppliers() {
             return true;
         } catch (error) {
             console.error("Error saving supplier:", error);
-            showError("No se pudo guardar el proveedor");
+            // El motor puede rechazar con un motivo puntual (ej. CUIT inválido): se muestra
+            // ese texto; el genérico queda solo de respaldo.
+            showError(getApiErrorMessage(error, "No se pudo guardar el proveedor"));
             return false;
         }
     };

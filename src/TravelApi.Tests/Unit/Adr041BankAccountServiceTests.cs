@@ -83,7 +83,10 @@ public class Adr041BankAccountServiceTests
             Currency: currency,
             Bank: "Banco Nacion",
             AccountType: BankAccountType.CuentaCorriente,
-            HolderTaxId: "30123456789",
+            // Digito verificador VALIDO (barrido H2, 2026-07-25): el alta/edicion de cuenta bancaria ahora
+            // valida el CUIT/CUIL del titular con CuitValidator, asi que el numero de prueba tiene que
+            // pasar el modulo 11 — antes era un "30123456789" inventado que hoy se rechazaria.
+            HolderTaxId: "30123456781",
             Notes: null,
             IsPrimary: isPrimary);
 

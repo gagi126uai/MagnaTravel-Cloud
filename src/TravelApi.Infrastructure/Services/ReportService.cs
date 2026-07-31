@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Security.Claims;
 using ClosedXML.Excel;
@@ -6,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -978,6 +980,24 @@ public class ReportService : IReportService
     public async Task<AgencySettings> UpdateAgencySettingsAsync(AgencySettings updated, CancellationToken cancellationToken)
     {
         var settings = await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken);
+
+        // Hallazgo H2 (barrido E2E 2026-07-25), extension a los datos de la agencia: este CUIT es el que se
+        // imprime en los papeles que ve el cliente (recibos, vouchers, seccion de datos bancarios). Mal
+        // tipeado, se entrega documentacion con un CUIT que no existe. Mismo validador y mismo mensaje que
+        // el alta de cliente y de operador; vacio sigue pasando (la agencia puede no haberlo cargado aun).
+        //
+        // Solo se valida si el numero CAMBIA (mismo criterio que la edicion de cliente/operador): editar el
+        // telefono de la agencia no tiene por que quedar trabado por un CUIT cargado mal antes de este fix.
+        var storedTaxId = settings?.TaxId;
+        bool taxIdChanged = !string.Equals(storedTaxId, updated.TaxId, StringComparison.Ordinal);
+        if (taxIdChanged && !CuitValidator.IsValidOrEmpty(updated.TaxId))
+        {
+            // ValidationException (DataAnnotations) a proposito: el endpoint de configuracion de la agencia
+            // no tiene try/catch propio, y el GlobalExceptionHandler es el que traduce ESTE tipo a un 400 con
+            // el mensaje real. Con cualquier otro tipo el usuario veria el 500 generico.
+            throw new ValidationException(CuitValidator.InvalidCuitMessage);
+        }
+
         if (settings == null)
         {
             _dbContext.AgencySettings.Add(updated);

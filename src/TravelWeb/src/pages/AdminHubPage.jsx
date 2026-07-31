@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { apiRequest, api } from "../api";
 import { showError, showInfo, showSuccess, showConfirm } from "../alerts";
+import { getApiErrorMessage } from "../lib/errors";
 import { isAdmin } from "../auth";
 import {
   Pencil,
@@ -381,7 +382,7 @@ export default function AdminHubPage() {
       showSuccess("Configuración de agencia actualizada");
       loadAgencySettings();
     } catch (error) {
-      showError("No se pudo guardar la configuración");
+      showError(getApiErrorMessage(error, "No se pudo guardar la configuración"));
     } finally {
       setSavingAgency(false);
     }

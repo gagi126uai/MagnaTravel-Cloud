@@ -4,6 +4,7 @@ using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -105,6 +106,7 @@ public class BankAccountService : IBankAccountService
         CancellationToken cancellationToken)
     {
         var (cbu, alias, holderName, currency, accountType, holderTaxId) = ValidateAndNormalize(request);
+        EnsureHolderTaxIdIsValid(holderTaxId);
 
         // El dueño se valida AL CREAR (no en update, donde no cambia): si es Cliente/Proveedor, su PublicId (que
         // viaja en request.OwnerId) tiene que existir y estar activo (sin esto, podriamos cargar una cuenta colgada
@@ -182,6 +184,14 @@ public class BankAccountService : IBankAccountService
             throw new KeyNotFoundException("Cuenta bancaria no encontrada.");
 
         var (cbu, alias, holderName, currency, accountType, holderTaxId) = ValidateAndNormalize(request);
+
+        // Solo se valida el CUIT del titular si CAMBIA en esta edicion (mismo criterio que la edicion de
+        // cliente y de operador): una cuenta cargada con un CUIT mal escrito ANTES de este fix no queda
+        // trabada para editarle, por ejemplo, el banco o las notas.
+        if (!string.Equals(account.HolderTaxId, holderTaxId, StringComparison.Ordinal))
+        {
+            EnsureHolderTaxIdIsValid(holderTaxId);
+        }
 
         // Detectamos si esta edicion convierte la cuenta en principal (o la "re-principaliza" en una moneda
         // distinta). wasPrimary + la moneda vieja sirven para saber si hubo un cambio real que auditar.
@@ -403,6 +413,20 @@ public class BankAccountService : IBankAccountService
         var holderTaxId = Trim(request.HolderTaxId);
 
         return (cbu, alias, holderName, currency, request.AccountType, holderTaxId);
+    }
+
+    /// <summary>
+    /// Hallazgo H2 (barrido E2E 2026-07-25), extension a cuentas bancarias: el CUIT/CUIL del titular se
+    /// muestra en los papeles "a dónde transferir" que recibe el cliente. Un digito mal tipeado manda plata
+    /// a una identidad que no existe. Mismo validador y mismo mensaje que el alta de cliente y de operador;
+    /// vacio sigue pasando (el campo es opcional a proposito).
+    /// </summary>
+    private static void EnsureHolderTaxIdIsValid(string? holderTaxId)
+    {
+        if (!CuitValidator.IsValidOrEmpty(holderTaxId))
+        {
+            throw new ArgumentException(CuitValidator.InvalidCuitMessage);
+        }
     }
 
     // ============================================================

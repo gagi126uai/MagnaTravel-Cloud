@@ -713,7 +713,10 @@ public class SupplierServiceTests
         var service = new SupplierService(context);
 
         var incoming = BuildIncomingSupplier(supplier, isActive: true);
-        incoming.TaxId = "30-11111111-1"; // CAMBIA el CUIT
+        // CAMBIA el CUIT. Digito verificador VALIDO (barrido H2, 2026-07-25): con el gate nuevo de
+        // CuitValidator en el operador, un CUIT invalido se rechaza ANTES de llegar al guard de factura
+        // viva que este test quiere ejercitar — necesita un numero que pase el checksum.
+        incoming.TaxId = "30-11111111-8";
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
@@ -737,11 +740,11 @@ public class SupplierServiceTests
         var service = new SupplierService(context);
 
         var incoming = BuildIncomingSupplier(supplier, isActive: true);
-        incoming.TaxId = "30-22222222-2";
+        incoming.TaxId = "30-22222222-9"; // digito verificador valido (ver nota H2 mas arriba)
 
         var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
 
-        Assert.Equal("30-22222222-2", result.TaxId);
+        Assert.Equal("30-22222222-9", result.TaxId);
     }
 
     /// <summary>
@@ -760,7 +763,7 @@ public class SupplierServiceTests
         var service = new SupplierService(context, audit.Object);
 
         var incoming = BuildIncomingSupplier(supplier, isActive: true);
-        incoming.TaxId = "30-44444444-4"; // CAMBIA el CUIT
+        incoming.TaxId = "30-44444444-0"; // CAMBIA el CUIT (digito verificador valido, ver nota H2 mas arriba)
         incoming.TaxCondition = "IVA_RESP_INSCRIPTO"; // Y TAMBIEN cambia la condicion
 
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -783,7 +786,7 @@ public class SupplierServiceTests
     public async Task UpdateSupplierAsync_ChangingOnlyTaxId_DoesNotAuditTaxConditionChange()
     {
         await using var context = CreateContext();
-        var supplier = new Supplier { Name = "Operador limpio", TaxId = "30-10000000-1", TaxCondition = "IVA_RESP_INSCRIPTO" };
+        var supplier = new Supplier { Name = "Operador limpio", TaxId = "30-10000000-4", TaxCondition = "IVA_RESP_INSCRIPTO" };
         context.Suppliers.Add(supplier);
         await context.SaveChangesAsync();
         context.ChangeTracker.Clear();
@@ -792,14 +795,14 @@ public class SupplierServiceTests
         var service = new SupplierService(context, audit.Object);
 
         var incoming = BuildIncomingSupplier(supplier, isActive: true);
-        incoming.TaxId = "30-99999999-9"; // SOLO cambia el CUIT (TaxCondition round-tripeado sin cambios)
+        incoming.TaxId = "30-99999999-5"; // SOLO cambia el CUIT (TaxCondition round-tripeado sin cambios)
 
         await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
 
         audit.Verify(a => a.StageBusinessEvent(
             AuditActions.SupplierTaxIdChanged,
             "Supplier", supplier.Id.ToString(),
-            It.Is<string>(d => d.Contains("30-10000000-1") && d.Contains("30-99999999-9")),
+            It.Is<string>(d => d.Contains("30-10000000-4") && d.Contains("30-99999999-5")),
             It.IsAny<string>(), It.IsAny<string>()), Times.Once);
 
         audit.Verify(a => a.StageBusinessEvent(

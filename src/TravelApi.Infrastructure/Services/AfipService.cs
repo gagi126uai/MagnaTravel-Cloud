@@ -281,11 +281,60 @@ public class AfipService : IAfipService
         }
     }
 
-    public async Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition, 
+    /// <summary>
+    /// Mensaje criollo para el admin que intenta dejar la configuracion de ARCA SIN el CUIT de la agencia.
+    /// Publico para que los tests lo verifiquen sin repetir el texto a mano (si alguien lo reescribe, el test
+    /// lo sigue).
+    /// </summary>
+    public const string CuitEraseBlockedMessage =
+        "No borres el CUIT de la agencia: sin él no se pueden emitir facturas.";
+
+    public async Task<AfipSettings> UpdateSettingsAsync(long cuit, int puntoDeVenta, bool isProduction, string taxCondition,
         byte[]? certificateData, string? certificateFileName, string? password,
         byte[]? prodCertificateData, string? prodCertificateFileName, string? prodPassword)
     {
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
+
+        // Hallazgo H2 (barrido E2E 2026-07-25), extension a la configuracion fiscal de la agencia: aca se
+        // guarda el CUIT PROPIO, el que va como emisor en TODOS los comprobantes. Si tiene un digito mal
+        // tipeado, ARCA rechaza cada factura con un error tecnico opaco y la agencia se entera recien al
+        // intentar facturar. Se bloquea con el MISMO validador y MISMO mensaje que el alta de cliente y de
+        // operador — una sola regla de CUIT para todo el sistema.
+        //
+        // Dos matices deliberados:
+        //  - Solo se valida si el numero CAMBIA respecto de lo guardado (mismo criterio que la edicion de
+        //    cliente/operador): asi un admin que solo viene a subir un certificado nuevo no queda trabado
+        //    por un CUIT cargado mal antes de este fix.
+        //  - El 0 se toma como "todavia no configurado" y NO se le corre el checksum (no tiene sentido pedirle
+        //    digito verificador a un campo vacio). Ojo: eso no significa que el 0 siempre pase — el candado de
+        //    mas abajo rechaza el 0 cuando YA habia un CUIT cargado.
+        //
+        // Va ANTES del Add()/de tocar cualquier campo: si rebota, no queda una fila de configuracion a medio
+        // crear trackeada en el contexto.
+        var storedCuit = settings?.Cuit ?? 0;
+        bool cuitChanged = cuit != storedCuit;
+
+        // Candado del borde "CUIT en cero" (firmado por el dueño, 2026-07-30). El campo del formulario llega
+        // como numero: si el admin lo BORRA, el 0 viaja igual que cualquier otro valor y antes se guardaba sin
+        // chistar, dejando a la agencia sin emisor y rompiendo TODA la facturacion en silencio (el error recien
+        // aparecia al intentar emitir, con una respuesta oscura de ARCA).
+        //
+        // Solo se bloquea el caso "habia un CUIT cargado y ahora llega 0/vacio". La PRIMERA carga (nunca se
+        // configuro: storedCuit == 0) sigue aceptando 0, para no trabar el arranque de una agencia nueva que
+        // guarda la pantalla antes de tener el numero a mano.
+        bool isErasingConfiguredCuit = storedCuit != 0 && cuit == 0;
+        if (isErasingConfiguredCuit)
+        {
+            throw new ArgumentException(CuitEraseBlockedMessage);
+        }
+
+        if (cuitChanged && cuit != 0 && !CuitValidator.IsValidOrEmpty(cuit.ToString(CultureInfo.InvariantCulture)))
+        {
+            // ArgumentException a proposito: el controller de AFIP la traduce a 400 CON el mensaje; cualquier
+            // otro tipo cae en su catch generico y el usuario veria "No se pudo validar la configuracion".
+            throw new ArgumentException(CuitValidator.InvalidCuitMessage);
+        }
+
         if (settings == null)
         {
             settings = new AfipSettings();
