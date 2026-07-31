@@ -276,7 +276,7 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
                   setAfipResults([]);
                 }}
                 disabled={documentoDeshabilitado}
-                placeholder={esTipoDocumentoFiscal(formData.tipoDocumento) ? "20-30111222-3" : "Número de documento"}
+                placeholder={esTipoDocumentoFiscal(formData.tipoDocumento) ? "20-30111222-0" : "Número de documento"}
                 className={`${inputClass} pr-10 font-mono`}
                 data-testid="customer-datos-document-number"
               />

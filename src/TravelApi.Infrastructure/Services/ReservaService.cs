@@ -515,32 +515,90 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
+    /// Campos del pasajero que se CONSERVAN cuando el request los manda vacios (ver
+    /// <see cref="ResolveEffectivePassengerFields"/>). Viven agrupados en un solo tipo para que las dos
+    /// puertas que los miran — el candado de estado (<see cref="PassengerEditChangesExistingIdentityAsync"/>)
+    /// y la edicion propiamente dicha (<see cref="UpdatePassengerAsync(int, Passenger)"/>) — razonen sobre
+    /// EXACTAMENTE la misma lista y no se desincronicen con el tiempo.
+    /// </summary>
+    private sealed record PassengerPreservedFields(
+        string? DocumentType,
+        string? DocumentNumber,
+        DateTime? BirthDate,
+        DateTime? PassportExpiry,
+        string? Nationality,
+        string? Gender);
+
+    /// <summary>
+    /// Mini-tanda firmada 2026-07-31 ("vacio = no tocar" en pasajeros, paridad con el cliente de ADR-023 T1):
+    /// devuelve los valores que van a quedar REALMENTE guardados, combinando lo que llego en el request con
+    /// lo que ya estaba en la ficha.
+    ///
+    /// <para>Regla: un dato de documento/identidad que llega vacio — o una fecha que llega en null — NO borra
+    /// lo guardado; significa "este campo no lo toco". Sin esto, cualquier pantalla que mande un payload
+    /// PARCIAL borra en silencio los datos que no muestra. El caso real que lo destapo: el mini-formulario en
+    /// linea de pasajeros nunca manda el vencimiento del pasaporte, asi que cada edicion rapida lo borraba.</para>
+    ///
+    /// <para>Contracara, y es la MISMA que firmo el dueño para el cliente (ADR-023 T1): por esta puerta ya no
+    /// se puede BORRAR un documento o una fecha dejando el casillero vacio, porque "lo vacie a proposito" y
+    /// "no mando ese campo" llegan identicos al motor. Entre corromper datos en silencio y no poder borrar,
+    /// la decision firmada es no corromper. Si algun dia hace falta borrar a proposito, va con una intencion
+    /// explicita (un pedido propio que diga "borrar el documento"), nunca omitiendo el campo.</para>
+    /// </summary>
+    private static PassengerPreservedFields ResolveEffectivePassengerFields(PassengerPreservedFields stored, Passenger incoming)
+    {
+        return new PassengerPreservedFields(
+            DocumentType: KeepStoredWhenIncomingIsEmpty(incoming.DocumentType, stored.DocumentType),
+            DocumentNumber: KeepStoredWhenIncomingIsEmpty(incoming.DocumentNumber, stored.DocumentNumber),
+            BirthDate: incoming.BirthDate ?? stored.BirthDate,
+            PassportExpiry: incoming.PassportExpiry ?? stored.PassportExpiry,
+            Nationality: KeepStoredWhenIncomingIsEmpty(incoming.Nationality, stored.Nationality),
+            Gender: KeepStoredWhenIncomingIsEmpty(incoming.Gender, stored.Gender));
+    }
+
+    /// <summary>Un texto vacio (o solo espacios) en el request significa "no lo toco": gana lo guardado.</summary>
+    private static string? KeepStoredWhenIncomingIsEmpty(string? incoming, string? stored)
+        => string.IsNullOrWhiteSpace(incoming) ? stored : incoming;
+
+    /// <summary>
     /// Decision 2026-06-17 (pasajeros bajo candado): true si el update CAMBIA un dato de IDENTIDAD que YA
     /// estaba cargado (nombre/tipo y numero de documento/fecha de nacimiento/nacionalidad/genero no vacio y
-    /// distinto al nuevo, o un dato cargado que se limpia). COMPLETAR un campo de identidad que estaba VACIO
-    /// NO cuenta como cambio (es completar, no alterar) y por eso no dispara el candado de estado. Los campos
-    /// de contacto (email/telefono/notas) y el vencimiento de pasaporte NO son identidad: se editan libres
-    /// (mismo criterio que el guard fiscal de UpdatePassengerAsync). Si el pasajero no existe, devuelve false
-    /// y deja que el metodo interno tire el NotFound.
+    /// distinto al nuevo). COMPLETAR un campo de identidad que estaba VACIO NO cuenta como cambio (es
+    /// completar, no alterar) y por eso no dispara el candado de estado. Los campos de contacto
+    /// (email/telefono/notas) y el vencimiento de pasaporte NO son identidad: se editan libres (mismo
+    /// criterio que el guard fiscal de UpdatePassengerAsync). Si el pasajero no existe, devuelve false y
+    /// deja que el metodo interno tire el NotFound.
+    ///
+    /// <para>Mini-tanda 2026-07-31: se compara contra lo que va a quedar guardado DE VERDAD (los campos
+    /// efectivos), no contra lo que llego. Un request parcial ya no borra nada, asi que tampoco tiene que
+    /// pedir autorizacion por un "cambio" que no va a ocurrir.</para>
     /// </summary>
     private async Task<bool> PassengerEditChangesExistingIdentityAsync(int passengerId, Passenger incoming, CancellationToken ct)
     {
         var current = await _context.Passengers.AsNoTracking()
             .Where(p => p.Id == passengerId)
-            .Select(p => new { p.FullName, p.DocumentType, p.DocumentNumber, p.BirthDate, p.Nationality, p.Gender })
+            .Select(p => new { p.FullName, p.DocumentType, p.DocumentNumber, p.BirthDate, p.PassportExpiry, p.Nationality, p.Gender })
             .FirstOrDefaultAsync(ct);
         if (current is null) return false;
 
+        var stored = new PassengerPreservedFields(
+            current.DocumentType, current.DocumentNumber, current.BirthDate,
+            current.PassportExpiry, current.Nationality, current.Gender);
+        var effective = ResolveEffectivePassengerFields(stored, incoming);
+
         return ChangesExistingText(current.FullName, incoming.FullName)
-            || ChangesExistingText(current.DocumentType, incoming.DocumentType)
-            || ChangesExistingText(current.DocumentNumber, incoming.DocumentNumber)
-            || ChangesExistingDate(current.BirthDate, incoming.BirthDate)
-            || ChangesExistingText(current.Nationality, incoming.Nationality)
-            || ChangesExistingText(current.Gender, incoming.Gender);
+            || ChangesExistingText(stored.DocumentType, effective.DocumentType)
+            || ChangesExistingText(stored.DocumentNumber, effective.DocumentNumber)
+            || ChangesExistingDate(stored.BirthDate, effective.BirthDate)
+            || ChangesExistingText(stored.Nationality, effective.Nationality)
+            || ChangesExistingText(stored.Gender, effective.Gender);
     }
 
     /// <summary>"Cambia un valor ya cargado" = el actual NO esta vacio y el nuevo es distinto (incluye
-    /// limpiarlo). Si el actual esta vacio, completar (o dejar vacio) NO es cambio.</summary>
+    /// limpiarlo). Si el actual esta vacio, completar (o dejar vacio) NO es cambio. Nota: desde la
+    /// mini-tanda del 2026-07-31 los campos de identidad ya no se pueden limpiar por esta puerta (llegan
+    /// resueltos por ResolveEffectivePassengerFields), asi que la rama "lo limpian" no se alcanza desde la
+    /// edicion; se deja igual porque es la definicion generica de "cambio".</summary>
     private static bool ChangesExistingText(string? current, string? incoming)
         => !string.IsNullOrWhiteSpace(current)
            && !string.Equals(current ?? string.Empty, incoming ?? string.Empty, StringComparison.Ordinal);
@@ -4473,20 +4531,32 @@ public class ReservaService : IReservaService
             EnsurePassengerContactIsValid(email: null, phone: updated.Phone);
         }
 
+        // Mini-tanda firmada 2026-07-31 (paridad con el cliente, ADR-023 T1): el request puede ser PARCIAL,
+        // asi que ANTES de validar y de guardar se resuelve el pasajero EFECTIVO = lo que llego, y donde no
+        // llego nada, lo que ya estaba guardado. Todo lo que sigue (validaciones, candado fiscal y
+        // persistencia) mira estos valores efectivos, nunca el request crudo.
+        // Ver ResolveEffectivePassengerFields para la regla y su contracara ("como se borra a proposito").
+        var storedFields = new PassengerPreservedFields(
+            passenger.DocumentType, passenger.DocumentNumber, passenger.BirthDate,
+            passenger.PassportExpiry, passenger.Nationality, passenger.Gender);
+        var effectiveFields = ResolveEffectivePassengerFields(storedFields, updated);
+
         // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2), mismo criterio "solo
-        // si cambio". El documento se mira como PAR (tipo + numero): cambiar el tipo a DNI dejando el
-        // numero de pasaporte viejo tambien es un cambio, y tiene que validarse.
+        // si cambio". El documento se mira como PAR (tipo + numero) YA RESUELTO: cambiar el tipo a DNI
+        // dejando el numero de pasaporte viejo (aunque el numero no venga en el request, porque se conserva)
+        // tambien es un cambio, y tiene que validarse.
         var documentChanged =
-            !string.Equals(passenger.DocumentType, updated.DocumentType, StringComparison.Ordinal) ||
-            !string.Equals(passenger.DocumentNumber, updated.DocumentNumber, StringComparison.Ordinal);
+            !string.Equals(storedFields.DocumentType, effectiveFields.DocumentType, StringComparison.Ordinal) ||
+            !string.Equals(storedFields.DocumentNumber, effectiveFields.DocumentNumber, StringComparison.Ordinal);
         if (documentChanged)
         {
-            EnsurePassengerDocumentIsValid(updated.DocumentType, updated.DocumentNumber);
+            EnsurePassengerDocumentIsValid(effectiveFields.DocumentType, effectiveFields.DocumentNumber);
         }
 
-        if (passenger.BirthDate != updated.BirthDate)
+        var birthDateChanged = storedFields.BirthDate != effectiveFields.BirthDate;
+        if (birthDateChanged)
         {
-            EnsurePassengerBirthDateIsValid(updated.BirthDate);
+            EnsurePassengerBirthDateIsValid(effectiveFields.BirthDate);
         }
 
         // B1.15 Fase 0' (CODE-14): solo bloqueamos si el request cambia DATOS
@@ -4495,11 +4565,10 @@ public class ReservaService : IReservaService
         // libremente — son parte de la operativa de la reserva, no del voucher.
         var personalDataChanged =
             !string.Equals(passenger.FullName, updated.FullName, StringComparison.Ordinal) ||
-            !string.Equals(passenger.DocumentType, updated.DocumentType, StringComparison.Ordinal) ||
-            !string.Equals(passenger.DocumentNumber, updated.DocumentNumber, StringComparison.Ordinal) ||
-            passenger.BirthDate != updated.BirthDate ||
-            !string.Equals(passenger.Nationality, updated.Nationality, StringComparison.Ordinal) ||
-            !string.Equals(passenger.Gender, updated.Gender, StringComparison.Ordinal);
+            documentChanged ||
+            birthDateChanged ||
+            !string.Equals(storedFields.Nationality, effectiveFields.Nationality, StringComparison.Ordinal) ||
+            !string.Equals(storedFields.Gender, effectiveFields.Gender, StringComparison.Ordinal);
 
         if (personalDataChanged)
         {
@@ -4515,30 +4584,29 @@ public class ReservaService : IReservaService
         }
 
         passenger.FullName = updated.FullName;
-        passenger.DocumentType = updated.DocumentType;
-        passenger.DocumentNumber = updated.DocumentNumber;
+        passenger.DocumentType = effectiveFields.DocumentType;
+        passenger.DocumentNumber = effectiveFields.DocumentNumber;
 
-        if (updated.BirthDate.HasValue)
-        {
-            passenger.BirthDate = DateTime.SpecifyKind(updated.BirthDate.Value, DateTimeKind.Utc);
-        }
-        else
-        {
-            passenger.BirthDate = null;
-        }
+        // SpecifyKind sobre un valor conservado es inofensivo (lo que sale de la base ya viene en Utc);
+        // hace falta para el valor que llega del request, porque Npgsql exige Kind=Utc en timestamptz.
+        passenger.BirthDate = effectiveFields.BirthDate.HasValue
+            ? DateTime.SpecifyKind(effectiveFields.BirthDate.Value, DateTimeKind.Utc)
+            : null;
 
         // Auditoria ERP item 8: vencimiento de pasaporte. NO entra al guard de "datos personales"
         // (personalDataChanged): no es identidad que invalide un voucher emitido, es un dato operativo
         // del documento que el vendedor completa/corrige a medida que recibe la documentacion. Se
-        // normaliza a fecha de pared Kind=Utc; null = se limpio el dato.
-        passenger.PassportExpiry = updated.PassportExpiry.HasValue
-            ? DateTime.SpecifyKind(updated.PassportExpiry.Value.Date, DateTimeKind.Utc)
+        // normaliza a fecha de pared Kind=Utc. Desde la mini-tanda del 2026-07-31 un request que NO manda
+        // el vencimiento lo CONSERVA (antes lo borraba: es el bug que reportaba el mini-formulario en
+        // linea, que nunca manda este campo).
+        passenger.PassportExpiry = effectiveFields.PassportExpiry.HasValue
+            ? DateTime.SpecifyKind(effectiveFields.PassportExpiry.Value.Date, DateTimeKind.Utc)
             : null;
 
-        passenger.Nationality = updated.Nationality;
+        passenger.Nationality = effectiveFields.Nationality;
         passenger.Phone = updated.Phone;
         passenger.Email = updated.Email;
-        passenger.Gender = updated.Gender;
+        passenger.Gender = effectiveFields.Gender;
         passenger.Notes = updated.Notes;
 
         await _context.SaveChangesAsync();

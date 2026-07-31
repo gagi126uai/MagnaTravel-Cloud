@@ -1038,6 +1038,255 @@ public class FieldValidationEntryPointsTests
     }
 
     // ===================================================================================================
+    // MINI-TANDA FINAL (firmada 2026-07-31) — "campo vacio = no tocar" en el pasajero, paridad con el
+    // cliente (ADR-023 T1). Un formulario que manda un payload PARCIAL ya no borra en silencio lo guardado.
+    // ===================================================================================================
+
+    [Fact]
+    public async Task UpdatePassengerAsync_PayloadSinVencimientoDePasaporte_NoLoBorra()
+    {
+        // Bug real que motivo la mini-tanda: el mini-formulario en linea de pasajeros NUNCA manda
+        // passportExpiry, asi que cada edicion rapida borraba el vencimiento que alguien habia cargado.
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            DocumentType = "Pasaporte",
+            DocumentNumber = "AB123456",
+            PassportExpiry = DateTime.SpecifyKind(new DateTime(2030, 4, 10), DateTimeKind.Utc),
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        await service.UpdatePassengerAsync(
+            passengerId: 50,
+            new Passenger
+            {
+                Id = 50,
+                FullName = "Juan Perez",
+                DocumentType = "Pasaporte",
+                DocumentNumber = "AB123456",
+                // PassportExpiry NO viaja en el payload (asi lo manda el formulario en linea).
+            });
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal(new DateTime(2030, 4, 10), persisted.PassportExpiry!.Value.Date);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_VencimientoDePasaporteNuevo_SiSePisa()
+    {
+        // La contracara: si el request TRAE el dato, se guarda. "Vacio = no tocar" no significa "nunca se
+        // puede cambiar".
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            PassportExpiry = DateTime.SpecifyKind(new DateTime(2030, 4, 10), DateTimeKind.Utc),
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        await service.UpdatePassengerAsync(
+            passengerId: 50,
+            new Passenger
+            {
+                Id = 50,
+                FullName = "Juan Perez",
+                PassportExpiry = DateTime.SpecifyKind(new DateTime(2032, 9, 1), DateTimeKind.Utc),
+            });
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal(new DateTime(2032, 9, 1), persisted.PassportExpiry!.Value.Date);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_DocumentoVacio_NoBorraElGuardado()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            DocumentType = "DNI",
+            DocumentNumber = "12345678",
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        // El formulario en linea de hotel/traslado no muestra el documento y lo manda vacio.
+        await service.UpdatePassengerAsync(
+            passengerId: 50,
+            new Passenger { Id = 50, FullName = "Juan Perez", DocumentType = null, DocumentNumber = null });
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal("DNI", persisted.DocumentType);
+        Assert.Equal("12345678", persisted.DocumentNumber);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_FechaDeNacimientoNoEnviada_NoSeBorra()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            BirthDate = DateTime.SpecifyKind(new DateTime(1985, 3, 20), DateTimeKind.Utc),
+            Nationality = "Argentina",
+            Gender = "M",
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        await service.UpdatePassengerAsync(
+            passengerId: 50,
+            new Passenger { Id = 50, FullName = "Juan Perez", Notes = "Pide asiento pasillo" });
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal(new DateTime(1985, 3, 20), persisted.BirthDate!.Value.Date);
+        Assert.Equal("Argentina", persisted.Nationality);
+        Assert.Equal("M", persisted.Gender);
+        Assert.Equal("Pide asiento pasillo", persisted.Notes);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_CambiarSoloElTipoDeDocumento_ValidaElParEfectivo_Bloquea()
+    {
+        // El "solo si cambio" de la TANDA 2 tiene que seguir mirando el PAR (tipo + numero) YA RESUELTO,
+        // igual que en el cliente: pasar el tipo a DNI dejando el numero de pasaporte guardado arma una
+        // combinacion imposible, aunque el numero no venga en el request.
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            DocumentType = "Pasaporte",
+            DocumentNumber = "AB123456",
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdatePassengerAsync(
+                passengerId: 50,
+                new Passenger { Id = 50, FullName = "Juan Perez", DocumentType = "DNI", DocumentNumber = null }));
+
+        Assert.Equal(DocumentNumberValidator.InvalidDniMessage, ex.Message);
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal("Pasaporte", persisted.DocumentType);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_ConVoucherEmitido_PayloadParcialQueNoCambiaNada_NoDisparaElCandadoFiscal()
+    {
+        // El candado fiscal (voucher entregado / factura con CAE) NO tiene que dispararse de mas: con la
+        // regla "vacio = no tocar", un payload parcial que omite nacionalidad/genero/nacimiento no cambia
+        // ningun dato personal, asi que la edicion de contacto tiene que salir bien igual.
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            DocumentType = "DNI",
+            DocumentNumber = "12345678",
+            BirthDate = DateTime.SpecifyKind(new DateTime(1985, 3, 20), DateTimeKind.Utc),
+            Nationality = "Argentina",
+            Gender = "M",
+        });
+        context.Vouchers.Add(new Voucher { Id = 90, ReservaId = 1, FileName = "v.pdf", Status = VoucherStatuses.Issued });
+        context.VoucherPassengerAssignments.Add(new VoucherPassengerAssignment { Id = 1, VoucherId = 90, PassengerId = 50 });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        await service.UpdatePassengerAsync(
+            passengerId: 50,
+            new Passenger
+            {
+                Id = 50,
+                FullName = "Juan Perez",
+                DocumentType = "DNI",
+                DocumentNumber = "12345678",
+                Phone = TelefonoValido,
+                // Nacionalidad, genero y fecha de nacimiento NO viajan en el payload.
+            });
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal(TelefonoValido, persisted.Phone);
+        Assert.Equal("Argentina", persisted.Nationality);
+        Assert.Equal("M", persisted.Gender);
+        Assert.Equal(new DateTime(1985, 3, 20), persisted.BirthDate!.Value.Date);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_ConVoucherEmitido_CambioRealDeNacionalidad_SigueBloqueando()
+    {
+        // La contracara del test anterior: el candado fiscal SIGUE VIVO. Si el request cambia de verdad un
+        // dato personal (la nacionalidad), el voucher emitido lo frena con su mensaje.
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            DocumentType = "DNI",
+            DocumentNumber = "12345678",
+            Nationality = "Argentina",
+        });
+        context.Vouchers.Add(new Voucher { Id = 90, ReservaId = 1, FileName = "v.pdf", Status = VoucherStatuses.Issued });
+        context.VoucherPassengerAssignments.Add(new VoucherPassengerAssignment { Id = 1, VoucherId = 90, PassengerId = 50 });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdatePassengerAsync(
+                passengerId: 50,
+                new Passenger
+                {
+                    Id = 50,
+                    FullName = "Juan Perez",
+                    DocumentType = "DNI",
+                    DocumentNumber = "12345678",
+                    Nationality = "Uruguaya",
+                }));
+
+        Assert.Contains("voucher", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal("Argentina", persisted.Nationality); // no se guardo nada
+    }
+
+    // ===================================================================================================
     // TANDA 2 — 10) Lead del bot de WhatsApp (LeadService)
     // ===================================================================================================
 

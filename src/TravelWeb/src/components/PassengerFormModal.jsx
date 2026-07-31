@@ -30,6 +30,7 @@ import { api } from "../api";
 import { showError, showSuccess, showWarning } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
+import { ayudaNumeroDocumento } from "../lib/documentoAyuda.js";
 import {
     cumpleUmbralBusqueda,
     construirUrlBusquedaHistorica,
@@ -445,7 +446,9 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                         required
                                         type="text"
                                         className={`${inputClass} pl-10 pr-10`}
-                                        placeholder="DNI o CUIT"
+                                        // La ayuda cambia con el tipo elegido: el motor exige 7 u 8 números
+                                        // para el DNI y es flojo con el resto (ver documentoAyuda.js).
+                                        placeholder={ayudaNumeroDocumento(formData.documentType || "DNI")}
                                         value={formData.documentNumber || ""}
                                         onChange={(event) => {
                                             updateField("documentNumber", event.target.value);

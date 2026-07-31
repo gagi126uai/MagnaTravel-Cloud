@@ -148,16 +148,21 @@ public class Adr020PassengerCompletionUnderLockTests
     }
 
     [Fact]
-    public async Task UpdatePassenger_ClearingExistingDocument_UnderLock_WithoutAuthorization_Throws()
+    public async Task UpdatePassenger_EmptyDocumentInPayload_UnderLock_KeepsStoredDocument_WithoutAuthorization()
     {
         await using var ctx = NewContext();
         SeedLockedReserva(ctx);
         SeedPassenger(ctx, fullName: "Juan Perez", documentNumber: "12345678");
         await ctx.SaveChangesAsync();
 
-        // Borrar (limpiar) un dato de identidad YA cargado es cambio -> pide autorizacion.
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            NewService(ctx).UpdatePassengerAsync("10", Req("Juan Perez", null), CancellationToken.None));
+        // Mini-tanda firmada 2026-07-31 ("vacio = no tocar", paridad con el cliente de ADR-023 T1): un
+        // request que manda el documento VACIO ya NO lo borra, lo CONSERVA. Por eso tampoco pide
+        // autorizacion: no hay cambio de identidad que autorizar. Antes de este cambio, el mismo request
+        // se tomaba como "limpiar el documento" y devolvia 409.
+        await NewService(ctx).UpdatePassengerAsync("10", Req("Juan Perez", null), CancellationToken.None);
+
+        var passenger = await ctx.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal("12345678", passenger.DocumentNumber);
     }
 
     [Fact]

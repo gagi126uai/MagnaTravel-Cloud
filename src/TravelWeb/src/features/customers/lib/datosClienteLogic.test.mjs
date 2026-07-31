@@ -54,7 +54,7 @@ test("arma el formulario con todos los campos del cliente", () => {
   const cliente = {
     fullName: "Fam. García",
     documentNumber: "30111222",
-    taxId: "20-30111222-3",
+    taxId: "20-30111222-0",
     taxConditionId: 1,
     email: "garcia@mail.com",
     phone: "11-4444-5555",
@@ -64,7 +64,7 @@ test("arma el formulario con todos los campos del cliente", () => {
   assert.deepEqual(construirEstadoInicialDatosCliente(cliente), {
     fullName: "Fam. García",
     documentNumber: "30111222",
-    taxId: "20-30111222-3",
+    taxId: "20-30111222-0",
     taxConditionId: 1,
     email: "garcia@mail.com",
     phone: "11-4444-5555",
@@ -125,7 +125,7 @@ test("arma el payload con los campos del formulario", () => {
   const formData = {
     fullName: "  Fam. García  ",
     documentNumber: "30111222",
-    taxId: "20-30111222-3",
+    taxId: "20-30111222-0",
     taxConditionId: 1,
     email: "garcia@mail.com",
     phone: "11-4444-5555",
@@ -136,7 +136,7 @@ test("arma el payload con los campos del formulario", () => {
 
   assert.equal(payload.fullName, "Fam. García"); // recortado
   assert.equal(payload.notes, "Nota vieja del vendedor");
-  assert.equal(payload.taxId, "20-30111222-3");
+  assert.equal(payload.taxId, "20-30111222-0");
   assert.equal(payload.taxConditionId, 1);
   assert.equal(payload.isActive, true);
 });

@@ -5,12 +5,12 @@ import { api } from "../../../api";
 import { showSuccess, showWarning } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
+import { ayudaNumeroDocumento } from "../../../lib/documentoAyuda.js";
 import {
     DOCUMENT_TYPE_OPTIONS,
     aplicarResultadoAfip,
     construirEstadoInicialDocumento,
     construirPayloadDocumento,
-    esTipoDocumentoFiscal,
     tipoDocumentoTieneBusquedaAfip,
 } from "../lib/customerDocumentLogic";
 
@@ -301,7 +301,10 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         <input
                                             type="text"
                                             aria-label="Número de documento"
-                                            placeholder={esTipoDocumentoFiscal(formData.tipoDocumento) ? "20-30111222-3" : "Número de documento"}
+                                            // Misma ayuda por tipo que el formulario de pasajeros: CUIT/CUIL
+                                            // muestran el ejemplo con guiones y el DNI avisa los 7 u 8 números
+                                            // sin puntos que exige el motor (ver documentoAyuda.js).
+                                            placeholder={ayudaNumeroDocumento(formData.tipoDocumento)}
                                             className="w-full rounded-md border border-input bg-background dark:bg-slate-950 py-2 pr-10 px-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                                             value={formData.numeroDocumento}
                                             onChange={(e) => {

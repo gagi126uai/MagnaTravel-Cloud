@@ -30,6 +30,7 @@ import { api } from "../../../api";
 import { showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
+import { ayudaNumeroDocumento } from "../../../lib/documentoAyuda.js";
 
 // Tipos de documento aceptados por el backend (mismo listado que el modal completo).
 const DOC_TYPES = [
@@ -76,7 +77,11 @@ export function PasajeroInlineForm({ reservaId, passengerToEdit, slotLabel, mode
     // o con un form vacío si estamos creando uno nuevo.
     const [form, setForm] = useState(() => ({
         fullName: passengerToEdit?.fullName || "",
-        documentType: passengerToEdit?.documentType || "DNI",
+        // Al EDITAR se respeta el tipo guardado tal cual, aunque esté vacío: si arrancáramos en "DNI"
+        // para un pasajero viejo sin tipo cargado, el formulario inventaría un par "DNI + número de
+        // pasaporte" que nadie eligió (y el motor, con razón, lo rechazaría). Al CREAR sí arranca en DNI,
+        // que es el caso normal.
+        documentType: passengerToEdit ? (passengerToEdit.documentType || "") : "DNI",
         documentNumber: passengerToEdit?.documentNumber || "",
         birthDate: passengerToEdit?.birthDate
             ? passengerToEdit.birthDate.split("T")[0]
@@ -183,7 +188,8 @@ export function PasajeroInlineForm({ reservaId, passengerToEdit, slotLabel, mode
                     <input
                         type="text"
                         aria-label="Número de documento"
-                        placeholder="N° documento"
+                        // La ayuda depende del tipo elegido arriba (ver documentoAyuda.js).
+                        placeholder={ayudaNumeroDocumento(form.documentType)}
                         value={form.documentNumber}
                         onChange={e => updateField("documentNumber", e.target.value)}
                         className={`w-36 ${inputClass}`}
