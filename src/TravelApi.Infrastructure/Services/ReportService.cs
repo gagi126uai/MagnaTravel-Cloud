@@ -998,6 +998,37 @@ public class ReportService : IReportService
             throw new ValidationException(CuitValidator.InvalidCuitMessage);
         }
 
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1). Estos datos se
+        // imprimen en los papeles que ve el cliente (recibos, vouchers) y la condicion fiscal de la
+        // agencia decide la letra de los comprobantes. Mismo tipo de excepcion y mismo criterio "solo si
+        // cambia" que el CUIT de arriba: una configuracion vieja con un mail mal escrito no traba al admin
+        // que solo viene a cambiar la direccion.
+        bool emailChanged = !string.Equals(settings?.Email, updated.Email, StringComparison.Ordinal);
+        if (emailChanged && !EmailValidator.IsValidOrEmpty(updated.Email))
+        {
+            throw new ValidationException(EmailValidator.InvalidEmailMessage);
+        }
+
+        bool phoneChanged = !string.Equals(settings?.Phone, updated.Phone, StringComparison.Ordinal);
+        if (phoneChanged && !PhoneValidator.IsValidOrEmpty(updated.Phone))
+        {
+            throw new ValidationException(PhoneValidator.InvalidPhoneMessage);
+        }
+
+        bool taxConditionChanged = !string.Equals(settings?.TaxCondition, updated.TaxCondition, StringComparison.Ordinal);
+        if (taxConditionChanged && !TaxConditionValidator.IsKnownTextOrEmpty(updated.TaxCondition))
+        {
+            throw new ValidationException(TaxConditionValidator.InvalidTaxConditionMessage);
+        }
+
+        // El % de comision por defecto SIEMPRE se valida (no "solo si cambia"): es plata y el campo llega
+        // como numero, asi que no existe el caso "dato legacy raro que no puedo corregir" — cualquier
+        // valor guardado hoy ya esta dentro del rango o es un error que conviene frenar ahora.
+        if (!CommissionPercentValidator.IsValid(updated.DefaultCommissionPercent))
+        {
+            throw new ValidationException(CommissionPercentValidator.InvalidPercentMessage);
+        }
+
         if (settings == null)
         {
             _dbContext.AgencySettings.Add(updated);

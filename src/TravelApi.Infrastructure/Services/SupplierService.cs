@@ -240,6 +240,13 @@ public class SupplierService : ISupplierService
             throw new ArgumentException(CuitValidator.InvalidCuitMessage);
         }
 
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): mismo criterio que
+        // el CUIT. El mail y el telefono del operador son por donde se le reclama una reserva o se le
+        // pide una devolucion; la condicion fiscal decide como se factura su liquidacion. Vacio sigue
+        // siendo valido (los tres campos son opcionales). ArgumentException porque es la que
+        // SuppliersController traduce a 400 CON el mensaje.
+        EnsureContactAndTaxConditionAreValid(supplier.Email, supplier.Phone, supplier.TaxCondition);
+
         // ADR-041 TANDA 5: el plazo de pago es opcional, pero si viene no puede ser negativo (un plazo
         // negativo no tiene sentido y daria un vencimiento sugerido anterior a la compra).
         ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
@@ -336,6 +343,26 @@ public class SupplierService : ISupplierService
         if (taxIdChanged && !CuitValidator.IsValidOrEmpty(supplier.TaxId))
         {
             throw new ArgumentException(CuitValidator.InvalidCuitMessage);
+        }
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1). Mismo criterio
+        // "solo si cambio" que el CUIT: un operador cargado con un mail mal escrito hace meses no queda
+        // trabado para editarle el plazo de pago. La condicion fiscal se mide contra incomingTaxCondition
+        // (el valor que REALMENTE se va a guardar), asi un PUT que la omite —y por lo tanto preserva la
+        // vieja— nunca dispara el bloqueo.
+        if (!string.Equals(existing.Email, supplier.Email, StringComparison.Ordinal) && !EmailValidator.IsValidOrEmpty(supplier.Email))
+        {
+            throw new ArgumentException(EmailValidator.InvalidEmailMessage);
+        }
+
+        if (!string.Equals(existing.Phone, supplier.Phone, StringComparison.Ordinal) && !PhoneValidator.IsValidOrEmpty(supplier.Phone))
+        {
+            throw new ArgumentException(PhoneValidator.InvalidPhoneMessage);
+        }
+
+        if (taxConditionChanged && !TaxConditionValidator.IsKnownTextOrEmpty(incomingTaxCondition))
+        {
+            throw new ArgumentException(TaxConditionValidator.InvalidTaxConditionMessage);
         }
 
         if (taxIdChanged)
@@ -486,6 +513,29 @@ public class SupplierService : ISupplierService
         if (defaultPaymentTermDays.HasValue && defaultPaymentTermDays.Value < 0)
         {
             throw new ArgumentException("El plazo de pago al proveedor no puede ser negativo.");
+        }
+    }
+
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): los tres chequeos del
+    /// ALTA de operador, juntos. En el alta se valida todo lo que llega (no hay "valor anterior"); la
+    /// edicion tiene su propio criterio "solo si cambio" dentro de <see cref="UpdateSupplierAsync"/>.
+    /// </summary>
+    private static void EnsureContactAndTaxConditionAreValid(string? email, string? phone, string? taxCondition)
+    {
+        if (!EmailValidator.IsValidOrEmpty(email))
+        {
+            throw new ArgumentException(EmailValidator.InvalidEmailMessage);
+        }
+
+        if (!PhoneValidator.IsValidOrEmpty(phone))
+        {
+            throw new ArgumentException(PhoneValidator.InvalidPhoneMessage);
+        }
+
+        if (!TaxConditionValidator.IsKnownTextOrEmpty(taxCondition))
+        {
+            throw new ArgumentException(TaxConditionValidator.InvalidTaxConditionMessage);
         }
     }
 

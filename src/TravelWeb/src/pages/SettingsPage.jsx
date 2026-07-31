@@ -424,7 +424,10 @@ export default function SettingsPage() {
       loadCommissionRules();
     } catch (error) {
       console.error("Error saving commission rule:", error);
-      showError(error.message || "No se pudo guardar la regla");
+      // El motor puede rechazar con un motivo puntual (ej. porcentaje fuera de 0 a 100): se muestra
+      // ese texto. getApiErrorMessage mira primero el cuerpo de la respuesta, que es donde viaja el
+      // mensaje real; el genérico queda solo de respaldo.
+      showError(getApiErrorMessage(error, "No se pudo guardar la regla"));
     }
   };
 

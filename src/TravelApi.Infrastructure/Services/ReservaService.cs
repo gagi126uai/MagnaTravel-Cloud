@@ -4305,6 +4305,24 @@ public class ReservaService : IReservaService
             .ToListAsync();
     }
 
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): mail y telefono del
+    /// pasajero, con el mensaje unico de cada validador. Pasar <c>null</c> en uno de los dos parametros
+    /// significa "este campo no se toca en esta llamada" (lo usa la edicion, que valida solo lo que cambio).
+    /// </summary>
+    private static void EnsurePassengerContactIsValid(string? email, string? phone)
+    {
+        if (!EmailValidator.IsValidOrEmpty(email))
+        {
+            throw new InvalidOperationException(EmailValidator.InvalidEmailMessage);
+        }
+
+        if (!PhoneValidator.IsValidOrEmpty(phone))
+        {
+            throw new InvalidOperationException(PhoneValidator.InvalidPhoneMessage);
+        }
+    }
+
     public async Task<PassengerDto> AddPassengerAsync(int reservaId, Passenger passenger)
     {
         // ADR-035 (2026-06-19): PRIMERA COMPUERTA — en una reserva CERRADA (Closed/Lost/Cancelled/
@@ -4326,6 +4344,16 @@ public class ReservaService : IReservaService
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (passenger.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): el mail y el
+        // telefono del pasajero son los datos de contacto con los que se le manda el voucher y se lo
+        // ubica en destino ante una urgencia. Vacio sigue siendo valido (no todo pasajero los tiene).
+        //
+        // InvalidOperationException y no ArgumentException a proposito: ReservasController mapea
+        // ArgumentException del alta a 400 con el mensaje, PERO en la EDICION lo tapa con un generico
+        // ("No se pudo actualizar el pasajero."). InvalidOperationException llega con el mensaje entero
+        // por los dos caminos, que es lo que necesita el vendedor para saber que campo corregir.
+        EnsurePassengerContactIsValid(passenger.Email, passenger.Phone);
 
         // Tope de pasajeros nominales = cantidad DECLARADA de la reserva (misma fuente unica
         // que usa EnsureReadinessForSaleAsync). NO se infiere de la capacidad de los servicios:
@@ -4382,6 +4410,18 @@ public class ReservaService : IReservaService
 
         if (string.IsNullOrWhiteSpace(updated.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (updated.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1). Criterio "solo si
+        // cambio", igual que el CUIT del cliente: un pasajero cargado con un telefono mal escrito antes
+        // de este fix no queda trabado para completarle el numero de pasaporte.
+        if (!string.Equals(passenger.Email, updated.Email, StringComparison.Ordinal))
+        {
+            EnsurePassengerContactIsValid(updated.Email, phone: null);
+        }
+        if (!string.Equals(passenger.Phone, updated.Phone, StringComparison.Ordinal))
+        {
+            EnsurePassengerContactIsValid(email: null, phone: updated.Phone);
+        }
 
         // B1.15 Fase 0' (CODE-14): solo bloqueamos si el request cambia DATOS
         // PERSONALES (nombre, documento, fecha de nacimiento, nacionalidad,

@@ -1,7 +1,9 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -39,6 +41,10 @@ public class CommissionService : ICommissionService
 
     public async Task<object> CreateRuleAsync(CreateCommissionRuleRequest request, CancellationToken cancellationToken)
     {
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): el porcentaje es
+        // plata (con el se devenga la comision del vendedor), asi que se frena antes de tocar la base.
+        EnsureCommissionPercentIsValid(request.CommissionPercent);
+
         int? supplierId = null;
         if (!string.IsNullOrWhiteSpace(request.SupplierId))
         {
@@ -82,6 +88,11 @@ public class CommissionService : ICommissionService
         if (rule == null)
             return null;
 
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1). Aca NO se aplica el
+        // criterio "solo si cambia" de las fichas: el porcentaje llega siempre como numero desde el unico
+        // formulario que edita reglas, no hay dato legacy de texto libre que pueda quedar trabado.
+        EnsureCommissionPercentIsValid(request.CommissionPercent);
+
         rule.CommissionPercent = request.CommissionPercent;
         rule.Description = request.Description;
         rule.Priority = request.Priority;
@@ -89,6 +100,25 @@ public class CommissionService : ICommissionService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return rule;
+    }
+
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): el porcentaje de una
+    /// regla de comision tiene que estar entre 0 y 100.
+    ///
+    /// <para><b>ValidationException y no ArgumentException a proposito</b>: el alta de regla en
+    /// <c>CommissionsController</c> atrapa <c>ArgumentException</c> y la reemplaza por un generico
+    /// ("No se pudo crear la regla de comision."), asi que el admin nunca leeria el motivo. La
+    /// <c>ValidationException</c> de DataAnnotations pasa de largo ese catch y el
+    /// <c>GlobalExceptionHandler</c> la traduce a un 400 con el mensaje real — el mismo camino que ya usa
+    /// la configuracion de la agencia.</para>
+    /// </summary>
+    private static void EnsureCommissionPercentIsValid(decimal commissionPercent)
+    {
+        if (!CommissionPercentValidator.IsValid(commissionPercent))
+        {
+            throw new ValidationException(CommissionPercentValidator.InvalidPercentMessage);
+        }
     }
 
     public async Task<bool> DeleteRuleAsync(int id, CancellationToken cancellationToken)

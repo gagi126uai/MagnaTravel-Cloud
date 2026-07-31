@@ -371,7 +371,9 @@ public class CuitValidationEntryPointsTests
             PublicId = publicId,
             OwnerType = BankAccountOwnerType.Agency,
             OwnerId = 0,
-            Cbu = "1234567890123456789012",
+            // CBU con los digitos verificadores del BCRA correctos (obra 2026-07-31, TANDA 1): desde que
+            // el alta/edicion de cuenta corre CbuValidator, un numero inventado de 22 digitos se rechaza.
+            Cbu = "0110599520000001234569",
             HolderName = "Magna Travel",
             Currency = Monedas.ARS,
             HolderTaxId = CuitInvalido, // dato cargado ANTES de este fix
@@ -399,7 +401,7 @@ public class CuitValidationEntryPointsTests
     private static BankAccountUpsertRequest BuildBankAccountRequest(string? holderTaxId) => new(
         OwnerType: BankAccountOwnerType.Agency,
         OwnerId: "0",
-        Cbu: "1234567890123456789012",
+        Cbu: "0110599520000001234569",
         Alias: null,
         HolderName: "Magna Travel",
         Currency: Monedas.ARS,

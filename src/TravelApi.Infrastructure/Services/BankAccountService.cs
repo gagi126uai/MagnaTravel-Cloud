@@ -107,6 +107,7 @@ public class BankAccountService : IBankAccountService
     {
         var (cbu, alias, holderName, currency, accountType, holderTaxId) = ValidateAndNormalize(request);
         EnsureHolderTaxIdIsValid(holderTaxId);
+        EnsureCbuChecksumIsValid(cbu);
 
         // El dueño se valida AL CREAR (no en update, donde no cambia): si es Cliente/Proveedor, su PublicId (que
         // viaja en request.OwnerId) tiene que existir y estar activo (sin esto, podriamos cargar una cuenta colgada
@@ -191,6 +192,14 @@ public class BankAccountService : IBankAccountService
         if (!string.Equals(account.HolderTaxId, holderTaxId, StringComparison.Ordinal))
         {
             EnsureHolderTaxIdIsValid(holderTaxId);
+        }
+
+        // Mismo criterio para el CBU (obra 2026-07-31, TANDA 1): los digitos verificadores se le corren
+        // solo al CBU que CAMBIA. Una cuenta vieja cargada con un CBU que no cierra sigue pudiendo
+        // editarse (ej. corregirle el alias o marcarla inactiva) sin quedar trabada.
+        if (!string.Equals(account.Cbu, cbu, StringComparison.Ordinal))
+        {
+            EnsureCbuChecksumIsValid(cbu);
         }
 
         // Detectamos si esta edicion convierte la cuenta en principal (o la "re-principaliza" en una moneda
@@ -404,6 +413,9 @@ public class BankAccountService : IBankAccountService
         if (string.IsNullOrEmpty(cbu) && string.IsNullOrEmpty(alias))
             throw new ArgumentException("Debe ingresar al menos un CBU o un alias.");
 
+        // El chequeo de LARGO queda aca (corre siempre, en alta y en edicion) porque da un mensaje mas
+        // preciso que el de CBU invalido: "te faltan/sobran digitos". Los digitos verificadores del BCRA
+        // se chequean aparte, en cada caller — ver EnsureCbuChecksumIsValid.
         if (!string.IsNullOrEmpty(cbu) && !CbuPattern.IsMatch(cbu))
             throw new ArgumentException("El CBU debe tener exactamente 22 dígitos numéricos.");
 
@@ -426,6 +438,20 @@ public class BankAccountService : IBankAccountService
         if (!CuitValidator.IsValidOrEmpty(holderTaxId))
         {
             throw new ArgumentException(CuitValidator.InvalidCuitMessage);
+        }
+    }
+
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): corre los DOS digitos
+    /// verificadores del BCRA sobre el CBU. Antes solo se contaban 22 digitos, asi que un numero con un
+    /// digito mal tipeado se guardaba igual y terminaba impreso en el instructivo de transferencia que
+    /// recibe el cliente — con la plata yendo a una cuenta que no existe (o peor, a la de otro).
+    /// </summary>
+    private static void EnsureCbuChecksumIsValid(string? cbu)
+    {
+        if (!CbuValidator.IsValidOrEmpty(cbu))
+        {
+            throw new ArgumentException(CbuValidator.InvalidCbuMessage);
         }
     }
 

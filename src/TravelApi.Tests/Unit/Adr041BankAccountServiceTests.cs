@@ -69,7 +69,7 @@ public class Adr041BankAccountServiceTests
     private static BankAccountUpsertRequest ValidRequest(
         BankAccountOwnerType ownerType = BankAccountOwnerType.Supplier,
         string? ownerToken = null,
-        string? cbu = "0123456789012345678901",
+        string? cbu = "0110599520000001234569",
         string? alias = null,
         string holderName = "Operador Mayorista SA",
         string currency = "ARS",
@@ -180,7 +180,7 @@ public class Adr041BankAccountServiceTests
     [Theory]
     [InlineData("12345")]                    // muy corto
     [InlineData("012345678901234567890")]    // 21 digitos
-    [InlineData("01234567890123456789012")]  // 23 digitos
+    [InlineData("01105995200000012345692")]  // 23 digitos
     [InlineData("01234567890123456789AB")]   // con letras
     public async Task Create_rechaza_cbu_con_formato_invalido(string badCbu)
     {
@@ -202,11 +202,11 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
+            ValidRequest(cbu: "0110599520000001234569"), "user-1", "User", CancellationToken.None);
 
         // El CBU completo se verifica por el GET de detalle (la escritura responde enmascarada).
         var detail = await service.GetByPublicIdAsync(created.PublicId, CancellationToken.None);
-        Assert.Equal("0123456789012345678901", detail!.Cbu);
+        Assert.Equal("0110599520000001234569", detail!.Cbu);
     }
 
     // ============================================================
@@ -221,12 +221,12 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
+            ValidRequest(cbu: "0110599520000001234569"), "user-1", "User", CancellationToken.None);
 
         // La respuesta del alta NO debe traer el CBU completo (solo los ultimos 4, el resto tapado).
         Assert.NotNull(created.CbuMasked);
-        Assert.EndsWith("8901", created.CbuMasked!);
-        Assert.DoesNotContain("012345678901234567", created.CbuMasked);
+        Assert.EndsWith("4569", created.CbuMasked!);
+        Assert.DoesNotContain("011059952000000123", created.CbuMasked);
     }
 
     [Fact]
@@ -237,16 +237,16 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
+            ValidRequest(cbu: "0110599520000001234569"), "user-1", "User", CancellationToken.None);
 
         var updated = await service.UpdateAsync(
             created.PublicId,
-            ValidRequest(cbu: "0123456789012345678901"),
+            ValidRequest(cbu: "0110599520000001234569"),
             "user-1", "User", CancellationToken.None);
 
         Assert.NotNull(updated.CbuMasked);
-        Assert.EndsWith("8901", updated.CbuMasked!);
-        Assert.DoesNotContain("012345678901234567", updated.CbuMasked);
+        Assert.EndsWith("4569", updated.CbuMasked!);
+        Assert.DoesNotContain("011059952000000123", updated.CbuMasked);
     }
 
     [Fact]
@@ -257,13 +257,13 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(ownerToken: SupplierToken(7),cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),cbu: "0110599520000001234569"), "user-1", "User", CancellationToken.None);
 
         var result = await service.SetPrimaryAsync(created.PublicId, "user-1", "User", CancellationToken.None);
 
         Assert.NotNull(result.CbuMasked);
-        Assert.EndsWith("8901", result.CbuMasked!);
-        Assert.DoesNotContain("012345678901234567", result.CbuMasked);
+        Assert.EndsWith("4569", result.CbuMasked!);
+        Assert.DoesNotContain("011059952000000123", result.CbuMasked);
         Assert.True(result.IsPrimary);
     }
 
@@ -489,14 +489,14 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         await service.CreateAsync(
-            ValidRequest(cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
+            ValidRequest(cbu: "0110599520000001234569"), "user-1", "User", CancellationToken.None);
 
         var list = await service.ListAsync(BankAccountOwnerType.Supplier, 1, CancellationToken.None);
 
         var masked = list[0].CbuMasked;
         Assert.NotNull(masked);
-        Assert.EndsWith("8901", masked);            // ultimos 4 visibles
-        Assert.DoesNotContain("012345678901234567", masked); // el resto NO viaja en claro
+        Assert.EndsWith("4569", masked);            // ultimos 4 visibles
+        Assert.DoesNotContain("011059952000000123", masked); // el resto NO viaja en claro
         Assert.Equal(22, masked!.Length);            // misma longitud, todo lo demas enmascarado
     }
 
@@ -543,12 +543,12 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
+            ValidRequest(cbu: "0110599520000001234569"), "user-1", "User", CancellationToken.None);
 
         var detail = await service.GetByPublicIdAsync(created.PublicId, CancellationToken.None);
 
         Assert.NotNull(detail);
-        Assert.Equal("0123456789012345678901", detail!.Cbu);
+        Assert.Equal("0110599520000001234569", detail!.Cbu);
     }
 
     // ============================================================
@@ -652,7 +652,7 @@ public class Adr041BankAccountServiceTests
             ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false), "user-1", "User", CancellationToken.None);
         // Ya hay una principal en ARS: la segunda (sin pedir principal) NO debe robar el lugar.
         var second = await service.CreateAsync(
-            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222833334444555562"),
             "user-1", "User", CancellationToken.None);
 
         Assert.False(second.IsPrimary);
@@ -668,7 +668,7 @@ public class Adr041BankAccountServiceTests
         var first = await service.CreateAsync(
             ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true, cbu: "1111222833334444555562"),
             "user-1", "User", CancellationToken.None);
 
         // La segunda quedo principal; la primera debe haber sido desmarcada (una sola principal por dueño+moneda).
@@ -690,7 +690,7 @@ public class Adr041BankAccountServiceTests
             ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         // Marcar principal en USD NO debe tocar la principal de ARS: son monedas distintas.
         var usd = await service.CreateAsync(
-            ValidRequest(ownerToken: SupplierToken(7),currency: "USD", isPrimary: true, cbu: "9999888877776666555544"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "USD", isPrimary: true, cbu: "9999888277776666555548"),
             "user-1", "User", CancellationToken.None);
 
         var arsReloaded = await service.GetByPublicIdAsync(ars.PublicId, CancellationToken.None);
@@ -710,13 +710,13 @@ public class Adr041BankAccountServiceTests
         var first = await service.CreateAsync(
             ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222833334444555562"),
             "user-1", "User", CancellationToken.None);
 
         // Editar la segunda pidiendo principal: debe quedar principal y desmarcar la primera.
         await service.UpdateAsync(
             second.PublicId,
-            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true, cbu: "1111222833334444555562"),
             "user-1", "User", CancellationToken.None);
 
         var firstReloaded = await service.GetByPublicIdAsync(first.PublicId, CancellationToken.None);
@@ -736,7 +736,7 @@ public class Adr041BankAccountServiceTests
         var first = await service.CreateAsync(
             ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222833334444555562"),
             "user-1", "User", CancellationToken.None);
 
         var result = await service.SetPrimaryAsync(second.PublicId, "user-1", "User", CancellationToken.None);
@@ -782,7 +782,7 @@ public class Adr041BankAccountServiceTests
         var first = await service.CreateAsync(
             ValidRequest(ownerToken: SupplierToken(7),currency: "ARS"), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", cbu: "1111222833334444555562"),
             "user-1", "User", CancellationToken.None);
         await service.SetPrimaryAsync(second.PublicId, "user-1", "User", CancellationToken.None);
 
@@ -867,7 +867,7 @@ public class Adr041BankAccountControllerAuthorizationTests
     private static BankAccountDetailDto OwnedBy(BankAccountOwnerType ownerType) => new(
         PublicId: Guid.NewGuid(),
         OwnerType: ownerType,
-        Cbu: "0123456789012345678901",
+        Cbu: "0110599520000001234569",
         Alias: null,
         HolderName: "Titular",
         Currency: "ARS",
@@ -902,7 +902,7 @@ public class Adr041BankAccountControllerAuthorizationTests
     private static BankAccountUpsertRequest Request(BankAccountOwnerType ownerType, string? ownerToken = "11111111-1111-1111-1111-111111111111") => new(
         OwnerType: ownerType,
         OwnerId: ownerToken,
-        Cbu: "0123456789012345678901",
+        Cbu: "0110599520000001234569",
         Alias: null,
         HolderName: "Titular",
         Currency: "ARS",
@@ -1221,7 +1221,7 @@ public class Adr041OwnerReferenceJsonConverterTests
     public void Deserializa_ownerId_GUID_como_texto_para_cliente_o_proveedor()
     {
         var guid = Guid.NewGuid();
-        var json = $"{{\"ownerType\":2,\"ownerId\":\"{guid}\",\"cbu\":\"0123456789012345678901\"," +
+        var json = $"{{\"ownerType\":2,\"ownerId\":\"{guid}\",\"cbu\":\"0110599520000001234569\"," +
                    "\"holderName\":\"Titular\",\"currency\":\"ARS\"}";
 
         var request = System.Text.Json.JsonSerializer.Deserialize<BankAccountUpsertRequest>(json, WebOptions);
@@ -1235,7 +1235,7 @@ public class Adr041OwnerReferenceJsonConverterTests
     public void Deserializa_ownerId_numerico_de_la_agencia_sin_romper()
     {
         // El front manda ownerId: 0 (numero) para la Agencia. Antes esto NO se podia leer en un string -> 400.
-        var json = "{\"ownerType\":0,\"ownerId\":0,\"cbu\":\"0123456789012345678901\"," +
+        var json = "{\"ownerType\":0,\"ownerId\":0,\"cbu\":\"0110599520000001234569\"," +
                    "\"holderName\":\"Titular\",\"currency\":\"ARS\"}";
 
         var request = System.Text.Json.JsonSerializer.Deserialize<BankAccountUpsertRequest>(json, WebOptions);
@@ -1248,7 +1248,7 @@ public class Adr041OwnerReferenceJsonConverterTests
     [Fact]
     public void Deserializa_ownerId_null_como_null()
     {
-        var json = "{\"ownerType\":0,\"ownerId\":null,\"cbu\":\"0123456789012345678901\"," +
+        var json = "{\"ownerType\":0,\"ownerId\":null,\"cbu\":\"0110599520000001234569\"," +
                    "\"holderName\":\"Titular\",\"currency\":\"ARS\"}";
 
         var request = System.Text.Json.JsonSerializer.Deserialize<BankAccountUpsertRequest>(json, WebOptions);

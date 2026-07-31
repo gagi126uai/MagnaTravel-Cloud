@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../api";
 import { showSuccess, showError } from "../alerts";
+import { getApiErrorMessage } from "../lib/errors";
 import { Upload, CheckCircle2, AlertCircle, Key, FileKey, ShieldCheck, RefreshCw } from "lucide-react";
 
 export default function AfipSettingsTab() {
@@ -59,7 +60,7 @@ export default function AfipSettingsTab() {
             setStatus(data.status);
         } catch (error) {
             console.error("Status check failed:", error);
-            setStatus("Error: " + error.message);
+            setStatus(getApiErrorMessage(error, "No se pudo verificar la conexión con ARCA."));
         } finally {
             setCheckingStatus(false);
         }
@@ -108,7 +109,11 @@ export default function AfipSettingsTab() {
             loadSettings(); // Reload to refresh names and status
             checkStatus();
         } catch (error) {
-            showError("Error guardando configuración: " + (error.response?.data?.message || error.message));
+            // El motor puede rechazar con un motivo puntual (CUIT inválido, punto de venta fuera de rango,
+            // condición fiscal desconocida): se muestra ESE texto tal cual. Antes se leía
+            // error.response.data.message, que es la forma de axios — este proyecto usa fetch y deja el
+            // cuerpo de la respuesta en error.payload, que es justo lo que mira getApiErrorMessage.
+            showError(getApiErrorMessage(error, "No se pudo guardar la configuración de facturación."));
         } finally {
             setLoading(false);
         }

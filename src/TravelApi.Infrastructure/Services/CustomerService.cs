@@ -261,6 +261,13 @@ public class CustomerService : ICustomerService
             throw new InvalidOperationException(CuitValidator.InvalidCuitMessage);
         }
 
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): mismo criterio que
+        // el CUIT — se frena en la puerta, antes de tocar la base. Vacio sigue siendo valido en los tres
+        // campos (son opcionales). InvalidOperationException porque es la que CustomersController traduce
+        // a un 409 CON el mensaje real; una ArgumentException la tapa con "No se pudo actualizar el
+        // cliente." y el vendedor no se entera de que campo esta mal.
+        EnsureContactAndTaxConditionAreValid(customer.Email, customer.Phone, customer.TaxCondition, customer.TaxConditionId);
+
         if (!string.IsNullOrWhiteSpace(customer.DocumentType) && !string.IsNullOrWhiteSpace(customer.DocumentNumber))
         {
             var docType = customer.DocumentType.Trim();
@@ -427,6 +434,31 @@ public class CustomerService : ICustomerService
         return name.Trim().ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): los tres chequeos del
+    /// ALTA de cliente, juntos y en un solo lugar. En el alta no existe "el valor anterior", asi que todo
+    /// lo que llega se valida; la edicion tiene su propio criterio "solo si cambio" (ver
+    /// <see cref="UpdateCustomerAsync"/>) y por eso no reusa esta funcion.
+    /// </summary>
+    private static void EnsureContactAndTaxConditionAreValid(string? email, string? phone, string? taxCondition, int? taxConditionId)
+    {
+        if (!EmailValidator.IsValidOrEmpty(email))
+        {
+            throw new InvalidOperationException(EmailValidator.InvalidEmailMessage);
+        }
+
+        if (!PhoneValidator.IsValidOrEmpty(phone))
+        {
+            throw new InvalidOperationException(PhoneValidator.InvalidPhoneMessage);
+        }
+
+        if (!TaxConditionValidator.IsKnownTextOrEmpty(taxCondition)
+            || !TaxConditionValidator.IsKnownCustomerCodeOrEmpty(taxConditionId))
+        {
+            throw new InvalidOperationException(TaxConditionValidator.InvalidTaxConditionMessage);
+        }
+    }
+
     public async Task<Customer> UpdateCustomerAsync(int id, Customer customer, CancellationToken cancellationToken)
     {
         var existing = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
@@ -477,6 +509,38 @@ public class CustomerService : ICustomerService
         if (taxIdChanged && !CuitValidator.IsValidOrEmpty(customer.TaxId))
         {
             throw new InvalidOperationException(CuitValidator.InvalidCuitMessage);
+        }
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1). Mismo criterio
+        // "solo si cambio" que el CUIT: un cliente cargado hace meses con un mail o telefono mal escrito
+        // NO queda trabado para editarle la direccion. La primera vez que alguien toque ese campo, ahi si
+        // se le exige que lo deje bien.
+        if (!string.Equals(existing.Email, customer.Email, StringComparison.Ordinal) && !EmailValidator.IsValidOrEmpty(customer.Email))
+        {
+            throw new InvalidOperationException(EmailValidator.InvalidEmailMessage);
+        }
+
+        if (!string.Equals(existing.Phone, customer.Phone, StringComparison.Ordinal) && !PhoneValidator.IsValidOrEmpty(customer.Phone))
+        {
+            throw new InvalidOperationException(PhoneValidator.InvalidPhoneMessage);
+        }
+
+        // La condicion fiscal se chequea contra lo que REALMENTE llego en el request (customer.*), no
+        // contra el par ya resuelto: si el request trae un codigo que no existe en el catalogo,
+        // ResolveIncoming lo degrada en silencio al valor viejo (regla 1 de su docstring) y el usuario
+        // creeria que guardo algo que nunca se guardo.
+        bool incomingTaxConditionCodeChanged = customer.TaxConditionId.HasValue
+            && customer.TaxConditionId != existing.TaxConditionId;
+        if (incomingTaxConditionCodeChanged && !TaxConditionValidator.IsKnownCustomerCodeOrEmpty(customer.TaxConditionId))
+        {
+            throw new InvalidOperationException(TaxConditionValidator.InvalidTaxConditionMessage);
+        }
+
+        bool incomingTaxConditionTextChanged = !string.IsNullOrWhiteSpace(customer.TaxCondition)
+            && !string.Equals(existing.TaxCondition, customer.TaxCondition, StringComparison.Ordinal);
+        if (incomingTaxConditionTextChanged && !TaxConditionValidator.IsKnownTextOrEmpty(customer.TaxCondition))
+        {
+            throw new InvalidOperationException(TaxConditionValidator.InvalidTaxConditionMessage);
         }
 
         if (taxIdChanged)

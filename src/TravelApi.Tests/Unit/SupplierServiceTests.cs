@@ -604,7 +604,9 @@ public class SupplierServiceTests
         // Regresion (perdida de dato): los forms de edicion existentes NO mandan defaultCurrency. Editar
         // cualquier otro campo (ej. el telefono) NO debe resetear la moneda de un operador USD a ARS.
         await using var context = CreateContext();
-        var supplier = new Supplier { Name = "Operador USD", DefaultCurrency = Monedas.USD, Phone = "111" };
+        // Telefonos REALES (obra 2026-07-31, TANDA 1): desde que la edicion valida el telefono, un "111"
+        // inventado se rechaza por corto. El test sigue probando lo mismo (que la moneda se preserva).
+        var supplier = new Supplier { Name = "Operador USD", DefaultCurrency = Monedas.USD, Phone = "3511234567" };
         context.Suppliers.Add(supplier);
         await context.SaveChangesAsync();
 
@@ -612,12 +614,12 @@ public class SupplierServiceTests
 
         // Simulamos el request del form de edicion: trae los otros campos pero NO la moneda (null).
         var incoming = BuildIncomingSupplier(supplier, isActive: true);
-        incoming.Phone = "222";
+        incoming.Phone = "3511234568";
         incoming.DefaultCurrency = null;
 
         var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
 
-        Assert.Equal("222", result.Phone);
+        Assert.Equal("3511234568", result.Phone);
         Assert.Equal(Monedas.USD, result.DefaultCurrency); // se preservo, NO se reseteo a ARS
 
         var stored = await context.Suppliers.FindAsync(supplier.Id);

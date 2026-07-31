@@ -152,7 +152,8 @@ public class AfipService : IAfipService
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "AFIP status unavailable because Security__EncryptionKey is not configured.");
-                return "Falta clave Security__EncryptionKey";
+                // El nombre de la variable interna va al log; al usuario solo el texto en criollo (T-5).
+                return "Falta configurar la clave de seguridad del sistema. Avisá al equipo técnico.";
             }
 
             if (certificateData == null || certificateData.Length == 0) return "Certificado Faltante";
@@ -173,7 +174,8 @@ public class AfipService : IAfipService
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "AFIP token could not be read because Security__EncryptionKey is not configured.");
-                return "Falta clave Security__EncryptionKey";
+                // Igual que la rama de arriba: el nombre interno queda en el log, no en pantalla (T-5).
+                return "Falta configurar la clave de seguridad del sistema. Avisá al equipo técnico.";
             }
 
             if (!string.IsNullOrEmpty(authToken))
@@ -333,6 +335,27 @@ public class AfipService : IAfipService
             // ArgumentException a proposito: el controller de AFIP la traduce a 400 CON el mensaje; cualquier
             // otro tipo cae en su catch generico y el usuario veria "No se pudo validar la configuracion".
             throw new ArgumentException(CuitValidator.InvalidCuitMessage);
+        }
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): el punto de venta.
+        // Mismo criterio "solo si cambia" que el CUIT — una configuracion guardada antes de este fix con
+        // un numero fuera de rango no traba al admin que solo viene a subir un certificado nuevo. Sobre
+        // una instalacion nueva (nunca configurada) el valor guardado es 0 y el formulario manda 1 por
+        // defecto, asi que el primer guardado si pasa por el chequeo.
+        var storedPointOfSale = settings?.PuntoDeVenta ?? 0;
+        bool pointOfSaleChanged = puntoDeVenta != storedPointOfSale;
+        if (pointOfSaleChanged && !AfipPointOfSaleValidator.IsValid(puntoDeVenta))
+        {
+            throw new ArgumentException(AfipPointOfSaleValidator.InvalidPointOfSaleMessage);
+        }
+
+        // La condicion fiscal de la agencia decide la LETRA de todos los comprobantes (A/B/C). Un texto
+        // que el motor no reconoce lo deja en "Desconocido" y la factura sale mal. Mismo criterio
+        // "solo si cambia"; vacio sigue pasando (instalacion a medio configurar).
+        bool taxConditionChanged = !string.Equals(settings?.TaxCondition, taxCondition, StringComparison.Ordinal);
+        if (taxConditionChanged && !TaxConditionValidator.IsKnownTextOrEmpty(taxCondition))
+        {
+            throw new ArgumentException(TaxConditionValidator.InvalidTaxConditionMessage);
         }
 
         if (settings == null)

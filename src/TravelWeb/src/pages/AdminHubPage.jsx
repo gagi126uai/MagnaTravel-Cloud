@@ -435,7 +435,9 @@ export default function AdminHubPage() {
       loadCommissionRules();
     } catch (error) {
       console.error("Error saving commission rule:", error);
-      showError(error.message || "No se pudo guardar la regla");
+      // Mismo criterio que SettingsPage: el motivo real del motor (ej. porcentaje fuera de 0 a 100)
+      // viaja en el cuerpo de la respuesta, que es lo primero que mira getApiErrorMessage.
+      showError(getApiErrorMessage(error, "No se pudo guardar la regla"));
     }
   };
 

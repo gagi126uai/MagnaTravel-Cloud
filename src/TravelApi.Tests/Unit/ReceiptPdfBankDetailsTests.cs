@@ -123,7 +123,10 @@ public class ReceiptPdfBankDetailsTests
             IsPrimary = isPrimary,
             IsActive = true,
             HolderName = "Magna Travel SRL",
-            Cbu = "0000000000000000000001",
+            // CBU con los digitos verificadores del BCRA correctos (obra 2026-07-31, TANDA 1): aunque este
+            // seed entra directo por el contexto (sin pasar por BankAccountService), se usa un numero valido
+            // de verdad para que el dato de prueba no contradiga la regla que hoy vale en el alta.
+            Cbu = "0110599520000001234569",
             Alias = "magna.travel.ars",
             Bank = "Banco Nacion",
         });
