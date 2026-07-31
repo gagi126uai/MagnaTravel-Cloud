@@ -39,7 +39,7 @@ public class CommissionService : ICommissionService
         });
     }
 
-    public async Task<object> CreateRuleAsync(CreateCommissionRuleRequest request, CancellationToken cancellationToken)
+    public async Task<CommissionRuleDto> CreateRuleAsync(CreateCommissionRuleRequest request, CancellationToken cancellationToken)
     {
         // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): el porcentaje es
         // plata (con el se devenga la comision del vendedor), asi que se frena antes de tocar la base.
@@ -79,10 +79,10 @@ public class CommissionService : ICommissionService
         _dbContext.CommissionRules.Add(rule);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        return rule;
+        return await BuildRuleDtoAsync(rule, cancellationToken);
     }
 
-    public async Task<object?> UpdateRuleAsync(int id, UpdateCommissionRuleRequest request, CancellationToken cancellationToken)
+    public async Task<CommissionRuleDto?> UpdateRuleAsync(int id, UpdateCommissionRuleRequest request, CancellationToken cancellationToken)
     {
         var rule = await _dbContext.CommissionRules.FindAsync(new object[] { id }, cancellationToken);
         if (rule == null)
@@ -99,7 +99,46 @@ public class CommissionService : ICommissionService
         rule.IsActive = request.IsActive;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
-        return rule;
+        return await BuildRuleDtoAsync(rule, cancellationToken);
+    }
+
+    /// <summary>
+    /// Arma la respuesta de una regla con los MISMOS campos que devuelve el listado
+    /// (<see cref="GetAllRulesAsync"/>), para que la pantalla vea siempre la misma forma.
+    ///
+    /// <para>El proveedor se busca aparte porque el alta/edicion no lo trae cargado (no hace falta un
+    /// Include para grabar). Es una consulta puntual por clave primaria, solo cuando la regla tiene
+    /// proveedor: sin proveedor no se consulta nada.</para>
+    /// </summary>
+    private async Task<CommissionRuleDto> BuildRuleDtoAsync(CommissionRule rule, CancellationToken cancellationToken)
+    {
+        Guid? supplierPublicId = null;
+        string? supplierName = null;
+
+        if (rule.SupplierId.HasValue)
+        {
+            var supplier = await _dbContext.Suppliers
+                .AsNoTracking()
+                .Where(s => s.Id == rule.SupplierId.Value)
+                .Select(s => new { s.PublicId, s.Name })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            supplierPublicId = supplier?.PublicId;
+            supplierName = supplier?.Name;
+        }
+
+        return new CommissionRuleDto
+        {
+            Id = rule.Id,
+            SupplierPublicId = supplierPublicId,
+            SupplierName = supplierName,
+            ServiceType = rule.ServiceType,
+            CommissionPercent = rule.CommissionPercent,
+            Priority = rule.Priority,
+            IsActive = rule.IsActive,
+            Description = rule.Description,
+            CreatedAt = rule.CreatedAt
+        };
     }
 
     /// <summary>

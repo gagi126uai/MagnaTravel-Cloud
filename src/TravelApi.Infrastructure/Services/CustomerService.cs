@@ -268,6 +268,12 @@ public class CustomerService : ICustomerService
         // cliente." y el vendedor no se entera de que campo esta mal.
         EnsureContactAndTaxConditionAreValid(customer.Email, customer.Phone, customer.TaxCondition, customer.TaxConditionId);
 
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): el numero de
+        // documento tiene que ser coherente con el TIPO elegido (un DNI son 7 u 8 numeros; un pasaporte es
+        // texto libre). Va antes del guard de duplicados: no tiene sentido buscar duplicados de un
+        // documento que ni siquiera puede existir.
+        EnsureDocumentNumberIsValid(customer.DocumentType, customer.DocumentNumber);
+
         if (!string.IsNullOrWhiteSpace(customer.DocumentType) && !string.IsNullOrWhiteSpace(customer.DocumentNumber))
         {
             var docType = customer.DocumentType.Trim();
@@ -459,6 +465,23 @@ public class CustomerService : ICustomerService
         }
     }
 
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): el documento se valida
+    /// contra su propio tipo (ver <see cref="DocumentNumberValidator"/>), y el mensaje tambien sale de ahi
+    /// —el del DNI dice cuantos numeros van, el de los demas es generico—.
+    ///
+    /// <para><c>InvalidOperationException</c> por la misma razon que los campos de la TANDA 1:
+    /// <c>CustomersController.UpdateCustomer</c> tapa las <c>ArgumentException</c> con un mensaje generico
+    /// ("No se pudo actualizar el cliente.") y el vendedor nunca leeria que campo esta mal.</para>
+    /// </summary>
+    private static void EnsureDocumentNumberIsValid(string? documentType, string? documentNumber)
+    {
+        if (!DocumentNumberValidator.IsValidOrEmpty(documentType, documentNumber))
+        {
+            throw new InvalidOperationException(DocumentNumberValidator.MessageFor(documentType));
+        }
+    }
+
     public async Task<Customer> UpdateCustomerAsync(int id, Customer customer, CancellationToken cancellationToken)
     {
         var existing = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
@@ -523,6 +546,32 @@ public class CustomerService : ICustomerService
         if (!string.Equals(existing.Phone, customer.Phone, StringComparison.Ordinal) && !PhoneValidator.IsValidOrEmpty(customer.Phone))
         {
             throw new InvalidOperationException(PhoneValidator.InvalidPhoneMessage);
+        }
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2), documento del cliente.
+        //
+        // Se valida el par (tipo, numero) que REALMENTE va a quedar guardado, no el que llego: mas abajo
+        // rige la regla de ADR-023 T1 "campo vacio = no tocar", asi que un PUT que omite el documento
+        // conserva el guardado. Sin resolver ese par antes, un PUT que solo cambia el TIPO (por ejemplo, de
+        // Pasaporte a DNI, dejando el numero viejo) pasaria sin control y guardaria una combinacion
+        // imposible.
+        //
+        // Criterio "solo si cambio", igual que el CUIT: un cliente cargado hace meses con el documento mal
+        // escrito no queda trabado para editarle la direccion.
+        var effectiveDocumentType = !string.IsNullOrWhiteSpace(customer.DocumentType)
+            ? customer.DocumentType
+            : existing.DocumentType;
+        var effectiveDocumentNumber = !string.IsNullOrWhiteSpace(customer.DocumentNumber)
+            ? customer.DocumentNumber
+            : existing.DocumentNumber;
+
+        var documentChanged =
+            !string.Equals(existing.DocumentType, effectiveDocumentType, StringComparison.Ordinal) ||
+            !string.Equals(existing.DocumentNumber, effectiveDocumentNumber, StringComparison.Ordinal);
+
+        if (documentChanged)
+        {
+            EnsureDocumentNumberIsValid(effectiveDocumentType, effectiveDocumentNumber);
         }
 
         // La condicion fiscal se chequea contra lo que REALMENTE llego en el request (customer.*), no

@@ -253,12 +253,20 @@ public class LeadService : ILeadService
         {
             // Cliente NUEVO: arrastramos los datos de viaje del lead a las notas del cliente, de forma
             // legible, para que el vendedor no tenga que ir a buscar el lead. Solo en alta nueva.
+            //
+            // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2), decision firmada
+            // del dueño para el bot de WhatsApp: el lead JAMAS se rechaza (perder una consulta que llego
+            // sola es peor que cualquier dato sucio), pero el dato invalido NO entra al campo. El mail o el
+            // telefono que no pasan el validador quedan VACIOS en la ficha y se anotan aparte, para que el
+            // vendedor lo vea y lo corrija hablando con la persona.
+            var contact = ResolveContactFromLead(lead);
+
             customer = new Customer
             {
                 FullName = lead.FullName,
-                Email = lead.Email,
-                Phone = lead.Phone,
-                Notes = BuildCustomerNotesFromLead(lead),
+                Email = contact.Email,
+                Phone = contact.Phone,
+                Notes = CombineNotes(BuildCustomerNotesFromLead(lead), contact.DiscardedDataNote),
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
@@ -280,6 +288,66 @@ public class LeadService : ILeadService
         await _db.SaveChangesAsync(cancellationToken);
 
         return customer.Id;
+    }
+
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): resultado de filtrar el
+    /// contacto que viene de un lead. <c>Email</c>/<c>Phone</c> son lo que SI se puede guardar en la ficha
+    /// del cliente (vacio si lo que llego no era un mail/telefono), y <c>DiscardedDataNote</c> es el texto
+    /// que deja constancia de lo descartado (null si no se descarto nada).
+    /// </summary>
+    private sealed record LeadContactForCustomer(string? Email, string? Phone, string? DiscardedDataNote);
+
+    /// <summary>
+    /// Separa el contacto del lead en "lo que entra a la ficha" y "lo que queda anotado".
+    ///
+    /// <para><b>Por que existe</b> (decision firmada del dueño, 2026-07-31): los leads del bot de WhatsApp
+    /// se arman con lo que la persona escribe en el chat, asi que en el casillero del mail puede venir
+    /// cualquier cosa ("no tengo", "juan arroba gmail"). Ese lead igual vale oro y NUNCA se rechaza; lo que
+    /// no puede pasar es que el dato sucio entre a la ficha del cliente, porque de ahi sale el envio del
+    /// voucher y la factura.</para>
+    ///
+    /// <para><b>Por que el valor crudo SI va en la nota</b>: la nota es un texto interno de la ficha que
+    /// lee el vendedor, no un error de sistema — y sin el valor original no se puede reconstruir que quiso
+    /// decir la persona ("juan arroba gmail punto com" se corrige en 5 segundos leyendolo). Se recorta a un
+    /// largo razonable por si el bot mando un parrafo entero.</para>
+    /// </summary>
+    private static LeadContactForCustomer ResolveContactFromLead(Lead lead)
+    {
+        var discardedParts = new List<string>();
+
+        var email = lead.Email;
+        if (!EmailValidator.IsValidOrEmpty(email))
+        {
+            discardedParts.Add($"Mail recibido por WhatsApp no parecía válido: {ShortenForNote(email)}");
+            email = null;
+        }
+
+        var phone = lead.Phone;
+        if (!PhoneValidator.IsValidOrEmpty(phone))
+        {
+            discardedParts.Add($"Teléfono recibido por WhatsApp no parecía válido: {ShortenForNote(phone)}");
+            phone = null;
+        }
+
+        var discardedNote = discardedParts.Count > 0 ? string.Join("\n", discardedParts) : null;
+        return new LeadContactForCustomer(email, phone, discardedNote);
+    }
+
+    /// <summary>Recorta un valor para que una nota no se coma un mensaje entero del chat.</summary>
+    private static string ShortenForNote(string? rawValue)
+    {
+        var trimmed = (rawValue ?? string.Empty).Trim();
+        const int maximumLength = 80;
+        return trimmed.Length <= maximumLength ? trimmed : trimmed[..maximumLength] + "…";
+    }
+
+    /// <summary>Une dos bloques de notas salteando los vacios (sin dejar saltos de linea sueltos).</summary>
+    private static string? CombineNotes(string? firstBlock, string? secondBlock)
+    {
+        if (string.IsNullOrWhiteSpace(firstBlock)) return secondBlock;
+        if (string.IsNullOrWhiteSpace(secondBlock)) return firstBlock;
+        return $"{firstBlock}\n{secondBlock}";
     }
 
     /// <summary>

@@ -4323,6 +4323,32 @@ public class ReservaService : IReservaService
         }
     }
 
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): el documento del
+    /// pasajero se valida contra su propio tipo (un DNI son 7 u 8 numeros; un pasaporte es texto libre).
+    /// El mensaje sale del validador, que sabe cual corresponde a cada tipo.
+    /// </summary>
+    private static void EnsurePassengerDocumentIsValid(string? documentType, string? documentNumber)
+    {
+        if (!DocumentNumberValidator.IsValidOrEmpty(documentType, documentNumber))
+        {
+            throw new InvalidOperationException(DocumentNumberValidator.MessageFor(documentType));
+        }
+    }
+
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): la fecha de nacimiento
+    /// no puede estar en el futuro ni ser de hace mas de 120 anos (ver <see cref="BirthDateValidator"/>).
+    /// Es CANDADO: una fecha asi es imposible, no dudosa.
+    /// </summary>
+    private static void EnsurePassengerBirthDateIsValid(DateTime? birthDate)
+    {
+        if (!BirthDateValidator.IsValidOrEmpty(birthDate))
+        {
+            throw new InvalidOperationException(BirthDateValidator.InvalidBirthDateMessage);
+        }
+    }
+
     public async Task<PassengerDto> AddPassengerAsync(int reservaId, Passenger passenger)
     {
         // ADR-035 (2026-06-19): PRIMERA COMPUERTA — en una reserva CERRADA (Closed/Lost/Cancelled/
@@ -4354,6 +4380,14 @@ public class ReservaService : IReservaService
         // ("No se pudo actualizar el pasajero."). InvalidOperationException llega con el mensaje entero
         // por los dos caminos, que es lo que necesita el vendedor para saber que campo corregir.
         EnsurePassengerContactIsValid(passenger.Email, passenger.Phone);
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): documento y fecha de
+        // nacimiento. Son los dos datos con los que el pasajero se presenta a embarcar; un error ahi no se
+        // nota hasta el mostrador. Vacio sigue siendo valido (se completan a medida que llega la
+        // documentacion). El vencimiento del pasaporte NO se valida aca: es aviso, no candado (ver el final
+        // de este metodo).
+        EnsurePassengerDocumentIsValid(passenger.DocumentType, passenger.DocumentNumber);
+        EnsurePassengerBirthDateIsValid(passenger.BirthDate);
 
         // Tope de pasajeros nominales = cantidad DECLARADA de la reserva (misma fuente unica
         // que usa EnsureReadinessForSaleAsync). NO se infiere de la capacidad de los servicios:
@@ -4395,7 +4429,23 @@ public class ReservaService : IReservaService
         _context.Passengers.Add(passenger);
         await _context.SaveChangesAsync();
 
-        return _mapper.Map<PassengerDto>(passenger);
+        return BuildPassengerResult(passenger);
+    }
+
+    /// <summary>
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): arma el pasajero que se
+    /// devuelve al front y le adjunta el AVISO no bloqueante que corresponda.
+    ///
+    /// <para>Hoy el unico aviso es el pasaporte vencido (decision firmada del dueño: se guarda igual,
+    /// porque en la agencia se carga al pasajero antes de que renueve). Usa el mismo riel
+    /// <c>Warning</c> que ya tenia la reserva para el aviso de fechas (FIX #27), asi el front no aprende un
+    /// mecanismo nuevo.</para>
+    /// </summary>
+    private PassengerDto BuildPassengerResult(Passenger passenger)
+    {
+        var dto = _mapper.Map<PassengerDto>(passenger);
+        dto.Warning = PassportExpiryRules.GetExpiredWarningOrNull(passenger.PassportExpiry);
+        return dto;
     }
 
     public async Task<PassengerDto> UpdatePassengerAsync(int passengerId, Passenger updated)
@@ -4421,6 +4471,22 @@ public class ReservaService : IReservaService
         if (!string.Equals(passenger.Phone, updated.Phone, StringComparison.Ordinal))
         {
             EnsurePassengerContactIsValid(email: null, phone: updated.Phone);
+        }
+
+        // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2), mismo criterio "solo
+        // si cambio". El documento se mira como PAR (tipo + numero): cambiar el tipo a DNI dejando el
+        // numero de pasaporte viejo tambien es un cambio, y tiene que validarse.
+        var documentChanged =
+            !string.Equals(passenger.DocumentType, updated.DocumentType, StringComparison.Ordinal) ||
+            !string.Equals(passenger.DocumentNumber, updated.DocumentNumber, StringComparison.Ordinal);
+        if (documentChanged)
+        {
+            EnsurePassengerDocumentIsValid(updated.DocumentType, updated.DocumentNumber);
+        }
+
+        if (passenger.BirthDate != updated.BirthDate)
+        {
+            EnsurePassengerBirthDateIsValid(updated.BirthDate);
         }
 
         // B1.15 Fase 0' (CODE-14): solo bloqueamos si el request cambia DATOS
@@ -4476,7 +4542,7 @@ public class ReservaService : IReservaService
         passenger.Notes = updated.Notes;
 
         await _context.SaveChangesAsync();
-        return _mapper.Map<PassengerDto>(passenger);
+        return BuildPassengerResult(passenger);
     }
 
     public async Task RemovePassengerAsync(int passengerId)

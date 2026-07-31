@@ -358,6 +358,14 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                 : await api.post(`/reservas/${reservaId}/passengers`, payload);
 
             showSuccess(passengerToEdit ? "Pasajero actualizado" : "Pasajero agregado");
+
+            // Aviso NO bloqueante del motor (hoy: pasaporte vencido). El pasajero SE GUARDA igual —por eso
+            // primero va el "guardado" y después el aviso—; es el mismo mecanismo que ya usa la ficha de la
+            // reserva para el aviso de fechas.
+            if (savedPassenger?.warning) {
+                showWarning(savedPassenger.warning);
+            }
+
             await onSuccess?.({ passenger: savedPassenger });
             onClose();
         } catch (error) {

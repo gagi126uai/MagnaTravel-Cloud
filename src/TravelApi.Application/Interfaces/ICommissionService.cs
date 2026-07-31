@@ -5,8 +5,15 @@ namespace TravelApi.Application.Interfaces;
 public interface ICommissionService
 {
     Task<IEnumerable<object>> GetAllRulesAsync(CancellationToken cancellationToken);
-    Task<object> CreateRuleAsync(CreateCommissionRuleRequest request, CancellationToken cancellationToken);
-    Task<object?> UpdateRuleAsync(int id, UpdateCommissionRuleRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Crea una regla de comision. Devuelve el DTO de la regla creada (deuda cerrada el 2026-07-31: antes
+    /// devolvia la entidad de base tal cual, con campos internos que la pantalla no usa).
+    /// </summary>
+    Task<CommissionRuleDto> CreateRuleAsync(CreateCommissionRuleRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Edita una regla de comision. Null = no existe la regla pedida.</summary>
+    Task<CommissionRuleDto?> UpdateRuleAsync(int id, UpdateCommissionRuleRequest request, CancellationToken cancellationToken);
     Task<bool> DeleteRuleAsync(int id, CancellationToken cancellationToken);
     Task<decimal> CalculateCommissionAsync(int? supplierId, string? serviceType, CancellationToken cancellationToken);
 

@@ -242,4 +242,151 @@ public class FieldValidatorsTests
         // null = "el request no mando el campo": no se toca la condicion guardada.
         Assert.True(TaxConditionValidator.IsKnownCustomerCodeOrEmpty(null));
     }
+
+    // ===================================================================================================
+    // TANDA 2 — Numero de documento (segun el TIPO elegido)
+    // ===================================================================================================
+
+    [Theory]
+    [InlineData("12345678")]   // DNI de 8 numeros, el caso normal de hoy
+    [InlineData("9876543")]    // DNI viejo de 7 numeros
+    [InlineData(" 12345678 ")] // espacios al pegar desde Excel: se recortan
+    public void DocumentNumberValidator_DniBienCargado_EsValido(string documentNumber)
+    {
+        Assert.True(DocumentNumberValidator.IsValidOrEmpty("DNI", documentNumber));
+    }
+
+    [Theory]
+    [InlineData("12.345.678")]   // con puntos: el sistema guarda el numero limpio
+    [InlineData("123456")]       // 6 numeros: muy corto
+    [InlineData("123456789")]    // 9 numeros: muy largo
+    [InlineData("20345678901")]  // pegaron el CUIT en el casillero del DNI
+    [InlineData("AB123456")]     // numero de pasaporte con el tipo DNI elegido
+    [InlineData("no lo trajo")]  // texto libre, el caso real que se colaba antes
+    public void DocumentNumberValidator_DniMalCargado_EsInvalido(string documentNumber)
+    {
+        Assert.False(DocumentNumberValidator.IsValidOrEmpty("DNI", documentNumber));
+    }
+
+    [Theory]
+    [InlineData("dni")]
+    [InlineData("D.N.I.")]
+    public void DocumentNumberValidator_ElTipoDniSeReconoceEscritoDeCualquierForma(string documentType)
+    {
+        // Mismo numero invalido: si el tipo se reconoce como DNI, tiene que rebotar igual.
+        Assert.True(DocumentNumberValidator.IsDniType(documentType));
+        Assert.False(DocumentNumberValidator.IsValidOrEmpty(documentType, "12.345.678"));
+    }
+
+    [Theory]
+    [InlineData("Pasaporte", "AB123456")]
+    [InlineData("Pasaporte", "AAB-123456")]
+    [InlineData("Cedula", "1234567")]
+    [InlineData("Otro", "X 99/88")]
+    [InlineData("Pasaporte", "20345678901")] // un pasaporte todo numerico existe en varios paises
+    public void DocumentNumberValidator_DocumentosDeTextoLibre_SonValidos(string documentType, string documentNumber)
+    {
+        Assert.True(DocumentNumberValidator.IsValidOrEmpty(documentType, documentNumber));
+    }
+
+    [Theory]
+    [InlineData("Pasaporte", "???")]                                  // puro simbolo: no es un documento
+    [InlineData("Otro", "@@@")]
+    [InlineData("Pasaporte", "el pasaporte lo manda por mail mañana")] // una frase entera en el casillero
+    public void DocumentNumberValidator_LoQueNoPuedeSerUnDocumento_EsInvalido(string documentType, string documentNumber)
+    {
+        Assert.False(DocumentNumberValidator.IsValidOrEmpty(documentType, documentNumber));
+    }
+
+    [Theory]
+    [InlineData("DNI", null)]
+    [InlineData("DNI", "")]
+    [InlineData("Pasaporte", "   ")]
+    [InlineData(null, null)]
+    public void DocumentNumberValidator_Vacio_EsValido(string? documentType, string? documentNumber)
+    {
+        Assert.True(DocumentNumberValidator.IsValidOrEmpty(documentType, documentNumber));
+    }
+
+    [Fact]
+    public void DocumentNumberValidator_ElMensajeCambiaSegunElTipo()
+    {
+        // El del DNI explica el formato exacto; el de los demas es generico porque no hay uno solo.
+        Assert.Equal(DocumentNumberValidator.InvalidDniMessage, DocumentNumberValidator.MessageFor("DNI"));
+        Assert.Equal(DocumentNumberValidator.InvalidDocumentNumberMessage, DocumentNumberValidator.MessageFor("Pasaporte"));
+    }
+
+    // ===================================================================================================
+    // TANDA 2 — Fecha de nacimiento
+    // ===================================================================================================
+
+    private static readonly DateTime HoyDePrueba = new(2026, 7, 31, 0, 0, 0, DateTimeKind.Utc);
+
+    [Theory]
+    [InlineData(-30)]     // hace 30 dias
+    [InlineData(-40 * 365)] // una persona de 40 anos
+    [InlineData(0)]       // hoy mismo: un bebe recien nacido tambien viaja
+    public void BirthDateValidator_FechasPosibles_SonValidas(int daysFromToday)
+    {
+        Assert.True(BirthDateValidator.IsValidOrEmpty(HoyDePrueba.AddDays(daysFromToday), HoyDePrueba));
+    }
+
+    [Fact]
+    public void BirthDateValidator_FechaFutura_EsInvalida()
+    {
+        // El error de tipeo tipico: el ano de HOY o uno posterior en lugar del de nacimiento.
+        Assert.False(BirthDateValidator.IsValidOrEmpty(HoyDePrueba.AddDays(1), HoyDePrueba));
+    }
+
+    [Fact]
+    public void BirthDateValidator_MasDeCientoVeinteAnos_EsInvalida()
+    {
+        var demasiadoVieja = HoyDePrueba.AddYears(-120).AddDays(-1);
+        Assert.False(BirthDateValidator.IsValidOrEmpty(demasiadoVieja, HoyDePrueba));
+    }
+
+    [Fact]
+    public void BirthDateValidator_JustoCientoVeinteAnos_EsValida()
+    {
+        // El borde entra: 120 anos exactos todavia es una persona posible.
+        Assert.True(BirthDateValidator.IsValidOrEmpty(HoyDePrueba.AddYears(-120), HoyDePrueba));
+    }
+
+    [Fact]
+    public void BirthDateValidator_SinFecha_EsValida()
+    {
+        Assert.True(BirthDateValidator.IsValidOrEmpty(null, HoyDePrueba));
+    }
+
+    // ===================================================================================================
+    // TANDA 2 — Vencimiento de pasaporte (AVISO, no candado)
+    // ===================================================================================================
+
+    [Fact]
+    public void PassportExpiryRules_PasaporteVencido_DevuelveElAviso()
+    {
+        var vencidoAyer = HoyDePrueba.AddDays(-1);
+        Assert.Equal(
+            PassportExpiryRules.ExpiredPassportWarning,
+            PassportExpiryRules.GetExpiredWarningOrNull(vencidoAyer, HoyDePrueba));
+    }
+
+    [Fact]
+    public void PassportExpiryRules_VenceHoy_NoAvisa()
+    {
+        // El pasaporte sirve hasta el final de su ultimo dia.
+        Assert.Null(PassportExpiryRules.GetExpiredWarningOrNull(HoyDePrueba, HoyDePrueba));
+    }
+
+    [Fact]
+    public void PassportExpiryRules_PasaporteVigente_NoAvisa()
+    {
+        Assert.Null(PassportExpiryRules.GetExpiredWarningOrNull(HoyDePrueba.AddYears(2), HoyDePrueba));
+    }
+
+    [Fact]
+    public void PassportExpiryRules_SinFechaCargada_NoAvisa()
+    {
+        Assert.Null(PassportExpiryRules.GetExpiredWarningOrNull(null, HoyDePrueba));
+    }
 }

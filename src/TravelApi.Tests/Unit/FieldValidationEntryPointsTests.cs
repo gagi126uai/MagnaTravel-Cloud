@@ -741,11 +741,426 @@ public class FieldValidationEntryPointsTests
     }
 
     // ===================================================================================================
+    // TANDA 2 — 8) Documento del cliente (CustomerService)
+    // ===================================================================================================
+
+    [Fact]
+    public async Task CreateCustomerAsync_DniConPuntos_Bloquea()
+    {
+        await using var context = CreateContext();
+        var service = CreateCustomerService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.CreateCustomerAsync(
+                new Customer { FullName = "Juan Perez", DocumentType = "DNI", DocumentNumber = "12.345.678" },
+                CancellationToken.None));
+
+        Assert.Equal(DocumentNumberValidator.InvalidDniMessage, ex.Message);
+        Assert.Equal(0, await context.Customers.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateCustomerAsync_PasaporteConLetras_Permite()
+    {
+        // El pasaporte es texto libre: cada pais tiene su formato y no se puede exigir uno.
+        await using var context = CreateContext();
+        var service = CreateCustomerService(context);
+
+        var result = await service.CreateCustomerAsync(
+            new Customer { FullName = "Juan Perez", DocumentType = "Pasaporte", DocumentNumber = "AB123456" },
+            CancellationToken.None);
+
+        Assert.Equal("AB123456", result.DocumentNumber);
+    }
+
+    [Fact]
+    public async Task UpdateCustomerAsync_DocumentoLegacyInvalidoSinTocarlo_NoBloqueaOtrosCampos()
+    {
+        // Cliente cargado ANTES de este fix con un DNI imposible: editarle la direccion tiene que andar.
+        await using var context = CreateContext();
+        context.Customers.Add(new Customer
+        {
+            Id = 7,
+            FullName = "Juan Perez",
+            DocumentType = "DNI",
+            DocumentNumber = "12.345.678",
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateCustomerService(context);
+
+        await service.UpdateCustomerAsync(
+            7,
+            new Customer { Id = 7, FullName = "Juan Perez", Address = "Av. Colon 1234" },
+            CancellationToken.None);
+
+        var persisted = await context.Customers.AsNoTracking().SingleAsync();
+        Assert.Equal("Av. Colon 1234", persisted.Address);
+        Assert.Equal("12.345.678", persisted.DocumentNumber); // el dato viejo queda como estaba
+    }
+
+    [Fact]
+    public async Task UpdateCustomerAsync_DniNuevoInvalido_Bloquea()
+    {
+        await using var context = CreateContext();
+        context.Customers.Add(new Customer
+        {
+            Id = 7,
+            FullName = "Juan Perez",
+            DocumentType = "DNI",
+            DocumentNumber = "12345678",
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateCustomerService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateCustomerAsync(
+                7,
+                new Customer { Id = 7, FullName = "Juan Perez", DocumentType = "DNI", DocumentNumber = "99" },
+                CancellationToken.None));
+
+        Assert.Equal(DocumentNumberValidator.InvalidDniMessage, ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateCustomerAsync_CambiarSoloElTipoDejandoElNumeroViejo_Bloquea()
+    {
+        // El par (tipo + numero) es lo que importa: pasar un pasaporte a "DNI" deja una combinacion
+        // imposible aunque el numero no se haya tocado en este PUT.
+        await using var context = CreateContext();
+        context.Customers.Add(new Customer
+        {
+            Id = 7,
+            FullName = "Juan Perez",
+            DocumentType = "Pasaporte",
+            DocumentNumber = "AB123456",
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateCustomerService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateCustomerAsync(
+                7,
+                new Customer { Id = 7, FullName = "Juan Perez", DocumentType = "DNI" },
+                CancellationToken.None));
+
+        Assert.Equal(DocumentNumberValidator.InvalidDniMessage, ex.Message);
+    }
+
+    // ===================================================================================================
+    // TANDA 2 — 9) Documento, nacimiento y pasaporte del pasajero (ReservaService)
+    // ===================================================================================================
+
+    [Fact]
+    public async Task AddPassengerAsync_DniMalCargado_Bloquea()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        await context.SaveChangesAsync();
+
+        var service = CreateReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddPassengerAsync(
+                reservaId: 1,
+                new Passenger { FullName = "Juan Perez", DocumentType = "DNI", DocumentNumber = "no lo trajo" }));
+
+        Assert.Equal(DocumentNumberValidator.InvalidDniMessage, ex.Message);
+        Assert.Equal(0, await context.Passengers.CountAsync());
+    }
+
+    [Fact]
+    public async Task AddPassengerAsync_FechaDeNacimientoFutura_Bloquea()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        await context.SaveChangesAsync();
+
+        var service = CreateReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddPassengerAsync(
+                reservaId: 1,
+                new Passenger { FullName = "Juan Perez", BirthDate = DateTime.UtcNow.AddYears(1) }));
+
+        Assert.Equal(BirthDateValidator.InvalidBirthDateMessage, ex.Message);
+        Assert.Equal(0, await context.Passengers.CountAsync());
+    }
+
+    [Fact]
+    public async Task AddPassengerAsync_PasaporteVencido_GuardaIgualYAvisa()
+    {
+        // Decision firmada del dueño: el pasaporte vencido es AVISO, no candado. La operacion sale bien y
+        // el aviso viaja en la respuesta para que la pantalla lo muestre.
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        await context.SaveChangesAsync();
+
+        var service = CreateReservaService(context);
+
+        var result = await service.AddPassengerAsync(
+            reservaId: 1,
+            new Passenger
+            {
+                FullName = "Juan Perez",
+                DocumentType = "Pasaporte",
+                DocumentNumber = "AB123456",
+                PassportExpiry = DateTime.SpecifyKind(new DateTime(2020, 1, 1), DateTimeKind.Utc),
+            });
+
+        Assert.Equal(PassportExpiryRules.ExpiredPassportWarning, result.Warning);
+        Assert.Equal(1, await context.Passengers.CountAsync());
+    }
+
+    [Fact]
+    public async Task AddPassengerAsync_PasaporteVigente_NoAvisaNada()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        await context.SaveChangesAsync();
+
+        var service = CreateReservaService(context);
+
+        var result = await service.AddPassengerAsync(
+            reservaId: 1,
+            new Passenger
+            {
+                FullName = "Juan Perez",
+                PassportExpiry = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddYears(3), DateTimeKind.Utc),
+            });
+
+        Assert.Null(result.Warning);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_DocumentoLegacyInvalidoSinTocarlo_NoBloqueaOtrosCampos()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50,
+            ReservaId = 1,
+            FullName = "Juan Perez",
+            DocumentType = "DNI",
+            DocumentNumber = "12.345.678", // dato cargado ANTES de este fix
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        await service.UpdatePassengerAsync(
+            passengerId: 50,
+            new Passenger
+            {
+                Id = 50,
+                FullName = "Juan Perez",
+                DocumentType = "DNI",
+                DocumentNumber = "12.345.678",
+                Notes = "Pide asiento pasillo",
+            });
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal("Pide asiento pasillo", persisted.Notes);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_DniNuevoInvalido_Bloquea()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 50, ReservaId = 1, FullName = "Juan Perez", DocumentType = "DNI", DocumentNumber = "12345678",
+        });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdatePassengerAsync(
+                passengerId: 50,
+                new Passenger { Id = 50, FullName = "Juan Perez", DocumentType = "DNI", DocumentNumber = "20345678901" }));
+
+        Assert.Equal(DocumentNumberValidator.InvalidDniMessage, ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_FechaDeNacimientoFutura_Bloquea()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger { Id = 50, ReservaId = 1, FullName = "Juan Perez" });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdatePassengerAsync(
+                passengerId: 50,
+                new Passenger { Id = 50, FullName = "Juan Perez", BirthDate = DateTime.UtcNow.AddDays(2) }));
+
+        Assert.Equal(BirthDateValidator.InvalidBirthDateMessage, ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdatePassengerAsync_CargarPasaporteVencido_SaleBienYAvisa()
+    {
+        await using var context = CreateContext();
+        SeedReservaWithDeclaredPassengers(context);
+        context.Passengers.Add(new Passenger { Id = 50, ReservaId = 1, FullName = "Juan Perez" });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var service = CreateReservaService(context);
+
+        var result = await service.UpdatePassengerAsync(
+            passengerId: 50,
+            new Passenger
+            {
+                Id = 50,
+                FullName = "Juan Perez",
+                PassportExpiry = DateTime.SpecifyKind(new DateTime(2019, 5, 20), DateTimeKind.Utc),
+            });
+
+        Assert.Equal(PassportExpiryRules.ExpiredPassportWarning, result.Warning);
+
+        var persisted = await context.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal(new DateTime(2019, 5, 20), persisted.PassportExpiry!.Value.Date);
+    }
+
+    // ===================================================================================================
+    // TANDA 2 — 10) Lead del bot de WhatsApp (LeadService)
+    // ===================================================================================================
+
+    [Fact]
+    public async Task ConvertToCustomerAsync_LeadConMailBasura_CreaElClienteConElMailVacio()
+    {
+        // Decision firmada del dueño: el lead NUNCA se rechaza (perder una consulta que llego sola es peor
+        // que un dato sucio), pero el dato invalido no entra al campo y queda anotado en la ficha.
+        await using var context = CreateContext();
+        context.Leads.Add(new Lead
+        {
+            Id = 3,
+            FullName = "Consulta WhatsApp",
+            Email = "no tengo mail",
+            Phone = TelefonoValido,
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateLeadService(context);
+
+        var customerId = await service.ConvertToCustomerAsync(3, CancellationToken.None);
+
+        var customer = await context.Customers.AsNoTracking().SingleAsync(c => c.Id == customerId);
+        Assert.True(string.IsNullOrEmpty(customer.Email));
+        Assert.Equal(TelefonoValido, customer.Phone); // el telefono si era valido: se guarda
+        Assert.Contains("Mail recibido por WhatsApp no parecía válido", customer.Notes ?? string.Empty);
+
+        // La conversion se completo: el lead quedo linkeado al cliente nuevo.
+        var lead = await context.Leads.AsNoTracking().SingleAsync();
+        Assert.Equal(customerId, lead.ConvertedCustomerId);
+    }
+
+    [Fact]
+    public async Task ConvertToCustomerAsync_LeadConTelefonoQueNoEsNumero_LoDejaVacioYLoAnota()
+    {
+        await using var context = CreateContext();
+        context.Leads.Add(new Lead
+        {
+            Id = 4,
+            FullName = "Consulta WhatsApp",
+            Email = MailValido,
+            Phone = TelefonoInvalido,
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateLeadService(context);
+
+        var customerId = await service.ConvertToCustomerAsync(4, CancellationToken.None);
+
+        var customer = await context.Customers.AsNoTracking().SingleAsync(c => c.Id == customerId);
+        Assert.True(string.IsNullOrEmpty(customer.Phone));
+        Assert.Equal(MailValido, customer.Email);
+        Assert.Contains("Teléfono recibido por WhatsApp no parecía válido", customer.Notes ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task ConvertToCustomerAsync_LeadConContactoBienCargado_NoAnotaNada()
+    {
+        await using var context = CreateContext();
+        context.Leads.Add(new Lead
+        {
+            Id = 5,
+            FullName = "Consulta WhatsApp",
+            Email = MailValido,
+            Phone = TelefonoValido,
+            Notes = "Quiere Bariloche en julio",
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateLeadService(context);
+
+        var customerId = await service.ConvertToCustomerAsync(5, CancellationToken.None);
+
+        var customer = await context.Customers.AsNoTracking().SingleAsync(c => c.Id == customerId);
+        Assert.Equal(MailValido, customer.Email);
+        Assert.Equal(TelefonoValido, customer.Phone);
+        Assert.Equal("Quiere Bariloche en julio", customer.Notes);
+    }
+
+    // ===================================================================================================
+    // TANDA 2 — 11) Respuesta de las reglas de comision (CommissionService)
+    // ===================================================================================================
+
+    [Fact]
+    public async Task CreateRuleAsync_DevuelveSoloLosCamposDeLaPantalla()
+    {
+        // Deuda cerrada: antes se devolvia la entidad de base tal cual (con el numero interno del
+        // proveedor). Ahora sale el mismo DTO que ya usa el listado, con el identificador publico.
+        await using var context = CreateContext();
+        var supplier = new Supplier { Id = 9, Name = "Operador Test", PublicId = Guid.NewGuid() };
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var service = new CommissionService(context);
+
+        var rule = await service.CreateRuleAsync(
+            new CreateCommissionRuleRequest(
+                SupplierId: supplier.PublicId.ToString(),
+                ServiceType: "Hotel",
+                CommissionPercent: 12m,
+                Priority: 3,
+                Description: "Hoteles del operador"),
+            CancellationToken.None);
+
+        Assert.Equal(supplier.PublicId, rule.SupplierPublicId);
+        Assert.Equal("Operador Test", rule.SupplierName);
+        Assert.Equal(12m, rule.CommissionPercent);
+    }
+
+    // ===================================================================================================
     // Helpers
     // ===================================================================================================
 
     private static CustomerService CreateCustomerService(AppDbContext context)
         => new(context, new FinancePositionService(context));
+
+    /// <summary>
+    /// LeadService para los tests de conversion. El resolver de referencias solo lo usa la sobrecarga que
+    /// recibe el identificador publico; estos tests llaman a la que recibe el Id, asi que alcanza con un
+    /// doble inerte.
+    /// </summary>
+    private static LeadService CreateLeadService(AppDbContext context)
+        => new(context, Mock.Of<IEntityReferenceResolver>());
 
     private static ReportService CreateReportService(AppDbContext context)
         => new(context, Mock.Of<IBnaExchangeRateService>());

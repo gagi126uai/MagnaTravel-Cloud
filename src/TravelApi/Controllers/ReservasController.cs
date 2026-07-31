@@ -401,7 +401,11 @@ public class ReservasController : ControllerBase
             // Ahora devolvemos 422 con un mensaje claro y logueamos el detalle REAL (SqlState + inner)
             // para diagnosticar — sin volcar PII del pasajero (nombre/documento).
             LogPassengerPersistenceFailure(ex, "adding", publicIdOrLegacyId);
-            return UnprocessableEntity(new { message = "No se pudo guardar el pasajero: los datos no cumplen una restriccion de la base. Revisá los campos e intentá de nuevo." });
+            // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): antes este texto
+            // decia "los datos no cumplen una restriccion de la base" — jerga de programador que al
+            // vendedor no le dice nada y ademas cuenta como esta hecho el sistema por dentro. El detalle
+            // tecnico real queda en el log (LogPassengerPersistenceFailure), que es donde sirve.
+            return UnprocessableEntity(new { message = "No se pudo guardar: revisá los datos cargados." });
         }
         catch (Exception ex)
         {
@@ -924,7 +928,11 @@ public class ReservasController : ControllerBase
             // BUG 4 (2026-06-08): constraint/dato invalido al persistir = error de datos (422), no 503.
             // Ver AddPassenger para el detalle del bug y LogPassengerPersistenceFailure.
             LogPassengerPersistenceFailure(ex, "updating", passengerPublicIdOrLegacyId);
-            return UnprocessableEntity(new { message = "No se pudo guardar el pasajero: los datos no cumplen una restriccion de la base. Revisá los campos e intentá de nuevo." });
+            // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): antes este texto
+            // decia "los datos no cumplen una restriccion de la base" — jerga de programador que al
+            // vendedor no le dice nada y ademas cuenta como esta hecho el sistema por dentro. El detalle
+            // tecnico real queda en el log (LogPassengerPersistenceFailure), que es donde sirve.
+            return UnprocessableEntity(new { message = "No se pudo guardar: revisá los datos cargados." });
         }
         catch (Exception ex)
         {
