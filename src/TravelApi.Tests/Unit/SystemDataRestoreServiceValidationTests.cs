@@ -71,6 +71,8 @@ public class SystemDataRestoreServiceValidationTests
             new Mock<ISchemaUpdatePort>().Object,
             maintenanceModeService ?? new RecordingMaintenanceModeService(),
             (auditServiceMock ?? new Mock<IAuditService>()).Object,
+            // B7: estos tests son de validacion de entrada (nunca llegan a purgar nada), un mock pelado alcanza.
+            new Mock<IHangfireJobQueuePurgePort>().Object,
             NullLogger<SystemDataRestoreService>.Instance);
     }
 

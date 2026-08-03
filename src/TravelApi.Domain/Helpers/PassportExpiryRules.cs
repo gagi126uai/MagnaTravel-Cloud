@@ -15,20 +15,33 @@ namespace TravelApi.Domain.Helpers;
 /// </summary>
 public static class PassportExpiryRules
 {
-    /// <summary>Texto unico del aviso, tal como lo lee el vendedor.</summary>
+    /// <summary>Texto unico del aviso "vencido a secas" (sin fechas de viaje) — lo devuelve <see cref="GetAlertOrNull"/>.</summary>
     public const string ExpiredPassportWarning = "El pasaporte de este pasajero está vencido.";
 
+    /// <summary>Texto del ROJO cuando SI hay fechas de viaje: el pasaporte no le alcanza para volver.</summary>
+    public const string ExpiredBeforeTripEndWarning =
+        "El pasaporte de este pasajero se vence antes del fin del viaje.";
+
+    /// <summary>Texto del AMBAR: sirve para viajar, pero no le sobra margen despues.</summary>
+    public const string TightMarginAfterTripWarning =
+        "Al pasaporte le quedan menos de 6 meses después del viaje; muchos destinos exigen ese margen.";
+
     /// <summary>
-    /// Devuelve el aviso si el pasaporte ya vencio; null si esta vigente, si vence hoy, o si no se cargo
-    /// la fecha.
-    ///
-    /// <para>Se compara contra el DIA CALENDARIO ARGENTINO (ver <see cref="ArgentinaTime"/>): el servidor
-    /// corre en UTC y, cargando un pasaporte a la noche, un pasaporte que vence hoy en Argentina ya seria
-    /// "ayer" en UTC y el sistema avisaria de un vencimiento que todavia no ocurrio.</para>
-    ///
-    /// <para><paramref name="todayInArgentina"/> existe solo para fijar el "hoy" en los tests.</para>
+    /// D2 (decision firmada del dueño, 2026-07-31 tarde): amplia el aviso de pasaporte para que mire las
+    /// FECHAS DEL VIAJE, no solo si ya vencio hoy. Sigue siendo un AVISO (P-20): nunca frena el guardado,
+    /// solo informa. Se usa tanto al guardar el pasajero (riel <c>Warning</c>) como al listar la reserva
+    /// (chip fijo en la fila, F11): por eso vive en Domain puro, sin EF ni DB, para que ambos caminos
+    /// llamen SIEMPRE a la misma regla y nunca se desincronicen (F-1: una sola regla por entidad).
     /// </summary>
-    public static string? GetExpiredWarningOrNull(DateTime? passportExpiry, DateTime? todayInArgentina = null)
+    /// <param name="passportExpiry">Vencimiento cargado del pasaporte. Null = nada que avisar.</param>
+    /// <param name="tripStart">Fecha de inicio del viaje (Reserva.StartDate).</param>
+    /// <param name="tripEnd">Fecha de fin del viaje (Reserva.EndDate). Si falta, se usa <paramref name="tripStart"/>.</param>
+    /// <param name="todayInArgentina">Solo para fijar el "hoy" en los tests (T-14: hora argentina siempre).</param>
+    public static PassportAlert? GetAlertOrNull(
+        DateTime? passportExpiry,
+        DateTime? tripStart,
+        DateTime? tripEnd,
+        DateTime? todayInArgentina = null)
     {
         if (!passportExpiry.HasValue)
         {
@@ -36,10 +49,55 @@ public static class PassportExpiryRules
         }
 
         var today = (todayInArgentina ?? ArgentinaTime.GetArgentinaToday()).Date;
+        var expiry = passportExpiry.Value.Date;
 
-        // Vence HOY todavia no es vencido: el pasaporte sirve hasta el final de su ultimo dia.
-        return passportExpiry.Value.Date < today
-            ? ExpiredPassportWarning
-            : null;
+        // "Fin del viaje" para esta cuenta: si no hay fecha de fin cargada, usamos el inicio (mejor una
+        // fecha aproximada que no avisar nada).
+        var tripEndOrStart = tripEnd ?? tripStart;
+
+        if (tripEndOrStart is null)
+        {
+            // Sin NINGUNA fecha de viaje cargada en la reserva: nos quedamos con la regla historica
+            // (vencido hoy = ROJO, nada mas). No relajar: la cubren los tests viejos de este helper.
+            return expiry < today
+                ? new PassportAlert(PassportAlertLevel.Expired, ExpiredPassportWarning)
+                : null;
+        }
+
+        var tripEndDate = tripEndOrStart.Value.Date;
+
+        // ROJO: ya vencido hoy, O vence antes/el mismo dia en que termina el viaje (no le sirve para
+        // volver al pais). Cualquiera de las dos condiciones alcanza.
+        if (expiry < today || expiry <= tripEndDate)
+        {
+            return new PassportAlert(PassportAlertLevel.Expired, ExpiredBeforeTripEndWarning);
+        }
+
+        // AMBAR: le alcanza para el viaje, pero le quedan menos de 6 meses de vigencia DESPUES de que
+        // termina — muchos destinos piden ese colchon para dejar entrar al pasajero.
+        var sixMonthsAfterTripEnd = tripEndDate.AddMonths(6);
+        if (expiry < sixMonthsAfterTripEnd)
+        {
+            return new PassportAlert(PassportAlertLevel.Tight, TightMarginAfterTripWarning);
+        }
+
+        // Holgado: le sobra vigencia de sobra, no hace falta avisar nada.
+        return null;
     }
 }
+
+/// <summary>
+/// Nivel del semaforo de vencimiento de pasaporte (D2). Se expone al front como STRING
+/// ("Expired"/"Tight"), nunca como numero crudo de enum (P-1, T-5).
+/// </summary>
+public enum PassportAlertLevel
+{
+    /// <summary>Rojo: vencido a secas, o vencido para las fechas del viaje.</summary>
+    Expired,
+
+    /// <summary>Ambar: vigente para el viaje, pero con poco margen despues.</summary>
+    Tight,
+}
+
+/// <summary>Resultado del semaforo: el nivel (para pintar el chip) + el texto exacto que lee el vendedor.</summary>
+public sealed record PassportAlert(PassportAlertLevel Level, string Text);

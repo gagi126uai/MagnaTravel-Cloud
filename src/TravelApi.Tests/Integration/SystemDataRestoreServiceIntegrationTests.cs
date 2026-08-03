@@ -94,6 +94,17 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         return mock;
     }
 
+    /// <summary>B7 + retomo 2026-08-03: mock por default que "purga" 0 jobs — estos tests no levantan un
+    /// storage de Hangfire real (ese camino se cubre en <c>HangfireJobQueuePurgePortTests</c>, unit test
+    /// con el storage de Hangfire mockeado).</summary>
+    private static Mock<IHangfireJobQueuePurgePort> NewHangfirePurgePortMock()
+    {
+        var mock = new Mock<IHangfireJobQueuePurgePort>();
+        mock.Setup(p => p.PurgeQueuedAndScheduledJobsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HangfireJobPurgeResult(0, 0, 0, HangfireJobPurgeStatus.Completa));
+        return mock;
+    }
+
     private static SystemDataRestoreService NewRestoreService(
         AppDbContext ctx,
         Mock<UserManager<ApplicationUser>> userManagerMock,
@@ -111,6 +122,7 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
             (schemaUpdatePortMock ?? NewSchemaUpdatePortMock()).Object,
             maintenanceModeService ?? new RecordingMaintenanceModeService(),
             auditService,
+            NewHangfirePurgePortMock().Object,
             NullLogger<SystemDataRestoreService>.Instance);
     }
 
@@ -646,7 +658,8 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
         var service = new SystemDataRestoreService(
             ctx, userManagerMock.Object, portMock.Object, backupPortMock.Object,
             NewSchemaUpdatePortMock().Object, maintenanceMode,
-            auditServiceMock.Object, NullLogger<SystemDataRestoreService>.Instance);
+            auditServiceMock.Object, NewHangfirePurgePortMock().Object,
+            NullLogger<SystemDataRestoreService>.Instance);
 
         // NO debe tirar - el restore ya fue exitoso, el fallo de auditoria queda solo en el log.
         var result = await service.ExecuteRestoreAsync(
@@ -654,6 +667,156 @@ public sealed class SystemDataRestoreServiceIntegrationTests : IClassFixture<Pos
 
         Assert.Equal(RestoreModes.Total, result.Modo);
         Assert.False(maintenanceMode.IsActive);
+    }
+
+    [Fact]
+    public async Task ExecuteRestoreAsync_ModoTotal_LaPurgaDeHangfireFalla_NoConvierteElRestoreExitosoEnUnErrorParaElUsuario()
+    {
+        // B7 (plan 2026-07-31 tarde, deuda ADR-052): mismo criterio best-effort que la auditoria (test de
+        // arriba) — si Hangfire no responde al purgar las colas, el restore YA fue exitoso y no se puede
+        // convertir en error para el usuario por eso. Se loguea y sigue con 0 jobs purgados.
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+
+        var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+        var userManagerMock = BuildUserManagerMock(user);
+
+        var backupPortMock = NewHappyPathBackupPortMock();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode);
+
+        var hangfirePurgePortMock = new Mock<IHangfireJobQueuePurgePort>();
+        hangfirePurgePortMock
+            .Setup(p => p.PurgeQueuedAndScheduledJobsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom: el storage de Hangfire no responde"));
+
+        var service = new SystemDataRestoreService(
+            ctx, userManagerMock.Object, portMock.Object, backupPortMock.Object,
+            NewSchemaUpdatePortMock().Object, maintenanceMode,
+            new AuditService(new Repository<AuditLog>(ctx), NullLogger<AuditService>.Instance),
+            hangfirePurgePortMock.Object,
+            NullLogger<SystemDataRestoreService>.Instance);
+
+        // NO debe tirar - el restore ya fue exitoso, el fallo de Hangfire queda solo en el log.
+        var result = await service.ExecuteRestoreAsync(
+            AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None);
+
+        Assert.Equal(RestoreModes.Total, result.Modo);
+        Assert.False(maintenanceMode.IsActive);
+        hangfirePurgePortMock.Verify(p => p.PurgeQueuedAndScheduledJobsAsync(It.IsAny<CancellationToken>()), Times.Once);
+
+        // Hallazgo de seguridad (re-review, 2026-08-03): "falló" es el PEOR caso (puede haber tareas fiscales
+        // de la copia que se completen solas), no el mejor — antes, con 0 jobs contados, el usuario no se
+        // enteraba de nada. Ahora tiene que quedar registrado en la auditoría Y avisado en el mensaje.
+        var auditLog = await ctx.AuditLogs
+            .Where(a => a.Action == AuditActions.SystemDataTotallyRestored)
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync();
+        Assert.NotNull(auditLog);
+        Assert.Contains("\"purgaDeTareas\":\"falló\"", auditLog!.Changes);
+        Assert.Contains("No se pudieron frenar todas las tareas pendientes", result.Mensaje);
+    }
+
+    [Fact]
+    public async Task ExecuteRestoreAsync_ModoTotal_LaPurgaDeHangfireQuedaIncompleta_AvisaAlUsuarioAunqueHayaContadoAlgo()
+    {
+        // Retomo 2026-08-03 (re-review): "incompleta" significa "se purgó ALGO pero no se pudo asegurar que
+        // fuera TODO" (ej. se cortó por el tope de paginación). El aviso de conteos (lo que SÍ se confirmó)
+        // convive con el aviso de "puede haber más" — ninguno reemplaza al otro.
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+
+        var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+        var userManagerMock = BuildUserManagerMock(user);
+
+        var backupPortMock = NewHappyPathBackupPortMock();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode);
+
+        var hangfirePurgePortMock = new Mock<IHangfireJobQueuePurgePort>();
+        hangfirePurgePortMock
+            .Setup(p => p.PurgeQueuedAndScheduledJobsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HangfireJobPurgeResult(
+                EmisionesDeComprobantePurgadas: 1,
+                AnulacionesDeComprobantePurgadas: 0,
+                OtrasTareasPurgadas: 0,
+                Estado: HangfireJobPurgeStatus.Incompleta));
+
+        var service = new SystemDataRestoreService(
+            ctx, userManagerMock.Object, portMock.Object, backupPortMock.Object,
+            NewSchemaUpdatePortMock().Object, maintenanceMode,
+            new AuditService(new Repository<AuditLog>(ctx), NullLogger<AuditService>.Instance),
+            hangfirePurgePortMock.Object,
+            NullLogger<SystemDataRestoreService>.Instance);
+
+        var result = await service.ExecuteRestoreAsync(
+            AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None);
+
+        var auditLog = await ctx.AuditLogs
+            .Where(a => a.Action == AuditActions.SystemDataTotallyRestored)
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync();
+        Assert.NotNull(auditLog);
+        Assert.Contains("\"purgaDeTareas\":\"incompleta\"", auditLog!.Changes);
+
+        // Concordancia (hallazgo menor de la re-review): con 1 solo comprobante el verbo va en singular.
+        Assert.Contains("Quedó 1 comprobante sin terminar de emitirse: revisalo a mano en su ficha.", result.Mensaje);
+        Assert.DoesNotContain("Quedaron 1 comprobante", result.Mensaje);
+        Assert.DoesNotContain("revisalos a mano", result.Mensaje);
+        Assert.Contains("No se pudieron frenar todas las tareas pendientes", result.Mensaje);
+    }
+
+    [Fact]
+    public async Task ExecuteRestoreAsync_ModoTotal_PurgaLosJobsDeHangfireYDejaElDesgloseEnElRastro()
+    {
+        // El desglose por categoria de negocio queda en el AuditLog (PR-12: cada cambio de estado o de plata
+        // queda en el rastro; aca es la limpieza post-restore, no plata, pero mismo criterio de auditabilidad
+        // B7). Retomo 2026-08-03: ya NO es un total ciego — el rastro tiene que distinguir cuantos eran
+        // comprobantes fiscales (emision/anulacion) de cuantos eran "otras tareas".
+        await using var ctx = _fixture.CreateDbContext();
+        await SeedAspNetUserAsync(ctx, AdminUserId);
+
+        var user = await ctx.Set<ApplicationUser>().AsNoTracking().SingleAsync(u => u.Id == AdminUserId);
+        var userManagerMock = BuildUserManagerMock(user);
+
+        var backupPortMock = NewHappyPathBackupPortMock();
+        var maintenanceMode = new RecordingMaintenanceModeService();
+        var portMock = NewHappyPathTotalPortMock(maintenanceMode);
+
+        var hangfirePurgePortMock = new Mock<IHangfireJobQueuePurgePort>();
+        hangfirePurgePortMock
+            .Setup(p => p.PurgeQueuedAndScheduledJobsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HangfireJobPurgeResult(
+                EmisionesDeComprobantePurgadas: 2,
+                AnulacionesDeComprobantePurgadas: 1,
+                OtrasTareasPurgadas: 4,
+                Estado: HangfireJobPurgeStatus.Completa));
+
+        var service = new SystemDataRestoreService(
+            ctx, userManagerMock.Object, portMock.Object, backupPortMock.Object,
+            NewSchemaUpdatePortMock().Object, maintenanceMode,
+            new AuditService(new Repository<AuditLog>(ctx), NullLogger<AuditService>.Instance),
+            hangfirePurgePortMock.Object,
+            NullLogger<SystemDataRestoreService>.Instance);
+
+        var result = await service.ExecuteRestoreAsync(
+            AdminUserId, "cualquier-cosa", "RESTAURAR TODO", ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None);
+
+        var auditLog = await ctx.AuditLogs
+            .Where(a => a.Action == AuditActions.SystemDataTotallyRestored)
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync();
+
+        Assert.NotNull(auditLog);
+        Assert.Contains("\"tareasDeFondoFrenadas\":7", auditLog!.Changes);
+        Assert.Contains("\"comprobantesSinTerminarDeEmitir\":2", auditLog!.Changes);
+        Assert.Contains("\"comprobantesSinTerminarDeAnular\":1", auditLog!.Changes);
+        Assert.Contains("\"purgaDeTareas\":\"completa\"", auditLog!.Changes);
+
+        // Retomo 2026-08-03 ("avisar"): el grupo fiscal purgado (2+1=3) tiene que aparecer en el mensaje al
+        // usuario, no solo en la auditoria interna.
+        Assert.Contains("sin terminar de emitirse", result.Mensaje);
+        Assert.Contains("sin terminar de anularse", result.Mensaje);
     }
 
     [Fact]

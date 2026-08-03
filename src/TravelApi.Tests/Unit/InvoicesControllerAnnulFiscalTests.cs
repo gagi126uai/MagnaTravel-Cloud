@@ -11,7 +11,13 @@ using TravelApi.Infrastructure.Persistence;
 using TravelApi.Tests.Fixtures;
 using Xunit;
 
-namespace TravelApi.Tests.Integration;
+namespace TravelApi.Tests.Unit;
+
+// Arreglo 3a (retomo 2026-08-03): este archivo vivia en la carpeta Integration pero usaba InMemory
+// (CustomWebApplicationFactory, ver el doc de la clase) — no matcheaba NINGUN filtro del CI
+// (ni "FullyQualifiedName~Unit" ni "Category=Integration"), asi que no corria en ningun job. Se
+// mueve a Unit (mismo patron que CustomersControllerDuplicateErrorStatusCodeTests.cs) para que
+// el filtro de tests unitarios lo levante.
 
 /// <summary>
 /// B1.15 Fase 2a (review final, 2026-05-11): gating fiscal del endpoint

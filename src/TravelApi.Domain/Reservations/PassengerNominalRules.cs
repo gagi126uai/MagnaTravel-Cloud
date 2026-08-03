@@ -110,6 +110,20 @@ public static class PassengerNominalRules
     }
 
     /// <summary>
+    /// F4 (plan 2026-07-31 tarde): true si el SET tiene un titular (<see cref="GetLeadPassenger"/>) CON
+    /// nombre cargado. Wrapper fino sobre <see cref="GetLeadPassenger"/> para no repetir la comprobación
+    /// "lead == null || FullName vacío" en cada lugar que necesita esta misma pregunta — es la MISMA
+    /// definición que usa el gate H7 (Presupuesto -&gt; En gestión, en <c>ReservaService</c>) y el candado
+    /// de Hotel/Traslado de este mismo archivo (F-1: una sola regla por entidad, no dos copias que puedan
+    /// divergir).
+    /// </summary>
+    public static bool HasNamedLeadPassenger(IReadOnlyList<Passenger> serviceSet)
+    {
+        var lead = GetLeadPassenger(serviceSet);
+        return lead != null && !string.IsNullOrWhiteSpace(lead.FullName);
+    }
+
+    /// <summary>
     /// Valida que el SET del servicio tenga cargados los datos nominales que exige el tipo. Lanza
     /// <see cref="InvalidOperationException"/> con un mensaje accionable (en espanol, sin el numero de
     /// documento) si falta algo. Si no falta nada, no hace nada.

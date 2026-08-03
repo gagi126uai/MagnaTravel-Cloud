@@ -556,9 +556,15 @@ public class ReservaService : IReservaService
             Gender: KeepStoredWhenIncomingIsEmpty(incoming.Gender, stored.Gender));
     }
 
-    /// <summary>Un texto vacio (o solo espacios) en el request significa "no lo toco": gana lo guardado.</summary>
+    /// <summary>
+    /// Un texto vacio (o solo espacios) en el request significa "no lo toco": gana lo guardado.
+    /// B5 (plan 2026-07-31 tarde): si el valor SI viene, se recorta (Trim) antes de quedar como
+    /// "efectivo". Sin esto, comparar con Trim (<see cref="TextValueChanged"/>) pero guardar el
+    /// string crudo dejaba pasar un documento con espacios de mas al voucher/PDF con solo
+    /// declararlo "sin cambios" — comparacion y guardado tienen que mirar el MISMO valor.
+    /// </summary>
     private static string? KeepStoredWhenIncomingIsEmpty(string? incoming, string? stored)
-        => string.IsNullOrWhiteSpace(incoming) ? stored : incoming;
+        => string.IsNullOrWhiteSpace(incoming) ? stored : incoming.Trim();
 
     /// <summary>
     /// Decision 2026-06-17 (pasajeros bajo candado): true si el update CAMBIA un dato de IDENTIDAD que YA
@@ -601,7 +607,17 @@ public class ReservaService : IReservaService
     /// edicion; se deja igual porque es la definicion generica de "cambio".</summary>
     private static bool ChangesExistingText(string? current, string? incoming)
         => !string.IsNullOrWhiteSpace(current)
-           && !string.Equals(current ?? string.Empty, incoming ?? string.Empty, StringComparison.Ordinal);
+           && TextValueChanged(current, incoming);
+
+    /// <summary>
+    /// B5 (plan 2026-07-31 tarde, deuda de la obra "vacio = no toca"): compara dos textos IGNORANDO
+    /// espacios de mas al principio/final (Trim), no el valor crudo. Sin esto, volver a guardar el MISMO
+    /// documento con un espacio pegado sin querer (copiar-pegar desde WhatsApp/Excel es el caso real) se
+    /// contaba como "cambio de identidad" — disparaba el candado de re-autorizacion en una reserva
+    /// Confirmada, o el freno de duplicado de B3 contra el propio pasajero, por un espacio que ni se ve.
+    /// </summary>
+    private static bool TextValueChanged(string? current, string? incoming)
+        => !string.Equals((current ?? string.Empty).Trim(), (incoming ?? string.Empty).Trim(), StringComparison.Ordinal);
 
     /// <summary>Idem para la fecha de nacimiento: comparada por DIA (Kind/hora no cuentan).</summary>
     private static bool ChangesExistingDate(DateTime? current, DateTime? incoming)
@@ -4356,11 +4372,47 @@ public class ReservaService : IReservaService
 
     public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(int reservaId)
     {
-        return await _context.Passengers
+        // D2 (2026-07-31 tarde): el semaforo de pasaporte se pinta desde el LISTADO (chip fijo en la
+        // fila, F11), no solo al guardar. Por eso acá SÍ recalculamos el aviso para cada pasajero, con
+        // las fechas del viaje de la reserva (consulta chica aparte: ProjectTo ya arma el DTO por SQL y
+        // no puede llamar a un helper de C# adentro de esa proyección).
+        var tripDates = await _context.Reservas
+            .Where(r => r.Id == reservaId)
+            .Select(r => new { r.StartDate, r.EndDate })
+            .FirstOrDefaultAsync();
+
+        var dtos = await _context.Passengers
             .Where(p => p.ReservaId == reservaId)
             .OrderBy(p => p.FullName)
             .ProjectTo<PassengerDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
+
+        foreach (var dto in dtos)
+        {
+            // dto.PassportExpiry ya viene de la proyeccion real de EF (ProjectTo arriba), a diferencia de
+            // BuildPassengerResult donde el dto puede salir de un mapper simplificado en tests.
+            ApplyPassportAlert(dto, dto.PassportExpiry, tripDates?.StartDate, tripDates?.EndDate);
+        }
+
+        return dtos;
+    }
+
+    /// <summary>
+    /// Calcula el semaforo de vencimiento de pasaporte (D2) y lo deja en el DTO. Se llama desde la
+    /// LECTURA (listado) y desde cada ALTA/EDICION, siempre con la MISMA regla de dominio
+    /// (<see cref="PassportExpiryRules.GetAlertOrNull"/>), para que el chip de la pantalla y el aviso del
+    /// toast nunca digan cosas distintas (F-1).
+    ///
+    /// <para><paramref name="passportExpiry"/> se recibe APARTE del <paramref name="dto"/> (en vez de leer
+    /// <c>dto.PassportExpiry</c> siempre) a proposito: en <c>BuildPassengerResult</c> el dto sale de
+    /// <c>_mapper.Map</c>, que en algunos tests unitarios esta mockeado y no copia todos los campos. Pasar
+    /// el vencimiento explicito desde la ENTIDAD evita ese acoplamiento fragil.</para>
+    /// </summary>
+    private static void ApplyPassportAlert(PassengerDto dto, DateTime? passportExpiry, DateTime? tripStart, DateTime? tripEnd)
+    {
+        var alert = PassportExpiryRules.GetAlertOrNull(passportExpiry, tripStart, tripEnd);
+        dto.PassportAlertLevel = alert?.Level.ToString();
+        dto.PassportAlertText = alert?.Text;
     }
 
     /// <summary>
@@ -4427,6 +4479,18 @@ public class ReservaService : IReservaService
         // pasajeros nominales == cantidad DECLARADA de la reserva.
 
         if (string.IsNullOrWhiteSpace(passenger.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
+
+        // Mini-tanda 2026-08-03 (mismo defecto de clase que el ya arreglado en UpdatePassengerAsync, B5):
+        // recortar ANTES de validar largo y de persistir. Sin esto, "  ab  " (6 caracteres) pasaba el minimo
+        // de 3 aunque el nombre real, sin los espacios pegados por error, tenga solo 2 — y el alta guardaba
+        // esos espacios de mas en el voucher/PDF (el guard de duplicados de documento SI trimea al comparar,
+        // pero eso no evita que quede sucio lo persistido).
+        passenger.FullName = passenger.FullName.Trim();
+        passenger.DocumentType = passenger.DocumentType?.Trim();
+        passenger.DocumentNumber = passenger.DocumentNumber?.Trim();
+        passenger.Nationality = passenger.Nationality?.Trim();
+        passenger.Gender = passenger.Gender?.Trim();
+
         if (passenger.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
 
         // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 1): el mail y el
@@ -4445,6 +4509,21 @@ public class ReservaService : IReservaService
         // documentacion). El vencimiento del pasaporte NO se valida aca: es aviso, no candado (ver el final
         // de este metodo).
         EnsurePassengerDocumentIsValid(passenger.DocumentType, passenger.DocumentNumber);
+
+        // B3 (obra 2026-07-31 tarde): freno de documento duplicado DENTRO de esta misma reserva. Corre en
+        // el motor (T-3), no en la pantalla: el aviso "quizás te referís a..." del formulario es solo una
+        // sugerencia para autocompletar y NUNCA bloquea. Este SI frena. file.Passengers ya esta cargado
+        // (Include de arriba), asi que no hace falta una consulta aparte.
+        var duplicatePassenger = file.Passengers.FirstOrDefault(existing =>
+            PassengerDuplicateDocumentGuard.IsSuspectedDuplicate(
+                existing.DocumentType, existing.DocumentNumber,
+                passenger.DocumentType, passenger.DocumentNumber));
+        if (duplicatePassenger is not null)
+        {
+            throw new InvalidOperationException(
+                PassengerDuplicateDocumentGuard.BuildDuplicateMessage(duplicatePassenger.FullName));
+        }
+
         EnsurePassengerBirthDateIsValid(passenger.BirthDate);
 
         // Tope de pasajeros nominales = cantidad DECLARADA de la reserva (misma fuente unica
@@ -4487,22 +4566,24 @@ public class ReservaService : IReservaService
         _context.Passengers.Add(passenger);
         await _context.SaveChangesAsync();
 
-        return BuildPassengerResult(passenger);
+        return BuildPassengerResult(passenger, file.StartDate, file.EndDate);
     }
 
     /// <summary>
-    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2): arma el pasajero que se
-    /// devuelve al front y le adjunta el AVISO no bloqueante que corresponda.
+    /// Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2, ampliado D2): arma el
+    /// pasajero que se devuelve al front y le adjunta el AVISO no bloqueante que corresponda.
     ///
-    /// <para>Hoy el unico aviso es el pasaporte vencido (decision firmada del dueño: se guarda igual,
-    /// porque en la agencia se carga al pasajero antes de que renueve). Usa el mismo riel
-    /// <c>Warning</c> que ya tenia la reserva para el aviso de fechas (FIX #27), asi el front no aprende un
-    /// mecanismo nuevo.</para>
+    /// <para>El aviso de pasaporte ahora mira las FECHAS DEL VIAJE (D2, 2026-07-31 tarde), no solo si ya
+    /// vencio hoy — ver <see cref="PassportExpiryRules.GetAlertOrNull"/>. El texto viaja por DOS lugares
+    /// con el MISMO contenido: <c>Warning</c> (riel viejo, el toast que se ve al guardar, FIX #27) y
+    /// <c>PassportAlertText</c>/<c>PassportAlertLevel</c> (riel nuevo, para el chip fijo de la fila —
+    /// F11 — que tambien se recalcula al LEER el listado, no solo al guardar).</para>
     /// </summary>
-    private PassengerDto BuildPassengerResult(Passenger passenger)
+    private PassengerDto BuildPassengerResult(Passenger passenger, DateTime? tripStart, DateTime? tripEnd)
     {
         var dto = _mapper.Map<PassengerDto>(passenger);
-        dto.Warning = PassportExpiryRules.GetExpiredWarningOrNull(passenger.PassportExpiry);
+        ApplyPassportAlert(dto, passenger.PassportExpiry, tripStart, tripEnd);
+        dto.Warning = dto.PassportAlertText;
         return dto;
     }
 
@@ -4516,6 +4597,10 @@ public class ReservaService : IReservaService
         // estados vivos no bloquea (ahi rige ADR-031). Chokepoint: la sobrecarga string delega aca.
         await ReservaCapacityRules.EnsurePassengersEditableByStateAsync(_context, passenger.ReservaId);
 
+        // B5 (plan 2026-07-31 tarde): se recorta ANTES de validar largo y de comparar/guardar. Si
+        // no se trimeara antes del chequeo de longitud, "  ab  " (6 caracteres) pasaria el minimo de
+        // 3 aunque el nombre real, sin los espacios pegados por error, tenga solo 2.
+        updated.FullName = (updated.FullName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(updated.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (updated.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
 
@@ -4545,12 +4630,32 @@ public class ReservaService : IReservaService
         // si cambio". El documento se mira como PAR (tipo + numero) YA RESUELTO: cambiar el tipo a DNI
         // dejando el numero de pasaporte viejo (aunque el numero no venga en el request, porque se conserva)
         // tambien es un cambio, y tiene que validarse.
+        // B5: TextValueChanged (Trim adentro) en vez de comparar el string crudo — un espacio de mas al
+        // guardar de nuevo el mismo documento no cuenta como "cambio" (ver XML doc del helper).
         var documentChanged =
-            !string.Equals(storedFields.DocumentType, effectiveFields.DocumentType, StringComparison.Ordinal) ||
-            !string.Equals(storedFields.DocumentNumber, effectiveFields.DocumentNumber, StringComparison.Ordinal);
+            TextValueChanged(storedFields.DocumentType, effectiveFields.DocumentType) ||
+            TextValueChanged(storedFields.DocumentNumber, effectiveFields.DocumentNumber);
         if (documentChanged)
         {
             EnsurePassengerDocumentIsValid(effectiveFields.DocumentType, effectiveFields.DocumentNumber);
+
+            // B3 (obra 2026-07-31 tarde): mismo freno de documento duplicado que el alta, pero solo
+            // cuando el documento efectivamente CAMBIA (editar un pasajero sin tocar el documento no
+            // dispara el guard contra si mismo). Comparamos contra los DEMAS pasajeros de la reserva
+            // (excluyendo este, por Id).
+            var siblingPassengers = await _context.Passengers
+                .Where(p => p.ReservaId == passenger.ReservaId && p.Id != passengerId)
+                .Select(p => new { p.FullName, p.DocumentType, p.DocumentNumber })
+                .ToListAsync();
+            var duplicateSibling = siblingPassengers.FirstOrDefault(existing =>
+                PassengerDuplicateDocumentGuard.IsSuspectedDuplicate(
+                    existing.DocumentType, existing.DocumentNumber,
+                    effectiveFields.DocumentType, effectiveFields.DocumentNumber));
+            if (duplicateSibling is not null)
+            {
+                throw new InvalidOperationException(
+                    PassengerDuplicateDocumentGuard.BuildDuplicateMessage(duplicateSibling.FullName));
+            }
         }
 
         var birthDateChanged = storedFields.BirthDate != effectiveFields.BirthDate;
@@ -4564,11 +4669,11 @@ public class ReservaService : IReservaService
         // genero). Email/Phone/Notes son campos de contacto y se permiten editar
         // libremente — son parte de la operativa de la reserva, no del voucher.
         var personalDataChanged =
-            !string.Equals(passenger.FullName, updated.FullName, StringComparison.Ordinal) ||
+            TextValueChanged(passenger.FullName, updated.FullName) ||
             documentChanged ||
             birthDateChanged ||
-            !string.Equals(storedFields.Nationality, effectiveFields.Nationality, StringComparison.Ordinal) ||
-            !string.Equals(storedFields.Gender, effectiveFields.Gender, StringComparison.Ordinal);
+            TextValueChanged(storedFields.Nationality, effectiveFields.Nationality) ||
+            TextValueChanged(storedFields.Gender, effectiveFields.Gender);
 
         if (personalDataChanged)
         {
@@ -4610,7 +4715,14 @@ public class ReservaService : IReservaService
         passenger.Notes = updated.Notes;
 
         await _context.SaveChangesAsync();
-        return BuildPassengerResult(passenger);
+
+        // D2: el semaforo de pasaporte necesita las fechas del viaje. UpdatePassengerAsync solo tenia
+        // cargado el pasajero (sin su Reserva), asi que las buscamos con una consulta chica aparte.
+        var tripDates = await _context.Reservas
+            .Where(r => r.Id == passenger.ReservaId)
+            .Select(r => new { r.StartDate, r.EndDate })
+            .FirstOrDefaultAsync();
+        return BuildPassengerResult(passenger, tripDates?.StartDate, tripDates?.EndDate);
     }
 
     public async Task RemovePassengerAsync(int passengerId)

@@ -130,7 +130,11 @@ public class CustomersController : ControllerBase
         }
         catch (Microsoft.EntityFrameworkCore.DbUpdateException)
         {
-            return BadRequest(new { message = "No se pudo actualizar el cliente. Verifica que el documento y el email no esten duplicados." });
+            // B4 (plan 2026-07-31 tarde, deuda 31/07): esta MISMA situacion (choca contra el indice unico
+            // de documento/email porque otro cliente ya lo tiene) devolvia 409 en el ALTA (CreateCustomer,
+            // arriba) y 400 aca en la EDICION — dos varas para el mismo error de negocio ("dato duplicado" es
+            // un CONFLICTO con lo que ya existe, no un dato mal tipeado). Se unifica a 409, mismo texto.
+            return Conflict(new { message = "No se pudo actualizar el cliente. Verifica que el documento y el email no esten duplicados." });
         }
         catch (Exception ex)
         {

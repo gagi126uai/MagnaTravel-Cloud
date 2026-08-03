@@ -122,6 +122,16 @@ public class SystemDataRestoreServiceTotalModeTests
         return mock;
     }
 
+    /// <summary>B7 + retomo 2026-08-03: mock por default que "purga" 0 jobs sin tocar Hangfire de verdad —
+    /// estos tests no levantan un storage de Hangfire real, asi que alcanza con que el metodo no rompa.</summary>
+    private static Mock<IHangfireJobQueuePurgePort> NewHangfirePurgePortMock()
+    {
+        var mock = new Mock<IHangfireJobQueuePurgePort>();
+        mock.Setup(p => p.PurgeQueuedAndScheduledJobsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HangfireJobPurgeResult(0, 0, 0, HangfireJobPurgeStatus.Completa));
+        return mock;
+    }
+
     private static SystemDataRestoreService NewService(
         AppDbContext context,
         Mock<UserManager<ApplicationUser>> userManagerMock,
@@ -129,13 +139,15 @@ public class SystemDataRestoreServiceTotalModeTests
         Mock<IWipeBackupPort> backupPortMock,
         RecordingMaintenanceModeService maintenanceMode,
         Mock<IAuditService>? auditServiceMock = null,
-        Mock<ISchemaUpdatePort>? schemaUpdatePortMock = null)
+        Mock<ISchemaUpdatePort>? schemaUpdatePortMock = null,
+        Mock<IHangfireJobQueuePurgePort>? hangfirePurgePortMock = null)
     {
         return new SystemDataRestoreService(
             context, userManagerMock.Object, portMock.Object, backupPortMock.Object,
             (schemaUpdatePortMock ?? NewSchemaUpdatePortMock()).Object,
             maintenanceMode,
             (auditServiceMock ?? new Mock<IAuditService>()).Object,
+            (hangfirePurgePortMock ?? NewHangfirePurgePortMock()).Object,
             NullLogger<SystemDataRestoreService>.Instance);
     }
 
@@ -775,7 +787,8 @@ public class SystemDataRestoreServiceTotalModeTests
         var service = new SystemDataRestoreService(
             context, userManagerMock.Object, portMock.Object, backupPortMock.Object,
             NewSchemaUpdatePortMock().Object, maintenanceMode,
-            new Mock<IAuditService>().Object, NullLogger<SystemDataRestoreService>.Instance);
+            new Mock<IAuditService>().Object, NewHangfirePurgePortMock().Object,
+            NullLogger<SystemDataRestoreService>.Instance);
 
         var ex = await Assert.ThrowsAsync<SystemDataRestoreRefusedException>(() =>
             service.ExecuteRestoreAsync(RequesterUserId, ValidPassword, ValidPhrase, ValidFileName, RestoreModes.Total, null, ValidMotivo, CancellationToken.None));

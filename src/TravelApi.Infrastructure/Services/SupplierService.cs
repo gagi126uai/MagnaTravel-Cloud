@@ -1326,6 +1326,13 @@ public class SupplierService : ISupplierService
             item.SuggestedDueDate = SupplierDebtCalculator.DeriveSuggestedDueDate(item.Date, defaultPaymentTermDays);
         }
 
+        // F4 (plan 2026-07-31 tarde): candado pre-emptivo en la cuenta del operador ("Marcar confirmado" se
+        // apaga ANTES de intentar si falta el titular). Traemos los pasajeros de las reservas que aparecen en
+        // esta página (una sola consulta agrupada, no una por fila) y les aplicamos la MISMA regla que usa el
+        // motor en el gate H7 (PassengerNominalRules.HasNamedLeadPassenger) — no se re-deriva en SQL para no
+        // duplicar el criterio (F-1).
+        await ApplyFaltaTitularConNombreAsync(page.Items, cancellationToken);
+
         // ADR-017 F1b: NetCost es el costo del servicio con el proveedor — sin
         // cobranzas.see_cost se anula. SalePrice NO se toca (D1: es venta, el
         // vendedor lo ve siempre). Descripcion/confirmacion/fechas siguen visibles.
@@ -1365,6 +1372,54 @@ public class SupplierService : ISupplierService
             .ToList();
 
         return PagedResponse<SupplierAccountServiceListItemDto>.Create(items, page, pageSize, confirmedOnly.Count);
+    }
+
+    /// <summary>
+    /// F4 (plan 2026-07-31 tarde): calcula <see cref="SupplierAccountServiceListItemDto.FaltaTitularConNombre"/>
+    /// para cada fila de la página, reusando la MISMA regla de dominio que el gate H7
+    /// (<see cref="PassengerNominalRules.HasNamedLeadPassenger"/>) — no se re-escribe el criterio en SQL.
+    ///
+    /// <para><b>Por qué una consulta agrupada y no una por fila</b>: una página puede traer servicios de
+    /// varias reservas distintas del mismo proveedor. Se traen TODOS los pasajeros de las reservas
+    /// involucradas en UNA sola consulta, se agrupan en memoria por reserva, y recién ahí se le aplica la
+    /// regla a cada grupo — evita el N+1 de "una consulta de pasajeros por fila de la página".</para>
+    /// </summary>
+    private async Task ApplyFaltaTitularConNombreAsync(
+        IReadOnlyList<SupplierAccountServiceListItemDto> items,
+        CancellationToken cancellationToken)
+    {
+        var reservaPublicIds = items
+            .Where(item => item.ReservaPublicId.HasValue)
+            .Select(item => item.ReservaPublicId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (reservaPublicIds.Count == 0)
+        {
+            return;
+        }
+
+        var passengersByReserva = await _dbContext.Passengers
+            .AsNoTracking()
+            .Where(passenger => reservaPublicIds.Contains(passenger.Reserva!.PublicId))
+            .Select(passenger => new { ReservaPublicId = passenger.Reserva!.PublicId, Passenger = passenger })
+            .ToListAsync(cancellationToken);
+
+        var hasNamedLeadByReserva = passengersByReserva
+            .GroupBy(row => row.ReservaPublicId)
+            .ToDictionary(
+                group => group.Key,
+                group => PassengerNominalRules.HasNamedLeadPassenger(
+                    group.Select(row => row.Passenger).ToList()));
+
+        foreach (var item in items)
+        {
+            // Sin reserva asociada, o reserva sin ningún pasajero cargado todavía: falta el titular.
+            var hasNamedLead = item.ReservaPublicId.HasValue
+                && hasNamedLeadByReserva.TryGetValue(item.ReservaPublicId.Value, out var found)
+                && found;
+            item.FaltaTitularConNombre = !hasNamedLead;
+        }
     }
 
     public async Task<PagedResponse<SupplierPaymentDto>> GetSupplierAccountPaymentsAsync(

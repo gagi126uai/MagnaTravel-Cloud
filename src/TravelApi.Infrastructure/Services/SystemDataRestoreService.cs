@@ -105,6 +105,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
     private readonly ISchemaUpdatePort _schemaUpdatePort;
     private readonly IMaintenanceModeService _maintenanceMode;
     private readonly IAuditService _auditService;
+    private readonly IHangfireJobQueuePurgePort _hangfireJobQueuePurgePort;
     private readonly ILogger<SystemDataRestoreService> _logger;
 
     public SystemDataRestoreService(
@@ -115,6 +116,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         ISchemaUpdatePort schemaUpdatePort,
         IMaintenanceModeService maintenanceMode,
         IAuditService auditService,
+        IHangfireJobQueuePurgePort hangfireJobQueuePurgePort,
         ILogger<SystemDataRestoreService> logger)
     {
         _context = context;
@@ -124,6 +126,7 @@ public class SystemDataRestoreService : ISystemDataRestoreService
         _schemaUpdatePort = schemaUpdatePort;
         _maintenanceMode = maintenanceMode;
         _auditService = auditService;
+        _hangfireJobQueuePurgePort = hangfireJobQueuePurgePort;
         _logger = logger;
     }
 
@@ -756,10 +759,22 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             // auditoría, no solo dentro del mensaje al usuario.
             var (archivosMensaje, archivosRepuestos) = await TryRestoreMinioObjectsAsync(fileName, CancellationToken.None);
 
+            // B7 (plan 2026-07-31 tarde, deuda ADR-052) + retomo 2026-08-03 ("limpiar y avisar"): purga los
+            // jobs de Hangfire que quedaron encolados/programados DENTRO de la foto restaurada (pueden
+            // apuntar a reservas/pagos que ya no existen tal cual en la base viva). Best-effort, mismo
+            // criterio que el paso de MinIO de arriba: un restore ya exitoso no se convierte en error porque
+            // Hangfire no respondio. El desglose por categoria (no un total ciego) es lo que despues permite
+            // avisarle al usuario CUANDO CORRESPONDE (grupo fiscal > 0), no siempre.
+            var hangfirePurgeResult = await TryPurgeHangfireQueuesAsync();
+
             _logger.LogWarning(
                 "Restaurar TOTAL: EXITOSO. UserId={UserId}, Archivo={Archivo}, BackupPrevio={BackupPrevio}, " +
-                "EsquemaActualizado={EsquemaActualizado}, MigracionesAplicadas={Migraciones}, ArchivosRepuestos={ArchivosRepuestos}.",
-                requester.Id, fileName, backupPrevioFileName, needsSchemaUpdate, migracionesAplicadas, archivosRepuestos);
+                "EsquemaActualizado={EsquemaActualizado}, MigracionesAplicadas={Migraciones}, ArchivosRepuestos={ArchivosRepuestos}, " +
+                "PurgaDeTareasEstado={PurgaEstado}, EmisionesPurgadas={EmisionesPurgadas}, AnulacionesPurgadas={AnulacionesPurgadas}, " +
+                "OtrasTareasPurgadas={OtrasTareasPurgadas}.",
+                requester.Id, fileName, backupPrevioFileName, needsSchemaUpdate, migracionesAplicadas, archivosRepuestos,
+                hangfirePurgeResult.Estado, hangfirePurgeResult.EmisionesDeComprobantePurgadas,
+                hangfirePurgeResult.AnulacionesDeComprobantePurgadas, hangfirePurgeResult.OtrasTareasPurgadas);
 
             // 10a) ANTES de dropear la copia anterior: verificar que el resguardo previo se pueda leer
             // (recomendación aceptada en la re-review). Cuesta segundos y es el ÚNICO cinturón contra "me
@@ -792,6 +807,16 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                         historialHuerfanasToleradas = schemaCheck.ToleratedOrphanMigrationsCount,
                         archivosRepuestos = archivosRepuestos,
                         resguardoPrevioVerificado = resguardoPrevioVerificado,
+                        // Retomo 2026-08-03 ("limpiar y avisar"): claves de NEGOCIO en criollo, con desglose,
+                        // en vez del "hangfireJobsPurgados" ciego de antes. La pantalla de Auditoria muestra
+                        // estas claves TAL CUAL (T-5), por eso van en espanol y sin nombres tecnicos.
+                        tareasDeFondoFrenadas = hangfirePurgeResult.Total,
+                        comprobantesSinTerminarDeEmitir = hangfirePurgeResult.EmisionesDeComprobantePurgadas,
+                        comprobantesSinTerminarDeAnular = hangfirePurgeResult.AnulacionesDeComprobantePurgadas,
+                        // "completa" | "falló" | "incompleta" (HangfireJobPurgeStatus): antes, si el storage de
+                        // Hangfire tiraba una excepcion, el catch devolvia 0 y la auditoria quedaba IDENTICA a
+                        // "no habia nada para purgar" — dos situaciones muy distintas que ahora se distinguen.
+                        purgaDeTareas = hangfirePurgeResult.Estado,
                     }, AuditJsonOptions),
                     userId: requester.Id,
                     userName: string.IsNullOrWhiteSpace(requester.FullName) ? requester.Email : requester.FullName,
@@ -841,7 +866,11 @@ public class SystemDataRestoreService : ISystemDataRestoreService
                     (needsSchemaUpdate
                         ? "Como el resguardo era más viejo, el sistema se actualizó solo después de restaurarlo. "
                         : string.Empty) +
-                    archivosMensaje,
+                    archivosMensaje +
+                    // Retomo 2026-08-03 ("limpiar y avisar"): si se purgaron comprobantes pendientes de emitir
+                    // o anular, se lo decimos ACÁ — reusa el mismo mensaje libre que ya se arma con los demás
+                    // avisos de esta respuesta (T-8), sin agregar un campo nuevo al contrato.
+                    BuildFiscalPurgeWarningMessage(hangfirePurgeResult),
             };
         }
         catch (Exception ex) when (ex is not SystemDataRestoreRefusedException && swappedPreviousDatabaseName is not null)
@@ -1020,6 +1049,89 @@ public class SystemDataRestoreService : ISystemDataRestoreService
             ? ("Los archivos subidos (vouchers, adjuntos) se repusieron desde el resguardo de ese momento.", true)
             : ("Los archivos subidos (vouchers, adjuntos) no se recuperaron con esta restauración: no se encontró un resguardo de archivos para ese momento.", false);
     }
+
+    /// <summary>
+    /// B7 (plan 2026-07-31 tarde, deuda ADR-052) + retomo 2026-08-03: purga los jobs de Hangfire encolados/
+    /// programados que vinieron ADENTRO de la foto restaurada (ver <see cref="IHangfireJobQueuePurgePort"/>
+    /// para el "qué se purga y qué no"). Mismo patrón best-effort que
+    /// <see cref="TryRestoreMinioObjectsAsync"/>: si Hangfire no responde, el restore YA fue exitoso y no se
+    /// puede convertir en error por esto.
+    ///
+    /// <para>Este try/catch es la ÚLTIMA red: el puerto real ya captura sus propios errores y devuelve
+    /// <see cref="HangfireJobPurgeResult.Fallida"/> (estado "falló") en vez de tirar. Este catch de acá cubre
+    /// el caso extremo de una implementación de <see cref="IHangfireJobQueuePurgePort"/> que igual tire (ej.
+    /// un mock de test, o un bug futuro) — nunca convierte un restore ya exitoso en un 500.</para>
+    /// </summary>
+    private async Task<HangfireJobPurgeResult> TryPurgeHangfireQueuesAsync()
+    {
+        try
+        {
+            return await _hangfireJobQueuePurgePort.PurgeQueuedAndScheduledJobsAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Restaurar TOTAL: fallo purgando las colas de Hangfire post-restore.");
+            return HangfireJobPurgeResult.Fallida();
+        }
+    }
+
+    /// <summary>
+    /// Decisión del dueño (retomo 2026-08-03, "limpiar y avisar"): si la purga se llevó puesto algún job
+    /// fiscal (emisión o anulación de comprobante pendiente), el usuario tiene que enterarse — esos
+    /// comprobantes se quedaron a mitad de camino y nadie los va a reintentar solo. Devuelve texto vacío
+    /// (nunca null) para poder concatenarlo directo al resto del mensaje.
+    ///
+    /// <para><b>Hallazgo de seguridad (re-review, 2026-08-03)</b>: cuando la purga da <c>HangfireJobPurgeStatus.Fallo</c>
+    /// o <c>Incompleta</c>, los contadores de arriba pueden dar CERO sin que eso signifique "no había nada
+    /// pendiente" — puede significar que el storage de Hangfire no respondió, y en ese caso las tareas
+    /// fiscales que venían en la copia van a completarse SOLAS: justo el escenario que la purga existe para
+    /// evitar. Antes, con contadores en cero, <c>TotalFiscal == 0</c> cortaba acá y el usuario quedaba
+    /// tranquilo con el PEOR caso posible. Ahora ese estado dispara un aviso aparte, además del de conteos
+    /// (que se mantiene cuando corresponde).</para>
+    /// </summary>
+    private static string BuildFiscalPurgeWarningMessage(HangfireJobPurgeResult purgeResult)
+    {
+        var avisos = new List<string>();
+
+        if (purgeResult.TotalFiscal > 0)
+        {
+            avisos.Add(BuildComprobantesPurgadosAviso(purgeResult));
+        }
+
+        if (purgeResult.Estado is HangfireJobPurgeStatus.Fallo or HangfireJobPurgeStatus.Incompleta)
+        {
+            avisos.Add(
+                "No se pudieron frenar todas las tareas pendientes que venían en la copia: algunas pueden " +
+                "completarse solas (facturas o notas que estaban a medio emitir). Revisá los comprobantes " +
+                "después de la restauración.");
+        }
+
+        return avisos.Count == 0 ? string.Empty : " " + string.Join(" ", avisos);
+    }
+
+    /// <summary>
+    /// Arma la frase de "quedaron N comprobantes sin terminar de emitirse/anularse", con concordancia
+    /// singular/plural (hallazgo menor de la re-review: con un solo comprobante el aviso decía "Quedaron 1
+    /// comprobante", mal en castellano).
+    /// </summary>
+    private static string BuildComprobantesPurgadosAviso(HangfireJobPurgeResult purgeResult)
+    {
+        var avisos = new List<string>();
+        if (purgeResult.EmisionesDeComprobantePurgadas > 0)
+        {
+            avisos.Add($"{purgeResult.EmisionesDeComprobantePurgadas} {ComprobantePlural(purgeResult.EmisionesDeComprobantePurgadas)} sin terminar de emitirse");
+        }
+        if (purgeResult.AnulacionesDeComprobantePurgadas > 0)
+        {
+            avisos.Add($"{purgeResult.AnulacionesDeComprobantePurgadas} {ComprobantePlural(purgeResult.AnulacionesDeComprobantePurgadas)} sin terminar de anularse");
+        }
+
+        var verboQuedar = purgeResult.TotalFiscal == 1 ? "Quedó" : "Quedaron";
+        var revisar = purgeResult.TotalFiscal == 1 ? "revisalo" : "revisalos";
+        return $"{verboQuedar} " + string.Join(" y ", avisos) + $": {revisar} a mano en su ficha.";
+    }
+
+    private static string ComprobantePlural(int cantidad) => cantidad == 1 ? "comprobante" : "comprobantes";
 
     /// <summary>
     /// Deriva el prefijo de MinIO correspondiente a un nombre de archivo de backup, SOLO si sigue alguno de

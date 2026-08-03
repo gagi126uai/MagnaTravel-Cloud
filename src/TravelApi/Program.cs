@@ -627,6 +627,19 @@ builder.Services.AddScoped<ISystemDataWipeService, SystemDataWipeService>();
 builder.Services.AddScoped<IDatabaseRestorePort, PgDatabaseRestorePort>();
 builder.Services.AddScoped<ISystemDataRestoreService, SystemDataRestoreService>();
 
+// B7 (plan 2026-07-31 tarde, deuda ADR-052) + retomo 2026-08-03: tras un restore, purga los jobs de
+// Hangfire que quedaron encolados/programados DENTRO de la foto restaurada (ver el XML doc de la interfaz).
+//
+// Truco de framework: se pasa "JobStorage.Current" explicito en vez de dejar que el puerto lo resuelva solo
+// adentro del metodo. Es el MISMO storage que "AddHangfire(...)" configura mas abajo (esa llamada deja
+// seteado JobStorage.Current apenas corre, y este factory recien LEE esa variable cuando alguien pide el
+// puerto por primera vez — no al registrar el servicio, sino ya con la app corriendo). La ventaja: un test
+// puede pasarle su PROPIO storage de Postgres efimero al constructor sin tocar esta variable global.
+builder.Services.AddScoped<IHangfireJobQueuePurgePort>(sp => new HangfireJobQueuePurgePort(
+    JobStorage.Current,
+    sp.GetRequiredService<IBackgroundJobClient>(),
+    sp.GetRequiredService<ILogger<HangfireJobQueuePurgePort>>()));
+
 // ADR-052 (2026-07-29, firmada): "poner el esquema al dia" pasa a ser un puerto compartido por los DOS caminos
 // que lo necesitan - el arranque de la app (mas abajo, donde antes vivia esta secuencia escrita a mano) y la
 // restauracion de un resguardo de una version anterior. Ver DatabaseSchemaUpdater para las dos politicas.

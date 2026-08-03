@@ -200,6 +200,16 @@ public class SupplierAccountServiceListItemDto
     public string? NumeroReserva { get; set; }
     public string? FileName { get; set; }
     public Guid? ReservaPublicId { get; set; }
+
+    /// <summary>
+    /// F4 (plan 2026-07-31 tarde, hueco "candado pre-emptivo en cuenta del operador"): true si a la reserva
+    /// de este servicio le falta el TITULAR con nombre cargado. El front la usa para apagar "Marcar
+    /// confirmado" ANTES de intentar (P-9: botón apagado con motivo, en vez de que el rechazo del motor
+    /// muera mudo recién al clickear). MISMA regla que ya usa el motor para el gate Presupuesto -&gt; En
+    /// gestión (H7): <see cref="TravelApi.Domain.Reservations.PassengerNominalRules.HasNamedLeadPassenger"/>
+    /// (T-13: el front no la recalcula, la recibe calculada).
+    /// </summary>
+    public bool FaltaTitularConNombre { get; set; }
 }
 
 // ===================================================================================================

@@ -27,4 +27,16 @@ public class PassengerDto
     /// (el listado de pasajeros de la reserva no recalcula avisos).</para>
     /// </summary>
     public string? Warning { get; set; }
+
+    /// <summary>
+    /// D2 (2026-07-31 tarde): semaforo de vencimiento de pasaporte CONTRA LAS FECHAS DEL VIAJE, calculado
+    /// SIEMPRE en el backend (T-13: el front nunca deduce esto solo). A diferencia de <see cref="Warning"/>
+    /// (que solo se llena al guardar, para el toast), estos dos campos se recalculan tambien en cada
+    /// LECTURA del listado de pasajeros, para que la pantalla pinte el chip fijo apenas carga la fila
+    /// (mockup firmado F11). Valores: "Expired" (rojo) / "Tight" (ambar) / null (sin aviso).
+    /// </summary>
+    public string? PassportAlertLevel { get; set; }
+
+    /// <summary>Texto exacto del aviso de <see cref="PassportAlertLevel"/> (mismo texto en toast y chip).</summary>
+    public string? PassportAlertText { get; set; }
 }

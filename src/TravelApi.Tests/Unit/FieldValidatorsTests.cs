@@ -359,34 +359,101 @@ public class FieldValidatorsTests
     }
 
     // ===================================================================================================
-    // TANDA 2 — Vencimiento de pasaporte (AVISO, no candado)
+    // D2 (2026-07-31 tarde) — Semaforo de pasaporte CONTRA LAS FECHAS DEL VIAJE (GetAlertOrNull)
+    //
+    // Arreglo 4 (retomo 2026-08-03): la tanda 2 original tambien probaba GetExpiredWarningOrNull, un
+    // metodo "vencido a secas, sin mirar fechas de viaje" que quedo SIN caller productivo desde que
+    // GetAlertOrNull (de abajo) lo reemplazo en todos los usos reales — se confirmo por grep antes de
+    // borrarlo, junto con estos tests. GetAlertOrNull YA cubre el mismo caso "sin fechas de viaje cargadas"
+    // (ver el primer test de este bloque), asi que no se perdio cobertura.
     // ===================================================================================================
 
     [Fact]
-    public void PassportExpiryRules_PasaporteVencido_DevuelveElAviso()
+    public void PassportAlert_SinVencimientoCargado_NoAvisaAunqueHayaFechasDeViaje()
+    {
+        var viajeFin = HoyDePrueba.AddDays(10);
+        Assert.Null(PassportExpiryRules.GetAlertOrNull(null, HoyDePrueba, viajeFin, HoyDePrueba));
+    }
+
+    [Fact]
+    public void PassportAlert_SinFechasDeViaje_VencidoHoy_UsaLaReglaVieja()
     {
         var vencidoAyer = HoyDePrueba.AddDays(-1);
-        Assert.Equal(
-            PassportExpiryRules.ExpiredPassportWarning,
-            PassportExpiryRules.GetExpiredWarningOrNull(vencidoAyer, HoyDePrueba));
+        var alerta = PassportExpiryRules.GetAlertOrNull(vencidoAyer, tripStart: null, tripEnd: null, HoyDePrueba);
+
+        Assert.NotNull(alerta);
+        Assert.Equal(PassportAlertLevel.Expired, alerta!.Level);
+        // Mismo texto exacto de siempre (T-6): no romper el aviso historico sin fechas de viaje.
+        Assert.Equal(PassportExpiryRules.ExpiredPassportWarning, alerta.Text);
     }
 
     [Fact]
-    public void PassportExpiryRules_VenceHoy_NoAvisa()
+    public void PassportAlert_SinFechasDeViaje_Vigente_NoAvisa()
     {
-        // El pasaporte sirve hasta el final de su ultimo dia.
-        Assert.Null(PassportExpiryRules.GetExpiredWarningOrNull(HoyDePrueba, HoyDePrueba));
+        Assert.Null(PassportExpiryRules.GetAlertOrNull(HoyDePrueba.AddYears(2), tripStart: null, tripEnd: null, HoyDePrueba));
     }
 
     [Fact]
-    public void PassportExpiryRules_PasaporteVigente_NoAvisa()
+    public void PassportAlert_VenceAntesDelFinDelViaje_EsRojoConElTextoDeViaje()
     {
-        Assert.Null(PassportExpiryRules.GetExpiredWarningOrNull(HoyDePrueba.AddYears(2), HoyDePrueba));
+        var finDeViaje = HoyDePrueba.AddDays(30);
+        var vencimiento = HoyDePrueba.AddDays(15); // vence ANTES de terminar el viaje
+
+        var alerta = PassportExpiryRules.GetAlertOrNull(vencimiento, HoyDePrueba, finDeViaje, HoyDePrueba);
+
+        Assert.NotNull(alerta);
+        Assert.Equal(PassportAlertLevel.Expired, alerta!.Level);
+        Assert.Equal(PassportExpiryRules.ExpiredBeforeTripEndWarning, alerta.Text);
     }
 
     [Fact]
-    public void PassportExpiryRules_SinFechaCargada_NoAvisa()
+    public void PassportAlert_VenceJustoElUltimoDiaDelViaje_EsRojo()
     {
-        Assert.Null(PassportExpiryRules.GetExpiredWarningOrNull(null, HoyDePrueba));
+        // "vencimiento <= fin del viaje" (borde incluido): el mismo dia que termina el viaje no alcanza
+        // para volver a entrar al pais con el pasaporte vigente.
+        var finDeViaje = HoyDePrueba.AddDays(30);
+
+        var alerta = PassportExpiryRules.GetAlertOrNull(finDeViaje, HoyDePrueba, finDeViaje, HoyDePrueba);
+
+        Assert.NotNull(alerta);
+        Assert.Equal(PassportAlertLevel.Expired, alerta!.Level);
+    }
+
+    [Fact]
+    public void PassportAlert_VenceConMenosDeSeisMesesDeMargenDespuesDelViaje_EsAmbar()
+    {
+        var finDeViaje = HoyDePrueba.AddDays(30);
+        // Vence 3 meses despues de terminar el viaje: alcanza para viajar, pero no le sobran los 6 meses
+        // de margen que piden muchos destinos.
+        var vencimiento = finDeViaje.AddMonths(3);
+
+        var alerta = PassportExpiryRules.GetAlertOrNull(vencimiento, HoyDePrueba, finDeViaje, HoyDePrueba);
+
+        Assert.NotNull(alerta);
+        Assert.Equal(PassportAlertLevel.Tight, alerta!.Level);
+        Assert.Equal(PassportExpiryRules.TightMarginAfterTripWarning, alerta.Text);
+    }
+
+    [Fact]
+    public void PassportAlert_VenceConSeisMesesOMasDeMargenDespuesDelViaje_NoAvisaNada()
+    {
+        var finDeViaje = HoyDePrueba.AddDays(30);
+        var vencimientoHolgado = finDeViaje.AddMonths(6); // borde: exactamente 6 meses no es "menos de 6"
+
+        Assert.Null(PassportExpiryRules.GetAlertOrNull(vencimientoHolgado, HoyDePrueba, finDeViaje, HoyDePrueba));
+    }
+
+    [Fact]
+    public void PassportAlert_SinFechaDeFin_UsaLaFechaDeInicioComoReemplazo()
+    {
+        // La reserva solo tiene fecha de INICIO cargada (no de fin): la regla dice "si no hay fin, usar
+        // inicio". Un vencimiento antes del inicio del viaje tiene que dar ROJO igual.
+        var inicioDeViaje = HoyDePrueba.AddDays(20);
+        var vencimiento = HoyDePrueba.AddDays(10);
+
+        var alerta = PassportExpiryRules.GetAlertOrNull(vencimiento, inicioDeViaje, tripEnd: null, HoyDePrueba);
+
+        Assert.NotNull(alerta);
+        Assert.Equal(PassportAlertLevel.Expired, alerta!.Level);
     }
 }

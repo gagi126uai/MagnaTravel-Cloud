@@ -166,6 +166,43 @@ public class Adr020PassengerCompletionUnderLockTests
     }
 
     [Fact]
+    public async Task UpdatePassenger_MismoDocumentoConEspaciosDeMas_UnderLock_NoPideAutorizacion()
+    {
+        // B5 (plan 2026-07-31 tarde, deuda de la obra "vacio = no toca"): re-guardar el MISMO numero con
+        // un espacio pegado sin querer (copiar-pegar) NO es un cambio de identidad. Antes de este fix, el
+        // candado lo tomaba como "cambio de documento" y pedia autorizacion por un espacio invisible.
+        //
+        // Arreglo 1 (retomo 2026-08-03): antes, la COMPARACION ignoraba los espacios pero la ESCRITURA
+        // guardaba el valor CRUDO — el documento quedaba con espacios en la base (y asi salia en el
+        // voucher/PDF) aunque el motor dijera "sin cambios". Ahora comparar y guardar miran el MISMO valor
+        // recortado: no pide autorizacion Y lo guardado queda SIN los espacios de mas.
+        await using var ctx = NewContext();
+        SeedLockedReserva(ctx);
+        SeedPassenger(ctx, fullName: "Juan Perez", documentNumber: "12345678");
+        await ctx.SaveChangesAsync();
+
+        await NewService(ctx).UpdatePassengerAsync("10", Req("Juan Perez", "  12345678  "), CancellationToken.None);
+
+        var passenger = await ctx.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal("12345678", passenger.DocumentNumber);
+    }
+
+    [Fact]
+    public async Task UpdatePassenger_MismoNombreConEspaciosDeMas_UnderLock_NoPideAutorizacion()
+    {
+        // Arreglo 1 (retomo 2026-08-03): mismo criterio que el test de arriba, aplicado al nombre.
+        await using var ctx = NewContext();
+        SeedLockedReserva(ctx);
+        SeedPassenger(ctx, fullName: "Juan Perez", documentNumber: "12345678");
+        await ctx.SaveChangesAsync();
+
+        await NewService(ctx).UpdatePassengerAsync("10", Req(" Juan Perez ", "12345678"), CancellationToken.None);
+
+        var passenger = await ctx.Passengers.AsNoTracking().SingleAsync();
+        Assert.Equal("Juan Perez", passenger.FullName);
+    }
+
+    [Fact]
     public async Task UpdatePassenger_ContactOnly_UnderLock_WithoutAuthorization_Succeeds()
     {
         await using var ctx = NewContext();
