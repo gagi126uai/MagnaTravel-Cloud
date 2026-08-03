@@ -40,7 +40,8 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
         bool multiCurrency,
         bool cancellationDebitNote,
         bool catalogFindOrCreate,
-        bool serviceDeadlineAlerts)
+        bool serviceDeadlineAlerts,
+        bool domesticDniExpiryAlert = false)
     {
         using var scope = _factory.Services.CreateScope();
         var settingsService = scope.ServiceProvider.GetRequiredService<IOperationalFinanceSettingsService>();
@@ -51,6 +52,7 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
         settings.EnableCancellationDebitNote = cancellationDebitNote;
         settings.EnableCatalogFindOrCreate = catalogFindOrCreate;
         settings.EnableServiceDeadlineAlerts = serviceDeadlineAlerts;
+        settings.EnableDomesticDniExpiryAlert = domesticDniExpiryAlert;
         await db.SaveChangesAsync();
     }
 
@@ -119,7 +121,8 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
             multiCurrency: true,
             cancellationDebitNote: true,
             catalogFindOrCreate: true,
-            serviceDeadlineAlerts: true);
+            serviceDeadlineAlerts: true,
+            domesticDniExpiryAlert: true);
 
         var client = CreateVendedorClientWithoutPermissions();
         var response = await client.GetAsync("/api/settings/operational-flags");
@@ -133,6 +136,7 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
         {
             "enableCancellationDebitNote",
             "enableCatalogFindOrCreate",
+            "enableDomesticDniExpiryAlert",
             "enableMultiCurrencyInvoicing",
             "enableServiceDeadlineAlerts",
         };
@@ -154,8 +158,9 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
     {
         var properties = typeof(OperationalFlagsResponse).GetProperties();
 
-        // ADR-020: bajo de 5 a 4 (murio EnableSoldToSettleStates).
-        Assert.Equal(4, properties.Length);
+        // ADR-020: bajo de 5 a 4 (murio EnableSoldToSettleStates). Semaforo de DNI vencido para
+        // cabotaje (2026-08-03): subio de 4 a 5 (EnableDomesticDniExpiryAlert).
+        Assert.Equal(5, properties.Length);
         Assert.All(properties, p => Assert.Equal(typeof(bool), p.PropertyType));
     }
 }

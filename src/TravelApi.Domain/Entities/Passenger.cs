@@ -35,6 +35,19 @@ public class Passenger : IHasPublicId
     /// </summary>
     public DateTime? PassportExpiry { get; set; }
 
+    /// <summary>
+    /// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): vencimiento del
+    /// DOCUMENTO NACIONAL DE IDENTIDAD del pasajero. Opcional (null = no informado), igual que
+    /// <see cref="PassportExpiry"/>: JAMAS es obligatorio, se completa a medida que llega la documentacion.
+    ///
+    /// <para>Alimenta <see cref="TravelApi.Domain.Helpers.DniExpiryRules"/>: para volar DENTRO del pais
+    /// (cabotaje) las aerolineas piden un documento vigente (DNI o pasaporte). Este campo, junto con el
+    /// ambito geografico de los servicios de la reserva (<see cref="ServicioReserva.GeographicScope"/>),
+    /// es lo que permite avisarle al vendedor cuando el DNI cargado no le va a alcanzar. Date-only "de
+    /// pared" Kind=Utc, mismo tratamiento que <see cref="PassportExpiry"/>.</para>
+    /// </summary>
+    public DateTime? DocumentExpiry { get; set; }
+
     [MaxLength(50)]
     public string? Nationality { get; set; }
 

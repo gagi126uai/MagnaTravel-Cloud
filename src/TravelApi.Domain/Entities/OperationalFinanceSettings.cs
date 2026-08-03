@@ -660,6 +660,25 @@ public class OperationalFinanceSettings
     /// </summary>
     public TreasuryFxAssumedBy TreasuryFxAssumedByDefault { get; set; } = TreasuryFxAssumedBy.Client;
 
+    // ============================================================
+    // Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): interruptor de
+    // AGENCIA para el aviso. Default conservador (OFF): mientras no se prenda, el DTO de pasajero nunca
+    // calcula ni expone DniAlertLevel/DniAlertText (null siempre), byte-identico a hoy.
+    // ============================================================
+
+    /// <summary>
+    /// Interruptor del semaforo de DNI vencido para cabotaje (2026-08-03). Con OFF (default) el aviso NO
+    /// se calcula nunca — <c>PassengerDto.DniAlertLevel</c>/<c>DniAlertText</c> siempre viajan en
+    /// <c>null</c>, igual que si la feature no existiera. Con ON, cada pasajero con DNI cargado en una
+    /// reserva que tiene al menos un servicio Nacional (<see cref="ServiceGeographicScope.Domestic"/>)
+    /// recibe el aviso si su DNI vence antes del fin del viaje (o ya esta vencido). Es un AVISO puro
+    /// (P-11): nunca frena el alta/edicion/confirmacion de nada, solo informa.
+    ///
+    /// <para>Editable por Admin desde el panel (mismo patron que el resto de los interruptores de esta
+    /// entidad). Default <c>false</c>: el dueño lo prende cuando quiera activar el aviso.</para>
+    /// </summary>
+    public bool EnableDomesticDniExpiryAlert { get; set; } = false;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

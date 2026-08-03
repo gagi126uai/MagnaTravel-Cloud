@@ -12,7 +12,10 @@ public record PassengerUpsertRequest(
     string? Notes,
     // Auditoria ERP 2026-06-12 (item 8): vencimiento del pasaporte. Opcional al final para no romper
     // los callers posicionales existentes (null = no informado). Ver Passenger.PassportExpiry.
-    DateTime? PassportExpiry = null);
+    DateTime? PassportExpiry = null,
+    // Semaforo de DNI vencido para cabotaje (2026-08-03): vencimiento del DNI. Mismo criterio que
+    // PassportExpiry (opcional, al final, null = no informado). Ver Passenger.DocumentExpiry.
+    DateTime? DocumentExpiry = null);
 
 public record ReservationPaymentUpsertRequest(
     decimal Amount,

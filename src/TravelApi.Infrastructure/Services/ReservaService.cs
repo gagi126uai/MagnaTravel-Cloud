@@ -526,6 +526,9 @@ public class ReservaService : IReservaService
         string? DocumentNumber,
         DateTime? BirthDate,
         DateTime? PassportExpiry,
+        // Semaforo de DNI vencido para cabotaje (2026-08-03): mismo criterio "vacio = no toca" que
+        // PassportExpiry (fecha opcional, jamas obligatoria).
+        DateTime? DocumentExpiry,
         string? Nationality,
         string? Gender);
 
@@ -552,6 +555,7 @@ public class ReservaService : IReservaService
             DocumentNumber: KeepStoredWhenIncomingIsEmpty(incoming.DocumentNumber, stored.DocumentNumber),
             BirthDate: incoming.BirthDate ?? stored.BirthDate,
             PassportExpiry: incoming.PassportExpiry ?? stored.PassportExpiry,
+            DocumentExpiry: incoming.DocumentExpiry ?? stored.DocumentExpiry,
             Nationality: KeepStoredWhenIncomingIsEmpty(incoming.Nationality, stored.Nationality),
             Gender: KeepStoredWhenIncomingIsEmpty(incoming.Gender, stored.Gender));
     }
@@ -583,13 +587,13 @@ public class ReservaService : IReservaService
     {
         var current = await _context.Passengers.AsNoTracking()
             .Where(p => p.Id == passengerId)
-            .Select(p => new { p.FullName, p.DocumentType, p.DocumentNumber, p.BirthDate, p.PassportExpiry, p.Nationality, p.Gender })
+            .Select(p => new { p.FullName, p.DocumentType, p.DocumentNumber, p.BirthDate, p.PassportExpiry, p.DocumentExpiry, p.Nationality, p.Gender })
             .FirstOrDefaultAsync(ct);
         if (current is null) return false;
 
         var stored = new PassengerPreservedFields(
             current.DocumentType, current.DocumentNumber, current.BirthDate,
-            current.PassportExpiry, current.Nationality, current.Gender);
+            current.PassportExpiry, current.DocumentExpiry, current.Nationality, current.Gender);
         var effective = ResolveEffectivePassengerFields(stored, incoming);
 
         return ChangesExistingText(current.FullName, incoming.FullName)
@@ -3061,6 +3065,7 @@ public class ReservaService : IReservaService
             DocumentNumber = passenger.DocumentNumber,
             BirthDate = passenger.BirthDate,
             PassportExpiry = passenger.PassportExpiry,
+            DocumentExpiry = passenger.DocumentExpiry,
             Nationality = passenger.Nationality,
             Phone = passenger.Phone,
             Email = passenger.Email,
@@ -3993,6 +3998,9 @@ public class ReservaService : IReservaService
             OperatorPaymentDeadline = request.OperatorPaymentDeadline.HasValue
                 ? DateTime.SpecifyKind(request.OperatorPaymentDeadline.Value.Date, DateTimeKind.Utc)
                 : (DateTime?)null,
+            // Semaforo de DNI vencido para cabotaje (2026-08-03): texto no reconocido o ausente ->
+            // Undefined (default), validacion SUAVE (nunca corta el alta del servicio).
+            GeographicScope = ServiceGeographicScopeText.ParseOrNull(request.GeographicScope) ?? ServiceGeographicScope.Undefined,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -4139,6 +4147,13 @@ public class ReservaService : IReservaService
         // si el request trae la fecha; un form viejo que no la manda NO borra la fecha cargada.
         if (request.OperatorPaymentDeadline.HasValue)
             service.OperatorPaymentDeadline = DateTime.SpecifyKind(request.OperatorPaymentDeadline.Value.Date, DateTimeKind.Utc);
+
+        // Semaforo de DNI vencido para cabotaje (2026-08-03): mismo anti-pisado — un texto ausente
+        // o no reconocido CONSERVA el ambito ya cargado. Para "volver a Sin definir" a proposito, el
+        // front manda el token ServiceGeographicScopeText.Cleared, que ParseOrNull SI reconoce.
+        var parsedGeographicScope = ServiceGeographicScopeText.ParseOrNull(request.GeographicScope);
+        if (parsedGeographicScope.HasValue)
+            service.GeographicScope = parsedGeographicScope.Value;
 
         // B2 (ADR-017 F1b — Fuga 3 en el servicio generico): a un caller sin
         // cobranzas.see_cost el GET le enmascara NetCost a 0; el form re-envia ese 0 y la
@@ -4387,11 +4402,18 @@ public class ReservaService : IReservaService
             .ProjectTo<PassengerDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
 
+        // Semaforo de DNI vencido para cabotaje (2026-08-03): se resuelve UNA vez para toda la reserva
+        // (llave de agencia + si hay algun servicio Nacional), no por cada pasajero del listado.
+        var (dniAlertEnabled, hasDomesticService) = await ResolveDniAlertContextAsync(reservaId, CancellationToken.None);
+
         foreach (var dto in dtos)
         {
             // dto.PassportExpiry ya viene de la proyeccion real de EF (ProjectTo arriba), a diferencia de
             // BuildPassengerResult donde el dto puede salir de un mapper simplificado en tests.
             ApplyPassportAlert(dto, dto.PassportExpiry, tripDates?.StartDate, tripDates?.EndDate);
+            ApplyDniAlert(
+                dto, dto.DocumentType, dto.DocumentExpiry, dto.PassportExpiry,
+                dniAlertEnabled, hasDomesticService, tripDates?.StartDate, tripDates?.EndDate);
         }
 
         return dtos;
@@ -4413,6 +4435,65 @@ public class ReservaService : IReservaService
         var alert = PassportExpiryRules.GetAlertOrNull(passportExpiry, tripStart, tripEnd);
         dto.PassportAlertLevel = alert?.Level.ToString();
         dto.PassportAlertText = alert?.Text;
+    }
+
+    /// <summary>
+    /// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): resuelve, UNA sola
+    /// vez por RESERVA (no por pasajero), los dos datos que necesita <see cref="DniExpiryRules"/> ademas
+    /// de lo propio de cada pasajero: si la llave de agencia esta prendida, y si la reserva tiene algun
+    /// servicio Nacional — ya sea un servicio generico (<c>Servicios</c>) o un vuelo real
+    /// (<c>FlightSegments</c>, el camino que usa la ficha de vuelo de verdad). Se llama desde el listado
+    /// y desde cada alta/edicion (F-1: misma regla siempre).
+    ///
+    /// <para>Si la llave esta apagada, NI SIQUIERA consultamos si hay servicio Nacional — con la llave OFF
+    /// el aviso tiene que dar null siempre, sin excepcion, y nos ahorramos una consulta que no hace falta.</para>
+    /// </summary>
+    private async Task<(bool AlertEnabled, bool HasDomesticService)> ResolveDniAlertContextAsync(int reservaId, CancellationToken ct)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        if (!settings.EnableDomesticDniExpiryAlert)
+        {
+            return (false, false);
+        }
+
+        // Fix 2026-08-03: el ambito Nacional se carga desde DOS lugares — el servicio generico
+        // (Servicios, tabla "Reservations") y el vuelo real (FlightSegments, el camino que usa
+        // el 99% de las cargas de aereo). Antes este metodo solo miraba Servicios, asi que un
+        // vuelo cargado como Nacional por la ficha real NUNCA prendia el semaforo de DNI.
+        var hasDomesticGenericService = await _context.Servicios
+            .AnyAsync(s => s.ReservaId == reservaId && s.GeographicScope == ServiceGeographicScope.Domestic, ct);
+
+        var hasDomesticFlight = await _context.FlightSegments
+            .AnyAsync(f => f.ReservaId == reservaId && f.GeographicScope == ServiceGeographicScope.Domestic, ct);
+
+        return (true, hasDomesticGenericService || hasDomesticFlight);
+    }
+
+    /// <summary>
+    /// Calcula el semaforo de DNI vencido (espejo de <see cref="ApplyPassportAlert"/>, mismo patron: se
+    /// llama SIEMPRE desde el mismo lugar en lectura y en alta/edicion). Con <paramref name="alertEnabled"/>
+    /// en false, deja los dos campos en null sin evaluar la regla — la llave apagada es un "no existe" total.
+    /// </summary>
+    private static void ApplyDniAlert(
+        PassengerDto dto,
+        string? documentType,
+        DateTime? documentExpiry,
+        DateTime? passportExpiry,
+        bool alertEnabled,
+        bool hasDomesticService,
+        DateTime? tripStart,
+        DateTime? tripEnd)
+    {
+        if (!alertEnabled)
+        {
+            dto.DniAlertLevel = null;
+            dto.DniAlertText = null;
+            return;
+        }
+
+        var alert = DniExpiryRules.GetAlertOrNull(documentType, documentExpiry, hasDomesticService, passportExpiry, tripStart, tripEnd);
+        dto.DniAlertLevel = alert?.Level.ToString();
+        dto.DniAlertText = alert?.Text;
     }
 
     /// <summary>
@@ -4560,13 +4641,20 @@ public class ReservaService : IReservaService
             passenger.PassportExpiry = DateTime.SpecifyKind(passenger.PassportExpiry.Value.Date, DateTimeKind.Utc);
         }
 
+        // Semaforo de DNI vencido para cabotaje (2026-08-03): mismo tratamiento de fecha de pared que
+        // PassportExpiry.
+        if (passenger.DocumentExpiry.HasValue)
+        {
+            passenger.DocumentExpiry = DateTime.SpecifyKind(passenger.DocumentExpiry.Value.Date, DateTimeKind.Utc);
+        }
+
         passenger.ReservaId = reservaId;
         passenger.CreatedAt = DateTime.UtcNow;
 
         _context.Passengers.Add(passenger);
         await _context.SaveChangesAsync();
 
-        return BuildPassengerResult(passenger, file.StartDate, file.EndDate);
+        return await BuildPassengerResultAsync(passenger, file.StartDate, file.EndDate);
     }
 
     /// <summary>
@@ -4579,11 +4667,19 @@ public class ReservaService : IReservaService
     /// <c>PassportAlertText</c>/<c>PassportAlertLevel</c> (riel nuevo, para el chip fijo de la fila —
     /// F11 — que tambien se recalcula al LEER el listado, no solo al guardar).</para>
     /// </summary>
-    private PassengerDto BuildPassengerResult(Passenger passenger, DateTime? tripStart, DateTime? tripEnd)
+    private async Task<PassengerDto> BuildPassengerResultAsync(Passenger passenger, DateTime? tripStart, DateTime? tripEnd)
     {
         var dto = _mapper.Map<PassengerDto>(passenger);
         ApplyPassportAlert(dto, passenger.PassportExpiry, tripStart, tripEnd);
         dto.Warning = dto.PassportAlertText;
+
+        // Semaforo de DNI vencido para cabotaje (2026-08-03): mismo calculo que en el listado, para que
+        // el chip que ve el vendedor apenas guarda sea IDENTICO al que ve despues al recargar (F-1).
+        var (dniAlertEnabled, hasDomesticService) = await ResolveDniAlertContextAsync(passenger.ReservaId, CancellationToken.None);
+        ApplyDniAlert(
+            dto, passenger.DocumentType, passenger.DocumentExpiry, passenger.PassportExpiry,
+            dniAlertEnabled, hasDomesticService, tripStart, tripEnd);
+
         return dto;
     }
 
@@ -4623,7 +4719,7 @@ public class ReservaService : IReservaService
         // Ver ResolveEffectivePassengerFields para la regla y su contracara ("como se borra a proposito").
         var storedFields = new PassengerPreservedFields(
             passenger.DocumentType, passenger.DocumentNumber, passenger.BirthDate,
-            passenger.PassportExpiry, passenger.Nationality, passenger.Gender);
+            passenger.PassportExpiry, passenger.DocumentExpiry, passenger.Nationality, passenger.Gender);
         var effectiveFields = ResolveEffectivePassengerFields(storedFields, updated);
 
         // Obra "cada campo acepta solo lo que va en ese campo" (2026-07-31, TANDA 2), mismo criterio "solo
@@ -4708,6 +4804,12 @@ public class ReservaService : IReservaService
             ? DateTime.SpecifyKind(effectiveFields.PassportExpiry.Value.Date, DateTimeKind.Utc)
             : null;
 
+        // Semaforo de DNI vencido para cabotaje (2026-08-03): mismo criterio "vacio = no toca" +
+        // normalizacion a fecha de pared Utc que PassportExpiry.
+        passenger.DocumentExpiry = effectiveFields.DocumentExpiry.HasValue
+            ? DateTime.SpecifyKind(effectiveFields.DocumentExpiry.Value.Date, DateTimeKind.Utc)
+            : null;
+
         passenger.Nationality = effectiveFields.Nationality;
         passenger.Phone = updated.Phone;
         passenger.Email = updated.Email;
@@ -4722,7 +4824,7 @@ public class ReservaService : IReservaService
             .Where(r => r.Id == passenger.ReservaId)
             .Select(r => new { r.StartDate, r.EndDate })
             .FirstOrDefaultAsync();
-        return BuildPassengerResult(passenger, tripDates?.StartDate, tripDates?.EndDate);
+        return await BuildPassengerResultAsync(passenger, tripDates?.StartDate, tripDates?.EndDate);
     }
 
     public async Task RemovePassengerAsync(int passengerId)

@@ -48,7 +48,8 @@ public class OperationalFlagsController : ControllerBase
             EnableMultiCurrencyInvoicing = settings.EnableMultiCurrencyInvoicing,
             EnableCancellationDebitNote = settings.EnableCancellationDebitNote,
             EnableCatalogFindOrCreate = settings.EnableCatalogFindOrCreate,
-            EnableServiceDeadlineAlerts = settings.EnableServiceDeadlineAlerts
+            EnableServiceDeadlineAlerts = settings.EnableServiceDeadlineAlerts,
+            EnableDomesticDniExpiryAlert = settings.EnableDomesticDniExpiryAlert
         });
     }
 }

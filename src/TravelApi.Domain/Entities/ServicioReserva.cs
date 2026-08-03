@@ -23,6 +23,87 @@ public static class ReservationStatuses
     public const string Cancelled = "Cancelado";
 }
 
+/// <summary>
+/// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): ambito geografico de
+/// un servicio generico. Solo importa si HAY AL MENOS UN servicio <see cref="Domestic"/> en la reserva:
+/// ese es el dato que dispara <see cref="TravelApi.Domain.Helpers.DniExpiryRules"/> (volar dentro del
+/// pais exige documento vigente). Se persiste como entero (EF default enum-&gt;int); el orden de los
+/// valores NO debe cambiarse porque ya queda escrito en la columna.
+/// </summary>
+public enum ServiceGeographicScope
+{
+    /// <summary>Default para TODO lo existente y para un servicio nuevo sin cargar: el vendedor no lo definio.</summary>
+    Undefined = 0,
+
+    /// <summary>Vuelo/servicio DENTRO del pais (cabotaje). Dispara el semaforo de DNI si el pasajero tiene uno vencido.</summary>
+    Domestic = 1,
+
+    /// <summary>Vuelo/servicio fuera del pais. NO dispara el semaforo de DNI (ahi lo que importa es el pasaporte).</summary>
+    International = 2,
+}
+
+/// <summary>
+/// Traduce <see cref="ServiceGeographicScope"/> a/desde el texto legible que viaja en los DTOs
+/// ("Nacional"/"Internacional"). El entero del enum NUNCA sale de este proceso (gate de exposicion:
+/// un numero de enum crudo es informacion tecnica que un usuario no-programador no entiende).
+/// </summary>
+public static class ServiceGeographicScopeText
+{
+    public const string Domestic = "Nacional";
+    public const string International = "Internacional";
+
+    /// <summary>
+    /// Token explicito que manda el front cuando el vendedor VUELVE a elegir "Sin definir" a proposito
+    /// (por ejemplo, corrigio un vuelo que habia marcado "Nacional" por error). Es distinto de mandar
+    /// vacio/nulo: eso significa "no toque este campo" (ver <see cref="ParseOrNull"/>). Sin este token,
+    /// un vuelo mal marcado quedaba avisando PARA SIEMPRE porque el update nunca sabia que el vendedor
+    /// queria borrar el ambito, no simplemente omitirlo.
+    /// </summary>
+    public const string Cleared = "SinDefinir";
+
+    /// <summary>Undefined se expone como <c>null</c>: "no definido" no necesita chip ni texto en pantalla.</summary>
+    public static string? ToDisplayText(ServiceGeographicScope scope) => scope switch
+    {
+        ServiceGeographicScope.Domestic => Domestic,
+        ServiceGeographicScope.International => International,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Interpreta el texto que manda el alta/edicion del servicio. Vacio (nada mandado) devuelve
+    /// <c>null</c> (validacion SUAVE: el caller simplemente no toca el ambito ya guardado). El token
+    /// <see cref="Cleared"/> es la unica forma de pedir explicitamente "Sin definir" y SI devuelve un
+    /// valor (<see cref="ServiceGeographicScope.Undefined"/>), para que el caller lo asigne como
+    /// cualquier otro valor reconocido.
+    /// </summary>
+    public static ServiceGeographicScope? ParseOrNull(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var normalized = text.Trim();
+
+        if (string.Equals(normalized, Domestic, StringComparison.OrdinalIgnoreCase))
+        {
+            return ServiceGeographicScope.Domestic;
+        }
+
+        if (string.Equals(normalized, International, StringComparison.OrdinalIgnoreCase))
+        {
+            return ServiceGeographicScope.International;
+        }
+
+        if (string.Equals(normalized, Cleared, StringComparison.OrdinalIgnoreCase))
+        {
+            return ServiceGeographicScope.Undefined;
+        }
+
+        return null;
+    }
+}
+
 public class ServicioReserva : IHasPublicId
 {
     public int Id { get; set; }
@@ -80,6 +161,15 @@ public class ServicioReserva : IHasPublicId
     public string? Currency { get; set; }
 
     public string? SupplierName { get; set; }
+
+    /// <summary>
+    /// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): ambito geografico
+    /// de ESTE servicio (ver <see cref="ServiceGeographicScope"/>). Opcional, default
+    /// <see cref="ServiceGeographicScope.Undefined"/> para TODO lo existente (no hay forma de inferir
+    /// retroactivamente si un vuelo viejo era nacional o internacional). El vendedor lo carga si quiere
+    /// activar el aviso; nunca es obligatorio para guardar el servicio.
+    /// </summary>
+    public ServiceGeographicScope GeographicScope { get; set; } = ServiceGeographicScope.Undefined;
 
     /// <summary>
     /// Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del servicio generico.

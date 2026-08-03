@@ -1042,6 +1042,14 @@ public partial class BookingService : IBookingService
         if (req.OperatorPaymentDeadline.HasValue)
             flight.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
+        // Semaforo de DNI vencido para cabotaje (2026-08-03, anti-clobber): mismo criterio que
+        // ProductName/los deadlines de arriba — un texto ausente o no reconocido CONSERVA el ambito
+        // ya cargado. Para "volver a Sin definir" a proposito, el front manda el token
+        // ServiceGeographicScopeText.Cleared, que ParseOrNull SI reconoce (ver ese metodo).
+        var parsedGeographicScope = ServiceGeographicScopeText.ParseOrNull(req.GeographicScope);
+        if (parsedGeographicScope.HasValue)
+            flight.GeographicScope = parsedGeographicScope.Value;
+
         // ADR-018 Ronda 7: cabina opcional. OJO, aca NO hay anti-clobber a proposito: la ficha reenvia
         // la cabina en cada edicion (round-trip), asi que null/vacio significa "el vendedor la dejo en
         // Sin especificar" y debe persistirse null (es un borrado legitimo, no un campo no enviado).

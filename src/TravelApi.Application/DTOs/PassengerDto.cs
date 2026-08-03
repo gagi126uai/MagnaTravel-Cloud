@@ -10,6 +10,11 @@ public class PassengerDto
     // Auditoria ERP 2026-06-12 (item 8): vencimiento del pasaporte. Se expone para que el front lo
     // muestre/edite y para la alarma de vigencia. Aditivo (null = no informado). Ver Passenger.PassportExpiry.
     public DateTime? PassportExpiry { get; set; }
+
+    // Semaforo de DNI vencido para cabotaje (2026-08-03): vencimiento del DNI. Aditivo (null = no
+    // informado), misma semantica que PassportExpiry. Ver Passenger.DocumentExpiry.
+    public DateTime? DocumentExpiry { get; set; }
+
     public string? Nationality { get; set; }
     public string? Phone { get; set; }
     public string? Email { get; set; }
@@ -39,4 +44,18 @@ public class PassengerDto
 
     /// <summary>Texto exacto del aviso de <see cref="PassportAlertLevel"/> (mismo texto en toast y chip).</summary>
     public string? PassportAlertText { get; set; }
+
+    /// <summary>
+    /// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): mismo patron que
+    /// <see cref="PassportAlertLevel"/>/<see cref="PassportAlertText"/>, pero para el DNI y solo cuando la
+    /// reserva tiene un tramo Nacional. Ver <see cref="TravelApi.Domain.Helpers.DniExpiryRules"/>.
+    ///
+    /// <para>Se calcula SOLO si la llave de configuracion <c>OperationalFinanceSettings.EnableDomesticDniExpiryAlert</c>
+    /// esta prendida; con la llave apagada estos dos campos SIEMPRE viajan en <c>null</c> (P-11: es un
+    /// aviso opcional de agencia, nunca un candado). Unico valor posible: <c>"Expired"</c>.</para>
+    /// </summary>
+    public string? DniAlertLevel { get; set; }
+
+    /// <summary>Texto exacto del aviso de <see cref="DniAlertLevel"/> (mismo texto para toda la pantalla, T-6).</summary>
+    public string? DniAlertText { get; set; }
 }

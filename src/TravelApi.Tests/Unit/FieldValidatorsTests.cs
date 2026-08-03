@@ -383,8 +383,9 @@ public class FieldValidatorsTests
 
         Assert.NotNull(alerta);
         Assert.Equal(PassportAlertLevel.Expired, alerta!.Level);
-        // Mismo texto exacto de siempre (T-6): no romper el aviso historico sin fechas de viaje.
-        Assert.Equal(PassportExpiryRules.ExpiredPassportWarning, alerta.Text);
+        // T-6: literal EXACTO, no la constante (comparar contra la propia constante es una tautologia
+        // que nunca falla aunque el texto cambie sin darse cuenta).
+        Assert.Equal("El pasaporte de este pasajero está vencido.", alerta.Text);
     }
 
     [Fact]
@@ -403,7 +404,8 @@ public class FieldValidatorsTests
 
         Assert.NotNull(alerta);
         Assert.Equal(PassportAlertLevel.Expired, alerta!.Level);
-        Assert.Equal(PassportExpiryRules.ExpiredBeforeTripEndWarning, alerta.Text);
+        // T-6: literal EXACTO, no la constante.
+        Assert.Equal("El pasaporte de este pasajero se vence antes del fin del viaje.", alerta.Text);
     }
 
     [Fact]
@@ -431,7 +433,10 @@ public class FieldValidatorsTests
 
         Assert.NotNull(alerta);
         Assert.Equal(PassportAlertLevel.Tight, alerta!.Level);
-        Assert.Equal(PassportExpiryRules.TightMarginAfterTripWarning, alerta.Text);
+        // T-6: literal EXACTO, no la constante.
+        Assert.Equal(
+            "Al pasaporte le quedan menos de 6 meses después del viaje; muchos destinos exigen ese margen.",
+            alerta.Text);
     }
 
     [Fact]

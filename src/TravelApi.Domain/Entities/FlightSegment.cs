@@ -203,4 +203,15 @@ public class FlightSegment : IHasPublicId
     // Legacy - mantener compatibilidad temporal
     public int? ServicioReservaId { get; set; }
     public ServicioReserva? ServicioReserva { get; set; }
+
+    /// <summary>
+    /// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): ambito geografico
+    /// de ESTE vuelo (ver <see cref="ServiceGeographicScope"/>). Mismo criterio que
+    /// <see cref="ServicioReserva.GeographicScope"/> (el campo gemelo del servicio generico): opcional,
+    /// default <see cref="ServiceGeographicScope.Undefined"/> para todo lo existente, nunca obligatorio
+    /// para guardar el vuelo. Antes de este fix este campo NO existia en <c>FlightSegment</c>: el vendedor
+    /// cargaba el ambito desde la ficha de vuelo pero el backend lo tiraba en silencio (el semaforo de DNI
+    /// nunca se prendia por un vuelo real, solo por el servicio generico viejo).
+    /// </summary>
+    public ServiceGeographicScope GeographicScope { get; set; } = ServiceGeographicScope.Undefined;
 }

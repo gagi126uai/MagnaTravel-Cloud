@@ -183,6 +183,13 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.TreasuryFxAssumedByDefault = assumedBy;
         }
 
+        // Semaforo de DNI vencido para cabotaje (2026-08-03): update CONDICIONAL (patch-like, criterio
+        // B-002). Es un ajuste de negocio puro, sin dependencias con otros flags.
+        if (request.EnableDomesticDniExpiryAlert.HasValue)
+        {
+            entity.EnableDomesticDniExpiryAlert = request.EnableDomesticDniExpiryAlert.Value;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -340,6 +347,9 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             // ADR-044 T3b Decision 3 (2026-07-10): el GET expone el default de agencia de "quién asume la
             // diferencia de cambio" para que el panel lo muestre/edite.
             TreasuryFxAssumedByDefault = entity.TreasuryFxAssumedByDefault,
+            // Semaforo de DNI vencido para cabotaje (2026-08-03): el GET expone el interruptor para que
+            // el panel lo muestre como toggle.
+            EnableDomesticDniExpiryAlert = entity.EnableDomesticDniExpiryAlert,
         };
     }
 }

@@ -31,4 +31,7 @@ public class OperationalFlagsResponse
 
     /// <summary>Avisos "Proximos inicios" (ADR-019). Gobierna el bucket upcomingStarts de la campanita y la columna "Avisos" de la fila.</summary>
     public bool EnableServiceDeadlineAlerts { get; set; }
+
+    /// <summary>Semaforo de DNI vencido para cabotaje (2026-08-03). Gobierna si el pasajero trae DniAlertLevel/DniAlertText.</summary>
+    public bool EnableDomesticDniExpiryAlert { get; set; }
 }

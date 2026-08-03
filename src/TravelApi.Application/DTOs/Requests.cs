@@ -71,7 +71,13 @@ public record CreateFlightRequest(
     DateTime? TicketingDeadline = null,
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del segmento (distinta del
     // time-limit). Opcional al final. Ver FlightSegment.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Semaforo de DNI vencido para cabotaje (2026-08-03): ambito geografico del vuelo, como texto
+    // legible ("Nacional"/"Internacional"). Opcional; null o un texto no reconocido = queda
+    // "Sin definir" (validacion SUAVE, ver ServiceGeographicScopeText.ParseOrNull). Antes de este fix
+    // este campo NO existia en el request del vuelo: la ficha lo mandaba y el backend lo ignoraba en
+    // silencio (el semaforo de DNI nunca se prendia por un vuelo real).
+    string? GeographicScope = null
 );
 
 public record UpdateFlightRequest(
@@ -115,7 +121,12 @@ public record UpdateFlightRequest(
     // COST_BELOW_PAID_CONFIRMATION_REQUIRED) antes de guardar. El front reintenta el MISMO request con
     // este campo en true una vez que el usuario confirmo el cartel. Default false: mismo comportamiento
     // de siempre para cualquier caller que no lo conoce todavia. Mismo patron que CreateInvoiceRequest.ForceIssue.
-    bool ConfirmCostBelowPaid = false
+    bool ConfirmCostBelowPaid = false,
+    // Semaforo de DNI vencido para cabotaje (2026-08-03): mismo anti-pisado que ProductName/los
+    // deadlines. La ficha SIEMPRE reenvia el ambito en la edicion (round-trip), pero un caller viejo
+    // que no lo conoce llega en null: el map lo IGNORA (ver MappingProfile) y el service lo asigna a
+    // mano SOLO cuando el texto se reconoce, para no borrar un ambito ya cargado (ver UpdateFlightAsync).
+    string? GeographicScope = null
 );
 
 public record CreateHotelRequest(

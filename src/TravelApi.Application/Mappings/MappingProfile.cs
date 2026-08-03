@@ -77,8 +77,12 @@ public class MappingProfile : Profile
             // suelta (byId/create/update/status, cargados con FindAsync SIN nav) el BookingService lo
             // re-resuelve con ResolveProductCreatedInSaleAsync. CostToConfirm mapea por convencion (mismo nombre).
             .ForMember(dest => dest.ProductCreatedInSale, opt => opt.MapFrom(src => src.Rate != null && src.Rate.CreatedInSale))
-            .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)));
-            
+            .ForMember(dest => dest.IsPriceSynced, opt => opt.MapFrom(src => src.Rate == null || (src.Rate.SalePrice == src.SalePrice && src.Rate.NetCost == src.NetCost)))
+            // Semaforo de DNI vencido para cabotaje (2026-08-03): el enum SIEMPRE sale como texto legible
+            // ("Nacional"/"Internacional"/null), nunca el numero crudo (gate de exposicion). Mismo criterio
+            // que el mapeo gemelo de ServicioReserva -> ServicioReservaDto.
+            .ForMember(dest => dest.GeographicScope, opt => opt.MapFrom(src => TravelApi.Domain.Entities.ServiceGeographicScopeText.ToDisplayText(src.GeographicScope)));
+
         CreateMap<CreateFlightRequest, FlightSegment>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
@@ -86,7 +90,11 @@ public class MappingProfile : Profile
             // del tarifario (byte-identico a hoy); con flag ON la asigna el service desde el request
             // (regla "request manda"). Sin este Ignore, el campo nuevo del request cambiaria el OFF.
             .ForMember(dest => dest.Currency, opt => opt.Ignore())
-            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
+            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"))
+            // Semaforo de DNI vencido para cabotaje (2026-08-03): en el ALTA el texto se parsea siempre
+            // (validacion SUAVE: texto vacio/no reconocido -> Undefined, nunca corta la carga del vuelo).
+            .ForMember(dest => dest.GeographicScope, opt => opt.MapFrom(src =>
+                TravelApi.Domain.Entities.ServiceGeographicScopeText.ParseOrNull(src.GeographicScope) ?? TravelApi.Domain.Entities.ServiceGeographicScope.Undefined));
             
         // Fuga 3 (ADR-017 §2.7, F1b): NetCost/Tax/Commission NO se mapean automaticamente
         // en los UPDATE. Un caller sin cobranzas.see_cost recibe el costo enmascarado a 0
@@ -119,7 +127,12 @@ public class MappingProfile : Profile
             {
                 opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.WorkflowStatus));
                 opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL");
-            });
+            })
+            // Semaforo de DNI vencido para cabotaje (2026-08-03, anti-clobber): el map IGNORA GeographicScope
+            // en el UPDATE, mismo motivo que ProductName/los deadlines de arriba. Un caller viejo que no
+            // conoce este campo manda null y el map lo borraria; el service (UpdateFlightAsync) lo asigna a
+            // mano SOLO cuando el texto se reconoce, preservando el ambito ya cargado en cualquier otro caso.
+            .ForMember(dest => dest.GeographicScope, opt => opt.Ignore());
 
         CreateMap<HotelBooking, HotelBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -289,7 +302,10 @@ public class MappingProfile : Profile
             // ADR-021 Capa 7: la moneda del servicio se normaliza (null/legacy -> ARS) para que el front
             // siempre reciba un codigo valido y nunca un null en el badge.
             .ForMember(dest => dest.Currency, opt => opt.MapFrom(src => TravelApi.Domain.Entities.Monedas.Normalizar(src.Currency)))
-            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : src.SupplierName));
+            .ForMember(dest => dest.SupplierName, opt => opt.MapFrom(src => src.Supplier != null ? src.Supplier.Name : src.SupplierName))
+            // Semaforo de DNI vencido para cabotaje (2026-08-03): el enum SIEMPRE sale como texto legible
+            // ("Nacional"/"Internacional"/null), nunca el numero crudo (gate de exposicion).
+            .ForMember(dest => dest.GeographicScope, opt => opt.MapFrom(src => TravelApi.Domain.Entities.ServiceGeographicScopeText.ToDisplayText(src.GeographicScope)));
 
         // Reserva
         CreateMap<Reserva, ReservaDto>()

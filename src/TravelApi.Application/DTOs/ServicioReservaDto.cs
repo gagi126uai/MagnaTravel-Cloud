@@ -59,4 +59,12 @@ public class ServicioReservaDto
     /// XML-doc completo en <see cref="HotelBookingDto.SupplierTaxConditionUnknown"/>.
     /// </summary>
     public bool SupplierTaxConditionUnknown { get; set; }
+
+    /// <summary>
+    /// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): ambito geografico
+    /// de este servicio. Viaja como STRING legible ("Nacional"/"Internacional"), NUNCA el numero crudo
+    /// del enum (gate de exposicion) — ver <see cref="TravelApi.Domain.Entities.ServiceGeographicScopeText"/>.
+    /// Null = sin definir (el vendedor no lo cargo).
+    /// </summary>
+    public string? GeographicScope { get; set; }
 }

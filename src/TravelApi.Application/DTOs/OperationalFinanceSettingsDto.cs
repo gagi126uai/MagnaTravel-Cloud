@@ -241,4 +241,11 @@ public class OperationalFinanceSettingsDto
     /// valor actual. El service valida que sea un valor de enum definido (400 si no). Se expone en el GET.</para>
     /// </summary>
     public TreasuryFxAssumedBy? TreasuryFxAssumedByDefault { get; set; }
+
+    /// <summary>
+    /// Semaforo de DNI vencido para cabotaje (2026-08-03): interruptor de agencia para el aviso. Con OFF
+    /// (default) el aviso no se calcula nunca. Nullable y patch-like (criterio B-002): enviar null u
+    /// omitir el campo en el PUT = no se modifica el valor actual. Se expone read-only en el GET.
+    /// </summary>
+    public bool? EnableDomesticDniExpiryAlert { get; set; }
 }
