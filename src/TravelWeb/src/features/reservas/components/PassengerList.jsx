@@ -41,6 +41,7 @@ import { getPublicId } from "../../../lib/publicIds";
 import { PasajeroInlineForm } from "./PasajeroInlineForm";
 import { tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { construirChipPasaporte } from "../lib/passportAlertChip";
+import { construirChipDni } from "../lib/dniAlertChip";
 
 /**
  * Franja de sugerencia de cantidad de pasajeros (Pieza C — ADR-031 v2.1).
@@ -249,6 +250,10 @@ export function PassengerList({
                         // pasaporte por fila. null cuando el motor no mandó alerta para este
                         // pasajero (pasaporte al día, sin vencimiento cargado, o slot vacío).
                         const chipPasaporte = tieneNombre ? construirChipPasaporte(slot.pasajero, reserva) : null;
+                        // Semáforo DNI vencido (2026-08-03, spec firmada): hermano gemelo del chip de
+                        // pasaporte de arriba. Va DESPUÉS en la fila (P1 firmado: pasaporte primero,
+                        // DNI después) porque cada chip avisa de un documento distinto.
+                        const chipDni = tieneNombre ? construirChipDni(slot.pasajero, reserva) : null;
 
                         return (
                             <div key={index}>
@@ -299,6 +304,17 @@ export function PassengerList({
                                                     title={chipPasaporte.title}
                                                 >
                                                     {chipPasaporte.label}
+                                                </span>
+                                            )}
+                                            {/* Semáforo DNI vencido (P1 firmado: va después del de pasaporte,
+                                                los dos conviven si el pasajero tiene ambos vencidos). */}
+                                            {chipDni && (
+                                                <span
+                                                    data-testid={`chip-dni-vencido-${index}`}
+                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipDni.className}`}
+                                                    title={chipDni.title}
+                                                >
+                                                    {chipDni.label}
                                                 </span>
                                             )}
                                         </div>

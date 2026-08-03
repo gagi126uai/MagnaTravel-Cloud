@@ -241,8 +241,8 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
                 </div>
             )}
 
-            {/* === FECHAS IDA · VUELTA + PASAJEROS === */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {/* === FECHAS IDA · VUELTA + PASAJEROS + ÁMBITO === */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                     <label className={LABEL_BASE} htmlFor="flight-ida">
                         <Calendar className="inline w-3 h-3 mr-1" />
@@ -290,6 +290,25 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
                         data-testid="flight-pasajeros"
                         aria-label="Cantidad de pasajeros"
                     />
+                </div>
+                {/* Semáforo de DNI vencido para cabotaje (2026-08-03, spec firmada P3/P4): marca
+                    de ámbito, A LA VISTA en la misma línea que fechas y pasajeros (P4=A: si no se
+                    ve, no se marca, y sin marca el aviso de DNI vencido nunca aparece). Default
+                    "Sin definir": no dispara ningún aviso. Solo existe en el Aéreo (P3=A). */}
+                <div>
+                    <label className={LABEL_BASE} htmlFor="flight-ambito">Vuelo</label>
+                    <select
+                        id="flight-ambito"
+                        className={INPUT_NORMAL}
+                        value={form.geographicScope || ""}
+                        onChange={(event) => setForm((prev) => ({ ...prev, geographicScope: event.target.value }))}
+                        data-testid="flight-ambito"
+                        aria-label="Ámbito geográfico del vuelo (Nacional o Internacional)"
+                    >
+                        <option value="">Sin definir</option>
+                        <option value="Nacional">Nacional (dentro del país)</option>
+                        <option value="Internacional">Internacional</option>
+                    </select>
                 </div>
             </div>
 

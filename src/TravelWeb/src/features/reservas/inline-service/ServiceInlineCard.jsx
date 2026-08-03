@@ -164,6 +164,11 @@ function buildFlightFormInitial(serviceToEdit) {
             // cabinClass: "" = "Sin especificar" (igual que el modal viejo). El select
             // siempre tiene opciones, así que "" nunca queda colgado.
             cabinClass: "",
+            // Semáforo de DNI vencido para cabotaje (2026-08-03): "" = "Sin definir" (default,
+            // nunca dispara el aviso). El backend ya tiene este campo en CreateFlightRequest/
+            // UpdateFlightRequest; buildPayload manda el token "SinDefinir" cuando el select
+            // queda en "" (ver ServiceGeographicScopeText.Cleared en el backend).
+            geographicScope: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -186,6 +191,10 @@ function buildFlightFormInitial(serviceToEdit) {
         baggage: serviceToEdit.baggage || "",
         // Round-trip: el backend devuelve cabinClass en FlightSegmentDto; fallback "" (Sin especificar).
         cabinClass: serviceToEdit.cabinClass || "",
+        // Semáforo de DNI vencido para cabotaje: FlightSegmentDto SI expone este campo en la
+        // lectura, como texto legible ("Nacional"/"Internacional") o null si nunca se definió.
+        // Fallback "" (Sin definir) cuando el backend devuelve null.
+        geographicScope: serviceToEdit.geographicScope || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
     };
@@ -557,6 +566,15 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 // cabinClass: null cuando no se eligió (backend lo relaja a opcional).
                 // Con || null: "" â†’ null, "Economy" â†’ "Economy", etc.
                 cabinClass: formVuelo.cabinClass || null,
+                // Semáforo de DNI vencido para cabotaje (2026-08-03): a diferencia de cabinClass,
+                // acá "" (Sin definir elegido en el select) NO se manda como null. El backend
+                // interpreta null/ausente como "no tocar el ámbito ya guardado" (ParseOrNull),
+                // así que un null nunca podría borrar un "Nacional" cargado por error. Por eso
+                // mandamos el token literal "SinDefinir" (ServiceGeographicScopeText.Cleared en
+                // el backend), que el backend SI reconoce como "volver a Sin definir a propósito".
+                // Como el form siempre rehidrata el valor guardado (buildFlightFormInitial),
+                // mandar el valor del select siempre refleja la intención visible del vendedor.
+                geographicScope: formVuelo.geographicScope || "SinDefinir",
             };
             if (formVuelo.rateId) {
                 payload.rateId = formVuelo.rateId;

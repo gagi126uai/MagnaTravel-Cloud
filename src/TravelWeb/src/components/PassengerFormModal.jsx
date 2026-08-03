@@ -53,6 +53,11 @@ const emptyPassengerForm = {
     // pasaporte). El backend ya tiene Passenger.PassportExpiry + la alarma de vigencia;
     // acá solo faltaba el campo en pantalla.
     passportExpiry: "",
+    // Semáforo de DNI vencido para cabotaje (2026-08-03, spec firmada P2): vencimiento del
+    // DNI. Solo se muestra en pantalla cuando el tipo de documento elegido es DNI (ver el
+    // campo condicional más abajo, en Identidad). Opcional, nunca frena Guardar; vacío =
+    // no tocar (el backend ya lo maneja, igual que passportExpiry).
+    documentExpiry: "",
     nationality: "",
     phone: "",
     email: "",
@@ -327,6 +332,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                 ...passengerToEdit,
                 birthDate: passengerToEdit.birthDate ? passengerToEdit.birthDate.split("T")[0] : "",
                 passportExpiry: passengerToEdit.passportExpiry ? passengerToEdit.passportExpiry.split("T")[0] : "",
+                documentExpiry: passengerToEdit.documentExpiry ? passengerToEdit.documentExpiry.split("T")[0] : "",
             });
         } else {
             setFormData(emptyPassengerForm);
@@ -348,6 +354,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         const payload = { ...formData };
         if (!payload.birthDate) payload.birthDate = null;
         if (!payload.passportExpiry) payload.passportExpiry = null;
+        if (!payload.documentExpiry) payload.documentExpiry = null;
         if (payload.nationality === "") payload.nationality = null;
         if (payload.phone === "") payload.phone = null;
         if (payload.email === "") payload.email = null;
@@ -512,6 +519,25 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                     ) : null}
                                 </div>
                             </div>
+
+                            {/* ─── Campo VENCIMIENTO DNI (P2, spec 2026-08-03) ───────────────
+                                Pegado al número de documento, en la misma sección Identidad —
+                                aparece justo donde el vendedor acaba de elegir "DNI" (P2=A,
+                                recomendación firmada). Solo visible con tipo DNI; con
+                                Pasaporte/Cédula/Otro no existe en pantalla. Opcional, sin
+                                leyenda "(opcional)" (regla 2026-06-05). */}
+                            {(formData.documentType || "DNI") === "DNI" && (
+                                <div>
+                                    <label className={labelClass}>Vencimiento DNI</label>
+                                    <input
+                                        type="date"
+                                        className={inputClass}
+                                        data-testid="input-vencimiento-dni"
+                                        value={formData.documentExpiry || ""}
+                                        onChange={(event) => updateField("documentExpiry", event.target.value)}
+                                    />
+                                </div>
+                            )}
                         </div>
                     </section>
 

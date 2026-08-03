@@ -63,6 +63,11 @@ function buildFlightPayload(form, canSeeCost) {
         pnr: form.pnr || null,
         // cabinClass: null cuando no se eligió (""); el backend lo acepta como opcional.
         cabinClass: form.cabinClass || null,
+        // Semáforo de DNI vencido para cabotaje (2026-08-03): a diferencia de cabinClass, acá ""
+        // (Sin definir) NO se manda como null. El backend interpreta null/ausente como "no tocar
+        // el ámbito ya guardado"; para "volver a Sin definir" a propósito hace falta el token
+        // literal "SinDefinir" (ServiceGeographicScopeText.Cleared en el backend), que SI reconoce.
+        geographicScope: form.geographicScope || "SinDefinir",
     };
     if (form.rateId) {
         payload.rateId = form.rateId;
@@ -79,13 +84,17 @@ function buildFlightPayload(form, canSeeCost) {
  * cabinClass: lee del backend con fallback "" (Sin especificar).
  */
 function buildFlightFormInitial(serviceToEdit) {
-    if (!serviceToEdit) return { routeName: "", rateId: null, newCatalogProduct: null, cabinClass: "" };
+    if (!serviceToEdit) return { routeName: "", rateId: null, newCatalogProduct: null, cabinClass: "", geographicScope: "" };
     return {
         routeName: serviceToEdit.productName || serviceToEdit.description || serviceToEdit.name || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
         // Round-trip: el backend devuelve cabinClass en FlightSegmentDto; fallback "" (Sin especificar).
         cabinClass: serviceToEdit.cabinClass || "",
+        // Semáforo de DNI vencido para cabotaje: FlightSegmentDto SI expone este campo en la
+        // lectura, como texto legible ("Nacional"/"Internacional") o null si nunca se definió.
+        // Fallback "" (Sin definir) cuando el backend devuelve null.
+        geographicScope: serviceToEdit.geographicScope || "",
     };
 }
 
@@ -440,4 +449,62 @@ test("buildFlightFormInitial: round-trip cabinClass null del backend → '' en e
     };
     const form = buildFlightFormInitial(serviceDesdeBackend);
     assert.equal(form.cabinClass, "");
+});
+
+// ─── Tests: geographicScope — semáforo de DNI vencido para cabotaje (2026-08-03) ──
+
+test("buildFlightPayload: geographicScope 'Nacional' elegido → va tal cual en el payload", () => {
+    const form = {
+        routeName: "AEP–COR",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 90000,
+        currency: "ARS",
+        rateId: "rate-1",
+        geographicScope: "Nacional",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.geographicScope, "Nacional");
+});
+
+test("buildFlightPayload: geographicScope 'Sin definir' (vacío) → token 'SinDefinir' en el payload (no null)", () => {
+    // El backend distingue "no mandé nada" (null → no tocar) de "elegí Sin definir a propósito"
+    // (token "SinDefinir" → limpia el ámbito). El form manda siempre el token, nunca null.
+    const form = {
+        routeName: "AEP–IGR",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        geographicScope: "",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.geographicScope, "SinDefinir");
+});
+
+test("buildFlightPayload: estaba 'Nacional', el vendedor elige 'Sin definir' → el payload manda 'SinDefinir'", () => {
+    // Caso real de esta obra: un vuelo mal marcado como Nacional se corrige a Sin definir.
+    // Si acá mandáramos null, el backend lo interpretaría como "no tocar" y el vuelo quedaría
+    // avisando para siempre. El token explícito es la única forma de borrar el ámbito guardado.
+    const serviceDesdeBackend = { productName: "AEP–COR", geographicScope: "Nacional", rateId: "rate-1" };
+    const formEditado = { ...buildFlightFormInitial(serviceDesdeBackend), geographicScope: "" };
+    const payload = buildFlightPayload(formEditado, true);
+    assert.equal(payload.geographicScope, "SinDefinir");
+});
+
+test("buildFlightFormInitial: geographicScope persistido se precarga en el form (cuando el backend lo devuelva)", () => {
+    const serviceDesdeBackend = { productName: "AEP–COR", geographicScope: "Nacional", rateId: "rate-1" };
+    const form = buildFlightFormInitial(serviceDesdeBackend);
+    assert.equal(form.geographicScope, "Nacional");
+});
+
+test("buildFlightFormInitial: sin geographicScope del backend → '' en el form (Sin definir)", () => {
+    const serviceDesdeBackend = { productName: "AEP–IGR", rateId: "rate-1" };
+    const form = buildFlightFormInitial(serviceDesdeBackend);
+    assert.equal(form.geographicScope, "");
 });

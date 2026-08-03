@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, BookOpen, CalendarClock, DollarSign, FileWarning, GitBranch, Settings2, ShieldAlert, TrendingUp, X } from "lucide-react";
+import { AlertTriangle, BookOpen, CalendarClock, DollarSign, FileWarning, GitBranch, IdCard, Settings2, ShieldAlert, TrendingUp, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { Button } from "./ui/button";
@@ -27,6 +27,10 @@ const defaultSettings = {
   // OFF por defecto: la campanita no muestra avisos de fechas límite. Con ON, cada vendedor
   // recibe avisos de señas y emisión pendientes de sus reservas; los admins ven todos.
   enableServiceDeadlineAlerts: false,
+  // Semáforo de DNI vencido para cabotaje (2026-08-03, spec firmada D): OFF por defecto. Con
+  // ON, la solapa Pasajeros marca en rojo al pasajero cuyo DNI se vence antes de un viaje
+  // Nacional. Ver PassengerList.jsx (chip) y DniExpiryRules (motor).
+  enableDomesticDniExpiryAlert: false,
   // Días de anticipación para los avisos de fechas límite (el DTO valida Range(1,60): fuera de rango = 400).
   serviceDeadlineAlertDays: 7,
   // OFF por defecto: el sistema no calcula comisiones para vendedores.
@@ -328,6 +332,32 @@ export default function OperationalFinanceSettingsTab() {
                 />
               </div>
             </div>
+
+            {/* Semáforo de DNI vencido para cabotaje (2026-08-03, spec firmada D).
+                Con ON, la solapa Pasajeros de la reserva marca en rojo al pasajero cuyo DNI
+                se vence antes de un viaje Nacional. Solo avisa; nunca frena nada (P-11). */}
+            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={form.enableDomesticDniExpiryAlert}
+                onChange={(event) => updateField("enableDomesticDniExpiryAlert", event.target.checked)}
+                className="mt-1 rounded border-slate-300"
+                disabled={loading}
+                data-testid="toggle-domestic-dni-expiry-alert"
+                aria-label="Avisar cuando el DNI de un pasajero esté vencido para un viaje dentro del país"
+              />
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                  <IdCard className="w-4 h-4 text-rose-500" aria-hidden="true" />
+                  Avisar cuando el DNI de un pasajero esté vencido para un viaje dentro del país
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  En la solapa Pasajeros de la reserva, el pasajero cuyo DNI se vence antes del
+                  viaje queda marcado en rojo. Para volar dentro del país piden DNI vigente (o
+                  pasaporte vigente). Solo avisa; nunca frena nada. Apagado, no se muestra ningún aviso.
+                </div>
+              </div>
+            </label>
           </div>
 
             {/* Comisiones de vendedor.
