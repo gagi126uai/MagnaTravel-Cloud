@@ -13,7 +13,12 @@ using TravelApi.Infrastructure.Persistence;
 using TravelApi.Tests.Fixtures;
 using Xunit;
 
-namespace TravelApi.Tests.Integration;
+// Arreglo (huerfanos de CI, 2026-08-03): este archivo vivia en Integration/ pero usa InMemory
+// (CustomWebApplicationFactory) y no llevaba [Trait("Category","Integration")] -> no matcheaba
+// NINGUN filtro del CI (ni Gate 1A FullyQualifiedName~Unit ni Gate 1B Category=Integration).
+// Se mueve a Unit (mismo patron que InvoicesControllerAnnulFiscalTests.cs) para que el Gate 1A lo corra.
+
+namespace TravelApi.Tests.Unit;
 
 /// <summary>
 /// ADR-041 TANDA 4 — B1 (review backend+seguridad 2026-06-28): los endpoints de "reembolsos a cobrar del operador"

@@ -8,7 +8,12 @@ using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Repositories;
 using Xunit;
 
-namespace TravelApi.Tests.Integration
+// Arreglo (huerfanos de CI, 2026-08-03): este archivo vivia en Integration/ pero usa EF InMemory
+// puro (sin factory, sin Postgres real) y no llevaba [Trait("Category","Integration")] -> no
+// matcheaba NINGUN filtro del CI (ni Gate 1A FullyQualifiedName~Unit ni Gate 1B Category=Integration).
+// Se mueve a Unit para que el Gate 1A lo corra.
+
+namespace TravelApi.Tests.Unit
 {
     public class RepositoryTests
     {

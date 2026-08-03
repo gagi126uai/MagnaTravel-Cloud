@@ -12,7 +12,12 @@ using TravelApi.Infrastructure.Persistence;
 using TravelApi.Tests.Fixtures;
 using Xunit;
 
-namespace TravelApi.Tests.Integration;
+// Arreglo (huerfanos de CI, 2026-08-03): este archivo vivia en Integration/ pero usa InMemory
+// (CustomWebApplicationFactory) y no llevaba [Trait("Category","Integration")] -> no matcheaba
+// NINGUN filtro del CI (ni Gate 1A FullyQualifiedName~Unit ni Gate 1B Category=Integration).
+// Se mueve a Unit (mismo patron que InvoicesControllerAnnulFiscalTests.cs) para que el Gate 1A lo corra.
+
+namespace TravelApi.Tests.Unit;
 
 /// <summary>
 /// Tanda 1 del plan de remediacion "contrato pantalla-motor" (2026-07-18): los endpoints
