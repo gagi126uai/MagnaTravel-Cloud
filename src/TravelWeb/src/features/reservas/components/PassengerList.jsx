@@ -40,6 +40,7 @@ import { Plus, User, Trash2, Edit2, Users, Lightbulb, Lock } from "lucide-react"
 import { getPublicId } from "../../../lib/publicIds";
 import { PasajeroInlineForm } from "./PasajeroInlineForm";
 import { tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
+import { construirChipPasaporte } from "../lib/passportAlertChip";
 
 /**
  * Franja de sugerencia de cantidad de pasajeros (Pieza C — ADR-031 v2.1).
@@ -244,6 +245,10 @@ export function PassengerList({
                     {slots.map((slot, index) => {
                         const tieneNombre = Boolean(slot.pasajero?.fullName?.trim());
                         const esteSlotAbierto = slotAbierto === index;
+                        // F11 (D2, 2026-07-31, mockup firmado): chip fijo de vencimiento de
+                        // pasaporte por fila. null cuando el motor no mandó alerta para este
+                        // pasajero (pasaporte al día, sin vencimiento cargado, o slot vacío).
+                        const chipPasaporte = tieneNombre ? construirChipPasaporte(slot.pasajero, reserva) : null;
 
                         return (
                             <div key={index}>
@@ -281,6 +286,19 @@ export function PassengerList({
                                             ) : (
                                                 <span className="text-sm italic text-amber-600 dark:text-amber-400">
                                                     — sin cargar
+                                                </span>
+                                            )}
+                                            {/* F11: chip fijo de pasaporte, mismo tratamiento visual que el
+                                                chip "Vencida con deuda" de ReservaStatusChips.jsx (patrón
+                                                existente, auditado antes de sumar uno nuevo). El texto largo
+                                                del motor va en el title (tooltip). */}
+                                            {chipPasaporte && (
+                                                <span
+                                                    data-testid={`chip-pasaporte-${chipPasaporte.key}-${index}`}
+                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipPasaporte.className}`}
+                                                    title={chipPasaporte.title}
+                                                >
+                                                    {chipPasaporte.label}
                                                 </span>
                                             )}
                                         </div>

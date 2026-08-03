@@ -66,6 +66,7 @@ export function CartelEmergente({
 }) {
     const esBloqueo = variant === CARTEL_EMERGENTE_VARIANTES.BLOQUEO;
     const botonSecundarioRef = useRef(null);
+    const dialogoRef = useRef(null);
 
     // Spec 3.4: "el foco arranca en el botón secundario" (el más seguro — un Enter accidental
     // no dispara la acción ni confirma nada). Solo corre cuando el cartel pasa a estar abierto.
@@ -88,6 +89,39 @@ export function CartelEmergente({
         return () => document.removeEventListener("keydown", handleKeyDown);
     }, [isOpen, isConfirming, onClose]);
 
+    // F8 (deuda vieja, 2026-07-31): focus trap. Sin esto, Tab se escapaba del cartel y seguía
+    // por los botones/links de la pantalla de ATRÁS (tapada visualmente por el fondo oscuro
+    // pero seguía siendo parte del tab order) — un usuario de teclado podía terminar
+    // interactuando con algo que no ve mientras el cartel sigue abierto. Ciclamos el foco
+    // entre los elementos tabuables DENTRO del diálogo: Tab en el último vuelve al primero,
+    // Shift+Tab en el primero vuelve al último.
+    useEffect(() => {
+        if (!isOpen) return;
+        const handleTabKeyDown = (event) => {
+            if (event.key !== "Tab") return;
+            const contenedor = dialogoRef.current;
+            if (!contenedor) return;
+
+            const elementosTabulables = contenedor.querySelectorAll(
+                'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            );
+            if (elementosTabulables.length === 0) return;
+
+            const primero = elementosTabulables[0];
+            const ultimo = elementosTabulables[elementosTabulables.length - 1];
+
+            if (event.shiftKey && document.activeElement === primero) {
+                event.preventDefault();
+                ultimo.focus();
+            } else if (!event.shiftKey && document.activeElement === ultimo) {
+                event.preventDefault();
+                primero.focus();
+            }
+        };
+        document.addEventListener("keydown", handleTabKeyDown);
+        return () => document.removeEventListener("keydown", handleTabKeyDown);
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
     const tituloResuelto = resolverTituloCartelEmergente(variant, title);
@@ -107,6 +141,7 @@ export function CartelEmergente({
             data-testid={dataTestId}
         >
             <div
+                ref={dialogoRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={titleTestId}

@@ -169,7 +169,14 @@ export function PasajeroInlineForm({ reservaId, passengerToEdit, slotLabel, mode
                     autoFocus
                 />
 
-                {/* Tipo de documento: solo cuando el mode lo requiere */}
+                {/* Tipo de documento: solo cuando el mode lo requiere.
+                    F2 (deuda 31/07): al editar un pasajero viejo sin tipo cargado, form.documentType
+                    arranca en "" (a propósito, ver el comentario de más arriba) — pero como
+                    DOC_TYPES no tenía ninguna opción con value="", el <select> quedaba en blanco,
+                    sin ninguna opción marcada (confuso: parece un campo roto, no uno vacío).
+                    Agregamos "Sin tipo" como opción explícita para ese caso. Elegirla a mano no
+                    cambia nada (sigue mandando "" al guardar, que el motor interpreta como "no
+                    tocar el tipo guardado" — paridad vacío=no-tocar, sin relajar esa regla). */}
                 {campos.documento && (
                     <select
                         aria-label="Tipo de documento"
@@ -177,6 +184,7 @@ export function PasajeroInlineForm({ reservaId, passengerToEdit, slotLabel, mode
                         onChange={e => updateField("documentType", e.target.value)}
                         className={`w-28 ${inputClass}`}
                     >
+                        {!form.documentType && <option value="">Sin tipo</option>}
                         {DOC_TYPES.map(d => (
                             <option key={d.value} value={d.value}>{d.label}</option>
                         ))}

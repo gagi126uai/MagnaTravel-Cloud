@@ -24,6 +24,7 @@ import {
     calcularSugerenciaComposicion,
     calcularTotalPasajerosDeclarados,
     faltaTitularConNombre,
+    calcularCandadoPorCoverage,
 } from "./pasajeroHint.js";
 
 // ─── Helpers para construir pasajeros de prueba ───────────────────────────────
@@ -388,4 +389,77 @@ test("faltaTitularConNombre: titular sin nombre → true (falta)", () => {
 test("faltaTitularConNombre: passengers null/undefined → true (falta, conservador)", () => {
     assert.equal(faltaTitularConNombre(null), true);
     assert.equal(faltaTitularConNombre(undefined), true);
+});
+
+// ─── calcularCandadoPorCoverage (bug fix 2026-08, plan tanda F) ───────────────
+// Reemplaza el candado de package/asistencia en ServiceList: la fuente de verdad
+// pasa a ser la coverage del backend (ServiceNominalCoverageDto), no el cálculo
+// local declarado/cargado (que exigía de más: lista.length >= totalDeclarado).
+
+test("calcularCandadoPorCoverage: coverage null (todavía no llegó) → no mostrar botón ni texto", () => {
+    const resultado = calcularCandadoPorCoverage(null);
+    assert.equal(resultado.mostrarBoton, false);
+    assert.equal(resultado.texto, null);
+});
+
+test("calcularCandadoPorCoverage: coverage completa (isComplete=true) → mostrar botón", () => {
+    const resultado = calcularCandadoPorCoverage({ isComplete: true, missingMessage: null });
+    assert.equal(resultado.mostrarBoton, true);
+    assert.equal(resultado.texto, null);
+});
+
+test("calcularCandadoPorCoverage: coverage incompleta → no mostrar botón, texto = missingMessage EXACTO del motor", () => {
+    const resultado = calcularCandadoPorCoverage({
+        isComplete: false,
+        missingMessage: "Falta el documento de 1 pasajero(s) para emitir la asistencia.",
+    });
+    assert.equal(resultado.mostrarBoton, false);
+    assert.equal(resultado.texto, "Falta el documento de 1 pasajero(s) para emitir la asistencia.");
+});
+
+test("calcularCandadoPorCoverage: incompleta pero missingMessage no llegó (defensivo) → texto genérico, no undefined", () => {
+    const resultado = calcularCandadoPorCoverage({ isComplete: false, missingMessage: null });
+    assert.equal(resultado.mostrarBoton, false);
+    assert.equal(resultado.texto, "Faltan datos de pasajeros para confirmar el servicio.");
+});
+
+test("calcularCandadoPorCoverage: caso real reportado — 2 declarados, solo titular cargado, set=1 y completo → motor acepta y front lo refleja", () => {
+    // Este es EXACTAMENTE el caso que el bug reportado escondía: reserva.adultCount=2 pero
+    // el servicio está asignado solo al titular (set resuelto = 1 pasajero). El motor
+    // (PassengerNominalRules) valida el SET, no el total declarado, así que acepta.
+    const coverageDelMotor = {
+        serviceType: "Package",
+        serviceSetCount: 1,
+        reservaPassengerCount: 2,
+        hasExplicitAssignments: true,
+        isComplete: true,
+        missingMessage: null,
+    };
+    const resultado = calcularCandadoPorCoverage(coverageDelMotor);
+    assert.equal(resultado.mostrarBoton, true);
+});
+
+// ─── calcularCandadoPorCoverage: fallback ante error del GET (bug fix P-11, re-review tanda Q) ───
+// Antes: si el GET de nominal-coverage fallaba (ej. caída de red), coverage quedaba null
+// PARA SIEMPRE y el casillero se veía mudo (ni botón ni motivo) — el servicio quedaba
+// inconfirmable desde la ficha sin ninguna explicación. Ahora, con huboErrorDeCoverage=true,
+// se vuelve a mostrar el botón (comportamiento reactivo previo a esta obra): el motor valida
+// al hacer clic y rechaza con su propio mensaje si de verdad falta un dato.
+
+test("calcularCandadoPorCoverage: coverage null CON error → mostrar botón (fallback reactivo, no dejar mudo el casillero)", () => {
+    const resultado = calcularCandadoPorCoverage(null, true);
+    assert.equal(resultado.mostrarBoton, true);
+    assert.equal(resultado.texto, null);
+});
+
+test("calcularCandadoPorCoverage: coverage null SIN error (loading transitorio) → sigue sin mostrar nada", () => {
+    const resultado = calcularCandadoPorCoverage(null, false);
+    assert.equal(resultado.mostrarBoton, false);
+    assert.equal(resultado.texto, null);
+});
+
+test("calcularCandadoPorCoverage: coverage YA llegó (aunque huboErrorDeCoverage venga true por error de un pedido viejo) → manda la coverage, no el flag", () => {
+    const resultado = calcularCandadoPorCoverage({ isComplete: false, missingMessage: "Falta algo." }, true);
+    assert.equal(resultado.mostrarBoton, false);
+    assert.equal(resultado.texto, "Falta algo.");
 });

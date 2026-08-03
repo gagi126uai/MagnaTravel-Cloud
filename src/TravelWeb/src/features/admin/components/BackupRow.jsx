@@ -2,7 +2,12 @@ import { ChevronDown } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { formatDateTime } from "../../../lib/utils";
 import { textoTiempoRelativo } from "../../cancellations/debitNoteInboxLogic";
-import { formatearTamanioArchivo, construirBadgeVersionResguardo, resolverPorQueSeGuardo } from "../lib/dangerRestoreLogic";
+import {
+    formatearTamanioArchivo,
+    construirBadgeVersionResguardo,
+    resolverPorQueSeGuardo,
+    construirSufijoTestIdBackup,
+} from "../lib/dangerRestoreLogic";
 import { RestoreBackupFicha } from "./RestoreBackupFicha";
 
 // ADR-052 (2026-07-29): mismo trío de colores que el resto de esta pantalla (ámbar/rosa/gris).
@@ -21,17 +26,22 @@ const BADGE_VERSION_CLASSES = {
  */
 export function BackupRow({ backup, isOpen, onToggle, onSuccessTotal }) {
     const badge = construirBadgeVersionResguardo(backup.versionResguardo);
+    // F9 (deuda 30/07): los testid/id de esta fila ya NO llevan el nombre de archivo interno
+    // del resguardo — ver el docstring de construirSufijoTestIdBackup. El `key` en el padre
+    // (CopiasDeSeguridadTab) y `onToggle`/`isOpen` siguen identificando la fila por
+    // `backup.archivo` como antes: eso no cambia, es la clave real del pedido de restaurar.
+    const sufijoTestId = construirSufijoTestIdBackup(backup);
 
     return (
         <>
-            <tr className="border-b border-slate-100 dark:border-slate-800" data-testid={`backup-row-${backup.archivo}`}>
+            <tr className="border-b border-slate-100 dark:border-slate-800" data-testid={`backup-row-${sufijoTestId}`}>
                 <td className="px-4 py-3 align-top">
                     <div className="font-semibold text-slate-900 dark:text-white">{formatDateTime(backup.fechaUtc)}</div>
                     <div className="text-xs text-slate-500 dark:text-slate-400">{textoTiempoRelativo(backup.fechaUtc)}</div>
                     {badge && (
                         <Badge
                             variant="outline"
-                            data-testid={`backup-badge-${backup.archivo}`}
+                            data-testid={`backup-badge-${sufijoTestId}`}
                             data-version={badge.color}
                             className={`${BADGE_VERSION_CLASSES[badge.color]} mt-1`}
                         >
@@ -48,10 +58,10 @@ export function BackupRow({ backup, isOpen, onToggle, onSuccessTotal }) {
                 <td className="px-4 py-3 align-top text-right">
                     <button
                         type="button"
-                        data-testid={`backup-usar-${backup.archivo}`}
+                        data-testid={`backup-usar-${sufijoTestId}`}
                         onClick={onToggle}
                         aria-expanded={isOpen}
-                        aria-controls={`backup-ficha-${backup.archivo}`}
+                        aria-controls={`backup-ficha-${sufijoTestId}`}
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:text-indigo-700 dark:border-slate-700 dark:text-slate-200 dark:hover:border-indigo-700"
                     >
                         {isOpen ? "Cerrar" : "Usar esta"}
@@ -60,7 +70,7 @@ export function BackupRow({ backup, isOpen, onToggle, onSuccessTotal }) {
                 </td>
             </tr>
             {isOpen && (
-                <tr id={`backup-ficha-${backup.archivo}`} data-testid={`backup-ficha-${backup.archivo}`}>
+                <tr id={`backup-ficha-${sufijoTestId}`} data-testid={`backup-ficha-${sufijoTestId}`}>
                     <td colSpan={4} className="bg-slate-50 px-4 pb-4 dark:bg-slate-900/40">
                         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
                             <RestoreBackupFicha backup={backup} onSuccessTotal={onSuccessTotal} />

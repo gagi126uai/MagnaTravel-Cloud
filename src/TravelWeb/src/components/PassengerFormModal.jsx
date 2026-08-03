@@ -371,7 +371,10 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             onClose();
         } catch (error) {
             console.error(error);
-            showError(`Error al guardar pasajero: ${getApiErrorMessage(error, "Error desconocido")}`);
+            // F1 (deuda 31/07): el toast YA pone "Error" como título (ver alerts.js showError) —
+            // agregarle acá el prefijo "Error al guardar pasajero: " duplicaba la palabra
+            // ("Error" arriba, "Error al guardar..." abajo). El texto del motor se muestra solo.
+            showError(getApiErrorMessage(error, "Error desconocido"));
         } finally {
             setLoading(false);
         }

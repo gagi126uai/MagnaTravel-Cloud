@@ -1279,13 +1279,29 @@ function EstadoServicioCell({ service, onUpdated, canEdit }) {
 
     return (
         <div className="flex flex-col items-start gap-1">
-            <ResolverServicioInline
-                reservaId={service.reservaPublicId}
-                servicePublicId={service.publicId}
-                recordKind={recordKind}
-                onResuelto={onUpdated}
-                align="start"
-            />
+            {/* F4 (plan 2026-07-31 tarde, hueco cerrado): mismo candado pre-emptivo P-9 que ya
+                usan aéreo/traslado en ServiceList.jsx — botón apagado, texto de motivo en vez del
+                botón (nunca un tooltip, P-9/P-10). `faltaTitularConNombre` viene YA CALCULADO del
+                motor (T-13, mismo criterio que el gate Presupuesto -> En gestión, H7) — el front
+                no reevalúa nada, solo decide qué mostrar. Si el motor lo rechaza igual (carrera,
+                datos que cambiaron), el Cartel emergente de ResolverServicioInline sigue cubriendo
+                ese camino reactivo sin tocarlo. */}
+            {service.faltaTitularConNombre ? (
+                <span
+                    className="text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                    data-testid={`hint-pasajeros-titular-${service.publicId}`}
+                >
+                    Cargá al menos el titular primero
+                </span>
+            ) : (
+                <ResolverServicioInline
+                    reservaId={service.reservaPublicId}
+                    servicePublicId={service.publicId}
+                    recordKind={recordKind}
+                    onResuelto={onUpdated}
+                    align="start"
+                />
+            )}
             {/* canEdit ya está garantizado acá (tieneBotonPrimario lo exige arriba) — no hace
                 falta volver a chequearlo para mostrar el link de corrección. */}
             {mostrarCorreccion ? (

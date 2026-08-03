@@ -19,6 +19,7 @@ import {
     construirMotivoRestaurarTodoDeshabilitado,
     construirConfirmacionRestore,
     esErrorDeMantenimiento,
+    debeSeguirEsperandoTrasErrorDeRestoreTotal,
     construirResumenExitoPruebaRestore,
     construirResumenExitoRealRestore,
     construirResumenExitoTotalRestore,
@@ -34,6 +35,7 @@ import {
     ORIGEN_BACKUP_EMPEZAR_DE_CERO,
     ORIGEN_BACKUP_VOLVER_A_COPIA,
     ORIGEN_BACKUP_MANUAL,
+    calcularTituloPantallaMantenimiento,
 } from "./dangerRestoreLogic.js";
 
 test("formatearTamanioArchivo: bytes chicos se muestran en B", () => {
@@ -204,6 +206,60 @@ test("esErrorDeMantenimiento: un 503 sin ese code exacto NO es mantenimiento (pu
 
 test("esErrorDeMantenimiento: el code MAINTENANCE en otro status (ej. 500) no cuenta", () => {
     assert.equal(esErrorDeMantenimiento({ status: 500, code: "MAINTENANCE" }), false);
+});
+
+// F6 (medio 31/07, hueco de QA tanda Q): antes de este fix, un corte de red del propio POST de
+// "Volver a esta copia" (el contenedor de la API se reinicia a mitad de la restauracion) se trataba
+// como un RECHAZO real y apagaba la pantalla de mantenimiento — pudiendo mostrar un cartel de error
+// falso mientras la restauracion seguia viva de fondo. Estos tests fijan el criterio nuevo.
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: sin status (fetch nunca tuvo respuesta HTTP) sigue esperando", () => {
+    // Corte de red puro: el navegador nunca recibio una respuesta (typico de un contenedor
+    // reiniciandose a mitad del POST). No hay status en absoluto.
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: undefined, code: undefined }), true);
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({}), true);
+});
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: 503 MAINTENANCE tambien sigue esperando (el motor confirma que sigue restaurando)", () => {
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 503, code: "MAINTENANCE" }), true);
+});
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: un rechazo REAL del motor (400/409/403 con mensaje propio) NO sigue esperando", () => {
+    // Estos SI son rechazos genuinos: hay que apagar mantenimiento y mostrar el motivo, no fingir
+    // que la restauracion sigue en curso.
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 400, code: null }), false);
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 409, code: null }), false);
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 403, code: null }), false);
+});
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: un 503 normal (base de datos caida, no mantenimiento) NO sigue esperando", () => {
+    // Distingue por la FORMA del error, no por "cualquier 503 = seguir esperando": un 503 sin el
+    // code MAINTENANCE exacto es otro problema (ej. Postgres caido), no la restauracion en curso.
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 503, code: "database_unavailable" }), false);
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 503, code: null }), false);
+});
+
+// Fix bug real de PROD (plan tanda F): el nginx del HOST (fuera de este repo, timeout de 60s,
+// ver nginx.conf) corta la conexion antes de que la restauracion total termine (tarda minutos) y
+// el navegador recibe un 408/502/504 en vez de la respuesta real del motor.
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: 408 (timeout del proxy) sigue esperando", () => {
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 408, code: null }), true);
+});
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: 502 (bad gateway, tipico del nginx del host cortando la conexion) sigue esperando", () => {
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 502, code: null }), true);
+});
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: 504 (gateway timeout, el mismo caso de PROD reportado) sigue esperando", () => {
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 504, code: null }), true);
+});
+
+test("debeSeguirEsperandoTrasErrorDeRestoreTotal: 502/504 siguen esperando aunque el body haya llegado con algun code (nginx no manda code del motor)", () => {
+    // El HTML de la pagina de error de nginx no trae {code: "..."} — pero aunque llegara algo en
+    // ese campo, 502/504 siempre son del proxy, nunca del motor: no depende del code.
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 502, code: "algo-inesperado" }), true);
+    assert.equal(debeSeguirEsperandoTrasErrorDeRestoreTotal({ status: 504, code: "algo-inesperado" }), true);
 });
 
 test("construirResumenExitoPruebaRestore: reusa las mismas filas de conteo que Empezar de cero, en una lista", () => {
@@ -484,4 +540,37 @@ test("construirPasosEsperaRestoreTotal: el paso EN CURSO usa el texto que manda 
 test("construirPasosEsperaRestoreTotal: un codigo desconocido (version vieja del motor) tampoco marca nada", () => {
     const pasos = construirPasosEsperaRestoreTotal({ paso: "algo-que-no-existe", pasoTexto: "x" });
     assert.ok(pasos.every((paso) => paso.estado === "pending"));
+});
+
+// Fix de review (2e, plan tanda F): calcularTituloPantallaMantenimiento se extrajo de
+// MaintenanceScreen.jsx para poder fijar los DOS titulos posibles de esa pantalla con
+// node:test, sin montar React (este repo no tiene RTL/jsdom).
+
+test("calcularTituloPantallaMantenimiento: sin fechaResguardo ni paso -> mantenimiento generico", () => {
+    const resultado = calcularTituloPantallaMantenimiento({});
+    assert.equal(resultado.esRestoreTotal, false);
+    assert.equal(resultado.titulo, "El sistema está en mantenimiento");
+});
+
+test("calcularTituloPantallaMantenimiento: sin argumentos -> mismo titulo generico (defaults)", () => {
+    const resultado = calcularTituloPantallaMantenimiento();
+    assert.equal(resultado.esRestoreTotal, false);
+    assert.equal(resultado.titulo, "El sistema está en mantenimiento");
+});
+
+test("calcularTituloPantallaMantenimiento: con fechaResguardo (esta pestana disparo el restore) -> titulo con fecha", () => {
+    const resultado = calcularTituloPantallaMantenimiento({ fechaResguardo: "27/07/2026 22:33" });
+    assert.equal(resultado.esRestoreTotal, true);
+    assert.equal(resultado.titulo, "Estamos volviendo a la copia del 27/07/2026 22:33");
+});
+
+test("calcularTituloPantallaMantenimiento: con paso pero SIN fechaResguardo (otro usuario, choco con el 503) -> titulo generico de restore", () => {
+    const resultado = calcularTituloPantallaMantenimiento({ paso: PASO_RESTORE_DATOS });
+    assert.equal(resultado.esRestoreTotal, true);
+    assert.equal(resultado.titulo, "Estamos volviendo a una copia anterior");
+});
+
+test("calcularTituloPantallaMantenimiento: con fechaResguardo Y paso -> la fecha manda (mismo criterio que el componente original)", () => {
+    const resultado = calcularTituloPantallaMantenimiento({ fechaResguardo: "01/01/2026 10:00", paso: PASO_RESTORE_RESGUARDO });
+    assert.equal(resultado.titulo, "Estamos volviendo a la copia del 01/01/2026 10:00");
 });

@@ -89,7 +89,7 @@ export default function App() {
   // Obra 2026-07-27 "Restaurar todo": ver maintenanceState.js para el detalle de los dos
   // caminos que prenden este estado (el propio admin que dispara la restauración, o
   // cualquier pedido de api.js que choque con un 503 MAINTENANCE).
-  const { active: sistemaEnMantenimiento, awaitingLocalResult, fechaResguardo } = useMaintenanceState();
+  const { active: sistemaEnMantenimiento, awaitingLocalResult, fechaResguardo, pedidoLocalPerdido } = useMaintenanceState();
 
   const handleLogout = useCallback(
     async ({ callServer = true } = {}) => {
@@ -201,7 +201,11 @@ export default function App() {
         el sistema vuelve. Mientras está activo, bloquea toda interacción con lo de abajo.
       */}
       {sistemaEnMantenimiento && (
-        <MaintenanceScreen awaitingLocalResult={awaitingLocalResult} fechaResguardo={fechaResguardo} />
+        <MaintenanceScreen
+          awaitingLocalResult={awaitingLocalResult}
+          fechaResguardo={fechaResguardo}
+          pedidoLocalPerdido={pedidoLocalPerdido}
+        />
       )}
       <Routes>
         <Route

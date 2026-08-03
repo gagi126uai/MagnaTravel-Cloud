@@ -75,6 +75,26 @@ export const TABLAS_CONFIGURACION_RESTORE = [
 const ETIQUETA_NEGOCIO_AFIP = "la conexión con AFIP";
 
 /**
+ * F9 (deuda 30/07): sufijo ESTABLE para los data-testid de una fila de backup, sin usar el
+ * nombre de archivo interno del resguardo (`backup.archivo`, un detalle de almacenamiento
+ * que puede traer puntos/guiones bajos/mayúsculas raras y que en teoría podría cambiar si
+ * algún día se reorganiza cómo se nombran los archivos en disco). Usamos la FECHA del
+ * resguardo: es el dato funcional que de verdad identifica "qué copia es esta" para quien
+ * mira la pantalla, y la sanitizamos para que sea un valor prolijo de usar en un selector
+ * CSS/testid (solo letras, números y guiones).
+ *
+ * OJO: esto es SOLO para testids/ids de accesibilidad — el `key` de React y el estado de
+ * "qué fila está abierta" siguen usando `backup.archivo` como antes (es la clave real que
+ * necesita el pedido de restaurar), esto no cambia.
+ *
+ * @param {{fechaUtc?: string}} backup
+ * @returns {string}
+ */
+export function construirSufijoTestIdBackup(backup) {
+    return String(backup?.fechaUtc || "sin-fecha").replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/**
  * Formatea el tamaño de un archivo de resguardo en criollo (ej. "1,2 MB", "340 KB"),
  * con coma decimal (es-AR) en vez de punto.
  *
@@ -461,6 +481,79 @@ export function construirConfirmacionRestore(modo, { fechaBackup, versionResguar
  */
 export function esErrorDeMantenimiento({ status, code }) {
     return status === 503 && code === "MAINTENANCE";
+}
+
+/**
+ * F6 (medio 31/07): mientras el motor tira abajo y repone TODA la API para una restauración
+ * "Volver a esta copia", el PROPIO pedido POST que arrancó esa restauración puede perder la
+ * conexión a mitad de camino (el contenedor de la API se reinicia). Eso NO es un rechazo del
+ * motor — es la reconexión natural de una restauración que sigue en curso. Antes, cualquier
+ * error acá se trataba igual que un rechazo real: se apagaba la pantalla de mantenimiento
+ * (`deactivateMaintenance()`) y se mostraba un cartel de "no se pudo completar la operación"
+ * que podía ser directamente falso (la restauración quizás terminó bien igual).
+ *
+ * Distinguimos por la FORMA del error, no por su texto (los textos pueden variar entre
+ * navegadores — "Failed to fetch", "Load failed", etc.):
+ *   - Si `error.status` es undefined, el `fetch()` nunca llegó a tener una respuesta HTTP real
+ *     (corte de red/conexión) — típico de un contenedor reiniciándose a mitad de pedido.
+ *   - Si el motor SÍ respondió pero con el 503 "MAINTENANCE" (ver esErrorDeMantenimiento),
+ *     también es "seguimos esperando": literalmente nos está diciendo que sigue restaurando.
+ *   - Fix de review (bug real de PROD, plan tanda F): en PROD hay un nginx DEL HOST (no del
+ *     motor) delante de la API con un timeout de 60 segundos (ver `nginx.conf`, sección del
+ *     location que expone la API) — la restauración total tarda MINUTOS, así que ese nginx
+ *     corta la conexión antes de que el motor termine y le devuelve al navegador un error
+ *     genérico de gateway (408/502/504), con el HTML de la página de error de nginx en el
+ *     cuerpo, no un JSON del motor. Ese corte es del intermediario, no un rechazo del motor:
+ *     hay que seguir esperando exactamente igual que con el corte de red (status undefined).
+ *
+ * Cualquier OTRO error (400/409/403 con mensaje real del motor, o un 503 SIN el code
+ * "MAINTENANCE" — ej. la base de datos caída por otro motivo) sigue siendo un rechazo
+ * genuino y se muestra como tal — acá no cambia nada.
+ *
+ * @param {{status?: number, code?: string|null}} error
+ * @returns {boolean} true si hay que seguir esperando (NO apagar mantenimiento, NO mostrar rechazo)
+ */
+export function debeSeguirEsperandoTrasErrorDeRestoreTotal(error) {
+    if (error?.status === undefined) return true;
+
+    // 408 (Request Timeout), 502 (Bad Gateway) y 504 (Gateway Timeout): errores típicos de un
+    // proxy/gateway que corta la conexión, no del motor. El motor real solo puede devolver el
+    // 503+MAINTENANCE de esErrorDeMantenimiento mientras restaura; estos tres códigos SIEMPRE
+    // vienen de un intermediario (nginx del host, load balancer, etc.), nunca del propio backend.
+    if (error.status === 408 || error.status === 502 || error.status === 504) return true;
+
+    return esErrorDeMantenimiento({ status: error.status, code: error.code });
+}
+
+/**
+ * Fix de review (2026-08, plan tanda F): decide si la pantalla de mantenimiento (Maintenance
+ * Screen.jsx) corresponde a una restauración TOTAL ("Volver a esta copia") o a mantenimiento
+ * por otro motivo, y arma el título EXACTO que va en el `<h1>` de esa pantalla. Se extrae del
+ * componente a esta función pura para poder testear con node:test los DOS títulos posibles
+ * sin montar React (este repo no tiene RTL/jsdom — solo lógica pura + node:test).
+ *
+ * Misma regla que ya vivía inline en el componente: sabemos con certeza que es una
+ * restauración total cuando esta pestaña la disparó (conoce `fechaResguardo`, la vio en la
+ * lista antes de tocar el botón) o cuando el motor ya publicó algún paso de restore (`paso`
+ * viene de GET /system/status y SOLO esa acción lo llena). Si ninguna de las dos es cierta,
+ * no inventamos "estamos volviendo a una copia": es mantenimiento por otro motivo.
+ *
+ * @param {{fechaResguardo?: string|null, paso?: string|null}} [params]
+ * @returns {{esRestoreTotal: boolean, titulo: string}}
+ */
+export function calcularTituloPantallaMantenimiento({ fechaResguardo = null, paso = null } = {}) {
+    const esRestoreTotal = Boolean(fechaResguardo) || Boolean(paso);
+
+    if (!esRestoreTotal) {
+        return { esRestoreTotal: false, titulo: "El sistema está en mantenimiento" };
+    }
+
+    return {
+        esRestoreTotal: true,
+        titulo: fechaResguardo
+            ? `Estamos volviendo a la copia del ${fechaResguardo}`
+            : "Estamos volviendo a una copia anterior",
+    };
 }
 
 /**

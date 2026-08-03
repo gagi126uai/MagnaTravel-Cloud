@@ -28,6 +28,14 @@ import { useSyncExternalStore } from "react";
  * de tocar el botón) — por eso solo el caso (a) la manda. Cualquier OTRO usuario que cae acá
  * por el caso (b) nunca la tiene: MaintenanceScreen.jsx muestra un título genérico en ese
  * caso, en vez de inventar o adivinar una fecha que no le consta.
+ *
+ * pedidoLocalPerdido (fix bug real, plan tanda F): cuando el propio POST de "Volver a esta
+ * copia" se corta por un timeout de proxy (nginx del host, ver dangerRestoreLogic.js) o un
+ * corte de red, RestoreBackupFicha.jsx NUNCA va a recibir el resumen de éxito (la promesa del
+ * fetch ya rechazó, no hay reintento) — aunque la restauración haya terminado bien de fondo.
+ * En ese caso, aunque `awaitingLocalResult` sea true, esta pestaña YA NO tiene forma de
+ * mostrar el resumen prometido: hay que tratarla como al usuario pasivo (reload duro apenas
+ * el sistema vuelva) en vez de solo apagar el cartel y dejar la SPA con datos viejos.
  */
 
 const listeners = new Set();
@@ -36,6 +44,7 @@ let maintenanceState = {
   active: false,
   awaitingLocalResult: false,
   fechaResguardo: null,
+  pedidoLocalPerdido: false,
 };
 
 function emitChange() {
@@ -67,12 +76,32 @@ export function activateMaintenance({ awaitingLocalResult = false, fechaResguard
     awaitingLocalResult: maintenanceState.awaitingLocalResult || awaitingLocalResult,
     // Mismo criterio: no pisar con null una fecha que ya se había guardado.
     fechaResguardo: fechaResguardo || maintenanceState.fechaResguardo,
+    // OJO: acá NO se reinicia la bandera, se conserva el valor que ya tenía (mismo criterio
+    // que las dos de arriba). Solo se limpia en deactivateMaintenance() (el sistema volvió
+    // y se hizo un reload duro) o al recargar la pestaña. activateMaintenance() nunca la pone
+    // en true por su cuenta: eso lo hace únicamente marcarPedidoLocalPerdido(), llamada por
+    // RestoreBackupFicha.jsx ante el corte de proxy/red.
+    pedidoLocalPerdido: maintenanceState.pedidoLocalPerdido,
   };
   emitChange();
 }
 
+/**
+ * Fix bug real (plan tanda F): marca que el pedido de "Volver a esta copia" de ESTA pestaña
+ * se perdió por un corte de proxy/red (ver debeSeguirEsperandoTrasErrorDeRestoreTotal en
+ * dangerRestoreLogic.js) — la promesa del fetch ya rechazó y no hay reintento, así que
+ * RestoreBackupFicha.jsx nunca va a poder mostrar el resumen de éxito aunque la restauración
+ * haya terminado bien de fondo. MaintenanceScreen.jsx usa esta bandera para decidir: cuando
+ * el sistema vuelva, hacer un reload duro (como al usuario pasivo) en vez de solo apagar el
+ * cartel y dejar la pantalla con datos de la base vieja.
+ */
+export function marcarPedidoLocalPerdido() {
+  maintenanceState = { ...maintenanceState, pedidoLocalPerdido: true };
+  emitChange();
+}
+
 export function deactivateMaintenance() {
-  maintenanceState = { active: false, awaitingLocalResult: false, fechaResguardo: null };
+  maintenanceState = { active: false, awaitingLocalResult: false, fechaResguardo: null, pedidoLocalPerdido: false };
   emitChange();
 }
 

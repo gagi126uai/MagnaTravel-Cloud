@@ -1,4 +1,4 @@
-import { normalizeMessage } from "./lib/errors";
+import { normalizeMessage, SPANISH_NETWORK_GENERIC } from "./lib/errors";
 import { esErrorDeMantenimiento } from "./features/admin/lib/dangerRestoreLogic";
 import { activateMaintenance } from "./maintenanceState";
 
@@ -121,10 +121,21 @@ async function parseErrorResponse(response) {
         payload: data,
       };
     } catch {
+      // Fix bug real de PROD (plan tanda F): si el cuerpo NO parsea como JSON, no es una
+      // respuesta armada por nuestro motor (que siempre manda JSON en sus errores, sea
+      // "application/json" o "application/problem+json" en los 400 de validación) — es
+      // típicamente la página de error HTML de un proxy/gateway intermedio (nginx del HOST,
+      // timeout de 60s, ver dangerRestoreLogic.js + nginx.conf: una restauración total tarda
+      // minutos y ese nginx corta antes, devolviendo su propio 502/504 con HTML en el body).
+      // Antes ese HTML se guardaba tal cual en `message`/`payload` y se mostraba LITERAL en
+      // pantalla a un usuario no programador. Ningún consumidor de `error.payload` en el
+      // resto del front espera un string (todos leen `.code`/`.message`/`.invariantCode` de
+      // un objeto — grep confirmado), así que dejarlo en `null` acá no rompe ningún flujo
+      // real; caemos al mismo mensaje genérico de conexión que ya usa el resto de la app.
       errorInfo = {
-        message: normalizeMessage(errorText, response.statusText || "Request failed"),
+        message: SPANISH_NETWORK_GENERIC,
         code: null,
-        payload: errorText,
+        payload: null,
       };
     }
   }

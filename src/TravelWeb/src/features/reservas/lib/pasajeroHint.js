@@ -182,6 +182,58 @@ export function calcularHintPaqueteGenerico(passengers, totalDeclarado) {
 }
 
 /**
+ * Fix bug reviewer (2026-08, plan tanda F): decide el candado de "Marcar confirmado" para
+ * PAQUETE y ASISTENCIA a partir de la coverage REAL del motor (ServiceNominalCoverageDto,
+ * ver useServiceNominalCoverage.js), no del cálculo local declarado/cargado de este archivo.
+ *
+ * Motivo del cambio: calcularHintAsistencia y calcularHintPaqueteGenerico exigían
+ * `lista.length >= totalDeclarado` (TODOS los pasajeros DECLARADOS de la reserva cargados),
+ * pero el motor (PassengerNominalRules.EnsureCovered, backend) valida el SET RESUELTO por
+ * asignaciones — que puede ser más chico que lo declarado (ej: 2 declarados, el servicio
+ * está asignado solo al titular). Con el cálculo local, el botón quedaba escondido en casos
+ * que el motor aceptaba sin problema. La coverage del backend es la MISMA fuente que ya usa
+ * el control "Para: Todos"/"Para: X de N" y el mini-formulario de nombres faltantes — así
+ * front y motor nunca discrepan (regla T-13 de la constitución: no duplicar reglas de negocio
+ * en el frontend cuando el backend ya expone la verdad).
+ *
+ * Bug fix P-11 (re-review, plan tanda Q): si el GET de nominal-coverage FALLÓ (no está en
+ * loading, terminó en error de red/servidor), coverage queda en `null` para siempre y con
+ * la lógica original el casillero se veía mudo (sin botón ni motivo) — el servicio quedaba
+ * inconfirmable desde la ficha sin que nadie entienda por qué. Con `huboErrorDeCoverage=true`
+ * volvemos al comportamiento reactivo de antes de esta obra: mostramos el botón igual, y el
+ * motor valida al hacer clic (rechaza con su propio mensaje si de verdad falta un dato).
+ *
+ * @param {object|null} coverage - ServiceNominalCoverageDto del backend, o null si aún no llegó
+ * @param {boolean} [huboErrorDeCoverage=false] - true si el GET de coverage terminó en error
+ *   (no confundir con loading: mientras está cargando, coverage también es null pero este
+ *   flag debe quedar en false).
+ * @returns {{ mostrarBoton: boolean, texto: string|null }}
+ *   mostrarBoton=true            → coverage completa, o el GET falló (fallback reactivo):
+ *                                   mostrar el botón de resolver.
+ *   mostrarBoton=false,texto=null → coverage todavía no llegó (loading, sin error): no mostrar
+ *                                   nada todavía, para no arriesgar un motivo que después cambie.
+ *   mostrarBoton=false,texto=... → falta algo: el texto es EXACTAMENTE el que lanzaría el
+ *                                   motor al intentar resolver (mismo mensaje, sin adivinar).
+ */
+export function calcularCandadoPorCoverage(coverage, huboErrorDeCoverage = false) {
+    if (!coverage) {
+        if (huboErrorDeCoverage) {
+            return { mostrarBoton: true, texto: null };
+        }
+        return { mostrarBoton: false, texto: null };
+    }
+
+    if (coverage.isComplete) {
+        return { mostrarBoton: true, texto: null };
+    }
+
+    return {
+        mostrarBoton: false,
+        texto: coverage.missingMessage || "Faltan datos de pasajeros para confirmar el servicio.",
+    };
+}
+
+/**
  * Calcula el hint correcto según el tipo de servicio (recordKind).
  *
  * Punto de entrada unificado para el ServiceList y los mini-formularios.

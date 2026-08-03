@@ -5,7 +5,7 @@ import { showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatDateTime } from "../../../lib/utils";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
-import { activateMaintenance, deactivateMaintenance } from "../../../maintenanceState";
+import { activateMaintenance, deactivateMaintenance, marcarPedidoLocalPerdido } from "../../../maintenanceState";
 import { RestoreResultadoInline } from "./RestoreResultadoInline";
 import {
     FRASE_CONFIRMACION_RESTORE,
@@ -22,6 +22,7 @@ import {
     construirResumenExitoTotalRestore,
     construirAvisoVersionResguardo,
     construirTextoMarcaRechazo,
+    debeSeguirEsperandoTrasErrorDeRestoreTotal,
 } from "../lib/dangerRestoreLogic";
 
 // ADR-052 (2026-07-29): mismos 3 colores que el badge de la fila, en formato caja informativa.
@@ -98,6 +99,11 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
 
         setAccionEnCurso(modo);
         setRejectionInfo(null);
+        // F6 (medio 31/07): si el pedido de un restore TOTAL se corta por el reinicio de la
+        // API a mitad de camino, NO es un rechazo — seguimos esperando (ver el helper). Esta
+        // bandera evita que el `finally` de abajo apague la pantalla de mantenimiento antes de
+        // tiempo en ese caso.
+        let siguioEsperandoTrasCorteDeProxy = false;
         try {
             const resultado = await api.post("/admin/danger/restore", {
                 archivo: backup.archivo,
@@ -120,12 +126,26 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
                 setResultadoInline({ modo, data: resultado });
             }
         } catch (error) {
-            setRejectionInfo({ modo, mensaje: getApiErrorMessage(error, "No se pudo completar la operación.") });
-            setCartelAbierto(true);
+            if (esModoTotal && debeSeguirEsperandoTrasErrorDeRestoreTotal(error)) {
+                // No mostramos rechazo ni apagamos mantenimiento: el sondeo de MaintenanceScreen
+                // (ya prendido más arriba, con awaitingLocalResult=true) es quien va a apagar el
+                // cartel apenas el sistema vuelva a responder de verdad.
+                siguioEsperandoTrasCorteDeProxy = true;
+                // Fix bug real (plan tanda F): este mismo pedido (el que armó esta promesa) ya
+                // rechazó y no se reintenta — aunque el motor termine bien de fondo, ESTA ficha
+                // nunca va a recibir el resumen de éxito para mostrarlo (onSuccessTotal no se
+                // llama en este catch). Avisamos al store para que, cuando el sistema vuelva,
+                // MaintenanceScreen haga un reload duro en vez de solo apagar el cartel y dejar
+                // a este usuario mirando la SPA con los datos de la base vieja.
+                marcarPedidoLocalPerdido();
+            } else {
+                setRejectionInfo({ modo, mensaje: getApiErrorMessage(error, "No se pudo completar la operación.") });
+                setCartelAbierto(true);
+            }
         } finally {
             setPassword("");
             setAccionEnCurso(null);
-            if (esModoTotal) deactivateMaintenance();
+            if (esModoTotal && !siguioEsperandoTrasCorteDeProxy) deactivateMaintenance();
         }
     };
 

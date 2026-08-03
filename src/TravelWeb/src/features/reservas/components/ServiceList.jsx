@@ -49,7 +49,7 @@ import {
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
 import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
-import { calcularHintPorTipo, calcularSlotsFaltantesDelSet } from "../lib/pasajeroHint";
+import { calcularHintPorTipo, calcularSlotsFaltantesDelSet, calcularCandadoPorCoverage } from "../lib/pasajeroHint";
 import { resolverBloqueoAnularServicio, resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
 import {
     debeAvisarCondicionFiscalOperadorDesconocida,
@@ -98,7 +98,7 @@ function recordKindAServiceType(recordKind) {
  *   reservaId           — publicId de la reserva
  *   svc                 — objeto del servicio normalizado
  *   pasajerosConNombre  — array de pasajeros con fullName cargado
- *   children            — función render prop: (coverage, coverageLoading, updateCoverage, serviceType, servicePublicId) => JSX
+ *   children            — función render prop: (coverage, coverageLoading, updateCoverage, serviceType, servicePublicId, coverageError) => JSX
  *
  * NOTA D1 (follow-up, no bloqueante): en reservas con muchos servicios y pasajeros con nombre
  * se hacen N llamadas GET /nominal-coverage al mismo tiempo al renderizar la lista.
@@ -123,7 +123,7 @@ function ConCoverageDeServicio({ reservaId, svc, pasajerosConNombre, reservaStat
     const necesitaCoverageParaMiniForm = reservaStatus === 'InManagement' && !esServicioResuelto(svc);
     const habilitarCoverage = (hayNombres || necesitaCoverageParaMiniForm) && Boolean(servicePublicId);
 
-    const { coverage, loading: coverageLoading, updateCoverage } = useServiceNominalCoverage({
+    const { coverage, loading: coverageLoading, error: coverageError, updateCoverage } = useServiceNominalCoverage({
         reservaId,
         serviceType,
         servicePublicId,
@@ -132,7 +132,13 @@ function ConCoverageDeServicio({ reservaId, svc, pasajerosConNombre, reservaStat
 
     // updateCoverage: función que permite pisar la coverage localmente con el DTO que devuelve
     // el PUT atómico de assignments (B2). Así evitamos re-pedir GET nominal-coverage tras guardar.
-    return children(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId);
+    //
+    // coverageError: bug fix (re-review, plan tanda F/Q) — si el GET de nominal-coverage falla
+    // (ej. caída de red), antes el casillero quedaba MUDO para siempre (sin botón ni motivo,
+    // servicio inconfirmable desde la ficha sin explicación). Lo exponemos al render prop para
+    // que, ante error, se vuelva a mostrar el botón "Marcar confirmado" como antes de esta obra:
+    // el motor valida al hacer clic y rechaza con su propio mensaje si de verdad falta un dato.
+    return children(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId, coverageError);
 }
 
 /**
@@ -1250,7 +1256,7 @@ export function ServiceList({
                                             pasajerosConNombre={pasajerosConNombre}
                                             reservaStatus={reservaStatus}
                                         >
-                                        {(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId) => (
+                                        {(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId, coverageError) => (
                                         <React.Fragment>
                                         <tr className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
                                             <td className="py-4 align-middle whitespace-nowrap pr-4">
@@ -1535,22 +1541,73 @@ export function ServiceList({
                                                                         </span>
                                                                     )
                                                                 )}
-                                                                {/* Fix #34 (Tanda 3, 2026-07-24): hotel/paquete/asistencia no tenían
-                                                                    NINGÚN botón de resolver desde la ficha — había que ir a la cuenta
-                                                                    del operador. Sin gate de pasajeros pre-emptivo (a diferencia de
-                                                                    aéreo/traslado, "sin cambios" por spec): si falta un dato, el motor
-                                                                    lo rechaza y el mensaje aparece en el propio casillero (ver "Frenos
-                                                                    del motor" en la spec). */}
-                                                                {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL ||
-                                                                    svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ||
-                                                                    svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE) && (
-                                                                    <ResolverServicioInline
-                                                                        reservaId={reservaId}
-                                                                        servicePublicId={getReservationServicePublicId(svc)}
-                                                                        recordKind={svc.recordKind}
-                                                                        onResuelto={onServiceResolved}
-                                                                    />
+                                                                {/* F3 (medio #7, 2026-07-31): hotel/traslado/paquete/asistencia AHORA
+                                                                    tienen el MISMO candado pre-emptivo que aéreo/traslado — decisión del
+                                                                    dueño que reemplaza el criterio del fix #34 (Tanda 3, 2026-07-24), que
+                                                                    dejaba estos tres tipos SIN gate ("si falta un dato, el motor lo
+                                                                    rechaza y el mensaje aparece en el propio casillero"). El rechazo del
+                                                                    motor sigue viéndose igual si igual llega a fallar (ResolverServicioInline
+                                                                    ya manda los rechazos largos al Cartel emergente, P-4) — esto solo evita
+                                                                    el primer click en falso cuando el candado YA sabe que falta un dato.
+                                                                    Hotel usa el mismo criterio que traslado (solo titular, cálculo local
+                                                                    con calcularHintPorTipo). Paquete y asistencia usan la coverage REAL
+                                                                    del backend (calcularCandadoPorCoverage, ver bug fix debajo): el motor
+                                                                    valida el SET resuelto por asignaciones, no la cantidad DECLARADA de la
+                                                                    reserva, así que el cálculo local (basado en declarado) podía discrepar
+                                                                    del motor y esconder el botón en casos que el motor sí aceptaba. */}
+                                                                {svc.recordKind === SERVICE_RECORD_KIND.HOTEL && (
+                                                                    pasajerosListos ? (
+                                                                        <ResolverServicioInline
+                                                                            reservaId={reservaId}
+                                                                            servicePublicId={getReservationServicePublicId(svc)}
+                                                                            recordKind={svc.recordKind}
+                                                                            onResuelto={onServiceResolved}
+                                                                        />
+                                                                    ) : (
+                                                                        <span
+                                                                            className="text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                                                                            data-testid={`hint-pasajeros-hotel-${getReservationServicePublicId(svc)}`}
+                                                                        >
+                                                                            Cargá al menos el titular primero
+                                                                        </span>
+                                                                    )
                                                                 )}
+                                                                {(svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ||
+                                                                    svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE) && (() => {
+                                                                    // Bug fix P-11 (re-review, plan tanda Q): si el GET de coverage
+                                                                    // falló (coverageError truthy), volvemos al comportamiento
+                                                                    // reactivo previo — mostramos el botón igual, el motor valida
+                                                                    // al hacer clic y rechaza con su propio mensaje si de verdad
+                                                                    // falta un dato. Antes, con error, coverage quedaba null para
+                                                                    // siempre y el casillero se veía mudo (ni botón ni motivo).
+                                                                    const candado = calcularCandadoPorCoverage(coverage, Boolean(coverageError));
+
+                                                                    if (candado.mostrarBoton) {
+                                                                        return (
+                                                                            <ResolverServicioInline
+                                                                                reservaId={reservaId}
+                                                                                servicePublicId={getReservationServicePublicId(svc)}
+                                                                                recordKind={svc.recordKind}
+                                                                                onResuelto={onServiceResolved}
+                                                                            />
+                                                                        );
+                                                                    }
+
+                                                                    // Coverage todavía no llegó del backend (loading, sin error):
+                                                                    // no mostramos ni botón ni motivo, para no arriesgar
+                                                                    // un texto que enseguida cambie.
+                                                                    if (!candado.texto) return null;
+
+                                                                    return (
+                                                                        <span
+                                                                            className="text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                                                                            data-testid={`hint-pasajeros-${svc.recordKind}-${getReservationServicePublicId(svc)}`}
+                                                                            title={candado.texto}
+                                                                        >
+                                                                            {candado.texto}
+                                                                        </span>
+                                                                    );
+                                                                })()}
                                                             </>
                                                         );
                                                     })()}
@@ -1814,7 +1871,7 @@ export function ServiceList({
                                     pasajerosConNombre={pasajerosConNombre}
                                     reservaStatus={reservaStatus}
                                 >
-                                {(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId) => {
+                                {(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId, coverageError) => {
                             // FIX 4: pill "creado en venta" eliminada. Solo queda la pill de próximo inicio.
                             // Sin pill no hay "—" en mobile (solo omitimos la línea entera).
                             // Pill de próximo inicio: solo con flag avisos ON, sin cancelado,
@@ -2033,19 +2090,62 @@ export function ServiceList({
                                                                 </span>
                                                             )
                                                         )}
-                                                        {/* Fix #34 (Tanda 3, 2026-07-24): hotel/paquete/asistencia, sin gate
-                                                            de pasajeros pre-emptivo — ver el comentario equivalente en la
-                                                            versión desktop más arriba en este archivo. */}
-                                                        {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL ||
-                                                            svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ||
-                                                            svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE) && (
-                                                            <ResolverServicioInline
-                                                                reservaId={reservaId}
-                                                                servicePublicId={getReservationServicePublicId(svc)}
-                                                                recordKind={svc.recordKind}
-                                                                onResuelto={onServiceResolved}
-                                                            />
+                                                        {/* F3 (medio #7, 2026-07-31): mismo candado pre-emptivo que desktop —
+                                                            ver el comentario equivalente más arriba en este archivo. */}
+                                                        {svc.recordKind === SERVICE_RECORD_KIND.HOTEL && (
+                                                            pasajerosListos ? (
+                                                                <ResolverServicioInline
+                                                                    reservaId={reservaId}
+                                                                    servicePublicId={getReservationServicePublicId(svc)}
+                                                                    recordKind={svc.recordKind}
+                                                                    onResuelto={onServiceResolved}
+                                                                />
+                                                            ) : (
+                                                                <span
+                                                                    className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 text-right"
+                                                                    data-testid={`hint-pasajeros-hotel-mobile-${getReservationServicePublicId(svc)}`}
+                                                                >
+                                                                    Cargá al menos el titular primero
+                                                                </span>
+                                                            )
                                                         )}
+                                                        {(svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ||
+                                                            svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE) && (() => {
+                                                            // Bug fix (2026-08, plan tanda F): mismo criterio que
+                                                            // desktop — usamos la coverage REAL del backend en vez del
+                                                            // hint local declarado/cargado. Ver el docstring de
+                                                            // calcularCandadoPorCoverage en pasajeroHint.js.
+                                                            //
+                                                            // Bug fix P-11 (re-review, plan tanda Q): mismo fallback que
+                                                            // desktop cuando el GET de coverage falla — mostramos el botón
+                                                            // igual (el motor valida al hacer clic) en vez de dejar el
+                                                            // casillero mudo para siempre.
+                                                            const candado = calcularCandadoPorCoverage(coverage, Boolean(coverageError));
+
+                                                            if (candado.mostrarBoton) {
+                                                                return (
+                                                                    <ResolverServicioInline
+                                                                        reservaId={reservaId}
+                                                                        servicePublicId={getReservationServicePublicId(svc)}
+                                                                        recordKind={svc.recordKind}
+                                                                        onResuelto={onServiceResolved}
+                                                                    />
+                                                                );
+                                                            }
+
+                                                            // Coverage todavía no llegó (loading, sin error): no mostramos nada.
+                                                            if (!candado.texto) return null;
+
+                                                            return (
+                                                                <span
+                                                                    className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 text-right"
+                                                                    data-testid={`hint-pasajeros-${svc.recordKind}-mobile-${getReservationServicePublicId(svc)}`}
+                                                                    title={candado.texto}
+                                                                >
+                                                                    {candado.texto}
+                                                                </span>
+                                                            );
+                                                        })()}
                                                     </>
                                                 );
                                             })()}
