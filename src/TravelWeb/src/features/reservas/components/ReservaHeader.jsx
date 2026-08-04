@@ -1,10 +1,12 @@
-import React from 'react';
-import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward } from "lucide-react";
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, AlertTriangle, Undo2, Pencil, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
-import { getStatusConfig, translateStatus, isStatusLocked, isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
+import { isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo, ReservaStatusBadge } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
 import { isAdmin } from "../../../auth";
 import { faltaTitularConNombre } from "../lib/pasajeroHint";
+import { isReservaAnulada } from "../moneyStatus";
+import { armarLineaDestinoYPasajeros } from "../lib/reservaDestinoFicha";
 
 // Bug "fechas corridas un día" (2026-07-16): startDate/endDate de la reserva son
 // fechas-solo-día (el usuario elige un día calendario, no una hora). El backend las
@@ -22,6 +24,89 @@ function formatTripDate(value) {
     if (!match) return null;
     const [, anio, mes, dia] = match;
     return `${dia}/${mes}/${anio}`;
+}
+
+/**
+ * Menú "⋯" con las acciones de EXCEPCIÓN de la ficha (regla P9, Tanda 2 del
+ * rediseño de Reservas, 2026-08-03): "Volver atrás", "Destrabar reserva" y
+ * "Sacar de viaje" son correcciones de último recurso (piden motivo, quedan
+ * en el historial) — no acciones de todos los días, así que dejan de competir
+ * en la fila principal de botones y pasan detrás de este menú desplegable.
+ *
+ * No inventa un patrón de dropdown nuevo: usa el mismo "click afuera cierra"
+ * que ya tiene NotificationBell.jsx (useRef + listener de mousedown).
+ *
+ * Si no hay ningún item para mostrar, no se renderiza nada (ni el botón "⋯").
+ */
+function MenuAccionesExcepcion({ items }) {
+    const [abierto, setAbierto] = useState(false);
+    const contenedorRef = useRef(null);
+    const triggerRef = useRef(null);
+
+    // Cierra el menú al hacer click afuera, y con Escape (devolviendo el foco al
+    // botón "⋯", como el resto de los desplegables de la app — review Tanda 2).
+    useEffect(() => {
+        function alClickearAfuera(evento) {
+            if (contenedorRef.current && !contenedorRef.current.contains(evento.target)) {
+                setAbierto(false);
+            }
+        }
+        function alApretarTecla(evento) {
+            if (evento.key === 'Escape') {
+                setAbierto(false);
+                triggerRef.current?.focus();
+            }
+        }
+        document.addEventListener('mousedown', alClickearAfuera);
+        document.addEventListener('keydown', alApretarTecla);
+        return () => {
+            document.removeEventListener('mousedown', alClickearAfuera);
+            document.removeEventListener('keydown', alApretarTecla);
+        };
+    }, []);
+
+    if (!items || items.length === 0) return null;
+
+    return (
+        <div className="relative" ref={contenedorRef}>
+            <button
+                type="button"
+                ref={triggerRef}
+                onClick={() => setAbierto((previo) => !previo)}
+                aria-haspopup="menu"
+                aria-expanded={abierto}
+                aria-label="Más acciones"
+                data-testid="reserva-menu-excepciones-trigger"
+                className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-slate-500 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+            >
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+            </button>
+            {abierto && (
+                <div
+                    role="menu"
+                    data-testid="reserva-menu-excepciones"
+                    className="absolute right-0 top-full z-20 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                >
+                    {items.map((item) => (
+                        <button
+                            key={item.key}
+                            type="button"
+                            role="menuitem"
+                            data-testid={item.testId}
+                            onClick={() => {
+                                setAbierto(false);
+                                item.onClick();
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                            {item.icon}
+                            {item.label}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
 }
 
 /**
@@ -43,7 +128,9 @@ function formatTripDate(value) {
  *   - El boton que antes decia "Cancelar" ahora dice "Anular reserva" (anular = deshacer el
  *     viaje; texto aclarado 2026-07-22 — P2 firmado por Gaston, distingue este botón del de
  *     "Anular servicio" por fila y "Anular varios servicios" de la lista).
- *   - Si el backend indica que no se puede eliminar (capability=false), el boton "Eliminar" no aparece.
+ *   - El botón "Eliminar reserva" fue SACADO de esta cabecera (Tanda 2 del rediseño,
+ *     2026-08-03, regla absoluta del dueño: nada de negocio se borra — se anula o se
+ *     archiva). El endpoint sigue existiendo en el hook, pero ya no hay puerta en la UI.
  *
  * ADR-037 (2026-06-21):
  *   - "Reabrir para facturar" ELIMINADO: la facturacion se desacoplo del estado. Se factura
@@ -62,7 +149,7 @@ function formatTripDate(value) {
  * - onCancelReserva: callback para abrir el flujo de anulacion en linea
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
- * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates, onReschedule son manejados por el padre
+ * - Los callbacks onStatusChange, onArchive, onRevert, onEditDates, onReschedule son manejados por el padre
  * - onReschedule: callback que abre ReprogramarViajeModal; se muestra cuando capabilities.canReschedule.allowed === true (G5, 2026-06-24).
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
@@ -73,7 +160,6 @@ export function ReservaHeader({
     reserva,
     onBack,
     onStatusChange,
-    onDelete,
     onArchive,
     onRevert,
     onEditDates,
@@ -86,7 +172,6 @@ export function ReservaHeader({
     onCorrectTraveling,
 }) {
     const isArchived = reserva.status === 'Archived';
-    const locked = isStatusLocked(reserva.status);
 
     // ─── Candado C1 (spec UX 2026-07-22) ─────────────────────────────────────────
     // Reserva Confirmada SIN autorización de edición viva: los botones de edición de
@@ -100,8 +185,8 @@ export function ReservaHeader({
     // usa su lógica local como fallback (degradación elegante).
     //
     // IMPORTANTE (fix TDZ 2026-06-22): este const y el helper getCapability van ANTES de
-    // la primera llamada a getCapability (canDelete, abajo). Aunque la function declaration
-    // está hoisteada y se puede llamar antes, su cuerpo lee `capabilities`, que es un const:
+    // la primera llamada a getCapability (canEditReservaData, abajo). Aunque la function
+    // declaration está hoisteada y se puede llamar antes, su cuerpo lee `capabilities`, que es un const:
     // usarlo antes de su línea de declaración lanza un TDZ ("Cannot access 'capabilities'
     // before initialization") que en el bundle de producción dejaba la pantalla en blanco al
     // abrir cualquier reserva. Declarar antes de usar lo resuelve de raíz.
@@ -114,12 +199,11 @@ export function ReservaHeader({
         return capabilities[field];
     }
 
-    // Solo se puede eliminar en Quotation/Budget (sin pagos, sin servicios resueltos).
-    // ADR-036 (punto 5): si el backend manda canDelete.allowed === false (reserva con plata viva),
-    // el boton "Eliminar" no aparece aunque la reserva sea temprana — solo se ofrece "Anular".
-    const deleteCapability = getCapability('canDelete');
-    const canDelete = (reserva.status === 'Quotation' || reserva.status === 'Budget')
-        && deleteCapability.allowed;
+    // Regla absoluta del dueño (firmada 2026-08-03, Tanda 2 del rediseño): nada de
+    // negocio se borra, ni reservas ni presupuestos — se ANULAN (queda rastro) o se
+    // ARCHIVAN. El botón "Eliminar reserva" que existía acá era un sobrante de antes
+    // de esa regla y se saca de la UI. El endpoint/hook (handleDeleteReserva) no se
+    // toca — esto es solo la puerta de la pantalla, no el motor.
 
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
@@ -180,7 +264,20 @@ export function ReservaHeader({
     // Sin esto, canCancel.allowed=true en pre-venta hacía que el botón quedara habilitado ahí también.
     const isPreSale = reserva.status === 'Quotation' || reserva.status === 'Budget';
 
-    const showCancelButton = !isPreSale && !esTraveling && canCancelReserva && onCancelReserva && !isArchived && (
+    // P9 (Tanda 2 del rediseño, 2026-08-03): en una reserva ya Anulada o Perdida no
+    // tiene sentido ofrecer "Anular reserva" de nuevo — antes quedaba gris/encendido
+    // sobre una pantalla que ya dice "solo lectura" (bug reportado en la maqueta
+    // firmada). Guarda defensiva en el front además de lo que ya decida el backend
+    // en canAnnul/canCancel.
+    const esAnuladaOPerdida = isReservaAnulada(reserva) || reserva.status === 'Lost';
+
+    // Fix P14 (review Tanda 2, 2026-08-04): el "Anular" duplicado de Estado de Cuenta se
+    // eliminó, así que este botón pasó a ser el ÚNICO acceso. El ocultamiento de pre-venta
+    // (F4-2) cede cuando el motor dice explícitamente canAnnul.allowed=true: una pre-venta
+    // puede tener plata viva (cobro o factura con CAE tras un "Volver atrás") y esa reserva
+    // se ANULA con rastro — jamás puede quedar sin salida ("nada se borra", regla absoluta).
+    const preSaleSinPlataViva = isPreSale && annulCapability.allowed !== true;
+    const showCancelButton = !preSaleSinPlataViva && !esTraveling && !esAnuladaOPerdida && canCancelReserva && onCancelReserva && !isArchived && (
         capabilities
             ? true
             : CANCELLABLE_STATUSES_FALLBACK.includes(reserva.status)
@@ -223,6 +320,52 @@ export function ReservaHeader({
     // del estado de la reserva: se factura directo desde Finalizada (sin reabrir). El botón
     // "Facturar" se gobierna por la capability del backend (canInvoiceSale), no por el estado.
 
+    // ─── Menú "⋯" de acciones de excepción (P9, Tanda 2 del rediseño) ───────────
+    // "Destrabar reserva": mismo botón que ya ofrece la franja ámbar del candado
+    // (ReservaLockBanner) — acá se agrega como atajo directo desde el encabezado.
+    // Misma condición EXACTA que esa franja (reserva.status === 'Confirmed'), para
+    // no ofrecer "destrabar" en Traveling/Closed, donde ese flujo no aplica.
+    const showDestrabarMenuItem = reserva.status === 'Confirmed'
+        && candadoDeEdicionActivo
+        && typeof onRequestEdit === 'function';
+
+    // Decisión de Gastón (2026-08-04, resolvió el choque entre la maqueta sección 11
+    // "botonera = solo Archivar en Anulada" y ADR-050 "una anulación por error se puede
+    // deshacer"): en ANULADA la botonera queda limpia como la maqueta, pero el "⋯" sigue
+    // existiendo con UNA sola opción adentro, "Deshacer anulación" (mismo camino de
+    // reversión del motor). En PERDIDA sí queda solo Archivar (no hay anulación que
+    // deshacer). El rótulo cambia según el caso: acción de todos los días no es —
+    // "Volver atrás" en vivas, "Deshacer anulación" en anuladas.
+    const esAnulada = reserva.status === 'Cancelled' || reserva.status === 'PendingOperatorRefund';
+    const menuAccionesExcepcion = [];
+    if (canRevert && onRevert && (!esAnuladaOPerdida || esAnulada)) {
+        menuAccionesExcepcion.push({
+            key: 'volver-atras',
+            label: esAnulada ? 'Deshacer anulación' : 'Volver atrás',
+            icon: <Undo2 className="h-4 w-4" aria-hidden="true" />,
+            onClick: onRevert,
+            testId: 'reserva-menu-volver-atras',
+        });
+    }
+    if (showDestrabarMenuItem) {
+        menuAccionesExcepcion.push({
+            key: 'destrabar',
+            label: 'Destrabar reserva',
+            icon: <Lock className="h-4 w-4" aria-hidden="true" />,
+            onClick: onRequestEdit,
+            testId: 'reserva-menu-destrabar',
+        });
+    }
+    if (showCorrectTravelingButton) {
+        menuAccionesExcepcion.push({
+            key: 'sacar-de-viaje',
+            label: 'Sacar de viaje',
+            icon: <CornerUpLeft className="h-4 w-4" aria-hidden="true" />,
+            onClick: onCorrectTraveling,
+            testId: 'reserva-menu-sacar-de-viaje',
+        });
+    }
+
     const startLabel = formatTripDate(reserva.startDate);
     const endLabel = formatTripDate(reserva.endDate);
 
@@ -246,8 +389,6 @@ export function ReservaHeader({
             ? "No se puede cerrar con saldo pendiente"
             : "Cerrar reserva";
 
-    const statusCfg = getStatusConfig(reserva.status);
-
     return (
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -257,54 +398,64 @@ export function ReservaHeader({
                 >
                     <ArrowLeft className="w-4 h-4 mr-1.5" /> Volver a Lista
                 </button>
-                <div className="flex items-center gap-3 flex-wrap">
-                    <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                {/* P7 (Tanda 2 del rediseño, 2026-08-03): el título se queda SOLO con el
+                    número de reserva y el chip de estado grande — es lo primero que hay
+                    que leer. "Con cambios" lo acompaña porque avisa sobre ESE estado
+                    (hay una edición sin revisar), no es un dato de plata ni de destino. */}
+                <div className="flex items-center gap-2 flex-wrap">
+                    <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                         Reserva <span className="text-indigo-600 dark:text-indigo-400">#{reserva.numeroReserva}</span>
                     </h1>
-                    {/* Badge de estado con icono de candado si aplica (decision 1 de UX) */}
-                    <div className="flex items-center gap-1.5">
-                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${statusCfg.color}`}>
-                            {translateStatus(reserva.status)}
-                        </span>
-                        {locked && (
-                            <Lock
-                                className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400"
-                                title="Reserva con candado. Para editarla, pedí autorización."
-                                aria-label="Reserva bloqueada"
-                            />
-                        )}
-                        {/* ADR-027: etiqueta "Con cambios" al lado del estado.
-                            Aparece cuando el vendedor editó precio/costo de un servicio
-                            en una reserva viva y el dueño todavía no acusó el cambio.
+                    <ReservaStatusBadge status={reserva.status} mostrarCandado size="lg" />
+                    {/* ADR-027: etiqueta "Con cambios" al lado del estado.
+                        Aparece cuando el vendedor editó precio/costo de un servicio
+                        en una reserva viva y el dueño todavía no acusó el cambio.
 
-                            Bug fix 2026-07-03: el flag hasUnacknowledgedChanges puede quedar en
-                            true por error del backend en reservas Anuladas / Esperando reembolso.
-                            Exigimos ademas que el estado sea "vivo" para no mostrar la etiqueta
-                            sobre un viaje que ya quedo sin efecto. */}
-                        {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
-                            <span
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700"
-                                data-testid="badge-con-cambios"
-                                title="Hay cambios de precio/costo pendientes de revisión"
-                            >
-                                <RefreshCw className="w-2.5 h-2.5" aria-hidden="true" />
-                                Con cambios
-                            </span>
-                        )}
-                    </div>
-                    {/* Chips de pago (Pagada / Saldo pendiente / En curso / Vencida).
-                        Se muestran con tamaño más pequeño para que no compitan visualmente
-                        con el badge de estado operativo de arriba (cambio 6 feedback 2026-06-19). */}
-                    <ReservaStatusChips reserva={reserva} />
+                        Bug fix 2026-07-03: el flag hasUnacknowledgedChanges puede quedar en
+                        true por error del backend en reservas Anuladas / Esperando reembolso.
+                        Exigimos ademas que el estado sea "vivo" para no mostrar la etiqueta
+                        sobre un viaje que ya quedo sin efecto. */}
+                    {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
+                        <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700"
+                            data-testid="badge-con-cambios"
+                            title="Hay cambios de precio/costo pendientes de revisión"
+                        >
+                            <RefreshCw className="w-2.5 h-2.5" aria-hidden="true" />
+                            Con cambios
+                        </span>
+                    )}
                 </div>
 
-                {/* Contador "N de M servicios anulados" (ADR-025 DT.3.1 decision #1).
-                    Solo aparece cuando hay AL MENOS UN servicio anulado.
-                    Vocabulario del negocio (2026-07-16): "anular" = dejar sin efecto; "cancelar" = el cliente abona el total.
-                    El dato viene del padre, calculado con calculateServiciosCanceladosResumen(allServices). */}
-                {serviciosCancelados && serviciosCancelados.cancelados > 0 && (
+                {/* Cliente en negrita — mismo lugar de siempre. */}
+                <p className="text-base font-bold text-slate-900 dark:text-white mt-2">
+                    {reserva.customerName}
+                </p>
+
+                {/* P7: "MUERE" el nombre autogenerado tipo "File F-2026-…" (reserva.name) —
+                    la palabra "file" no se ve más acá. En su lugar, esta línea gris muestra
+                    destino + cantidad de pasajeros (derivado de los servicios YA cargados,
+                    mismo criterio que el listado: ciudades reales, sin inventar — ver
+                    reservaDestinoFicha.js). En una reserva Anulada con algún servicio
+                    anulado, esta línea se REEMPLAZA por el contador "N de M servicios
+                    anulados" (maqueta firmada, sección 11) — es el dato que importa ahí. */}
+                {isReservaAnulada(reserva) && serviciosCancelados && serviciosCancelados.cancelados > 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5" data-testid="ficha-destino-o-anulados">
+                        {serviciosCancelados.cancelados} de {serviciosCancelados.totalConProveedor}{' '}
+                        {serviciosCancelados.totalConProveedor === 1 ? 'servicio anulado' : 'servicios anulados'}
+                    </p>
+                ) : (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5" data-testid="ficha-destino-o-anulados">
+                        {armarLineaDestinoYPasajeros(reserva)}
+                    </p>
+                )}
+
+                {/* Reserva VIVA con servicios cancelados sueltos (no toda la reserva está
+                    Anulada): esta info se conserva, solo que como línea secundaria — antes
+                    era la única forma de verla y no puede desaparecer. */}
+                {!isReservaAnulada(reserva) && serviciosCancelados && serviciosCancelados.cancelados > 0 && (
                     <p
-                        className="mt-1 text-xs text-slate-400 dark:text-slate-500"
+                        className="mt-0.5 text-xs text-slate-400 dark:text-slate-500"
                         data-testid="contador-servicios-cancelados"
                     >
                         {serviciosCancelados.cancelados} de {serviciosCancelados.totalConProveedor}{' '}
@@ -312,17 +463,17 @@ export function ReservaHeader({
                     </p>
                 )}
 
-                <p className="text-xl text-slate-900 dark:text-white mt-2 font-bold flex items-center gap-2">
-                    {reserva.customerName}
-                </p>
-                {reserva.name && reserva.name !== `Reserva ${reserva.numeroReserva}` && (
-                    <p className="text-lg text-slate-500 dark:text-slate-400 font-medium italic">{reserva.name}</p>
-                )}
+                {/* P7: los cartelitos "Pago: … · Factura: …" bajan a su propio renglón,
+                    debajo del destino — dejan de pelear con el título de arriba. Ningún
+                    texto cambia (siguen siendo los mismos chips de ReservaStatusChips). */}
+                <div className="mt-2">
+                    <ReservaStatusChips reserva={reserva} />
+                </div>
 
                 {/* Fechas del viaje */}
                 <div className="mt-3 flex items-center gap-3 flex-wrap">
                     <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-800 dark:bg-slate-900">
-                        <Calendar className="w-4 h-4 text-indigo-500" />
+                        <span aria-hidden="true">📅</span>
                         <span className="font-medium text-slate-500 dark:text-slate-400">Salida:</span>
                         <span className={startLabel ? "font-bold text-slate-900 dark:text-white" : "italic text-slate-400"}>
                             {startLabel || "sin cargar"}
@@ -520,12 +671,15 @@ export function ReservaHeader({
                             </button>
                         )}
 
-                        {/* ── Boton "Anular reserva" ──────────────────────────────────────────────
+                        {/* ── Boton "Anular reserva" (P9: estilo "peligro suave", con emoji
+                            🚫 igual que la maqueta firmada) ──────────────────────────────
                             F4-2 (2026-06-26): habilitado cuando canAnnul.allowed OR canCancel.allowed.
                             En gris (disabled) solo cuando NINGUNA de las dos lo permite.
                             ADR-035: SIEMPRE VISIBLE si el usuario tiene permiso (reservas.cancel).
                             Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
-                            El cartel único en ReservaDetailPage explica el estado global. */}
+                            El cartel único en ReservaDetailPage explica el estado global.
+                            P9 (2026-08-03): oculto en Anulada/Perdida (ver esAnuladaOPerdida
+                            más arriba) — ahí no tiene sentido ofrecer anular de nuevo. */}
                         {showCancelButton && (
                             <button
                                 onClick={puedeAnular ? onCancelReserva : undefined}
@@ -538,20 +692,8 @@ export function ReservaHeader({
                                         : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
                                 }`}
                             >
-                                <Ban className="w-4 h-4" />
+                                <span aria-hidden="true">🚫</span>
                                 Anular reserva
-                            </button>
-                        )}
-
-                        {/* ── Reversion de estado ──────────────────────────────────────────────── */}
-                        {canRevert && onRevert && (
-                            <button
-                                onClick={onRevert}
-                                aria-label="Volver atrás"
-                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors text-sm font-semibold"
-                            >
-                                <Undo2 className="w-4 h-4" />
-                                Volver atrás
                             </button>
                         )}
 
@@ -560,56 +702,38 @@ export function ReservaHeader({
                             Finalizada (y desde Confirmada/En viaje) sin reabrir ni destrabar nada.
                             El botón "Facturar" se habilita por capability del backend. */}
 
-                        {/* Eliminar: solo en etapas tempranas sin pagos */}
-                        {canDelete && (
-                            <button
-                                onClick={onDelete}
-                                aria-label="Eliminar reserva"
-                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-400 rounded-xl transition-colors text-sm font-semibold"
-                            >
-                                <Trash2 className="w-4 h-4" />
-                                Eliminar
-                            </button>
-                        )}
-
-                        {/* Archivar: botón siempre gris cuando no puede.
-                            Feedback 2026-06-19: SIN texto de motivo debajo.
-                            El cartel único en ReservaDetailPage explica el estado global.
+                        {/* Archivar: botón gris cuando no puede, y AHORA (P9, 2026-08-03) con el
+                            motivo del motor escrito debajo — mismo patrón que ya usa el listado
+                            (ReservaTable/ReservaMobileList, P-9/P-13⭐): nunca escondido en un
+                            tooltip. Antes de esta tanda el motivo existía pero no se mostraba;
+                            ese cambio queda documentado en adr035FeedbackVisual.test.mjs.
                             Guía UX 2026-06-22: ocultar en Traveling — archivar es para estados
                             terminales (Finalizada/Perdida/Anulada), no para algo en curso. */}
                         {!esTraveling && (
-                            <button
-                                onClick={canArchive ? onArchive : undefined}
-                                disabled={!canArchive}
-                                aria-label="Archivar reserva"
-                                className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
-                            >
-                                <Archive className="w-4 h-4" />
-                                Archivar
-                            </button>
+                            <div className="flex flex-col items-start gap-1">
+                                <button
+                                    onClick={canArchive ? onArchive : undefined}
+                                    disabled={!canArchive}
+                                    aria-label="Archivar reserva"
+                                    className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
+                                >
+                                    <span aria-hidden="true">🗄</span>
+                                    Archivar
+                                </button>
+                                {archiveBlockReason && (
+                                    <span className="max-w-[220px] text-[11px] leading-tight text-slate-400 dark:text-slate-500">
+                                        {archiveBlockReason}
+                                    </span>
+                                )}
+                            </div>
                         )}
-                    </div>
 
-                    {/* ── "Sacar de viaje" — separado de la botonera normal ───────────────
-                        Acción de EXCEPCIÓN (spec UX 2026-06-22 "Tanda 2"):
-                        - Solo para Admin, solo En viaje, solo si no hay factura ni voucher vivo.
-                        - Va discreto: separador visual + estilo terciario gris sobrio.
-                        - NO se muestra gris/deshabilitado si no cumple las condiciones: directamente no aparece.
-                        - Al click abre el modal CorregirEntradaViajeModal (NO ejecuta directo). */}
-                    {showCorrectTravelingButton && (
-                        <div className="sm:border-l sm:border-slate-200 sm:dark:border-slate-800 sm:pl-4">
-                            <button
-                                onClick={onCorrectTraveling}
-                                data-testid="reserva-action-correct-traveling"
-                                aria-label="Sacar de viaje — corrección de entrada errónea"
-                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors text-sm font-semibold"
-                                title="Acción de corrección — solo si la reserva entró en viaje por error"
-                            >
-                                <CornerUpLeft className="w-4 h-4" />
-                                Sacar de viaje
-                            </button>
-                        </div>
-                    )}
+                        {/* Menú "⋯" de acciones de excepción (P9): agrupa "Volver atrás",
+                            "Destrabar reserva" y "Sacar de viaje" — correcciones de último
+                            recurso que antes competían con los botones de todos los días.
+                            Si no hay ningún item que aplique, no se renderiza nada. */}
+                        <MenuAccionesExcepcion items={menuAccionesExcepcion} />
+                    </div>
                 </div>
             )}
         </div>

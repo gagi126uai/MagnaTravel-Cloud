@@ -4,218 +4,231 @@ import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { isAdmin } from "../../../auth";
 import { getMoneyStatus, isReservaAnulada } from "../moneyStatus";
 
+// Mismo margen de tolerancia que usa moneyStatus.js (ReservaCollectionStatus.Epsilon):
+// un resto de centavo por conversión de moneda no debe leerse como "hay plata en juego".
+const EPSILON = 0.005;
+
 /**
  * Franja de números clave de la reserva — aparece debajo del header en la página de detalle.
  *
- * Decision 5 (guia UX 2026-06-08): DOS números de plata diferenciados:
- *   - "SALDO A COBRAR" (grande): lo que el cliente debe HOY por servicios ya confirmados.
- *   - "RECAUDADO": lo que el cliente ya pagó.
- *   - "INVERSIÓN" (admin only): el costo neto total.
+ * P10 (Tanda 2 del rediseño de Reservas, 2026-08-03, regla firmada): "SOLO el que
+ * tiene plata grita". El Saldo a Cobrar (o, en una Anulada, el contexto de esa
+ * anulación) es el ÚNICO número grande de la franja; Recaudado e Inversión pasan a
+ * una línea chica gris al lado. Si TODO está en cero, los tres van chicos y grises
+ * — no hay ningún número grande. También se elimina el puntito rojo que latía
+ * (animate-pulse): competía visualmente con los avisos de verdad.
  *
- * Multimoneda (2026-06-11): cuando reserva.esMultimoneda === true, cada número muestra
- * DOS cifras (pesos arriba, dólares abajo), tomadas de reserva.porMoneda[i].
- * Si es mono-moneda, se ve EXACTAMENTE igual que antes.
- *
- * Tanda 6 (2026-07-05): en una reserva ANULADA el primer bloque ya NO muestra
- * "SALDO A COBRAR" en rojo pulsante — una anulada nunca "debe" en el sentido normal.
- * En su lugar se lee getMoneyStatus(reserva) y se muestra el contexto real
- * (saldo a favor del cliente / multa por anulación pendiente de cobro), o directamente
- * nada si el dato es "Inconsistente" (eso lo revisa un vigía interno, no el vendedor).
- * El contexto es a nivel de TODA la reserva (no por moneda), por eso se muestra igual
- * en modo mono-moneda y multimoneda.
+ * Multimoneda (2026-06-11, y P-3⭐ del rediseño): cuando reserva.esMultimoneda es
+ * true, el número grande trae UNA LÍNEA POR MONEDA (nunca se suman pesos y dólares
+ * en un solo número) — Recaudado/Inversión hacen lo mismo, solo que en chico.
+ * Si es mono-moneda, se sigue el mismo criterio con una sola línea.
  */
 export function ReservaSummaryStrip({ reserva }) {
     const admin = isAdmin();
     const anulada = isReservaAnulada(reserva);
     const moneyStatus = getMoneyStatus(reserva);
-
-    // --- Modo multimoneda (dos monedas en esta reserva) ---
     const esMultimoneda = reserva.esMultimoneda && Array.isArray(reserva.porMoneda) && reserva.porMoneda.length > 1;
 
-    if (esMultimoneda) {
+    return (
+        <div className="mb-8 border-b border-slate-100 pb-6 dark:border-slate-800/50" data-testid="numeros-ficha">
+            {esMultimoneda
+                ? <NumerosMultimoneda reserva={reserva} anulada={anulada} moneyStatus={moneyStatus} admin={admin} />
+                : <NumerosMonoMoneda reserva={reserva} anulada={anulada} moneyStatus={moneyStatus} admin={admin} />}
+        </div>
+    );
+}
+
+/** Etiqueta chiquita en mayúsculas (mismo estilo que usaban los tres números antes). */
+function Rotulo({ children }) {
+    return (
+        <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
+            {children}
+        </p>
+    );
+}
+
+/** El único número "grande" permitido por P10 — Saldo a Cobrar, o el contexto de una Anulada. */
+function NumeroGrande({ label, value, colorClass, leyenda, testId }) {
+    return (
+        <div className="space-y-1">
+            <Rotulo>{label}</Rotulo>
+            <p className={`text-3xl font-extrabold leading-none ${colorClass}`} data-testid={testId}>
+                {value}
+            </p>
+            {leyenda && <p className="text-xs text-slate-400 dark:text-slate-500">{leyenda}</p>}
+        </div>
+    );
+}
+
+/** Recaudado / Inversión: SIEMPRE chicos y grises, nunca compiten con el número grande. */
+function NumeroChico({ label, value }) {
+    return (
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+            {label} <b className="font-semibold text-slate-700 dark:text-slate-200">{value}</b>
+        </p>
+    );
+}
+
+// ─── Mono-moneda ────────────────────────────────────────────────────────────────
+
+function NumerosMonoMoneda({ reserva, anulada, moneyStatus, admin }) {
+    const currency = reserva.porMoneda?.[0]?.currency ?? "ARS";
+    const collected = reserva.totalPaid ?? 0;
+    const cost = reserva.totalCost ?? 0;
+    const balance = reserva.balance ?? 0;
+
+    if (anulada) {
         return (
-            <div className={`grid grid-cols-2 ${admin ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 mb-10 pb-8 border-b border-slate-100 dark:border-slate-800/50`}>
-
-                {/* Saldo a Cobrar (vivo) / contexto de anulación (anulada) */}
-                <div className="space-y-1">
-                    {anulada ? (
-                        <BloqueContextoAnulado moneyStatus={moneyStatus} reserva={reserva} />
-                    ) : (
-                        <>
-                            <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
-                                Saldo a Cobrar
-                            </p>
-                            <div className="space-y-1.5">
-                                {reserva.porMoneda.map((pm) => {
-                                    const hayDeuda = pm.balance > 0;
-                                    return (
-                                        <div key={pm.currency} className="flex items-center gap-1.5">
-                                            <CurrencyBadge currency={pm.currency} size="sm" />
-                                            <span className={`text-2xl font-extrabold leading-none ${hayDeuda ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700'}`}>
-                                                {formatCurrency(pm.balance, pm.currency)}
-                                                {hayDeuda && <span className="inline-block ml-2 w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse align-middle" />}
-                                            </span>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                            {/* "de $X / US$Y presupuestado" — ambas monedas en una línea, separadas por "/" */}
-                            {reserva.porMoneda.some((pm) => pm.totalSale > 0) && (
-                                <p className="text-xs text-slate-400 dark:text-slate-500">
-                                    de {reserva.porMoneda
-                                        .filter((pm) => pm.totalSale > 0)
-                                        .map((pm) => formatCurrency(pm.totalSale, pm.currency))
-                                        .join(" / ")
-                                    } presupuestado
-                                </p>
-                            )}
-                        </>
-                    )}
+            <div className="space-y-2">
+                <BloqueGrandeAnulada reserva={reserva} moneyStatus={moneyStatus} currency={currency} />
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+                    <NumeroChico label="Recaudado" value={formatCurrency(collected, currency)} />
+                    {admin && <NumeroChico label="Inversión" value={formatCurrency(cost, currency)} />}
                 </div>
-
-                {/* Recaudado — dos líneas */}
-                <div className="space-y-1">
-                    <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">Recaudado</p>
-                    <div className="space-y-1.5">
-                        {reserva.porMoneda.map((pm) => (
-                            <div key={pm.currency} className="flex items-center gap-1.5">
-                                <CurrencyBadge currency={pm.currency} size="sm" />
-                                <span className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-500 leading-none">
-                                    {formatCurrency(pm.totalPaid, pm.currency)}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Inversión (solo admin / see_cost) — dos líneas */}
-                {admin && (
-                    <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">Inversión (Costo)</p>
-                        <div className="space-y-1.5">
-                            {reserva.porMoneda.map((pm) => (
-                                <div key={pm.currency} className="flex items-center gap-1.5">
-                                    <CurrencyBadge currency={pm.currency} size="sm" />
-                                    <span className="text-2xl font-bold text-slate-400 dark:text-slate-600 leading-none">
-                                        {formatCurrency(pm.totalCost, pm.currency)}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
             </div>
         );
     }
 
-    // --- Modo mono-moneda: IDÉNTICO al comportamiento previo ---
-    // Regla ③: si hay una sola moneda, la pantalla se ve exactamente igual que antes.
-    //
-    // Fix C1 (Tanda 6, 2026-07-05): "Recaudado" usaba una suma local de reserva.payments,
-    // que incluye pagos PUENTE (AffectsCash=false, no es plata real) y podía divergir del
-    // número que muestra EstadoCuentaResumen ("Cobrado") para la MISMA reserva. Ahora usa
-    // reserva.totalPaid del backend directamente, igual que el path multimoneda de arriba.
-    const collected = reserva.totalPaid ?? 0;
-
-    // Fix formato gringo (seguimiento Tanda P4, 2026-07-22): formatCurrency(amount) SIN
-    // currency explícita cae en el formato legacy en-US ("$700.00" con punto) para no romper
-    // call sites viejos (ver lib/utils.js). Estas tarjetas mono-moneda no pasaban currency,
-    // por eso mostraban plata "a la gringa" en vez de es-AR ("$ 700,00"). Se pasa explícita
-    // reserva.porMoneda?.[0]?.currency (o "ARS" si el DTO todavía no la trae), mismo patrón
-    // que ya usa EstadoCuentaResumen.jsx en la pestaña "Venta y facturación".
+    // Reserva viva con todo en $0: ni siquiera el saldo grita — los tres quedan
+    // chicos y grises en una sola línea (regla P10: "si todo está en $0…").
+    const todoEnCero = Math.abs(balance) < EPSILON && Math.abs(collected) < EPSILON && Math.abs(cost) < EPSILON;
+    if (todoEnCero) {
+        return (
+            <p className="text-sm text-slate-400 dark:text-slate-500">
+                Saldo a cobrar <b className="font-semibold">{formatCurrency(0, currency)}</b>
+                {" · "}Recaudado <b className="font-semibold">{formatCurrency(0, currency)}</b>
+                {admin && <> {" · "}Inversión <b className="font-semibold">{formatCurrency(0, currency)}</b></>}
+            </p>
+        );
+    }
 
     return (
-        <div className={`grid grid-cols-2 ${admin ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 mb-10 pb-8 border-b border-slate-100 dark:border-slate-800/50`}>
-
-            {/* Saldo a cobrar (vivo) / contexto de anulación (anulada). */}
-            <div className="space-y-1">
-                {anulada ? (
-                    <BloqueContextoAnulado moneyStatus={moneyStatus} reserva={reserva} />
-                ) : (
-                    <>
-                        {/* ADR-020: Balance = ConfirmedSale - TotalPaid. Un servicio solicitado NO genera deuda.
-                            Fix C2 (Tanda 6): el color/pulso ya NO lee reserva.balance > 0 a mano, sale de
-                            moneyStatus.tone (calculado a partir de collectionStatus/hasOverdueDebt del backend). */}
-                        <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
-                            Saldo a Cobrar
-                        </p>
-                        <p className={`text-3xl font-extrabold leading-none ${moneyStatus.tone === 'danger' ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700'}`}>
-                            {formatCurrency(reserva.balance, reserva.porMoneda?.[0]?.currency ?? "ARS")}
-                            {moneyStatus.tone === 'danger' && <span className="inline-block ml-2 w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse align-middle" />}
-                        </p>
-                        {/* "de $X presupuestado" solo si totalSale difiere del balance (hay servicios no confirmados aún) */}
-                        {reserva.totalSale > 0 && (
-                            <p className="text-xs text-slate-400 dark:text-slate-500">
-                                de {formatCurrency(reserva.totalSale, reserva.porMoneda?.[0]?.currency ?? "ARS")} presupuestado
-                            </p>
-                        )}
-                    </>
-                )}
+        <div className="space-y-2">
+            <NumeroGrande
+                label="Saldo a Cobrar"
+                value={formatCurrency(balance, currency)}
+                colorClass={moneyStatus.tone === 'danger' ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700'}
+                leyenda={reserva.totalSale > 0 ? `de ${formatCurrency(reserva.totalSale, currency)} presupuestado` : null}
+            />
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+                <NumeroChico label="Recaudado" value={formatCurrency(collected, currency)} />
+                {admin && <NumeroChico label="Inversión" value={formatCurrency(cost, currency)} />}
             </div>
+        </div>
+    );
+}
 
-            <div className="space-y-1">
-                <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">Recaudado</p>
-                <p className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-500 leading-none">
-                    {formatCurrency(collected, reserva.porMoneda?.[0]?.currency ?? "ARS")}
-                </p>
+/**
+ * Bloque "grande" cuando la reserva está Anulada: nunca dice "debe" — muestra el
+ * contexto real (saldo a favor / multa) o, si no hay ningún contexto (dato para el
+ * vigía interno, ver moneyStatus.js), directamente NO se renderiza nada (null) —
+ * en ese caso solo quedan Recaudado/Inversión en chico, resueltos por el caller.
+ * Antes acá se veía "Saldo —" con Recaudado/Inversión en 3xl al lado; la maqueta
+ * firmada (sección 11) lo saca. El contexto de anulación es de TODA la reserva
+ * (no por moneda), por eso este bloque es el mismo en mono y multimoneda.
+ */
+function BloqueGrandeAnulada({ reserva, moneyStatus, currency }) {
+    if (moneyStatus.kind === 'none') return null;
+
+    const esMultaEnAmbar = moneyStatus.kind === 'multaPorCobrar';
+    const monto = esMultaEnAmbar
+        ? formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency ?? currency)
+        : formatCurrency(Math.abs(reserva.balance ?? 0), currency);
+
+    return (
+        <NumeroGrande
+            label={moneyStatus.label}
+            value={monto}
+            colorClass={esMultaEnAmbar ? 'text-amber-600 dark:text-amber-500' : 'text-emerald-600 dark:text-emerald-500'}
+            // P10: leyenda firmada SOLO para el saldo a favor — la multa no la trae.
+            leyenda={moneyStatus.kind === 'saldoAFavorAnulada' ? 'se puede usar en otra reserva o devolver' : null}
+            testId={esMultaEnAmbar ? 'anulada-multa-por-cobrar' : 'anulada-saldo-a-favor'}
+        />
+    );
+}
+
+/**
+ * Recaudado + Inversión, una línea por moneda (P-3⭐: nunca se suman pesos y
+ * dólares). Se usa tanto en la reserva viva como en la Anulada — el número
+ * cobrado/invertido es el mismo dato objetivo en los dos casos, cambia solo si
+ * hay o no un número "grande" arriba.
+ */
+function RecaudadoInversionPorMoneda({ reserva, admin }) {
+    return (
+        <div className="flex flex-wrap gap-x-8 gap-y-1">
+            <div className="space-y-0.5">
+                <span className="text-sm text-slate-500 dark:text-slate-400">Recaudado</span>
+                {reserva.porMoneda.map((pm) => (
+                    <div key={pm.currency} className="flex items-center gap-1.5">
+                        <CurrencyBadge currency={pm.currency} size="sm" />
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                            {formatCurrency(pm.totalPaid, pm.currency)}
+                        </span>
+                    </div>
+                ))}
             </div>
-
             {admin && (
-                <div className="space-y-1">
-                    <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">Inversión (Costo)</p>
-                    <p className="text-3xl font-bold text-slate-400 dark:text-slate-600 leading-none">
-                        {formatCurrency(reserva.totalCost, reserva.porMoneda?.[0]?.currency ?? "ARS")}
-                    </p>
+                <div className="space-y-0.5">
+                    <span className="text-sm text-slate-500 dark:text-slate-400">Inversión</span>
+                    {reserva.porMoneda.map((pm) => (
+                        <div key={pm.currency} className="flex items-center gap-1.5">
+                            <CurrencyBadge currency={pm.currency} size="sm" />
+                            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                                {formatCurrency(pm.totalCost, pm.currency)}
+                            </span>
+                        </div>
+                    ))}
                 </div>
             )}
         </div>
     );
 }
 
-/**
- * Reemplaza el bloque "Saldo a Cobrar" cuando la reserva está ANULADA.
- * Nunca dice "debe": muestra el contexto real (saldo a favor / multa por anulación)
- * o directamente nada si moneyStatus.kind === "none" (dato inconsistente — lo revisa
- * un vigía interno, no se le muestra al vendedor una cifra que podría estar mal).
- *
- * Tanda "multa fantasma" (2026-07-06): con multa, el monto SALE de moneyStatus
- * (amount/amountCurrency = el monto exacto de la multa, con su propio fallback al
- * balance si el backend todavía no lo manda) — este componente ya no recalcula nada.
- * Con saldo a favor, el monto sigue siendo el balance de la reserva (no cambia: el
- * contexto de anulación es a nivel de TODA la reserva, no por moneda).
- */
-function BloqueContextoAnulado({ moneyStatus, reserva }) {
-    if (moneyStatus.kind === 'none') {
+// ─── Multimoneda ────────────────────────────────────────────────────────────────
+
+function NumerosMultimoneda({ reserva, anulada, moneyStatus, admin }) {
+    if (anulada) {
+        // El contexto de una anulación (saldo a favor / multa) es de TODA la reserva,
+        // no por moneda — mismo criterio que ya usaba este componente antes de esta
+        // tanda. Recaudado/Inversión sí van una línea por moneda (P-3⭐).
+        const currencyFallback = reserva.porMoneda?.[0]?.currency ?? "ARS";
         return (
-            <>
-                <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
-                    Saldo
-                </p>
-                <p className="text-3xl font-extrabold leading-none text-slate-300 dark:text-slate-700" data-testid="anulada-sin-plata-pendiente">
-                    —
-                </p>
-            </>
+            <div className="space-y-2">
+                <BloqueGrandeAnulada reserva={reserva} moneyStatus={moneyStatus} currency={currencyFallback} />
+                <RecaudadoInversionPorMoneda reserva={reserva} admin={admin} />
+            </div>
         );
     }
 
-    const esMultaEnAmbar = moneyStatus.kind === 'multaPorCobrar';
-    // Fallback a "ARS" si no hay porMoneda cargado: sin currency explícita, formatCurrency
-    // usa el formato legacy en-US ("$700.00") en vez del formato argentino ("$ 700,00").
-    const monto = esMultaEnAmbar
-        ? formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency ?? "ARS")
-        : formatCurrency(Math.abs(reserva.balance ?? 0), reserva.porMoneda?.[0]?.currency ?? "ARS");
-
     return (
-        <>
-            <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
-                {moneyStatus.label}
-            </p>
-            <p
-                className={`text-3xl font-extrabold leading-none ${esMultaEnAmbar ? 'text-amber-600 dark:text-amber-500' : 'text-emerald-600 dark:text-emerald-500'}`}
-                data-testid={esMultaEnAmbar ? 'anulada-multa-por-cobrar' : 'anulada-saldo-a-favor'}
-            >
-                {monto}
-            </p>
-        </>
+        <div className="space-y-2">
+            <div>
+                <Rotulo>Saldo a Cobrar</Rotulo>
+                <div className="space-y-0.5">
+                    {reserva.porMoneda.map((pm) => {
+                        const hayDeuda = pm.balance > EPSILON;
+                        return (
+                            <div key={pm.currency} className="flex items-center gap-1.5">
+                                <CurrencyBadge currency={pm.currency} size="sm" />
+                                <span className={`text-2xl font-extrabold leading-none ${hayDeuda ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700'}`}>
+                                    {formatCurrency(pm.balance, pm.currency)}
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+                {reserva.porMoneda.some((pm) => pm.totalSale > 0) && (
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        de {reserva.porMoneda
+                            .filter((pm) => pm.totalSale > 0)
+                            .map((pm) => formatCurrency(pm.totalSale, pm.currency))
+                            .join(" / ")
+                        } presupuestado
+                    </p>
+                )}
+            </div>
+
+            <RecaudadoInversionPorMoneda reserva={reserva} admin={admin} />
+        </div>
     );
 }

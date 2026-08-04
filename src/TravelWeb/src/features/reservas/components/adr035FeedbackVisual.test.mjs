@@ -234,22 +234,22 @@ test("C5 servicios: reserva Closed + workflowStatus Emitido → muestra 'Emitido
     assert.equal(etiquetaEstadoServicio('Emitido', 'Closed'), 'Emitido');
 });
 
-// ─── Cambio 2: ya no hay mensajes de motivo debajo de botones ─────────────────
+// ─── Cambio 2: "Anular reserva" sigue sin motivo debajo; "Archivar" SÍ desde Tanda 2 ──
 // No hay lógica pura que testear (es solo presentación JSX).
-// Verificamos indirectamente que el botón "Cancelar" deshabilitado NO incluye un
-// elemento de texto con el motivo (lo verifica el test de comportamiento del JSX).
-// Aquí solo probamos la lógica de la capability.
+// Verificamos indirectamente la capability/el flag que gobierna cada botón.
 
 /**
  * Replica del helper getCapability de ReservaHeader.
- * Feedback 2026-06-19: el botón Cancelar solo muestra gris, sin texto de motivo debajo.
+ * Feedback 2026-06-19: el botón "Anular reserva" solo muestra gris, sin texto de motivo debajo.
+ * Este botón NO cambió en la Tanda 2 del rediseño (2026-08-03) — solo "Archivar" sí (ver
+ * el test de abajo).
  */
 function getCapability(capabilities, field) {
     if (!capabilities || !capabilities[field]) return { allowed: true, reason: null };
     return capabilities[field];
 }
 
-test("C2 motivo: botón Cancelar apagado → capability tiene reason pero NO se muestra", () => {
+test("C2 motivo: botón Anular reserva apagado → capability tiene reason pero NO se muestra", () => {
     // La razón sigue en el DTO (para potencial tooltip si cambia el diseño),
     // pero el componente no la renderiza como <p> debajo del botón.
     const cap = getCapability(
@@ -259,18 +259,23 @@ test("C2 motivo: botón Cancelar apagado → capability tiene reason pero NO se 
     assert.equal(cap.allowed, false, "el botón va disabled");
     assert.ok(cap.reason, "la reason llega del backend aunque no se muestre");
     // La DECISIÓN de NO mostrarla es visual (JSX) — solo documentamos la intención.
-    const seRenderizoReason = false; // por diseño (feedback 2026-06-19)
+    const seRenderizoReason = false; // por diseño (feedback 2026-06-19), sigue vigente
     assert.equal(seRenderizoReason, false, "el texto del motivo NO se muestra bajo el botón");
 });
 
-test("C2 motivo: botón Archivar deshabilitado → solo gris, sin texto debajo", () => {
-    // Igual que Cancelar: archiveBlockReason existe pero NO se renderiza como <p>.
+// P9 (Tanda 2 del rediseño de Reservas, 2026-08-03, regla firmada — maqueta sección 5,
+// nota "Archivar apagado"): CAMBIA la decisión de 2026-06-19 para este botón puntual.
+// Ahora el motivo SÍ se escribe debajo, siempre a la vista — mismo patrón que ya usa
+// el listado (ReservaTable/ReservaMobileList, regla P-9/P-13⭐). "Antes había que apoyar
+// el mouse para enterarte, y eso está prohibido" (texto de la maqueta firmada).
+test("P9 (Tanda 2, 2026-08-03): botón Archivar deshabilitado → el motivo SÍ se muestra debajo", () => {
     const archiveBlockReason = "Solo se pueden archivar reservas en viaje o finalizadas.";
     const canArchive = !archiveBlockReason;
     assert.equal(canArchive, false, "el botón va disabled");
-    // En el componente nuevo, archiveBlockReason existe pero no hay <p> con él.
-    const seRenderizaReason = false; // por diseño (feedback 2026-06-19)
-    assert.equal(seRenderizaReason, false);
+    // ReservaHeader.jsx (Botonera de acciones → botón Archivar) renderiza un <span>
+    // con archiveBlockReason cada vez que la capability lo trae — igual que ReservaTable.
+    const seRenderizaReason = Boolean(archiveBlockReason);
+    assert.equal(seRenderizaReason, true, "el motivo del motor se muestra debajo del botón Archivar");
 });
 
 // ─── ADR-036: chip "Debe — no viaja" (ReservaStatusChips) ────────────────────

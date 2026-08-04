@@ -13,6 +13,11 @@ import { RESERVA_STATUS_LABELS, traducirEstadoReserva } from '../lib/reservaStat
  *
  * Los keys son los strings persistidos en la BD (en ingles, alineados con EstadoReserva.cs).
  *
+ * `size` (Tanda 2 rediseño de la ficha, 2026-08-03, regla P7): "sm" (por defecto, sin
+ * cambios) es el tamaño chico que ya usan las 17+ pantallas existentes. "lg" es el chip
+ * grande al lado del título "Reserva #F-2026-XXXX" en la ficha de detalle — mismo
+ * mapeo de color/texto/candado, solo más grande para que sea lo primero que se lea.
+ *
  * Ciclo nuevo (ADR-020, ciclo unico sin flags):
  *   Quotation → Budget → InManagement → Confirmed → Traveling → Closed
  *   Lost: cotizacion/presupuesto que no prospero (queda en historial)
@@ -180,14 +185,21 @@ export function getStatusConfig(status) {
  * isStatusLocked): en Traveling/Closed, que también están "bloqueados" para editar,
  * el ícono normal de su propio estado (✈️/✅) ya cumple ese rol.
  */
-export function ReservaStatusBadge({ status, mostrarCandado = false }) {
+export function ReservaStatusBadge({ status, mostrarCandado = false, size = "sm" }) {
     const cfg = getStatusConfig(status);
     // Fix bloqueante del reviewer (2026-07-27): mismo motivo que translateStatus — nunca
     // mostrar la clave cruda del backend si el status no esta en el mapa.
     const label = traducirEstadoReserva(status);
     const conCandado = mostrarCandado && status === "Confirmed";
+    // "lg" = mismas clases que el chip grande dibujado a mano en ReservaHeader antes de
+    // esta tanda (padding/tipografía más grandes, en mayúsculas). "sm" queda IDÉNTICO
+    // a como estaba: no tocar el tamaño por defecto para no correr las 17+ pantallas
+    // que ya usan este badge sin pedirlo.
+    const sizeClasses = size === "lg"
+        ? "px-3 py-1 text-xs font-bold uppercase tracking-wider"
+        : "px-2.5 py-0.5 text-xs font-medium";
     return (
-        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>
+        <span className={`rounded-full border ${sizeClasses} ${cfg.color}`}>
             {label}{conCandado ? " 🔒" : ""}
         </span>
     );

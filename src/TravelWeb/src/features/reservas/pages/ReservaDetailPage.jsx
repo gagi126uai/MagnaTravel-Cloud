@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess, showWarning } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -19,6 +19,7 @@ import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
 import { AvisosPlegadosBar } from "../components/AvisosPlegadosBar";
+import { AvisoFila } from "../components/AvisoFila";
 import { getServiciosSinConfirmar, construirAvisosInformativos } from "../avisosFicha";
 import { EditReservaDatesModal } from "../components/EditReservaDatesModal";
 import { PassengerList } from "../components/PassengerList";
@@ -573,26 +574,39 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
  * por eso vive plegado dentro de "N avisos más" (ver AvisosPlegadosBar). La decisión
  * de "hay servicios sin confirmar" vive en avisosFicha.js para que el contador del
  * plegado y este banner nunca diverjan entre sí.
+ *
+ * P11 (Tanda 2 del rediseño, 2026-08-03): pasa a fila GRIS de una sola línea (con
+ * AvisoFila) en vez del bloque apilado de antes. El detalle completo ("Estos
+ * servicios todavía no tienen respuesta del proveedor...") queda como `title` —
+ * se sigue pudiendo leer al pasar el mouse, solo que ya no ocupa cuatro renglones
+ * fijos. `onVer` lleva a la pestaña Servicios, donde está el detalle fila por fila.
  */
-function UnconfirmedServicesBanner({ reserva }) {
+function UnconfirmedServicesBanner({ reserva, onVer }) {
   const serviciosSinResolver = getServiciosSinConfirmar(reserva);
   if (serviciosSinResolver.length === 0) return null;
 
+  // Tope de 3 nombres para que la fila de UNA línea (P11) no se desborde con reservas
+  // grandes; el resto queda como "y N más" y el detalle completo vive en la pestaña
+  // Servicios (botón "Ver") y en el title.
+  const todos = serviciosSinResolver.map((s) => s.nombre.trim());
+  const nombres = todos.length <= 3
+    ? todos.join(", ")
+    : `${todos.slice(0, 3).join(", ")} y ${todos.length - 3} más`;
+  const textoAviso = serviciosSinResolver.length === 1
+    ? `1 servicio sin confirmar: `
+    : `${serviciosSinResolver.length} servicios sin confirmar: `;
+
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-      <div className="font-bold mb-1">
-        {serviciosSinResolver.length} {serviciosSinResolver.length === 1 ? 'servicio sin confirmar' : 'servicios sin confirmar'}
-      </div>
-      <div className="text-xs text-amber-800 dark:text-amber-300 mb-2">
-        Estos servicios todavía no tienen respuesta del proveedor. Resolvelós en la pestaña de Servicios antes de que empiece el viaje.
-      </div>
-      <ul className="text-xs space-y-0.5">
-        {serviciosSinResolver.slice(0, 8).map((s, i) => (
-          <li key={i}>• <strong>{s.nombre.trim()}</strong></li>
-        ))}
-        {serviciosSinResolver.length > 8 && <li className="italic">y {serviciosSinResolver.length - 8} más...</li>}
-      </ul>
-    </div>
+    <AvisoFila
+      variante="info"
+      dataTestId="aviso-servicios-sin-confirmar"
+      textoBoton={onVer ? "Ver" : undefined}
+      onClickBoton={onVer}
+    >
+      <span title="Estos servicios todavía no tienen respuesta del proveedor. Resolvelós en la pestaña de Servicios antes de que empiece el viaje.">
+        {textoAviso}<strong>{nombres}</strong>
+      </span>
+    </AvisoFila>
   );
 }
 
@@ -838,7 +852,9 @@ export default function ReservaDetailPage() {
     serviceCollectionErrors,
     fetchReserva,
     handleArchiveReserva,
-    handleDeleteReserva,
+    // handleDeleteReserva ya NO se usa acá: el botón "Eliminar reserva" se sacó de
+    // la ficha (Tanda 2 del rediseño, 2026-08-03, regla absoluta del dueño). El hook
+    // sigue exportando la función — no se toca el motor, solo esta puerta de UI.
     handleStatusChange,
     statusChangeBlockedByMoneyGuard,
     setStatusChangeBlockedByMoneyGuard,
@@ -1250,14 +1266,9 @@ export default function ReservaDetailPage() {
         }}
         onRevert={() => setShowRevertModal(true)}
         onEditDates={() => setShowEditDatesModal(true)}
-        onDelete={() =>
-          askConfirmation({
-            title: "¿Eliminar la reserva?",
-            message: "No se puede deshacer. Solo se eliminan reservas sin cobros.",
-            type: "danger",
-            onConfirm: handleDeleteReserva,
-          })
-        }
+        // "Eliminar reserva" fue SACADO de la ficha (Tanda 2 del rediseño, 2026-08-03,
+        // regla absoluta del dueño: nada de negocio se borra). handleDeleteReserva
+        // queda sin usar acá a propósito — no se toca el hook/endpoint.
         onArchive={() =>
           askConfirmation({
             title: "¿Archivar la reserva?",
@@ -2045,12 +2056,17 @@ export default function ReservaDetailPage() {
         // la lógica de "hay que mostrar esto" (esa lógica vive en avisosFicha.js).
         const clavesAvisos = construirAvisosInformativos({ reserva, paxCount, capacity });
 
+        // "Ver" de ambos avisos informativos lleva a la pestaña Servicios — ahí está
+        // el detalle fila por fila (qué servicio falta confirmar, o cuál se pasó
+        // de capacidad). Mismo mecanismo que ya usan las solapas (setActiveTab).
+        const irAServicios = () => setActiveTab("services");
+
         const avisos = [];
         if (clavesAvisos.includes("serviciosSinConfirmar")) {
-          avisos.push({ key: "servicios-sin-confirmar", node: <UnconfirmedServicesBanner reserva={reserva} /> });
+          avisos.push({ key: "servicios-sin-confirmar", node: <UnconfirmedServicesBanner reserva={reserva} onVer={irAServicios} /> });
         }
         if (clavesAvisos.includes("capacidad")) {
-          avisos.push({ key: "capacidad", node: <CapacityWarning paxCount={paxCount} capacity={capacity} /> });
+          avisos.push({ key: "capacidad", node: <CapacityWarning paxCount={paxCount} capacity={capacity} onVer={irAServicios} /> });
         }
 
         return <AvisosPlegadosBar avisos={avisos} />;
@@ -2335,36 +2351,28 @@ export default function ReservaDetailPage() {
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">
 
-              {/* Barra de acciones: "Registrar cobro", "Emitir factura" y "Cancelar reserva".
+              {/* Barra de acciones: "Registrar cobro" y "Emitir factura".
                   ADR-035: los botones se muestran SIEMPRE (apagados si la accion no aplica).
-                  Solo una ficha inline abierta a la vez (cobro, factura o cancelacion). */}
+                  Solo una ficha inline abierta a la vez (cobro o factura).
+                  P14 (Tanda 2 del rediseño, 2026-08-03, regla firmada): "Anular reserva"
+                  vive SOLO arriba, en el encabezado (ReservaHeader) — el botón que estaba
+                  acá era un duplicado exacto (mismo testid, mismo panel CancelarReservaInline)
+                  y se saca de esta barra. showCancelInline lo sigue abriendo el header. */}
               {!showCobroInline && !showFacturaInline && !showCancelInline && (() => {
                 // Leemos capabilities del DTO para apagar botones con motivo (ADR-035).
                 // Degradacion elegante: si no hay capabilities, todos los botones van habilitados.
                 const capRegPago = reserva.capabilities?.canRegisterPayment;
                 const capFactura = reserva.capabilities?.canInvoiceSale;
-                const capCancelar = reserva.capabilities?.canCancel;
-                const capAnular = reserva.capabilities?.canAnnul;
 
                 const registroPagoHabilitado = !capRegPago || capRegPago.allowed;
                 const facturaHabilitada = !capFactura || capFactura.allowed;
-                // F4-2 (2026-06-26): el botón "Anular reserva" usa canAnnul como capacidad primaria.
-                //   canAnnul.allowed=true  → reserva con plata viva → emite NC formal.
-                //   canCancel.allowed=true → baja simple (sin documentos fiscales vivos).
-                // Se muestra cuando CUALQUIERA de las dos permite la acción.
-                // Degradación elegante: si no vienen capabilities, caemos al permiso de usuario.
-                const puedeAnularFormal = capAnular?.allowed ?? false;
-                const puedeEliminarSimple = capCancelar?.allowed ?? false;
-                const cancelarHabilitado =
-                  canCancelReserva && (!capAnular && !capCancelar
-                    ? true               // DTO viejo sin capabilities → permitir si tiene el permiso
-                    : puedeAnularFormal || puedeEliminarSimple);
 
-                // Mostramos "Emitir factura" y "Anular reserva" SOLO si están disponibles. En estados
-                // de solo lectura (En viaje, Finalizada, etc.) el backend apaga la capability → el botón
-                // NO aparece. Nada de botón gris con un mensajito rojo debajo: el cartel de solo-lectura
-                // de arriba ya explica el porqué (decisión Gaston 2026-06-22, coherente con "un solo
-                // cartel arriba, nunca motivos pegados a cada botón").
+                // Mostramos "Emitir factura" SOLO si está disponible. En estados de solo
+                // lectura (En viaje, Finalizada, etc.) el backend apaga la capability → el
+                // botón NO aparece. Nada de botón gris con un mensajito rojo debajo: el
+                // cartel de solo-lectura de arriba ya explica el porqué (decisión Gaston
+                // 2026-06-22, coherente con "un solo cartel arriba, nunca motivos pegados
+                // a cada botón").
                 //
                 // H13 (2026-07-25, decisión firmada): "Registrar cobro" es la EXCEPCIÓN a esa regla.
                 // Cuando la reserva ya está saldada (o no es cobrable por otro motivo), el botón se
@@ -2377,7 +2385,6 @@ export default function ReservaDetailPage() {
                 // En su lugar mostramos un cartel "Factura en proceso" para que sepa que ya está en camino.
                 const facturaEnProceso = reserva.hasInvoiceInProgress === true;
                 const mostrarFactura = reserva.invoicingStatus !== 'FullyInvoiced' && facturaHabilitada && !facturaEnProceso;
-                const mostrarCancelar = canCancelReserva && cancelarHabilitado;
                 // H13 fix (review B1, 2026-07-25): el motivo-en-botón SOLO tiene sentido en los
                 // estados donde cobrar es conceptualmente posible: venta firme (En gestión,
                 // Confirmada, Finalizada) o En viaje (ahí el motivo "el viaje ya empezó" SÍ es
@@ -2391,7 +2398,7 @@ export default function ReservaDetailPage() {
                 const esEstadoDondeCobrarTieneSentido =
                   !isEarlyStage && reserva.status !== 'Lost' && reserva.status !== 'Archived' && !isReservaAnulada(reserva);
                 const mostrarCobro = registroPagoHabilitado || (Boolean(capRegPago) && esEstadoDondeCobrarTieneSentido);
-                if (!mostrarCobro && !mostrarFactura && !mostrarCancelar && !facturaEnProceso) return null;
+                if (!mostrarCobro && !mostrarFactura && !facturaEnProceso) return null;
 
                 return (
                   <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
@@ -2453,18 +2460,6 @@ export default function ReservaDetailPage() {
                       </div>
                     )}
 
-                    {/* F4-2: texto "Anular reserva" (ADR-036: "anular" = deshacer el viaje,
-                        no confundir con "cancelar" = saldar deuda). testid unificado
-                        con el botón del encabezado para poder referenciarlo en tests. */}
-                    {mostrarCancelar && (
-                      <button
-                        onClick={() => setShowCancelInline(true)}
-                        className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-rose-700"
-                        data-testid="btn-anular-reserva"
-                      >
-                        <Ban className="w-4 h-4" /> Anular reserva
-                      </button>
-                    )}
                   </div>
                 );
               })()}

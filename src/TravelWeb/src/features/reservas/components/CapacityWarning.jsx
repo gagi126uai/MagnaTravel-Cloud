@@ -1,29 +1,37 @@
 import React from 'react';
-import { AlertTriangle } from "lucide-react";
 import { getAdvertenciaCapacidad } from "../avisosFicha";
+import { AvisoFila } from "./AvisoFila";
 
-export function CapacityWarning({ paxCount, capacity }) {
+/**
+ * Aviso: hay más pasajeros cargados que lugares que alcanzan los servicios
+ * contratados (ej. 3 pasajeros pero el hotel solo tiene lugar para 2).
+ *
+ * P11 (Tanda 2 del rediseño, 2026-08-03): fila GRIS de una sola línea (con
+ * AvisoFila), reemplaza el bloque amarillo de antes. `onVer` (opcional) lleva
+ * a la pestaña Servicios, donde se ajusta la capacidad de cada uno.
+ */
+export function CapacityWarning({ paxCount, capacity, onVer }) {
     // La decisión de "hay que avisar" vive en avisosFicha.js: la usa también el
     // plegado "N avisos más" de la ficha para contar este aviso sin duplicar la regla.
     const advertencia = getAdvertenciaCapacidad(paxCount, capacity);
     if (!advertencia) return null;
 
-    const cap = advertencia;
     const detalle = advertencia.detalle;
 
     return (
-        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4 dark:bg-yellow-950/20 dark:border-yellow-700">
-            <div className="flex">
-                <div className="flex-shrink-0">
-                    <AlertTriangle className="h-5 w-5 text-yellow-400" aria-hidden="true" />
-                </div>
-                <div className="ml-3">
-                    <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                        Atención: hay <strong>{paxCount}</strong> {paxCount === 1 ? "pasajero cargado" : "pasajeros cargados"} y los servicios contratados alcanzan para <strong>{cap.total}</strong>{detalle.length > 0 ? ` (${detalle.join(", ")})` : ""}.
-                        <br /><span className="text-xs opacity-75">Ajustá la capacidad de los servicios o sumá uno más antes de seguir.</span>
-                    </p>
-                </div>
-            </div>
-        </div>
+        <AvisoFila
+            variante="info"
+            dataTestId="aviso-capacidad-excedida"
+            textoBoton={onVer ? "Ver" : undefined}
+            onClickBoton={onVer}
+        >
+            {/* Sin `title`: la guía prohíbe info solo-por-hover (review Tanda 2). La
+                indicación de qué hacer va visible, corta; el detalle vive en Servicios. */}
+            <span>
+                Hay <strong>{paxCount}</strong> {paxCount === 1 ? "pasajero cargado" : "pasajeros cargados"} y los servicios
+                contratados alcanzan para <strong>{advertencia.total}</strong>
+                {detalle.length > 0 ? ` (${detalle.join(", ")})` : ""} — ajustá la capacidad o sumá un servicio.
+            </span>
+        </AvisoFila>
     );
 }
