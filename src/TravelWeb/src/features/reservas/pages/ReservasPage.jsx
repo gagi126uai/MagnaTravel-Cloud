@@ -145,7 +145,15 @@ export default function ReservasPage() {
   const handleNextMonth = () => {
     setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
   };
+  // monthName se usa TAL CUAL (en minúscula, "agosto de 2026") dentro de frases como
+  // "No hay reservas creadas en agosto de 2026" — ahí SÍ va en minúscula, es gramática
+  // normal de mitad de oración.
   const monthName = currentMonth ? currentMonth.toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : "";
+  // monthNameEtiqueta es la versión para el rótulo SUELTO del selector de mes ("◀ Agosto
+  // de 2026 ▶"). Bug de estética (2026-08-04, Gaston viendo PROD): antes ese rótulo usaba
+  // la clase CSS "capitalize", que pone en mayúscula CADA palabra ("Agosto De 2026") en vez
+  // de solo la primera — por eso acá se capitaliza a mano nada más que la primera letra.
+  const monthNameEtiqueta = monthName ? monthName.charAt(0).toUpperCase() + monthName.slice(1) : "";
   const previousMonthDate = currentMonth
     ? new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)
     : null;
@@ -224,208 +232,237 @@ export default function ReservasPage() {
         }
       />
 
-      <ReservaKPIs stats={stats} />
+      {/* Tarjeta única (maqueta firmada 2026-08-03, docs/ux/maquetas/2026-08-03-reservas-rediseno.html
+          líneas 295-411): Gaston vio la Tanda 1 recién deployada en PROD y la rechazó
+          estéticamente porque quedó repartida en 4 cajas separadas (KPIs, solapas, buscador
+          y tabla, cada una con su propio marco). Acá adentro viven, en ESTE orden, KPIs →
+          solapas → buscador/filtros → tabla → pie de paginación, todos dentro de un solo
+          borde/sombra — tal cual la maqueta. El título "Reservas" + botón de arriba quedan
+          afuera, como ya estaban. */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+        <div className="space-y-4 p-4 md:p-5">
+          <ReservaKPIs stats={stats} />
 
-      {/* Tabs en su propia fila — ocupan todo el ancho y permiten scroll horizontal sin tapar otros controles */}
-      <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-        {/* ADR-020: ciclo unico, tabs directas sin esperar flags.
-            B2 (Tanda 1, 2026-08-04): una solapa en 0 queda VISIBLE pero apagada y sin
-            poder tocarla ("cero" también es información). Mientras se busca (B3), la
-            que se ve marcada pasa a ser "Todas" sin tocar el filtro real. */}
-        <div className="flex overflow-x-auto scrollbar-hide rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-          {tabs.map((tab) => {
-            const count = tabCounts[tabCountKey(tab.value)] || 0;
-            const apagada = esSolapaApagada(tab.value, count);
-            const activa = solapaVisible === tab.value;
-            return (
-              <button
-                key={tab.value}
-                type="button"
-                disabled={apagada}
-                onClick={() => setViewFilter(tab.value)}
-                data-testid={`tab-reservas-${tab.value}`}
-                className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all disabled:cursor-not-allowed ${
-                  activa
-                    ? "bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white"
-                    : apagada
-                      ? "text-slate-300 dark:text-slate-700"
-                      : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
-                }`}
-              >
-                {tab.label}
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+          {/* Solapas con línea inferior (maqueta líneas 79-86), NO pastillas: la Tanda 1
+              recién deployada usaba un segmented control (pastilla blanca con sombra sobre
+              fondo gris) que Gaston juzgó "no es la maqueta". Acá la activa se marca con
+              texto índigo + un borde de 2px abajo, sobre una fila con una única línea fina
+              de fondo — mismo patrón que ya usan pestañas de sistemas de facturación.
+              ADR-020: ciclo unico, tabs directas sin esperar flags.
+              B2 (Tanda 1, 2026-08-04): una solapa en 0 queda VISIBLE pero apagada y sin
+              poder tocarla ("cero" también es información). Mientras se busca (B3), la
+              que se ve marcada pasa a ser "Todas" sin tocar el filtro real. */}
+          <div
+            role="tablist"
+            aria-label="Filtrar reservas por estado"
+            className="flex flex-wrap gap-x-1 overflow-x-auto border-b border-slate-200 scrollbar-hide dark:border-slate-800"
+          >
+            {tabs.map((tab) => {
+              const count = tabCounts[tabCountKey(tab.value)] || 0;
+              const apagada = esSolapaApagada(tab.value, count);
+              const activa = solapaVisible === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={activa}
+                  disabled={apagada}
+                  onClick={() => setViewFilter(tab.value)}
+                  data-testid={`tab-reservas-${tab.value}`}
+                  className={`flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-[13px] font-medium transition-colors disabled:cursor-not-allowed ${
                     activa
-                      ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+                      ? "border-indigo-600 font-bold text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
                       : apagada
-                        ? "bg-transparent text-slate-300 dark:text-slate-700"
-                        : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                        ? "border-transparent text-slate-400 opacity-55 dark:text-slate-600"
+                        : "border-transparent text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                   }`}
                 >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
+                  {tab.label}
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
+                      activa
+                        ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300"
+                        : apagada
+                          ? "border border-slate-200 text-slate-400 dark:border-slate-700 dark:text-slate-600"
+                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Filtros (buscar + rango fecha + tipo de fecha).
+              B3 (Tanda 1, 2026-08-04): el buscador pasa a ser lo más ancho de la fila
+              (va en searchSlot, que ListToolbar estira con flex-1); los filtros de
+              fecha pasan a actionSlot, con ancho fijo. Antes era al revés.
+              className pisa el marco propio de ListToolbar (border/sombra/fondo/padding):
+              ya estamos dentro de la tarjeta única, un marco propio dibujaría una caja
+              dentro de otra caja. */}
+          <ListToolbar
+            className="border-0 bg-transparent p-0 shadow-none dark:bg-transparent"
+            searchSlot={
+              <div className="flex flex-col gap-1">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white"
+                    placeholder="Buscar por N° de reserva o cliente…"
+                    aria-label="Buscar por número de reserva o cliente en todas las reservas"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    data-testid="reservas-search-input"
+                  />
+                  {/* El "×" responde a lo TIPEADO (searchTerm crudo), no al debounced: apenas hay
+                      texto tiene que poder borrarse, sin esperar los 300 ms. */}
+                  {searchTerm ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm("")}
+                      aria-label="Limpiar búsqueda"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-700"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+                {isSearching ? (
+                  <p className="pl-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    Buscando en todas las reservas, sin filtro de mes.
+                  </p>
+                ) : null}
+              </div>
+            }
+            actionSlot={
+              <div
+                className={`flex flex-wrap items-center gap-2 transition-opacity ${isSearching ? "pointer-events-none opacity-40" : ""}`}
+                aria-disabled={isSearching}
+                title={isSearching ? "El buscador ignora el mes mientras hay texto" : undefined}
+              >
+                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-800/50">
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Por</span>
+                  <select
+                    className="rounded bg-transparent p-1 text-xs font-bold text-slate-700 focus:outline-none dark:text-slate-200"
+                    value={dateRange.field}
+                    onChange={(e) => setDateRange((prev) => ({ ...prev, field: e.target.value }))}
+                    title="Campo de fecha sobre el que filtrar"
+                    disabled={isSearching}
+                  >
+                    <option value="created">creación</option>
+                    <option value="travel">viaje</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50">
+                  <select
+                    className="rounded bg-transparent p-1.5 text-xs font-bold text-slate-700 focus:outline-none dark:text-slate-200"
+                    value={dateRange.preset}
+                    disabled={isSearching}
+                    onChange={(e) => {
+                      const preset = e.target.value;
+                      const today = new Date();
+                      let from = "";
+                      if (preset === "90days") {
+                        from = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+                      } else if (preset === "365days") {
+                        from = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+                      }
+                      setDateRange((prev) => ({ ...prev, from, to: "", preset }));
+                    }}
+                  >
+                    <option value="month">Mes a Mes</option>
+                    <option value="90days">Últimos 90 días</option>
+                    <option value="365days">Último año</option>
+                    <option value="all">Todas</option>
+                    <option value="custom">Personalizado</option>
+                  </select>
+                  {dateRange.preset === "month" && (
+                    <div className="flex items-center gap-0.5 rounded-lg bg-white p-0.5 dark:bg-slate-900">
+                      <button onClick={handlePrevMonth} disabled={isSearching} className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:pointer-events-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes anterior">
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <div className="flex items-center px-1">
+                        <span className="w-[90px] text-center text-[10px] font-black text-slate-700 dark:text-slate-200">
+                          {monthNameEtiqueta}
+                        </span>
+                      </div>
+                      <button onClick={handleNextMonth} disabled={isSearching} className="rounded p-0.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:pointer-events-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes siguiente">
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                  {dateRange.preset === "custom" && (
+                    <div className="flex items-center gap-1 rounded-md bg-white p-0.5 dark:bg-slate-900">
+                      <input
+                        type="date"
+                        disabled={isSearching}
+                        className="w-[120px] bg-transparent px-1 text-xs font-medium text-slate-700 focus:outline-none dark:text-slate-200"
+                        value={dateRange.from}
+                        onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
+                      />
+                      <span className="text-xs text-slate-400">→</span>
+                      <input
+                        type="date"
+                        disabled={isSearching}
+                        className="w-[120px] bg-transparent px-1 text-xs font-medium text-slate-700 focus:outline-none dark:text-slate-200"
+                        value={dateRange.to}
+                        onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            }
+          />
+
+          {/* Tabla/estados de la lista: SIN marco propio (className pisa el de ReservaTable/
+              DataGrid) porque ya viven dentro de la tarjeta única. El buscador/filtros de
+              arriba quedan atenuados pero la tabla sigue mostrando lo último cargado. */}
+          {databaseUnavailable ? (
+            <DatabaseUnavailableState />
+          ) : loadError ? (
+            <ListLoadErrorState message={loadError} onRetry={loadReservas} />
+          ) : (
+            <>
+              <div className="hidden md:block">
+                <ReservaTable
+                  reservas={reservas}
+                  onRowClick={(id) => navigate(`/reservas/${id}`)}
+                  onArchive={handleArchive}
+                  emptyState={emptyState}
+                  className="rounded-none border-0 bg-transparent shadow-none dark:bg-transparent"
+                />
+              </div>
+
+              <div className="md:hidden">
+                <ReservaMobileList
+                  reservas={reservas}
+                  onRowClick={(id) => navigate(`/reservas/${id}`)}
+                  onArchive={handleArchive}
+                  emptyState={emptyState}
+                />
+              </div>
+
+              {/* Pie de paginación (maqueta línea 408-411, ".pie"): línea fina arriba en vez
+                  de tarjeta propia — className pisa el marco de PaginationFooter. */}
+              <PaginationFooter
+                page={page}
+                pageSize={pageSize}
+                totalCount={totalCount}
+                totalPages={totalPages}
+                hasPreviousPage={hasPreviousPage}
+                hasNextPage={hasNextPage}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+                className="rounded-none border-0 border-t border-slate-200 bg-transparent px-0 shadow-none dark:border-slate-800 dark:bg-transparent"
+              />
+            </>
+          )}
         </div>
       </div>
-
-      {/* Filtros (buscar + rango fecha + tipo de fecha) en su propia fila.
-          B3 (Tanda 1, 2026-08-04): el buscador pasa a ser lo más ancho de la fila
-          (va en searchSlot, que ListToolbar estira con flex-1); los filtros de
-          fecha pasan a actionSlot, con ancho fijo. Antes era al revés. */}
-      <ListToolbar
-        className="p-1.5"
-        searchSlot={
-          <div className="flex flex-col gap-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm placeholder:text-slate-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white"
-                placeholder="Buscar por N° de reserva o cliente…"
-                aria-label="Buscar por número de reserva o cliente en todas las reservas"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                data-testid="reservas-search-input"
-              />
-              {/* El "×" responde a lo TIPEADO (searchTerm crudo), no al debounced: apenas hay
-                  texto tiene que poder borrarse, sin esperar los 300 ms. */}
-              {searchTerm ? (
-                <button
-                  type="button"
-                  onClick={() => setSearchTerm("")}
-                  aria-label="Limpiar búsqueda"
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-700"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
-            {isSearching ? (
-              <p className="pl-1 text-[11px] text-slate-400 dark:text-slate-500">
-                Buscando en todas las reservas, sin filtro de mes.
-              </p>
-            ) : null}
-          </div>
-        }
-        actionSlot={
-          <div
-            className={`flex flex-wrap items-center gap-2 transition-opacity ${isSearching ? "pointer-events-none opacity-40" : ""}`}
-            aria-disabled={isSearching}
-            title={isSearching ? "El buscador ignora el mes mientras hay texto" : undefined}
-          >
-            <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-800/50">
-              <span className="text-[10px] font-bold uppercase text-slate-500">Por</span>
-              <select
-                className="rounded bg-transparent p-1 text-xs font-bold text-slate-700 focus:outline-none dark:text-slate-200"
-                value={dateRange.field}
-                onChange={(e) => setDateRange((prev) => ({ ...prev, field: e.target.value }))}
-                title="Campo de fecha sobre el que filtrar"
-                disabled={isSearching}
-              >
-                <option value="created">creación</option>
-                <option value="travel">viaje</option>
-              </select>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800/50">
-              <select
-                className="rounded bg-transparent p-1.5 text-xs font-bold text-slate-700 focus:outline-none dark:text-slate-200"
-                value={dateRange.preset}
-                disabled={isSearching}
-                onChange={(e) => {
-                  const preset = e.target.value;
-                  const today = new Date();
-                  let from = "";
-                  if (preset === "90days") {
-                    from = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-                  } else if (preset === "365days") {
-                    from = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-                  }
-                  setDateRange((prev) => ({ ...prev, from, to: "", preset }));
-                }}
-              >
-                <option value="month">Mes a Mes</option>
-                <option value="90days">Últimos 90 días</option>
-                <option value="365days">Último año</option>
-                <option value="all">Todas</option>
-                <option value="custom">Personalizado</option>
-              </select>
-              {dateRange.preset === "month" && (
-                <div className="flex items-center gap-0.5 rounded-lg bg-white p-0.5 dark:bg-slate-900">
-                  <button onClick={handlePrevMonth} disabled={isSearching} className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:pointer-events-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes anterior">
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <div className="flex items-center px-1">
-                    <span className="w-[90px] text-center text-[10px] font-black capitalize text-slate-700 dark:text-slate-200">
-                      {monthName}
-                    </span>
-                  </div>
-                  <button onClick={handleNextMonth} disabled={isSearching} className="rounded p-0.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:pointer-events-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white" title="Mes siguiente">
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
-              {dateRange.preset === "custom" && (
-                <div className="flex items-center gap-1 rounded-md bg-white p-0.5 dark:bg-slate-900">
-                  <input
-                    type="date"
-                    disabled={isSearching}
-                    className="w-[120px] bg-transparent px-1 text-xs font-medium text-slate-700 focus:outline-none dark:text-slate-200"
-                    value={dateRange.from}
-                    onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value }))}
-                  />
-                  <span className="text-xs text-slate-400">→</span>
-                  <input
-                    type="date"
-                    disabled={isSearching}
-                    className="w-[120px] bg-transparent px-1 text-xs font-medium text-slate-700 focus:outline-none dark:text-slate-200"
-                    value={dateRange.to}
-                    onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value }))}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        }
-      />
-
-      {databaseUnavailable ? (
-        <DatabaseUnavailableState />
-      ) : loadError ? (
-        <ListLoadErrorState message={loadError} onRetry={loadReservas} />
-      ) : (
-        <>
-          <div className="hidden md:block">
-            <ReservaTable
-              reservas={reservas}
-              onRowClick={(id) => navigate(`/reservas/${id}`)}
-              onArchive={handleArchive}
-              emptyState={emptyState}
-            />
-          </div>
-
-          <div className="md:hidden">
-            <ReservaMobileList
-              reservas={reservas}
-              onRowClick={(id) => navigate(`/reservas/${id}`)}
-              onArchive={handleArchive}
-              emptyState={emptyState}
-            />
-          </div>
-
-          <PaginationFooter
-            page={page}
-            pageSize={pageSize}
-            totalCount={totalCount}
-            totalPages={totalPages}
-            hasPreviousPage={hasPreviousPage}
-            hasNextPage={hasNextPage}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
-        </>
-      )}
 
       <CreateReservaModal
         isOpen={isModalOpen}

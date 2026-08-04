@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { cn } from "../../lib/utils";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
@@ -11,6 +12,7 @@ export function PaginationFooter({
   hasNextPage,
   onPageChange,
   onPageSizeChange,
+  className,
 }) {
   const safeTotalCount = Number(totalCount || 0);
   const safePage = Number(page || 1);
@@ -19,7 +21,12 @@ export function PaginationFooter({
   const end = safeTotalCount === 0 ? 0 : Math.min(safePage * safePageSize, safeTotalCount);
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between">
+    <div
+      className={cn(
+        "flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between",
+        className
+      )}
+    >
       <div className="text-sm text-slate-500 dark:text-slate-400">
         {start}-{end} de {safeTotalCount}
       </div>

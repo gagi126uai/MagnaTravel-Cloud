@@ -32,9 +32,12 @@ import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSE
  * búsqueda sin resultados) porque solo esa pantalla tiene los datos del filtro
  * activo (mes, período) para escribir un mensaje útil.
  */
-export function ReservaTable({ reservas, onRowClick, onArchive, emptyState }) {
+export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, className }) {
   return (
-    <DataGrid minWidth="920px">
+    // `className`: la Tanda de realineación a la maqueta (2026-08-04) mete esta tabla
+    // DENTRO de la tarjeta única de ReservasPage — así que acá se le puede pisar el
+    // marco propio (borde/sombra/fondo) para que no queden dos tarjetas anidadas.
+    <DataGrid minWidth="920px" className={className}>
       <DataGridHeader>
         <DataGridHeaderRow>
           <DataGridHeaderCell>Reserva</DataGridHeaderCell>
@@ -149,6 +152,11 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState }) {
                 </DataGridCell>
                 <DataGridActionCell
                   align="center"
+                  // whitespace-normal pisa el "nowrap" default de la celda de acciones:
+                  // el motivo del motor bajo "Archivar" tiene que poder partirse en
+                  // 2-3 líneas en vez de estirar la columna y generar scroll horizontal
+                  // fantasma en la tabla (bug reportado por Gaston viendo PROD en 1600px).
+                  className="whitespace-normal"
                   onClick={(event) => event.stopPropagation()}
                 >
                   <div className="flex flex-col items-center gap-1">

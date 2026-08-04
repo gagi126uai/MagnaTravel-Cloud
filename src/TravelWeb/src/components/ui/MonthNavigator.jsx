@@ -71,9 +71,14 @@ export function MonthNavigator({ month, onChange, disabled = false, disableNext 
   // como base para navegar si el usuario aprieta prev/next.
   const base = month ?? new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const monthName = month
+  // Bug de estética (2026-08-04, Gaston viendo PROD): toLocaleDateString ya devuelve
+  // "agosto de 2026" en minúscula. La clase CSS "capitalize" que usaba este componente
+  // pone en mayúscula CADA palabra ("Agosto De 2026"), no solo la primera — por eso acá
+  // se capitaliza a mano solo la primera letra y el CSS "capitalize" se saca del JSX.
+  const monthNameCrudo = month
     ? month.toLocaleDateString("es-AR", { month: "long", year: "numeric" })
     : "Todo el historial";
+  const monthName = monthNameCrudo.charAt(0).toUpperCase() + monthNameCrudo.slice(1);
 
   const showTodayButton = month !== null && !isCurrentMonth(month);
 
@@ -114,7 +119,7 @@ export function MonthNavigator({ month, onChange, disabled = false, disableNext 
       <div className="flex items-center gap-1.5 px-1 sm:px-2">
         <Calendar className="w-3.5 h-3.5 text-indigo-500" />
         <span
-          className="min-w-[110px] text-center text-sm font-medium capitalize text-slate-700 dark:text-slate-200"
+          className="min-w-[110px] text-center text-sm font-medium text-slate-700 dark:text-slate-200"
           data-testid="month-nav-label"
         >
           {monthName}
