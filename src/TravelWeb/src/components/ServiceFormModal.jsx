@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
+import { getApiErrorMessage } from "../lib/errors";
 import { hasPermission, isAdmin } from "../auth";
 import { useLearnedRateFlow } from "../hooks/useLearnedRateFlow";
 import RateDuplicateModal from "./RateDuplicateModal";
@@ -38,10 +39,13 @@ import {
 // ADR-036: ahora son 3 estados bloqueados: Confirmed, Traveling, Closed (ToSettle fue eliminado).
 // Usarla aqui evita que el modal y el header diverjan si cambian los estados.
 import { isStatusLocked } from "../features/reservas/components/ReservaStatusBadge";
+// traducirEstadoReserva pasa el estado interno (ej. "Traveling") al nombre que ve el agente
+// (ej. "En viaje"). Sin esto el aviso de candado mostraba el enum crudo del backend.
+import { traducirEstadoReserva } from "../features/reservas/lib/reservaStatusLabels";
 import RoomingPlanner from "./RoomingPlanner";
 
 const SERVICE_TYPES = [
-    { value: "Aereo", label: "Aereo", icon: Plane, color: "sky" },
+    { value: "Aereo", label: "Aéreo", icon: Plane, color: "sky" },
     { value: "Hotel", label: "Hotel", icon: Hotel, color: "amber" },
     { value: "Traslado", label: "Traslado", icon: Bus, color: "emerald" },
     { value: "Paquete", label: "Paquete", icon: Package, color: "violet" },
@@ -84,7 +88,7 @@ const getHotelQuantity = (form) => {
 
 const toIsoDate = (value, fieldLabel) => {
     if (!value) {
-        throw new Error(`Completa ${fieldLabel}.`);
+        throw new Error(`Completá ${fieldLabel}.`);
     }
 
     const date = new Date(value);
@@ -154,7 +158,7 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
 
     return (
         <div className="relative">
-            <label className={labelClass}>Buscar en el tarifario (opcional)</label>
+            <label className={labelClass}>Buscar en tu tarifario</label>
             <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input
@@ -184,7 +188,7 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
                 >
                     {rates.length === 0 ? (
                         <div className="p-4 text-center text-sm text-slate-500">
-                            {loading ? "Buscando..." : "No esta en tu tarifario. Cargá los datos a mano abajo."}
+                            {loading ? "Buscando..." : "No está en tu tarifario. Cargá los datos a mano abajo."}
                         </div>
                     ) : (
                         rates.map((rate) => {
@@ -260,11 +264,11 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
     return (
         <div className="space-y-4">
             {/* === BUSCADOR PRIMERO ===
-                El agente escribe la aerolínea o ruta y elige del tarifario.
+                Escribí la aerolínea o la ruta y elegí del tarifario.
                 Al elegir, el proveedor queda vinculado automaticamente (handleRateSelect).
                 Si el servicio no esta en el tarifario, usa el boton de abajo. */}
             <div>
-                <label className={labelClass}>Aerolinea / ruta</label>
+                <label className={labelClass}>Aerolínea / ruta</label>
                 <RateSelector
                     // FIX: usamos activeServiceType (estado del modal padre, siempre sincronizado
                     // con la pestaña activa) en lugar de form.serviceType, que puede estar
@@ -333,7 +337,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
             {/* Aerolinea: codigo IATA (ej. "AR") y nombre (ej. "Aerolineas Argentinas") */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Codigo Aerolinea</label>
+                    <label className={labelClass}>Código de aerolínea</label>
                     <input
                         className={inputClass}
                         placeholder="AR, LA, AA..."
@@ -344,10 +348,10 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Nombre Aerolinea</label>
+                    <label className={labelClass}>Nombre de la aerolínea</label>
                     <input
                         className={inputClass}
-                        placeholder="Aerolineas Argentinas..."
+                        placeholder="Aerolíneas Argentinas..."
                         value={form.airlineName || ""}
                         onChange={(event) => setForm({ ...form, airlineName: event.target.value })}
                         disabled={disabled}
@@ -359,7 +363,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
             {/* Numero de vuelo y clase de cabina */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Numero de Vuelo</label>
+                    <label className={labelClass}>Número de vuelo</label>
                     <input
                         className={inputClass}
                         placeholder="AR1234"
@@ -395,7 +399,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     <input className={inputClass} placeholder="BUE" value={form.origin || ""} onChange={(event) => setForm({ ...form, origin: event.target.value.toUpperCase() })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Ciudad Origen</label>
+                    <label className={labelClass}>Ciudad de origen</label>
                     <input
                         className={inputClass}
                         placeholder="Buenos Aires"
@@ -410,7 +414,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     <input className={inputClass} placeholder="MIA" value={form.destination || ""} onChange={(event) => setForm({ ...form, destination: event.target.value.toUpperCase() })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Ciudad Destino</label>
+                    <label className={labelClass}>Ciudad de destino</label>
                     <input
                         className={inputClass}
                         placeholder="Miami"
@@ -425,11 +429,11 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
             {/* Fechas y horas de salida/llegada */}
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <div>
-                    <label className={labelClass}>Fecha Salida</label>
+                    <label className={labelClass}>Fecha de salida</label>
                     <input type="date" className={inputClass} value={form.departureDate || ""} onChange={(event) => setForm({ ...form, departureDate: event.target.value })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Hora Salida</label>
+                    <label className={labelClass}>Hora de salida</label>
                     <input
                         type="time"
                         className={inputClass}
@@ -440,11 +444,11 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Fecha Llegada</label>
+                    <label className={labelClass}>Fecha de llegada</label>
                     <input type="date" className={inputClass} value={form.arrivalDate || ""} onChange={(event) => setForm({ ...form, arrivalDate: event.target.value })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Hora Llegada</label>
+                    <label className={labelClass}>Hora de llegada</label>
                     <input
                         type="time"
                         className={inputClass}
@@ -470,7 +474,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Numero Confirmacion</label>
+                    <label className={labelClass}>Número de confirmación</label>
                     <input
                         className={inputClass}
                         placeholder="CF-00001"
@@ -481,7 +485,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Numero Ticket</label>
+                    <label className={labelClass}>Número de ticket</label>
                     <input
                         className={inputClass}
                         placeholder="TK-00001"
@@ -496,7 +500,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
             {/* Equipaje y cantidad de pasajeros */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Equipaje Incluido</label>
+                    <label className={labelClass}>Equipaje incluido</label>
                     <input
                         className={inputClass}
                         placeholder="1 maleta 23kg + carry-on"
@@ -507,7 +511,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Cantidad Pasajeros</label>
+                    <label className={labelClass}>Cantidad de pasajeros</label>
                     <input
                         type="number"
                         min="1"
@@ -691,8 +695,8 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
             {/* Nombre y ciudad son OBLIGATORIOS — el backend los requiere en HotelBooking */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {/* === NOMBRE DEL HOTEL = BUSCADOR + CARGA EN UN SOLO CAMPO ===
-                    Escribis el hotel: si esta en tu tarifario aparecen las opciones (por
-                    proveedor y precio) para elegir y autocompletar todo; si no esta, ese
+                    Escribís el hotel: si está en tu tarifario aparecen las opciones (por
+                    proveedor y precio) para elegir y autocompletar todo; si no está, ese
                     texto queda como el hotel nuevo y cargas el resto a mano. El dropdown va
                     ANCLADO a este campo (contenedor relative) para no escaparse. */}
                 <div className="relative">
@@ -771,7 +775,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                                                     className="flex w-full items-center justify-between p-3 text-left transition-colors hover:bg-emerald-50/50 dark:hover:bg-emerald-900/10"
                                                 >
                                                     <div className="flex-1">
-                                                        <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{rate.roomType || "Habitacion Estandar"}</div>
+                                                        <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{rate.roomType || "Habitación estándar"}</div>
                                                         {/* el proveedor de la tarifa, bien visible: al elegir queda vinculado */}
                                                         <div className="text-[10px] text-slate-500">{rate.mealPlan || "Solo Alojamiento"} • <span className="font-semibold text-indigo-500">{rate.supplierName}</span></div>
                                                     </div>
@@ -794,7 +798,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                             className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 shadow-lg dark:border-amber-900/40 dark:bg-amber-950 dark:text-amber-300"
                             onMouseDown={(e) => e.preventDefault()}
                         >
-                            No esta en tu tarifario. Segui cargando los datos (ciudad, fechas, precio): se agrega como hotel nuevo.
+                            No está en tu tarifario. Seguí cargando los datos (ciudad, fechas, precio) y se da de alta como hotel nuevo.
                         </div>
                     )}
                 </div>
@@ -802,7 +806,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                     <label className={labelClass}>Ciudad *</label>
                     <input
                         className={inputClass}
-                        placeholder="Buenos Aires, Cancun..."
+                        placeholder="Buenos Aires, Cancún..."
                         value={form.city || ""}
                         onChange={(event) => setForm({ ...form, city: event.target.value })}
                         disabled={disabled}
@@ -842,7 +846,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                     <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{nights}</div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Dias</div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Días</div>
                     <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{days}</div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
@@ -862,7 +866,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                     className="flex w-full items-center justify-between p-3 text-left text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/50"
                     data-testid="hotel-more-details-toggle"
                 >
-                    <span>Mas detalles del hotel (opcional)</span>
+                    <span>Más detalles del hotel</span>
                     {showDetails ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
                 </button>
 
@@ -871,10 +875,10 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                         {/* Pais y direccion — opcionales, util para el voucher del pasajero */}
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
-                                <label className={labelClass}>Pais</label>
+                                <label className={labelClass}>País</label>
                                 <input
                                     className={inputClass}
-                                    placeholder="Argentina, Mexico..."
+                                    placeholder="Argentina, México..."
                                     value={form.country || ""}
                                     onChange={(event) => setForm({ ...form, country: event.target.value })}
                                     disabled={disabled}
@@ -882,7 +886,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                                 />
                             </div>
                             <div>
-                                <label className={labelClass}>Direccion</label>
+                                <label className={labelClass}>Dirección</label>
                                 <input
                                     className={inputClass}
                                     placeholder="Av. Libertador 1234..."
@@ -915,7 +919,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                                 />
                             </div>
                             <div>
-                                <label className={labelClass}>Tipo de Habitacion</label>
+                                <label className={labelClass}>Tipo de habitación</label>
                                 <select
                                     className={inputClass}
                                     value={form.roomType || "Doble"}
@@ -940,11 +944,11 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                                     disabled={disabled}
                                     data-testid="hotel-meal-plan"
                                 >
-                                    <option value="Solo Alojamiento">Solo Alojamiento</option>
+                                    <option value="Solo Alojamiento">Solo alojamiento</option>
                                     <option value="Desayuno">Desayuno</option>
-                                    <option value="Media Pension">Media Pension</option>
-                                    <option value="Pension Completa">Pension Completa</option>
-                                    <option value="All Inclusive">All Inclusive</option>
+                                    <option value="Media Pension">Media pensión</option>
+                                    <option value="Pension Completa">Pensión completa</option>
+                                    <option value="All Inclusive">All inclusive</option>
                                 </select>
                             </div>
                         </div>
@@ -994,7 +998,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
     return (
         <div className="space-y-4">
             {/* === BUSCADOR PRIMERO ===
-                El agente escribe el trayecto (ej. "Aeropuerto-Hotel Cancún") y elige del tarifario.
+                Escribí el trayecto (ej. "Aeropuerto-Hotel Cancún") y elegí del tarifario.
                 Al elegir, el proveedor queda vinculado automaticamente. */}
             <div>
                 <label className={labelClass}>Trayecto</label>
@@ -1074,11 +1078,11 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
             {/* Fecha y hora del traslado de ida */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className={labelClass}>Fecha Pick-up</label>
+                    <label className={labelClass}>Fecha del pick-up</label>
                     <input type="date" className={inputClass} value={form.pickupDate || ""} onChange={(event) => setForm({ ...form, pickupDate: event.target.value })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Hora Pick-up</label>
+                    <label className={labelClass}>Hora del pick-up</label>
                     <input type="time" className={inputClass} value={form.pickupTime || ""} onChange={(event) => setForm({ ...form, pickupTime: event.target.value })} disabled={disabled} />
                 </div>
             </div>
@@ -1097,7 +1101,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Cantidad Pasajeros</label>
+                    <label className={labelClass}>Cantidad de pasajeros</label>
                     <input
                         type="number"
                         min="1"
@@ -1113,7 +1117,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
             {/* Vuelo asociado (util para in-out aeropuerto) y numero de confirmacion */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                    <label className={labelClass}>Vuelo Asociado</label>
+                    <label className={labelClass}>Vuelo asociado</label>
                     <input
                         className={inputClass}
                         placeholder="AR1234 (vuelo que se recibe)"
@@ -1124,7 +1128,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Numero Confirmacion</label>
+                    <label className={labelClass}>Número de confirmación</label>
                     <input
                         className={inputClass}
                         placeholder="CF-00001"
@@ -1156,7 +1160,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
             {form.isRoundTrip && (
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label className={labelClass}>Fecha Retorno</label>
+                        <label className={labelClass}>Fecha de retorno</label>
                         <input
                             type="date"
                             className={inputClass}
@@ -1167,7 +1171,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
                         />
                     </div>
                     <div>
-                        <label className={labelClass}>Hora Retorno</label>
+                        <label className={labelClass}>Hora de retorno</label>
                         <input
                             type="time"
                             className={inputClass}
@@ -1216,7 +1220,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
     return (
         <div className="space-y-4">
             {/* === BUSCADOR PRIMERO ===
-                El agente escribe el nombre del paquete y elige del tarifario.
+                Escribí el nombre del paquete y elegí del tarifario.
                 Al elegir, packageName y proveedor quedan vinculados automaticamente. */}
             <div>
                 <label className={labelClass}>Nombre del paquete</label>
@@ -1291,7 +1295,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
                     <label className={labelClass}>Destino</label>
                     <input
                         className={inputClass}
-                        placeholder="Cancun, Mexico"
+                        placeholder="Cancún, México"
                         value={form.destination || ""}
                         onChange={(event) => setForm({ ...form, destination: event.target.value })}
                         disabled={disabled}
@@ -1342,7 +1346,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
 
             {/* Numero de confirmacion del operador */}
             <div>
-                <label className={labelClass}>Numero Confirmacion</label>
+                <label className={labelClass}>Número de confirmación</label>
                 <input
                     className={inputClass}
                     placeholder="CF-00001"
@@ -1356,7 +1360,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
             {/* Checkboxes: que servicios incluye el paquete */}
             <div className={panelClass}>
                 <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    Servicios Incluidos en el Paquete
+                    Servicios incluidos en el paquete
                 </p>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {[
@@ -1383,11 +1387,11 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
 
             {/* Itinerario: descripcion detallada del programa dia por dia */}
             <div>
-                <label className={labelClass}>Itinerario / Descripcion</label>
+                <label className={labelClass}>Itinerario / descripción</label>
                 <textarea
                     className={`${inputClass} resize-none`}
                     rows={4}
-                    placeholder="Dia 1: Llegada y traslado al hotel. Dia 2: Tour por la ciudad..."
+                    placeholder="Día 1: llegada y traslado al hotel. Día 2: tour por la ciudad..."
                     value={form.itinerary || ""}
                     onChange={(event) => setForm({ ...form, itinerary: event.target.value })}
                     disabled={disabled}
@@ -1554,7 +1558,7 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
                     />
                 </div>
                 <div>
-                    <label className={labelClass}>Zona / Destinos Cubiertos</label>
+                    <label className={labelClass}>Zona / destinos cubiertos</label>
                     <input
                         className={inputClass}
                         placeholder="Mundo excepto USA y Canada..."
@@ -1569,7 +1573,7 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
             {/* Vigencia: date-only. Igual que checkIn/checkOut en Hotel — NO incluye hora. */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className={labelClass}>Vigencia Desde *</label>
+                    <label className={labelClass}>Vigencia desde *</label>
                     <div className="relative">
                         <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                         <input
@@ -1584,7 +1588,7 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
                     </div>
                 </div>
                 <div>
-                    <label className={labelClass}>Vigencia Hasta *</label>
+                    <label className={labelClass}>Vigencia hasta *</label>
                     <div className="relative">
                         <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                         <input
@@ -1630,7 +1634,7 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
 
             {/* Numero de confirmacion del operador/aseguradora */}
             <div>
-                <label className={labelClass}>Nro. Confirmacion</label>
+                <label className={labelClass}>Nro. de confirmación</label>
                 <input
                     className={inputClass}
                     placeholder="CF-00001"
@@ -1750,7 +1754,7 @@ function GenericServiceForm({ form, setForm, suppliers, onRateSelect, disabled, 
             </div>
 
             <div>
-                <label className={labelClass}>Descripcion *</label>
+                <label className={labelClass}>Descripción *</label>
                 <input className={inputClass} value={form.description || ""} onChange={(event) => setForm({ ...form, description: event.target.value })} required disabled={disabled} />
             </div>
 
@@ -1764,7 +1768,7 @@ function GenericServiceForm({ form, setForm, suppliers, onRateSelect, disabled, 
                     <input type="date" className={inputClass} value={form.returnDate || ""} onChange={(event) => setForm({ ...form, returnDate: event.target.value })} disabled={disabled} />
                 </div>
                 <div>
-                    <label className={labelClass}>Confirmacion</label>
+                    <label className={labelClass}>Confirmación</label>
                     <input className={inputClass} value={form.confirmationNumber || ""} onChange={(event) => setForm({ ...form, confirmationNumber: event.target.value })} disabled={disabled} />
                 </div>
             </div>
@@ -1804,8 +1808,8 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
     // la VISTA: el valor preciso sigue en form.unitNetCost para que el total no se desvie.
     const netValue = roundMoney(isHotel ? (form.unitNetCost || 0) : (form.netCost || 0));
     const saleValue = roundMoney(isHotel ? (form.unitSalePrice || 0) : (form.salePrice || 0));
-    const netLabel = isHotel ? "Costo por noche *" : "Costo Neto *";
-    const saleLabel = isHotel ? "Venta por noche *" : "Precio Venta *";
+    const netLabel = isHotel ? "Costo por noche *" : "Costo neto *";
+    const saleLabel = isHotel ? "Venta por noche *" : "Precio de venta *";
 
     const handleNet = (value) => {
         if (isHotel) {
@@ -2286,8 +2290,8 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 //   Argentina (UTC-3) se mandaria como "17:30Z" y el voucher del pasajero
                 //   mostraria la hora equivocada.
                 //   El contrato con el backend es: mandar "YYYY-MM-DDTHH:mm:00" SIN sufijo Z.
-                if (!form.departureDate) throw new Error("Completa la fecha de salida.");
-                if (!form.arrivalDate) throw new Error("Completa la fecha de llegada.");
+                if (!form.departureDate) throw new Error("Completá la fecha de salida.");
+                if (!form.arrivalDate) throw new Error("Completá la fecha de llegada.");
                 payload.departureTime = `${form.departureDate}T${form.departureTime || "00:00"}:00`;
                 payload.arrivalTime = `${form.arrivalDate}T${form.arrivalTime || "00:00"}:00`;
 
@@ -2309,10 +2313,10 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 // Validacion minima de hotel: nombre y ciudad son los campos propios de HotelBooking en el backend.
                 // El tarifario (rateId) ya NO es obligatorio — el backend acepta hotel sin tarifa.
                 if (!form.hotelName || !form.hotelName.trim()) {
-                    throw new Error("Ingresa el nombre del hotel.");
+                    throw new Error("Cargá el nombre del hotel.");
                 }
                 if (!form.city || !form.city.trim()) {
-                    throw new Error("Ingresa la ciudad del hotel.");
+                    throw new Error("Cargá la ciudad del hotel.");
                 }
                 // El backend exige proveedor (ResolveSupplierIdAsync tira si va vacio).
                 // Como ahora el hotel se carga a mano, pedimos el proveedor con un mensaje
@@ -2342,7 +2346,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 //   Convertir a UTC correria la hora y el pasajero recibiria el voucher con
                 //   horario equivocado (mismo problema que con el vuelo).
                 //   Mandamos "YYYY-MM-DDTHH:mm:00" SIN sufijo Z.
-                if (!form.pickupDate) throw new Error("Completa la fecha de pick-up.");
+                if (!form.pickupDate) throw new Error("Completá la fecha del pick-up.");
                 payload.pickupDateTime = `${form.pickupDate}T${form.pickupTime || "00:00"}:00`;
 
                 // returnDateTime: solo se manda si es ida y vuelta; null si no lo es.
@@ -2421,7 +2425,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 showSuccess("Servicio guardado");
                 onClose();
             } else {
-                showSuccess(`Habitacion "${form.roomType || "Estandar"}" agregada correctamente.`);
+                showSuccess(`Habitación "${form.roomType || "estándar"}" agregada.`);
                 setManualHotelPricing({ netCost: false, salePrice: false });
                 // Limpia solo los campos de la VARIANTE (tarifa, precios, habitacion, asignacion).
                 // Conserva los datos del hotel en si (nombre, ciudad, pais, direccion, estrellas,
@@ -2442,7 +2446,11 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 }));
             }
         } catch (error) {
-            showError(error.message || "Error al guardar");
+            // No usamos error.message directo: puede traer texto crudo del framework/red
+            // en inglés (ej. "Internal Server Error", "Request failed") — gate de
+            // exposición de datos. getApiErrorMessage prioriza el mensaje de negocio que
+            // manda el backend y, si no hay, cae al fallback fijo en español.
+            showError(getApiErrorMessage(error, "No se pudo guardar el servicio. Probá de nuevo."));
         } finally {
             setLoading(false);
         }
@@ -2466,7 +2474,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                 <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-indigo-500 to-sky-600 p-4 text-white dark:border-slate-700">
                     <h2 className="flex items-center gap-2 text-lg font-semibold">
                         {currentType ? <currentType.icon className="h-5 w-5" /> : null}
-                        {serviceToEdit ? "Editar Servicio" : "Agregar Servicio"}
+                        {serviceToEdit ? "Editar servicio" : "Agregar servicio"}
                     </h2>
                     <button onClick={onClose} className="rounded-lg p-2 text-white/80 transition-colors hover:bg-white/20 hover:text-white">
                         <X className="h-5 w-5" />
@@ -2531,7 +2539,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                     {isLocked ? (
                         <div className="mb-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-100 p-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
                             <AlertCircle className="h-5 w-5" />
-                            <p>Reserva en estado <b>{reservaStatus}</b>. La edicion economica queda bloqueada.</p>
+                            <p>Reserva <b>{traducirEstadoReserva(reservaStatus)}</b>: los precios y costos no se pueden cambiar.</p>
                         </div>
                     ) : null}
 
@@ -2599,14 +2607,14 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                                 disabled={loading}
                                 className="rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400"
                             >
-                                Guardar y Agregar Otra Hab.
+                                Guardar y agregar otra habitación
                             </button>
                         )}
                         <button type="button" onClick={onClose} className="rounded-xl px-5 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
                             Cancelar
                         </button>
                         <button type="submit" disabled={loading} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm text-white disabled:opacity-50 shadow-lg shadow-indigo-200 dark:shadow-none">
-                            {loading ? "Guardando..." : (serviceToEdit ? "Actualizar" : "Guardar Servicio")}
+                            {loading ? "Guardando..." : (serviceToEdit ? "Actualizar" : "Guardar servicio")}
                         </button>
                     </div>
                 </form>

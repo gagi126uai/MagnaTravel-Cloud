@@ -447,7 +447,7 @@ export default function OperationalFinanceSettingsTab() {
                 Caducidad de presupuestos y cotizaciones
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Si no avanzan, pasan solos a &quot;Perdido&quot;.
+                Si no avanzan, pasan solas a &quot;Perdida&quot;.
               </p>
             </div>
 

@@ -2,7 +2,7 @@
  * Formulario de Asistencia al viajero dentro de la ficha de carga en línea (ServiceInlineCard).
  *
  * Campos a la vista SIEMPRE (sin revelado progresivo — guía UX ronda 1):
- *   Buscador del plan · Proveedor · Vigencia desde · Vigencia hasta
+ *   Buscador del plan · Operador · Vigencia desde · Vigencia hasta
  *   Días (calculados solos) · Pasajeros · Costo · Venta · Moneda
  *
  * Más detalles (plegado):
@@ -83,14 +83,14 @@ function NewAssistanceBox({ newProduct, onChange, suppliers }) {
                     />
                 </div>
                 <div>
-                    <label className={LABEL_BASE}>Proveedor *</label>
+                    <label className={LABEL_BASE}>Operador *</label>
                     <select
                         className={INPUT_NORMAL}
                         value={newProduct.supplierPublicId || ""}
                         onChange={(event) => onChange({ ...newProduct, supplierPublicId: event.target.value })}
                         required
                         data-testid="new-assistance-supplier"
-                        aria-label="Proveedor del plan nuevo"
+                        aria-label="Operador del plan nuevo"
                     >
                         <option value="">Seleccioná...</option>
                         {suppliers.map((supplier) => (
@@ -149,7 +149,10 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
         ? [
               {
                   publicId: form.supplierId,
-                  name: form.supplierName || `Proveedor sugerido (${String(form.supplierId).slice(0, 8)}…)`,
+                  // Sin supplierName no mostramos el ID interno recortado (eso es un dato
+                  // técnico que un usuario no programador no puede leer) — mejor un texto
+                  // genérico que igual identifica que hay un operador sugerido (2026-08-03).
+                  name: form.supplierName || "Operador sugerido",
               },
               ...suppliers,
           ]
@@ -237,10 +240,10 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
                 />
             )}
 
-            {/* === PROVEEDOR === */}
+            {/* === OPERADOR === */}
             {!form.newCatalogProduct && (
                 <div>
-                    <label className={LABEL_BASE} htmlFor="assistance-proveedor">Proveedor</label>
+                    <label className={LABEL_BASE} htmlFor="assistance-proveedor">Operador</label>
                     <select
                         id="assistance-proveedor"
                         className={camposSugeridos.supplierId ? INPUT_SUGERIDO : INPUT_NORMAL}
@@ -250,9 +253,9 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
                         }}
                         data-testid="assistance-supplier"
-                        aria-label="Proveedor de la asistencia"
+                        aria-label="Operador de la asistencia"
                     >
-                        <option value="">Seleccioná un proveedor...</option>
+                        <option value="">Seleccioná un operador...</option>
                         {suppliersFull.map((supplier) => (
                             <option
                                 key={supplier.publicId || supplier.PublicId}

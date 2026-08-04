@@ -25,11 +25,11 @@ function formatStatus(status) {
     case "Draft":
       return "Borrador";
     case "PendingAuthorization":
-      return "Pendiente Autorización";
+      return "Pendiente de autorización";
     case "Issued":
       return "Emitido";
     case "UploadedExternal":
-      return "Cargado Externo";
+      return "Subido a mano";
     case "Revoked":
       return "Anulado";
     default:
@@ -306,7 +306,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
   const validateScope = () => {
     if (scope === "PasajerosSeleccionados" && selectedPassengerIds.length === 0) {
-      toast.error("Selecciona al menos un pasajero para este alcance.");
+      toast.error("Elegí al menos un pasajero.");
       return false;
     }
     if (scope === "TodosLosPasajeros" && passengers.length === 0) {
@@ -345,11 +345,11 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
   const handleUploadExternal = async () => {
     if (!externalFile) {
-      toast.error("Selecciona el archivo del documento externo.");
+      toast.error("Elegí el archivo que querés subir.");
       return;
     }
     if (!externalOrigin.trim()) {
-      toast.error("Indica el origen del documento externo.");
+      toast.error("Escribí de dónde salió el documento.");
       return;
     }
     if (!validateScope()) return;
@@ -390,11 +390,11 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
   const handleAuthSubmit = () => {
     if (exceptionalReason.trim().length < 10) {
-      toast.error("Para emitir con saldo pendiente, indica una justificación de al menos 10 caracteres.");
+      toast.error("La reserva tiene saldo pendiente: escribí el motivo (al menos 10 caracteres).");
       return;
     }
     if (!authorizedBySuperiorUserId) {
-      toast.error("Selecciona el supervisor que debe autorizar esta emisión.");
+      toast.error("Elegí quién autoriza esta emisión.");
       return;
     }
     executeIssue(voucherToIssue.publicId, exceptionalReason.trim(), authorizedBySuperiorUserId, issueReason.trim());
@@ -448,7 +448,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
   const handleRejectSubmit = async () => {
     if (rejectReason.trim().length < 10) {
-      toast.error("Por favor, indica un motivo de rechazo válido.");
+      toast.error("Escribí por qué lo rechazás.");
       return;
     }
     try {
@@ -473,7 +473,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
   const handleRevokeSubmit = async () => {
     if (!isAdmin() && revokeReason.trim().length < 10) {
-      toast.error("Indica un motivo de anulacion de al menos 10 caracteres.");
+      toast.error("Escribí un motivo de al menos 10 caracteres.");
       return;
     }
     try {
@@ -686,7 +686,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             Gestiona vouchers generados por el sistema y archivos cargados externamente.
           </p>
         </div>
-        {/* "Añadir Documento" es escritura: se oculta en solo lectura (estado congelado) */}
+        {/* "Agregar documento" es escritura: se oculta en solo lectura (estado congelado) */}
         {!soloLectura && (
           <button
             type="button"
@@ -697,7 +697,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-indigo-700"
           >
             <Plus className="h-4 w-4" />
-            Añadir Documento
+            Agregar documento
           </button>
         )}
       </div>
@@ -732,7 +732,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
       {documentView === "revoked" ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
-          Estos documentos estan anulados y se conservan solo como trazabilidad. No se pueden emitir, aprobar, rechazar ni enviar.
+          Estos documentos están anulados y quedan solo como registro. No se pueden emitir, aprobar, rechazar ni enviar.
         </div>
       ) : null}
 
@@ -749,12 +749,12 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             </span>
             <p className="mt-1 text-xs">
               {documentView === "revoked"
-                ? "Los documentos anulados se mostraran aca cuando existan."
+                ? "Acá van a aparecer los documentos que anules."
                 : revokedVouchers.length > 0
-                ? "Revisa la solapa Anulados para ver documentos historicos."
+                ? "Mirá la solapa Anulados para ver los que diste de baja."
                 : soloLectura
-                ? "Esta reserva esta en solo lectura: no se agregan documentos nuevos."
-                : "Añade uno usando el botón superior derecho."}
+                ? "Esta reserva está en solo lectura: no se agregan documentos nuevos."
+                : "Sumá uno con el botón de arriba a la derecha."}
             </p>
           </div>
         ) : (
@@ -952,7 +952,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
       <Modal 
         isOpen={isAddModalOpen} 
         onClose={() => setIsAddModalOpen(false)} 
-        title={addMode === "select" ? "Añadir Documento" : addMode === "generate" ? "Generar Documento del Sistema" : "Subir Documento Externo"}
+        title={addMode === "select" ? "Agregar documento" : addMode === "generate" ? "Generar documento" : "Subir un documento"}
       >
         {addMode === "select" ? (
           <div className="grid gap-4 sm:grid-cols-2">
@@ -964,8 +964,8 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                 <FilePlus2 className="h-6 w-6" />
               </div>
               <div className="text-center">
-                <div className="text-sm font-black text-slate-900 dark:text-white">Generar Sistema</div>
-                <div className="mt-1 text-xs font-medium text-slate-500">Crea un voucher automáticamente usando los datos de la reserva</div>
+                <div className="text-sm font-black text-slate-900 dark:text-white">Generar</div>
+                <div className="mt-1 text-xs font-medium text-slate-500">Armamos el voucher con los datos de la reserva</div>
               </div>
             </button>
             <button
@@ -976,8 +976,8 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                 <UploadCloud className="h-6 w-6" />
               </div>
               <div className="text-center">
-                <div className="text-sm font-black text-slate-900 dark:text-white">Subir Externo</div>
-                <div className="mt-1 text-xs font-medium text-slate-500">Carga un documento en formato PDF o imagen emitido por un tercero</div>
+                <div className="text-sm font-black text-slate-900 dark:text-white">Subir un archivo</div>
+                <div className="mt-1 text-xs font-medium text-slate-500">Subí un PDF o una imagen que emitió otra empresa</div>
               </div>
             </button>
           </div>
@@ -995,7 +995,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             {addMode === "upload" && (
               <div className="space-y-4">
                 <div>
-                  <label className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400">Origen Externo</label>
+                  <label className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400">De dónde salió</label>
                   <input
                     value={externalOrigin}
                     onChange={(event) => setExternalOrigin(event.target.value)}
@@ -1053,15 +1053,15 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
       <Modal 
         isOpen={isAuthModalOpen} 
         onClose={() => setIsAuthModalOpen(false)} 
-        title="Autorización Comercial Requerida"
+        title="Necesitás autorización"
       >
         <div className="space-y-4">
           <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
-              <div className="text-sm font-black">Cobro Pendiente: {formatMoney(reserva?.balance)}</div>
+              <div className="text-sm font-black">Cobro pendiente: {formatMoney(reserva?.balance)}</div>
               <div className="mt-1 text-xs font-medium">
-                Esta reserva tiene un saldo deudor. Debes solicitar autorización a un supervisor para emitir los documentos.
+                La reserva tiene saldo pendiente. Para emitir los documentos, pedí autorización a un supervisor.
               </div>
             </div>
           </div>
@@ -1084,7 +1084,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               onChange={(event) => setAuthorizedBySuperiorUserId(event.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
             >
-              <option value="">Selecciona el Supervisor...</option>
+              <option value="">Elegí un supervisor...</option>
               {supervisors.map(sup => (
                 <option key={sup.id} value={sup.id}>{sup.fullName || sup.email}</option>
               ))}
@@ -1106,17 +1106,17 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-amber-700 disabled:opacity-60"
             >
               {issuingId === voucherToIssue?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Solicitar Autorización
+              Pedir autorización
             </button>
           </div>
         </div>
       </Modal>
 
       {/* MODAL RECHAZAR */}
-      <Modal 
-        isOpen={isRejectModalOpen} 
-        onClose={() => setIsRejectModalOpen(false)} 
-        title="Rechazar Autorización"
+      <Modal
+        isOpen={isRejectModalOpen}
+        onClose={() => setIsRejectModalOpen(false)}
+        title="Rechazar"
       >
         <div className="space-y-4">
           <div>
@@ -1126,7 +1126,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               onChange={(event) => setRejectReason(event.target.value)}
               rows={3}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-              placeholder="Indica al vendedor por qué no autorizas la emisión..."
+              placeholder="Contale al vendedor por qué no lo autorizás..."
             />
           </div>
           <div className="flex justify-end gap-3 pt-3">
@@ -1154,28 +1154,32 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
       <Modal
         isOpen={isRevokeModalOpen}
         onClose={() => setIsRevokeModalOpen(false)}
-        title="Anular Documento"
+        title="Anular documento"
       >
         <div className="space-y-4">
           <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
             <Ban className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
-              <div className="text-sm font-black">El documento quedara trazable como anulado.</div>
+              <div className="text-sm font-black">El documento queda anulado, con registro de quién y cuándo.</div>
               <div className="mt-1 text-xs font-medium">
-                No se podra emitir, aprobar, rechazar ni enviar. El historial conservara quien lo anulo y por que.
+                No se va a poder emitir, aprobar, rechazar ni enviar. Queda registrado quién lo anuló y por qué.
               </div>
             </div>
           </div>
           <div>
             <label className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400">
-              Motivo de Anulacion {isAdmin() ? <span className="text-slate-400 font-normal normal-case tracking-normal">(opcional para administradores)</span> : null}
+              {/* Para no-admin el motivo es obligatorio (mín. 10 caracteres, ver handleRevokeSubmit);
+                  para admin queda opcional. Mismo patrón que RevertStatusModal.jsx. */}
+              Motivo de la anulación {!isAdmin()
+                ? <span className="text-rose-500">* (mín. 10 caracteres)</span>
+                : null}
             </label>
             <textarea
               value={revokeReason}
               onChange={(event) => setRevokeReason(event.target.value)}
               rows={3}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-              placeholder={isAdmin() ? "Opcional: indica el motivo de la anulación..." : "Ej. Se genero con datos incorrectos, se subio el archivo equivocado..."}
+              placeholder={isAdmin() ? "Motivo de la anulación..." : "Ej.: se generó con datos incorrectos, se subió el archivo equivocado..."}
             />
           </div>
           <div className="flex justify-end gap-3 pt-3">
@@ -1193,7 +1197,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-rose-700 disabled:opacity-60"
             >
               {revokingId === voucherToRevoke?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Anular Documento
+              Anular documento
             </button>
           </div>
         </div>
@@ -1250,7 +1254,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
       <Modal
         isOpen={isEditExternalModalOpen}
         onClose={closeEditExternalModal}
-        title="Editar Documento Externo"
+        title="Editar el documento"
       >
         <div className="space-y-5">
           <div>
@@ -1277,7 +1281,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               htmlFor="edit-external-file"
               className="mb-1.5 block text-[11px] font-black uppercase tracking-widest text-slate-400"
             >
-              Reemplazar Archivo
+              Reemplazar el archivo
             </label>
             {/* El archivo es opcional: si no se elige uno, el backend conserva el actual */}
             <input
@@ -1310,7 +1314,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-amber-700 disabled:opacity-60"
             >
               {isSavingExternal ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Guardar Cambios
+              Guardar cambios
             </button>
           </div>
         </div>
@@ -1374,7 +1378,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                     <FileText className="mx-auto mb-3 h-10 w-10 text-slate-400" />
                     <h3 className="text-base font-black text-slate-900 dark:text-white">Vista previa no disponible</h3>
                     <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400">
-                      Este formato no se puede previsualizar en el navegador. Puedes descargarlo para revisarlo.
+                      Este archivo no se puede ver acá. Descargalo para revisarlo.
                     </p>
                   </div>
                 </div>

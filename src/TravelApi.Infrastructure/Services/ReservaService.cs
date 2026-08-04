@@ -680,7 +680,7 @@ public class ReservaService : IReservaService
         // ADR-020: las cantidades agregadas (AdultCount/...) solo se editan en las etapas comerciales
         // tempranas (Cotizacion / Presupuesto). Desde En gestion se cargan pasajeros nominales.
         if (reserva.Status != EstadoReserva.Quotation && reserva.Status != EstadoReserva.Budget)
-            throw new InvalidOperationException("Las cantidades de pasajeros solo se pueden editar en Cotizacion o Presupuesto. Si ya pasó a En gestion, cargá los pasajeros nominales.");
+            throw new InvalidOperationException("Las cantidades se editan en Cotización o Presupuesto. Si la reserva ya está En gestión, cargá los pasajeros con nombre.");
 
         if (counts.AdultCount < 0 || counts.ChildCount < 0 || counts.InfantCount < 0)
             throw new ArgumentException("Las cantidades no pueden ser negativas.");
@@ -947,7 +947,7 @@ public class ReservaService : IReservaService
             AssignmentServiceType.Flight => await ResolveRequiredIdAsync<FlightSegment>(request.ServicePublicIdOrLegacyId, ct),
             AssignmentServiceType.Assistance => await ResolveRequiredIdAsync<AssistanceBooking>(request.ServicePublicIdOrLegacyId, ct),
             AssignmentServiceType.Generic => await ResolveRequiredIdAsync<ServicioReserva>(request.ServicePublicIdOrLegacyId, ct),
-            _ => throw new ArgumentException("ServiceType no soportado.")
+            _ => throw new ArgumentException("Ese tipo de servicio no está disponible.")
         };
 
         // Validar que el servicio pertenezca a la Reserva (defensa en profundidad)
@@ -1087,7 +1087,7 @@ public class ReservaService : IReservaService
         var assignmentId = await ResolveRequiredIdAsync<PassengerServiceAssignment>(assignmentPublicIdOrLegacyId, ct);
         var assignment = await _context.PassengerServiceAssignments
             .FirstOrDefaultAsync(a => a.Id == assignmentId, ct);
-        if (assignment == null) throw new KeyNotFoundException("Asignacion no encontrada");
+        if (assignment == null) throw new KeyNotFoundException("No encontramos esa asignación de pasajeros.");
 
         // ADR-031 v2.1 (§6.5): capturamos los datos para el audit ANTES de borrar (luego ya no estan).
         // La reserva la inferimos del pasajero (la asignacion no la guarda directo).
@@ -1231,7 +1231,7 @@ public class ReservaService : IReservaService
                     var hasCancel = await UserHasPermissionAsync(actorUserId, Permissions.ReservasCancel, ct);
                     if (!hasCancel)
                     {
-                        throw new UnauthorizedAccessException("No tenes permiso para cancelar reservas.");
+                        throw new UnauthorizedAccessException("No tenés permiso para cancelar reservas.");
                     }
 
                     var hasPaymentsOrInvoices = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted, ct)
@@ -1242,7 +1242,7 @@ public class ReservaService : IReservaService
                         if (!hasCancelWithPayment)
                         {
                             throw new UnauthorizedAccessException(
-                                "Cancelar una reserva con cobros o facturas asociadas requiere autorizacion adicional.");
+                                "Cancelar una reserva con cobros o facturas necesita autorización de un supervisor.");
                         }
                     }
                 }
@@ -1307,7 +1307,7 @@ public class ReservaService : IReservaService
                 var hasCancel = await UserHasPermissionAsync(actorUserId, Permissions.ReservasCancel, ct);
                 if (!hasCancel)
                 {
-                    throw new UnauthorizedAccessException("No tenes permiso para anular reservas.");
+                    throw new UnauthorizedAccessException("No tenés permiso para anular reservas.");
                 }
 
                 var hasPaymentsOrInvoices = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted, ct)
@@ -1318,7 +1318,7 @@ public class ReservaService : IReservaService
                     if (!hasCancelWithPayment)
                     {
                         throw new UnauthorizedAccessException(
-                            "Anular una reserva con cobros o facturas asociadas requiere autorizacion adicional.");
+                            "Anular una reserva con cobros o facturas necesita autorización de un supervisor.");
                     }
                 }
             }
@@ -1832,7 +1832,7 @@ public class ReservaService : IReservaService
             .AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE), ct);
         if (hasInvoiceWithCae)
         {
-            dto.HardBlockers.Add("La reserva tiene facturas AFIP emitidas con CAE. No se puede revertir el estado (rompe la historia fiscal). Si necesitas anular, emiti una Nota de Credito primero.");
+            dto.HardBlockers.Add("La reserva tiene facturas AFIP emitidas con CAE. No se puede volver atrás: ya hay facturas emitidas. Si la querés anular, emití primero una nota de crédito.");
             dto.AllowedTargets.Clear();
         }
 
@@ -1900,9 +1900,12 @@ public class ReservaService : IReservaService
         // ADR-020: matriz de reverts UNICA (murio el ciclo dual).
         if (!AllowedRevertTransitions.TryGetValue(reserva.Status, out var allowedTargets) || !allowedTargets.Contains(request.TargetStatus, StringComparer.OrdinalIgnoreCase))
         {
+            // Categoria 5 #2 del inventario de textos (2026-08-03), "los 10 peores" #2: el mensaje viejo
+            // devolvia los nombres INTERNOS del enum de estado (Budget, InManagement, Confirmed...) al
+            // usuario final, que no es programador. La lista de opciones legales ya la pinta la pantalla
+            // (RevertStatusModal via GetRevertOptionsAsync); este mensaje solo explica por que la eligio mal.
             throw new InvalidOperationException(
-                $"No se puede revertir desde {reserva.Status} a {request.TargetStatus}. " +
-                $"Transiciones permitidas desde {reserva.Status}: {(allowedTargets == null ? "(ninguna)" : string.Join(", ", allowedTargets))}.");
+                "Desde este estado no se puede volver a ese otro. Elegí una de las opciones que ofrece la pantalla.");
         }
 
         // ADR-020 (B1): el revert de Lost vuelve SOLO al estado de origen registrado (deterministico).
@@ -1910,14 +1913,19 @@ public class ReservaService : IReservaService
         {
             var legalTarget = await ResolveLostRevertTargetAsync(id, ct);
             if (!string.Equals(request.TargetStatus, legalTarget, StringComparison.OrdinalIgnoreCase))
+                // P-1 (review backend-dotnet-reviewer, 2026-08-04): legalTarget es el valor CRUDO del enum de
+                // estado (ej. "Budget"), no una palabra del idioma de negocio. Antes se interpolaba directo en
+                // el mensaje y el usuario leia "solo vuelve a Budget". La pantalla YA publica el destino legal
+                // en AllowedTargets (ver GetRevertOptionsAsync, linea ~1821), asi que el mensaje de ACA no
+                // necesita nombrar el estado: solo explica por que la eligio mal.
                 throw new InvalidOperationException(
-                    $"Una reserva Perdida solo puede volver a '{legalTarget}' (el estado desde el que se perdio).");
+                    "Una reserva Perdida solo vuelve al estado en el que estaba cuando se perdió. Elegí la opción que ofrece la pantalla.");
         }
 
         // Hard blockers
         var hasInvoiceWithCae = await _context.Invoices.AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE), ct);
         if (hasInvoiceWithCae)
-            throw new InvalidOperationException("La reserva tiene facturas AFIP emitidas con CAE. No se puede revertir (rompe la historia fiscal).");
+            throw new InvalidOperationException("La reserva tiene facturas AFIP emitidas con CAE. No se puede volver atrás: ya hay facturas emitidas.");
 
         // ADR-020 (M5): el unico revert con gate es InManagement -> Budget (sin pagos vivos + sin
         // facturas + sin servicios resueltos). El gate unificado vive en EnsureCanRevertToBudgetAsync.
@@ -1952,13 +1960,13 @@ public class ReservaService : IReservaService
         if (!actorIsAdmin)
         {
             if (string.IsNullOrWhiteSpace(request.AuthorizedBySuperiorUserId))
-                throw new InvalidOperationException("Necesitas autorizacion de un supervisor para revertir el estado de la reserva. Selecciona un supervisor en el formulario.");
+                throw new InvalidOperationException("Para cambiar el estado necesitás que te autorice un supervisor. Elegí uno en el formulario.");
             if (reason.Length < 10)
-                throw new InvalidOperationException("Indica un motivo de la reversion (al menos 10 caracteres).");
+                throw new InvalidOperationException("Escribí el motivo del cambio de estado (al menos 10 caracteres).");
 
             var superior = await _context.Users.AsNoTracking()
                 .FirstOrDefaultAsync(u => u.Id == request.AuthorizedBySuperiorUserId && u.IsActive, ct)
-                ?? throw new InvalidOperationException("El supervisor seleccionado no existe o esta inactivo.");
+                ?? throw new InvalidOperationException("Ese supervisor no existe o está dado de baja.");
 
             var superiorRoles = await _context.UserRoles.AsNoTracking()
                 .Where(ur => ur.UserId == superior.Id)
@@ -2273,7 +2281,7 @@ public class ReservaService : IReservaService
             var credit = await _context.ClientCreditEntries
                 .FirstOrDefaultAsync(c => c.SourceBridgePaymentId == bridge.Id, ct)
                 ?? throw new InvalidOperationException(
-                    "No se pudo identificar el saldo a favor asociado a esta anulación. Contactá a soporte técnico antes de continuar.");
+                    "No pudimos ubicar el saldo a favor de esta anulación. Avisale al administrador antes de seguir.");
 
             // Defensa en profundidad: EvaluateCancelledRevertBlockersAsync YA revalidó esto arriba, en la MISMA
             // transacción; esta es la última barrera antes de tocar plata.
@@ -2444,11 +2452,11 @@ public class ReservaService : IReservaService
         // El candado solo existe de Confirmada en adelante; antes la edicion ya es libre.
         if (!ReservaLockGuard.IsLockedStatus(reserva.Status))
             throw new InvalidOperationException(
-                "La reserva no esta bajo candado: todavia se puede editar libremente, no necesita autorizacion.");
+                "Esta reserva no tiene candado: se puede editar sin pedir autorización.");
 
         var reason = (request.Reason ?? "").Trim();
         if (reason.Length < 10)
-            throw new InvalidOperationException("Indica un motivo de la edicion (al menos 10 caracteres).");
+            throw new InvalidOperationException("Escribí el motivo del cambio (al menos 10 caracteres).");
 
         // Quien autoriza: el propio actor si tiene el permiso (Admin lo tiene por bypass de rol),
         // o un autorizante explicito que lo tenga. Mismo modelo de seleccion que RevertStatusAsync.
@@ -2467,11 +2475,11 @@ public class ReservaService : IReservaService
         {
             if (string.IsNullOrWhiteSpace(request.AuthorizedByUserId))
                 throw new InvalidOperationException(
-                    "Necesitas que alguien con permiso autorice la edicion de una reserva confirmada. Selecciona un autorizante.");
+                    "Para editar una reserva confirmada necesitás que alguien la autorice. Elegí quién.");
 
             var authorizer = await _context.Users.AsNoTracking()
                 .FirstOrDefaultAsync(u => u.Id == request.AuthorizedByUserId && u.IsActive, ct)
-                ?? throw new InvalidOperationException("El autorizante seleccionado no existe o esta inactivo.");
+                ?? throw new InvalidOperationException("Esa persona no existe o está dada de baja.");
 
             var authorizerRoles = await _context.UserRoles.AsNoTracking()
                 .Where(ur => ur.UserId == authorizer.Id)
@@ -3962,7 +3970,7 @@ public class ReservaService : IReservaService
             }
         }
 
-        if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
+        if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Elegí el tipo de servicio.");
         if (request.DepartureDate == default) throw new ArgumentException("La fecha de salida es obligatoria");
         // Integridad de datos (2026-06-25): la fecha de regreso (opcional) no puede ser anterior a la de
         // salida. Solo se valida si ambas estan presentes; un servicio de una sola fecha (ReturnDate null)
@@ -4111,7 +4119,7 @@ public class ReservaService : IReservaService
             }
         }
 
-        if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
+        if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Elegí el tipo de servicio.");
         if (request.SalePrice <= 0) throw new ArgumentException("El precio de venta debe ser mayor a 0");
         // Integridad de datos (2026-06-25): misma regla que en el alta — regreso (opcional) >= salida.
         ValidateGenericServiceDates(request.DepartureDate, request.ReturnDate);
@@ -4624,8 +4632,9 @@ public class ReservaService : IReservaService
 
         if (file.Passengers.Count >= declaredPax)
         {
+            var passengerWord = declaredPax == 1 ? "pasajero" : "pasajeros";
             throw new InvalidOperationException(
-                $"La reserva declara {declaredPax} pasajero(s) y ya están todos cargados. " +
+                $"La reserva declara {declaredPax} {passengerWord} y ya están todos cargados. " +
                 "Para sumar más, aumentá la cantidad declarada de pasajeros de la reserva.");
         }
 
@@ -5284,10 +5293,11 @@ public class ReservaService : IReservaService
         if (!AllowedForwardTransitions.TryGetValue(file.Status, out var allowedTargets)
             || !allowedTargets.Contains(status, StringComparer.OrdinalIgnoreCase))
         {
+            // P-1 (review backend-dotnet-reviewer, 2026-08-04): mismo leak que RevertStatusAsync (~linea
+            // 1903) pero en el camino de avance. file.Status/status son los nombres CRUDOS del enum (Budget,
+            // InManagement...); no se le devuelven al usuario. La pantalla ya sabe que opciones ofrecer.
             throw new InvalidOperationException(
-                $"No se puede pasar de {file.Status} a {status}. " +
-                $"Transiciones permitidas desde {file.Status}: " +
-                $"{(allowedTargets == null || allowedTargets.Length == 0 ? "(ninguna hacia adelante)" : string.Join(", ", allowedTargets))}.");
+                "No se puede pasar a ese estado desde acá. Elegí una de las opciones que ofrece la pantalla.");
         }
 
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(CancellationToken.None);
@@ -5356,7 +5366,7 @@ public class ReservaService : IReservaService
             if (hasLiveCae)
             {
                 throw new InvalidOperationException(
-                    "La reserva tiene facturas con CAE vigentes. Debe anularlas (se emitira Nota de Credito) antes de cancelar la reserva.");
+                    "La reserva tiene facturas vivas. Anulalas primero (se emite una nota de crédito) y después cancelá la reserva.");
             }
 
             // ADR-036 (2026-06-21): refuerzo del guard de escritura. Una reserva con COBROS VIVOS no admite
@@ -5626,7 +5636,7 @@ public class ReservaService : IReservaService
             AssignmentServiceType.Flight => await ResolveRequiredIdAsync<FlightSegment>(servicePublicIdOrLegacyId, ct),
             AssignmentServiceType.Assistance => await ResolveRequiredIdAsync<AssistanceBooking>(servicePublicIdOrLegacyId, ct),
             AssignmentServiceType.Generic => await ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, ct),
-            _ => throw new ArgumentException("ServiceType no soportado.")
+            _ => throw new ArgumentException("Ese tipo de servicio no está disponible.")
         };
 
         var serviceBelongsToReserva = serviceType switch
@@ -5739,7 +5749,7 @@ public class ReservaService : IReservaService
             AssignmentServiceType.Flight => PassengerNominalRules.ServiceKind.Flight,
             AssignmentServiceType.Assistance => PassengerNominalRules.ServiceKind.Assistance,
             AssignmentServiceType.Generic => PassengerNominalRules.ServiceKind.Generic,
-            _ => throw new ArgumentException("ServiceType no soportado.")
+            _ => throw new ArgumentException("Ese tipo de servicio no está disponible.")
         };
 
     /// <summary>
@@ -5803,10 +5813,10 @@ public class ReservaService : IReservaService
         if (hasPayments) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay pagos registrados. Eliminalos primero.");
 
         var hasInvoices = await _context.Invoices.AnyAsync(i => i.ReservaId == id, ct);
-        if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay facturas emitidas. Debes anularlas primero (Nota de Credito).");
+        if (hasInvoices) throw new InvalidOperationException("No se puede volver a Presupuesto: hay facturas emitidas. Anulalas primero con una nota de crédito.");
 
         var hasResolved = await HasResolvedServicesAsync(id, ct);
-        if (hasResolved) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay servicios ya resueltos/confirmados con el operador. Cancela esos servicios primero.");
+        if (hasResolved) throw new InvalidOperationException("No se puede volver a Presupuesto porque hay servicios ya resueltos/confirmados con el operador. Cancelá esos servicios primero.");
     }
 
     /// <summary>

@@ -31,8 +31,8 @@ import { ReservaMobileList } from "../components/ReservaMobileList";
  *
  * "quotation"     → Cotizaciones (borrador)
  * "budget"        → Presupuestos (enviados al cliente)
- * "in-management" → En gestion (el cliente acepto, se solicitan servicios)
- * "active"        → Activas (En gestion + Confirmadas — vista combinada para el dia a dia)
+ * "in-management" → En gestión (el cliente acepto, se solicitan servicios)
+ * "active"        → Activas (En gestión + Confirmadas — vista combinada para el dia a dia)
  * "confirmed"     → Confirmadas (todos los servicios resueltos, candado activo)
  * "traveling"     → En viaje
  * "closed"        → Finalizadas (solo cerradas; anuladas viven en su propia pestaña)
@@ -48,7 +48,7 @@ const TABS = [
   { value: "all", label: "Todas" },
   { value: "quotation", label: "Borradores anteriores" },
   { value: "budget", label: "Presupuestos" },
-  { value: "in-management", label: "En gestion" },
+  { value: "in-management", label: "En gestión" },
   { value: "confirmed", label: "Confirmadas" },
   { value: "traveling", label: "En viaje" },
   { value: "closed", label: "Finalizadas" },

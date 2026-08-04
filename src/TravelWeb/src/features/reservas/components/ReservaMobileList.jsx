@@ -11,7 +11,7 @@ export function ReservaMobileList({ reservas, onRowClick }) {
     return (
       <ListEmptyState
         title="No se encontraron reservas"
-        description="Intenta ajustar los filtros de busqueda."
+        description="Probá cambiando los filtros."
         className="rounded-xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900"
       />
     );

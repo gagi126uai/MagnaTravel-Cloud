@@ -7,21 +7,21 @@ import { Lock, LockOpen, AlertTriangle } from 'lucide-react';
  * Tres modos posibles (en orden de prioridad):
  *
  * 1. Franja NARANJA de regresion: cuando lastRegressionReason viene del DTO y la reserva
- *    volvio sola a En gestion — es el aviso mas urgente para el vendedor (decisión #6).
+ *    volvio sola a En gestión — es el aviso mas urgente para el vendedor (decisión #6).
  *
  * 2. Franja VERDE "destrabada": cuando hasLiveEditAuthorization=true — la reserva tiene
  *    una autorizacion de edicion vigente. Se muestra "Destrabada hasta las HH:MM"
  *    y las acciones de edicion pasan a habilitarse (decisión N3).
  *
  * 3. Franja AMBAR de candado: cuando isLocked=true y no hay autorizacion activa.
- *    El vendedor ve "Pedir autorizacion"; el admin puede abrir el modal para destrabar.
+ *    El vendedor ve "Pedí autorización"; el admin puede abrir el modal para destrabar.
  *    (Decision #1 y #2 guia UX 2026-06-08).
  *
  *    Retoque P4-3 (2026-07-22, spec docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md,
  *    P3=A): el texto de ESTA franja ahora distingue por el permiso
  *    reservas.authorize_locked_edit (prop `puedeAutorizar`) — el MISMO permiso que ya usa
  *    EditAuthorizationModal para decidir si mostrar el formulario de destrabe directo. Antes
- *    la franja le decia "pedi autorizacion" al admin tambien, aunque el modal que abre ese
+ *    la franja le decia "pedí autorización" al admin tambien, aunque el modal que abre ese
  *    mismo boton ya lo dejara destrabar solo — el texto quedaba incoherente con lo que
  *    ofrecia. El modal en si NO cambia.
  *
@@ -35,7 +35,7 @@ import { Lock, LockOpen, AlertTriangle } from 'lucide-react';
  * Props:
  * - isLocked: boolean — true cuando el status esta en {Confirmed, Traveling, Closed} (ADR-036: ToSettle eliminado)
  * - onRequestEdit: callback — el vendedor/admin hizo clic en el boton de autorizacion
- * - hasRegressionWarning: boolean — true si volvio sola a En gestion
+ * - hasRegressionWarning: boolean — true si volvio sola a En gestión
  * - regressionReason: string|null — motivo de la regresion (del campo lastRegressionReason del DTO)
  * - hasLiveEditAuthorization: boolean — true si hay una autorizacion de edicion vigente
  * - editAuthorizationExpiresAt: string|null — ISO datetime del vencimiento de la autorizacion

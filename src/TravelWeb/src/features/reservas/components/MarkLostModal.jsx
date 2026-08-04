@@ -68,20 +68,20 @@ export function MarkLostModal({ reservaPublicId, onClose, onMarked }) {
                 <div className="p-6 space-y-4">
                     <p className="text-sm text-slate-600 dark:text-slate-300">
                         <span className="font-bold">¿Seguro?</span> La reserva va a quedar en el historial
-                        como Perdida. Podes revertirla despues si el cliente vuelve.
+                        como Perdida. Si el cliente vuelve, la podés reactivar después.
                     </p>
                     <div>
                         <label
                             htmlFor="motivo-perdida"
                             className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400"
                         >
-                            Motivo (opcional)
+                            Motivo
                         </label>
                         <textarea
                             id="motivo-perdida"
                             value={motivo}
                             onChange={(e) => setMotivo(e.target.value)}
-                            placeholder="¿Por que no compro? (puede dejarse en blanco)"
+                            placeholder="¿Por qué no compró? (podés dejarlo en blanco)"
                             rows={2}
                             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         />

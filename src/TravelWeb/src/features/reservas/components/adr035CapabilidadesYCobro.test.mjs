@@ -849,7 +849,7 @@ test("H13 cobro LÍMITE: reserva ANULADA (Cancelled) → botón OCULTO, no gris 
         status: "Cancelled",
         isVoided: true,
         capabilities: {
-            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero." },
+            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado. Pasá la reserva a En gestión primero." },
         },
     };
     const estado = calcularEstadoBotonRegistrarCobro(reserva);
@@ -860,7 +860,7 @@ test("H13 cobro LÍMITE: reserva PERDIDA (Lost) → botón OCULTO", () => {
     const reserva = {
         status: "Lost",
         capabilities: {
-            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero." },
+            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado. Pasá la reserva a En gestión primero." },
         },
     };
     const estado = calcularEstadoBotonRegistrarCobro(reserva);
@@ -871,7 +871,7 @@ test("H13 cobro LÍMITE: reserva en PRESUPUESTO (Budget, pre-venta) → botón O
     const reserva = {
         status: "Budget",
         capabilities: {
-            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero." },
+            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado. Pasá la reserva a En gestión primero." },
         },
     };
     const estado = calcularEstadoBotonRegistrarCobro(reserva);

@@ -60,7 +60,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess, initial
         e.preventDefault();
 
         if (!formData.payerId) {
-            showError("Por favor selecciona un cliente principal");
+            showError("Elegí el cliente de la reserva.");
             return;
         }
 
@@ -98,10 +98,10 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess, initial
                 <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
                     <div>
                         <h2 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
-                            Nuevo Presupuesto
+                            Nuevo presupuesto
                         </h2>
                         <p className="text-sm text-slate-500 dark:text-slate-400">
-                            Crea la reserva en estado Presupuesto y carga sus servicios.
+                            Nace como presupuesto: después le cargás los servicios.
                         </p>
                     </div>
                     <button
@@ -118,7 +118,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess, initial
                     <div className="space-y-2">
                         <label className="text-sm font-medium flex items-center gap-2 text-slate-700 dark:text-slate-300">
                             <User className="h-4 w-4 text-slate-400" />
-                            Cliente Principal <span className="text-red-500">*</span>
+                            Cliente <span className="text-red-500">*</span>
                         </label>
 
                         {/* Buscador rapido para filtrar el listado */}
@@ -145,14 +145,14 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess, initial
                                 ))}
                             </select>
                         </div>
-                        <p className="text-xs text-slate-500">Se usara para facturacion y contacto.</p>
+                        <p className="text-xs text-slate-500">Es a quién le facturamos y a quién contactamos.</p>
                     </div>
 
-                    {/* Fecha de inicio (opcional) */}
+                    {/* Fecha de inicio: no es obligatoria, se puede completar mas adelante con los servicios */}
                     <div className="space-y-2">
                         <label className="text-sm font-medium flex items-center gap-2 text-slate-700 dark:text-slate-300">
                             <Calendar className="h-4 w-4 text-slate-400" />
-                            Fecha de Inicio (Opcional)
+                            Fecha de salida
                         </label>
                         <input
                             type="date"
@@ -182,7 +182,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess, initial
                                     Creando...
                                 </span>
                             ) : (
-                                "Crear Presupuesto"
+                                "Crear presupuesto"
                             )}
                         </button>
                     </div>

@@ -185,8 +185,9 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
     if (workflowStatus && workflowStatus !== 'Solicitado') {
         return workflowStatus;
     }
-    const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
-    return estaEnEtapaPrevia ? 'En espera' : 'Solicitado';
+    // Pulido de textos 2026-08-03 (P13 firmada): etiqueta única "Solicitado", sin
+    // distinción por etapa. Antes Quotation/Budget mostraban "En espera" — ya no.
+    return 'Solicitado';
 }
 
 test("C5 servicios: reserva Lost + workflowStatus Solicitado → muestra 'Anulado'", () => {
@@ -218,13 +219,14 @@ test("C5 servicios: reserva InManagement + workflowStatus Confirmado → muestra
     assert.equal(etiquetaEstadoServicio('Confirmado', 'InManagement'), 'Confirmado');
 });
 
-test("C5 servicios: reserva Budget + workflowStatus null → muestra 'En espera'", () => {
-    assert.equal(etiquetaEstadoServicio(null, 'Budget'), 'En espera');
+test("C5 servicios: reserva Budget + workflowStatus null → muestra 'Solicitado' (etiqueta única, P13)", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Budget'), 'Solicitado');
 });
 
-test("C5 servicios: reserva Quotation + workflowStatus Solicitado → muestra 'En espera'", () => {
-    // Aunque backend mande "Solicitado", en Quotation se muestra "En espera".
-    assert.equal(etiquetaEstadoServicio('Solicitado', 'Quotation'), 'En espera');
+test("C5 servicios: reserva Quotation + workflowStatus Solicitado → muestra 'Solicitado' (etiqueta única, P13)", () => {
+    // Pulido 2026-08-03: en Quotation/Budget ya NO se distingue "En espera" — misma
+    // etiqueta "Solicitado" que en el resto de las etapas previas a resolución.
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'Quotation'), 'Solicitado');
 });
 
 test("C5 servicios: reserva Closed + workflowStatus Emitido → muestra 'Emitido' (no es Lost/Cancelled)", () => {
@@ -342,13 +344,13 @@ test("ADR-036 candado: Budget → no bloqueado", () => {
  * ADR-036: Cancelled.label cambió de "Cancelada" a "Anulada".
  */
 const STATUS_LABELS_ADR036 = {
-    Quotation: 'Cotizacion',
+    Quotation: 'Cotización',
     Budget: 'Presupuesto',
-    InManagement: 'En gestion',
+    InManagement: 'En gestión',
     Confirmed: 'Confirmada',
     Traveling: 'En viaje',
     Closed: 'Finalizada',
-    Lost: 'Perdido',
+    Lost: 'Perdida',
     Cancelled: 'Anulada',  // ADR-036: antes era "Cancelada"
     Archived: 'Archivada',
 };
@@ -361,6 +363,8 @@ test("ADR-036 label: ToSettle → no existe en el config (fue eliminado)", () =>
     assert.equal(STATUS_LABELS_ADR036.ToSettle, undefined);
 });
 
-test("ADR-036 label: Lost → sigue siendo 'Perdido' (no cambió)", () => {
-    assert.equal(STATUS_LABELS_ADR036.Lost, 'Perdido');
+// Pulido de textos 2026-08-03: label canónico pasó de "Perdido" a "Perdida"
+// (concuerda con "reserva"). El estado en sí no cambió, solo el texto.
+test("Pulido 2026-08-03 label: Lost → 'Perdida' (antes 'Perdido')", () => {
+    assert.equal(STATUS_LABELS_ADR036.Lost, 'Perdida');
 });

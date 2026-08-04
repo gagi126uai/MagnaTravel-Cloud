@@ -40,14 +40,14 @@ import { OWNER_TYPE } from "../../bank-accounts/lib/bankAccountLogic";
 const FUENTES_TC = [
     { value: 5, label: "Manual" },                    // Manual=5 → default para el MVP
     { value: 6, label: "BNA vendedor divisa" },       // BNA_VendedorDivisa=6 → el recomendado por el contador
-    { value: 1, label: "BCRA mayorista A3500" },      // BCRA_A3500=1 → para asientos contables
+    { value: 1, label: "Mayorista (BCRA)" },          // BCRA_A3500=1 → para asientos contables
 ];
 
 const METODOS_PAGO = [
     { value: "Transferencia", label: "Transferencia" },
     { value: "Efectivo", label: "Efectivo" },
-    { value: "Tarjeta Crédito", label: "Tarjeta Crédito" },
-    { value: "Tarjeta Débito", label: "Tarjeta Débito" },
+    { value: "Tarjeta Crédito", label: "Tarjeta de crédito" },
+    { value: "Tarjeta Débito", label: "Tarjeta de débito" },
     { value: "Cheque", label: "Cheque" },
     { value: "Deposito", label: "Depósito" },
 ];
@@ -431,10 +431,10 @@ export function RegistrarCobroInline({
                     )}
                 </div>
 
-                {/* Fila secundaria: Método + Fecha + Nota */}
+                {/* Fila secundaria: Forma de pago + Fecha + Nota */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Método</label>
+                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Forma de pago</label>
                         <select
                             value={metodo}
                             disabled={saving}
@@ -458,7 +458,7 @@ export function RegistrarCobroInline({
                         />
                     </div>
                     <div className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Nota (opcional)</label>
+                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Nota</label>
                         <input
                             type="text"
                             value={notas}
@@ -517,9 +517,9 @@ export function RegistrarCobroInline({
                                     ))}
                                 </select>
                             </div>
-                            {/* Fecha del TC */}
+                            {/* Fecha del tipo de cambio */}
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fecha del TC</label>
+                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fecha del tipo de cambio</label>
                                 <input
                                     type="date"
                                     value={fechaTC}

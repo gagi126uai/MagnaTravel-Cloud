@@ -2,7 +2,7 @@
  * Lista de servicios contratados de una reserva.
  *
  * Muestra los servicios en dos layouts:
- *   - Desktop: tabla con columnas (Tipo, Descripción, Fecha/Estancia, Estado, Costo, Precio Venta, [Avisos], Acciones)
+ *   - Desktop: tabla con columnas (Tipo, Descripción, Fecha/Estancia, Estado, Costo, Precio de venta, [Avisos], Acciones)
  *   - Mobile: tarjetas apiladas con la información clave
  *
  * Columna "Avisos" (UpcomingStartPill):
@@ -183,7 +183,7 @@ export function calculateServiciosCanceladosResumen(services) {
  *   - Aereo: ticket EMITIDO (workflowStatus === "Emitido" o status === "TK"/"KL")
  *   - Hotel / Paquete: confirmado por el operador (workflowStatus === "Confirmado" o status HK/KK)
  *   - Asistencia: voucher emitido (workflowStatus === "Emitido")
- *   - Traslado: confirmado o marcado "no requiere confirmacion" (workflowStatus "Confirmado" | "NoConfirmation")
+ *   - Traslado: confirmado o marcado "no requiere confirmación" (workflowStatus "Confirmado" | "NoConfirmation")
  */
 function esServicioResuelto(svc) {
     const status = svc.workflowStatus || svc.status || '';
@@ -233,11 +233,12 @@ function esServicioAnulado(svc) {
 /**
  * Devuelve la etiqueta de texto del badge de estado del servicio.
  *
- * Regla de negocio (Gaston 2026-06-08):
- *   - En Cotizacion (Quotation) y Presupuesto (Budget) todavia no se le solicito
- *     nada al operador — el badge dice "En espera", no "Solicitado".
- *   - A partir de "En gestion" (InManagement) en adelante, si el workflowStatus
- *     esta vacio o es el valor por defecto, el badge dice "Solicitado" (ya se pidio).
+ * Regla de negocio (Gaston 2026-08-03, reemplaza la regla anterior del 2026-06-08):
+ *   Etiqueta única para un servicio recién cargado y sin resolver: "Solicitado",
+ *   sin importar en qué estado esté la reserva (Cotización, Presupuesto o En gestión).
+ *   Antes existía una segunda etiqueta ("En espera") solo para Cotización/Presupuesto;
+ *   se eliminó porque confundía más de lo que aclaraba (dos textos para el mismo
+ *   significado: "todavía no se resolvió con el operador").
  *   - "Confirmado" siempre se muestra tal cual (llega del backend).
  *
  * ADR-036 (2026-06-21): cuando la reserva entera está deshecha (Lost o Cancelled),
@@ -280,16 +281,13 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
         return workflowStatus;
     }
 
-    // "Solicitado" o vacio: en Cotizacion/Presupuesto todavia no se pidio
-    // nada al operador, asi que el texto correcto es "En espera".
-    const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
-    return estaEnEtapaPrevia ? 'En espera' : 'Solicitado';
+    // "Solicitado" o vacio (Cotizacion, Presupuesto o En gestion): todavia no se
+    // resolvio con el operador. Etiqueta unica, sin distincion por etapa (2026-08-03).
+    return 'Solicitado';
 }
 
 /**
  * Color del badge segun la ETIQUETA visible (no solo el workflowStatus).
- * "En espera" (cotizacion/presupuesto, nada pedido aun) va gris neutro, distinto
- * del ambar de "Solicitado" (ya pedido al operador, esperando confirmacion).
  * "Anulado" tiene DOS orígenes con color distinto a propósito:
  *   - Reserva entera Lost/Cancelled: gris sobrio (la reserva no prosperó, nada para
  *     remarcar puntualmente — se chequea PRIMERO, antes de mirar la etiqueta).
@@ -311,7 +309,6 @@ function claseColorEstadoServicio(workflowStatus, reservaStatus) {
     // Servicio anulado individualmente (antes decía "Cancelado" acá): mismo rosa/alerta
     // de siempre, solo cambió el texto que se muestra.
     if (etiqueta === 'Anulado') return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400';
-    if (etiqueta === 'En espera') return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
     // "Finalizado": verde pálido / slate — el servicio se cumplió, el viaje terminó bien.
     // Se diferencia de "Confirmado" (verde intenso) para no confundir "en camino" con "cerrado".
     if (etiqueta === 'Finalizado') return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400';
@@ -678,7 +675,7 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAVouchers, onCl
  * viven en un único componente reusable: ver ResolverServicioInline.jsx.
 
 /**
- * Resumen de resolucion de servicios para la vista "En gestion" (decision 4 de UX).
+ * Resumen de resolucion de servicios para la vista "En gestión" (decision 4 de UX).
  * Muestra "X de Y servicios resueltos" con pelotita verde (resuelto) / amarilla (pendiente) por fila.
  * Solo aparece cuando la reserva esta en estado InManagement.
  */
@@ -703,7 +700,7 @@ function ResumenServiciosResueltos({ services, reservaStatus }) {
             </span>
             {resueltos === activos.length ? (
                 <span className="text-xs text-cyan-600 dark:text-cyan-400">
-                    Todos listos — la reserva se va a confirmar automaticamente.
+                    Todos listos — la reserva se confirma sola.
                 </span>
             ) : (
                 <span className="text-xs text-cyan-600 dark:text-cyan-400">
@@ -893,7 +890,7 @@ function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, covera
  *                                     Es INDEPENDIENTE del flag de catálogo (decisión del dueño).
  *   windowDays                      — int|null, días de ventana para las pills (upcomingStartsWindowDays del contexto)
  *   onServiceConfirmed              — callback(servicioActualizado) cuando confirm-cost tiene éxito
- *   onServiceResolved               — callback() cuando un servicio se resuelve (marcar emitido / no requiere confirmacion)
+ *   onServiceResolved               — callback() cuando un servicio se resuelve (marcar emitido / no requiere confirmación)
  *                                     El padre recarga la reserva para reflejar el nuevo estado.
  *   onIrAFacturas                   — callback () => void para navegar a la solapa "Estado de Cuenta" (facturas).
  *                                     Se usa en el modal de bloqueo 409 del flujo individual y también se
@@ -1039,14 +1036,15 @@ export function ServiceList({
     // Solo se muestra cuando el usuario lo solicita con el botón "Anular varios".
     const [showCancelarVarios, setShowCancelarVarios] = useState(false);
 
-    // Servicios "anulables": los que tienen proveedor asignado Y no están ya anulados.
-    // Estos son los candidatos para mostrar en la sección "Anular varios".
-    // Misma lógica que calculateServiciosCanceladosResumen para determinar "con proveedor".
+    // Servicios "anulables": SOLO los que ya están confirmados/resueltos con el operador
+    // (mismo criterio que esServicioResuelto, decisión #9 guia UX 2026-06-08).
+    // Un servicio todavía "Solicitado" (sin resolver) no entra acá: a ese se lo saca con
+    // el botón Borrar de su fila, no con "Anular varios" — corrección firmada 2026-08-03,
+    // antes el filtro dejaba pasar cualquier servicio con proveedor asignado, sin
+    // importar si el operador ya lo había confirmado o no.
     const serviciosCancelables = (services || []).filter((svc) => {
-        const tieneProveedor = Boolean(svc.supplierPublicId || svc.supplierId || svc.supplierName);
-        const esTipoEspecifico = svc.recordKind && svc.recordKind !== 'generic';
         const estaCancelado = (svc.workflowStatus || svc.status) === 'Cancelado';
-        return (tieneProveedor || esTipoEspecifico) && !estaCancelado;
+        return !estaCancelado && esServicioResuelto(svc);
     });
 
     /**
@@ -1137,14 +1135,15 @@ export function ServiceList({
             )}
 
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios Contratados</h3>
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios contratados</h3>
                 <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
-                    {/* Botón "Anular varios servicios": solo con permiso reservas.cancel, cuando hay
-                        servicios anulables Y cuando el backend lo habilita (puedeCancelarServicios).
+                    {/* Botón "Anular varios servicios": solo con permiso reservas.cancel, cuando el
+                        backend lo habilita (puedeCancelarServicios) Y hay 2 o más servicios anulables
+                        (con 1 solo alcanza con anular esa fila individual — botón firmado 2026-08-03).
                         Guía UX 2026-06-22: ocultar en solo lectura según capability del backend.
                         Texto aclarado 2026-07-22 (P2 firmado por Gaston): ya decía así la sección que
                         este botón abre (CancelarVariosServiciosInline) — solo faltaba el disparador. */}
-                    {canCancelServices && puedeCancelarServicios && serviciosCancelables.length > 0 && !showCancelarVarios && (
+                    {canCancelServices && puedeCancelarServicios && serviciosCancelables.length >= 2 && !showCancelarVarios && (
                         candadoDeEdicionActivo ? (
                             <button
                                 type="button"
@@ -1180,14 +1179,14 @@ export function ServiceList({
                                 aria-label="Agregar servicio — bloqueado, pedí autorización"
                                 className="flex items-center justify-center gap-2 bg-slate-100 text-slate-500 px-4 py-2 rounded-lg hover:bg-slate-200 transition-colors shadow-sm text-sm dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                             >
-                                <Lock className="w-4 h-4" aria-hidden="true" /> Agregar Servicio
+                                <Lock className="w-4 h-4" aria-hidden="true" /> Agregar servicio
                             </button>
                         ) : (
                             <button
                                 onClick={onAddService}
                                 className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm"
                             >
-                                <Plus className="w-4 h-4" /> Agregar Servicio
+                                <Plus className="w-4 h-4" /> Agregar servicio
                             </button>
                         )
                     )}
@@ -1202,7 +1201,7 @@ export function ServiceList({
                     <div className="flex items-start gap-3">
                         <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                         <div className="space-y-1">
-                            <div className="font-semibold">La reserva sigue visible, pero una o mas listas de servicios no se pudieron refrescar.</div>
+                            <div className="font-semibold">La reserva se ve bien, pero algunos servicios no se pudieron actualizar. Recargá la pantalla.</div>
                             {collectionErrorMessages.map((message) => (
                                 <div key={message}>{message}</div>
                             ))}
@@ -1214,7 +1213,7 @@ export function ServiceList({
             {services.length === 0 ? (
                 <div className="text-center py-12 bg-gray-50 dark:bg-slate-800 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
                     <Plane className="w-12 h-12 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
-                    <p className="text-gray-500 dark:text-slate-400">No hay servicios cargados en este file.</p>
+                    <p className="text-gray-500 dark:text-slate-400">Todavía no hay servicios en esta reserva. Cargá el primero para armar el viaje.</p>
                 </div>
             ) : (
                 <>
@@ -1227,8 +1226,8 @@ export function ServiceList({
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Descripción</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha / Estancia</th>
                                     <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
-                                    {mostrarCosto && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Costo Neto</th>}
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Precio Venta</th>
+                                    {mostrarCosto && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Costo neto</th>}
+                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Precio de venta</th>
                                     {/* Columna Avisos: aparece cuando enableServiceDeadlineAlerts está ON.
                                         Es independiente del flag de catálogo (decisión del dueño). */}
                                     {isServiceDeadlineAlertsEnabled && (
@@ -1359,7 +1358,7 @@ export function ServiceList({
                                                 {/* items-start: el badge hugea su texto y no se estira al ancho de la celda */}
                                                 <div className="flex flex-col items-start gap-1.5">
                                                     {/* px-1.5 (en vez de px-2) para que el área de color no se extienda
-                                                        de más en textos cortos como "En espera" o "Emitido". */}
+                                                        de más en textos cortos como "Solicitado" o "Emitido". */}
                                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${claseColorEstadoServicio(svc.workflowStatus, reservaStatus)}`}>
                                                         {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                                     </span>
@@ -1805,7 +1804,7 @@ export function ServiceList({
                                 })}
 
                                 {/* Fila TOTAL al pie: SOLO cuando la reserva tiene dos monedas (decisión A, 2026-06-11).
-                                    Muestra el total de Precio Venta por moneda, separados por punto medio.
+                                    Muestra el total de Precio de venta por moneda, separados por punto medio.
                                     Regla ③: con una sola moneda esta fila NO aparece (igual que hoy). */}
                                 {esMultimoneda && services.length > 0 && (() => {
                                     // Acumular total de salePrice por moneda (no mezclar)
@@ -1828,7 +1827,7 @@ export function ServiceList({
                                             <td colSpan={3} className="py-3 pl-2 text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
                                                 Total venta
                                             </td>
-                                            {/* Celdas vacías para Estado y posible Costo (para alinear con columna Precio Venta) */}
+                                            {/* Celdas vacías para Estado y posible Costo (para alinear con columna Precio de venta) */}
                                             {mostrarCosto && <td />}
                                             <td className="py-3 text-right pr-4">
                                                 {/* Totales por moneda separados por · */}

@@ -186,7 +186,7 @@ export function PassengerList({
             {/* Encabezado con título, contador y botón de agregar */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <div>
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white">Pasajeros del Viaje</h3>
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white">Pasajeros del viaje</h3>
 
                     {/* Contador "X de N nombres cargados" (P10, guía UX 2026-06-15).
                         Se oculta si no hay cantidad declarada (nada que contar).

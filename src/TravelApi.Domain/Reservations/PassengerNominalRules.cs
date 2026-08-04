@@ -356,7 +356,8 @@ public static class PassengerNominalRules
         // caemos a un mensaje generico para no devolver un texto roto.
         if (missingFieldNames.Count == 0)
         {
-            return $"Faltan datos de {affectedPassengers} pasajero(s) para {actionLabel}.";
+            var passengerWord = affectedPassengers == 1 ? "pasajero" : "pasajeros";
+            return $"Faltan datos de {affectedPassengers} {passengerWord} para {actionLabel}.";
         }
 
         var fieldList = JoinWithSpanishConjunction(missingFieldNames);
@@ -369,7 +370,8 @@ public static class PassengerNominalRules
             ? $"Falta {SingularArticleFor(missingFieldNames[0])}"
             : "Faltan";
 
-        return $"{verb} {fieldList} de {affectedPassengers} pasajero(s) para {actionLabel}.";
+        var passengerWordForFieldList = affectedPassengers == 1 ? "pasajero" : "pasajeros";
+        return $"{verb} {fieldList} de {affectedPassengers} {passengerWordForFieldList} para {actionLabel}.";
     }
 
     /// <summary>

@@ -128,7 +128,10 @@ export function PackageInlineForm({ form, setForm, suppliers, isEditing }) {
         ? [
               {
                   publicId: form.supplierId,
-                  name: form.supplierName || `Operador sugerido (${String(form.supplierId).slice(0, 8)}…)`,
+                  // Sin supplierName no mostramos el ID interno recortado (eso es un dato
+                  // técnico que un usuario no programador no puede leer) — mejor un texto
+                  // genérico que igual identifica que hay un operador sugerido (2026-08-03).
+                  name: form.supplierName || "Operador sugerido",
               },
               ...suppliers,
           ]
@@ -283,7 +286,7 @@ export function PackageInlineForm({ form, setForm, suppliers, isEditing }) {
                         value={form.endDate || ""}
                         onChange={(event) => setForm((prev) => ({ ...prev, endDate: event.target.value }))}
                         data-testid="package-end-date"
-                        aria-label="Fecha de fin del paquete (opcional)"
+                        aria-label="Fecha de fin del paquete"
                     />
                 </div>
                 <div>

@@ -104,7 +104,7 @@ export function EditReservaDatesModal({ isOpen, reserva, onClose, onSave }) {
 
                 <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
                     <p className="text-sm text-slate-500 dark:text-slate-400">
-                        Estas fechas tambien se recalculan cuando agregas o editas servicios. Editarlas aca tiene sentido cuando los servicios no tienen fechas claras o queres un override manual.
+                        Estas fechas se recalculan solas cuando cargás o editás servicios. Editalas acá si los servicios todavía no tienen fecha o querés fijarlas a mano.
                     </p>
 
                     <div>
@@ -144,7 +144,7 @@ export function EditReservaDatesModal({ isOpen, reserva, onClose, onSave }) {
                         />
                         {endDateFromSuggestion ? (
                             <p className="mt-1 text-xs italic text-indigo-500 dark:text-indigo-400">
-                                Sugerido del ultimo servicio cargado
+                                Sugerido del último servicio cargado
                             </p>
                         ) : (
                             <p className="mt-1 text-xs text-slate-400">Dejar vacio borra la fecha.</p>

@@ -1,9 +1,13 @@
 /**
- * Tests de lógica pura para CancelarVariosServiciosInline.
+ * Tests de lógica pura para CancelarVariosServiciosInline y para el cálculo de
+ * candidatos que hace su padre, ServiceList.jsx (serviciosCancelables).
  *
  * Testea:
  *   - calcularTotalPorMoneda: agrupación correcta por moneda (sin mezclar).
- *   - filtrarServiciosCancelables: qué servicios aparecen como candidatos.
+ *   - filtrarServiciosCancelables: qué servicios aparecen como candidatos para
+ *     "Anular varios" (réplica de `serviciosCancelables` en ServiceList.jsx).
+ *   - debeMostrarBotonAnularVarios: el botón "Anular varios servicios" solo
+ *     aparece con 2 o más candidatos (con 1 solo alcanza con anular esa fila).
  *   - extraerMensajeError: lectura del error real del cliente api.js (fetch nativo).
  *   - clasificarResultadoFinal: clasificación del resultado tras el proceso secuencial,
  *     incluyendo el caso de ÉXITO PARCIAL (el más crítico según el reviewer).
@@ -26,7 +30,7 @@ import assert from "node:assert/strict";
 
 import { normalizeMessage, SPANISH_NETWORK_GENERIC } from "../../../lib/errors.js";
 
-// ─── Lógica pura copiada de CancelarVariosServiciosInline.jsx ────────────────
+// ─── Lógica pura copiada de ServiceList.jsx / CancelarVariosServiciosInline.jsx ─
 // (Copiada en vez de importada porque el runner es Node puro sin bundler.
 //  Si cambia la función original, actualizar acá también.)
 
@@ -38,13 +42,31 @@ function calcularTotalPorMoneda(servicios) {
   }, {});
 }
 
+// Réplica de esServicioResuelto (ServiceList.jsx): un servicio está "resuelto"
+// cuando el operador ya lo confirmó (ticket emitido, hotel confirmado, etc.).
+function esServicioResuelto(svc) {
+  const status = svc.workflowStatus || svc.status || "";
+  const estadosResueltos = ["Confirmado", "Emitido", "HK", "TK", "KK", "KL", "NoConfirmation"];
+  return estadosResueltos.includes(status);
+}
+
+// Réplica de `serviciosCancelables` (ServiceList.jsx, corrección firmada 2026-08-03):
+// SOLO entran los servicios ya confirmados/resueltos con el operador. Un servicio
+// todavía "Solicitado" (sin resolver) se saca con el botón Borrar de su fila, no
+// con "Anular varios" — antes el filtro dejaba pasar cualquier servicio con
+// proveedor asignado, sin mirar si el operador ya lo había confirmado.
 function filtrarServiciosCancelables(services) {
   return (services || []).filter((svc) => {
-    const tieneProveedor = Boolean(svc.supplierPublicId || svc.supplierId || svc.supplierName);
-    const esTipoEspecifico = svc.recordKind && svc.recordKind !== "generic";
     const estaCancelado = (svc.workflowStatus || svc.status) === "Cancelado";
-    return (tieneProveedor || esTipoEspecifico) && !estaCancelado;
+    return !estaCancelado && esServicioResuelto(svc);
   });
+}
+
+// Réplica de la condición de visibilidad del botón "Anular varios servicios"
+// (ServiceList.jsx): con 1 solo candidato alcanza con anular esa fila individual,
+// el botón de lote recién aparece a partir de 2 (corrección firmada 2026-08-03).
+function debeMostrarBotonAnularVarios(cantidadServiciosCancelables) {
+  return cantidadServiciosCancelables >= 2;
 }
 
 /**
@@ -164,9 +186,19 @@ test("filtrarServiciosCancelables: excluye cancelados", () => {
   assert.equal(resultado[0].recordKind, "flight");
 });
 
-test("filtrarServiciosCancelables: excluye genérico sin proveedor", () => {
+test("filtrarServiciosCancelables: excluye un servicio 'Solicitado' aunque tenga proveedor (corrección 2026-08-03)", () => {
+  // Antes este servicio entraba como candidato de 'Anular varios' solo por tener
+  // supplierName cargado. Ahora, al no estar resuelto todavía, se saca con Borrar.
   const services = [
-    { recordKind: "generic", workflowStatus: "Solicitado" }, // sin supplier
+    { recordKind: "hotel", workflowStatus: "Solicitado", supplierName: "Plaza" },
+  ];
+  const resultado = filtrarServiciosCancelables(services);
+  assert.equal(resultado.length, 0);
+});
+
+test("filtrarServiciosCancelables: excluye genérico sin proveedor y sin resolver", () => {
+  const services = [
+    { recordKind: "generic", workflowStatus: "Solicitado" }, // sin supplier y sin resolver
     { recordKind: "hotel", workflowStatus: "Confirmado", supplierName: "Plaza" },
   ];
   const resultado = filtrarServiciosCancelables(services);
@@ -174,18 +206,27 @@ test("filtrarServiciosCancelables: excluye genérico sin proveedor", () => {
   assert.equal(resultado[0].recordKind, "hotel");
 });
 
-test("filtrarServiciosCancelables: incluye genérico CON proveedor", () => {
+test("filtrarServiciosCancelables: incluye genérico CON proveedor solo si ya está resuelto", () => {
   const services = [
-    { recordKind: "generic", workflowStatus: "Solicitado", supplierName: "Proveedor" },
+    { recordKind: "generic", workflowStatus: "Confirmado", supplierName: "Proveedor" },
   ];
   const resultado = filtrarServiciosCancelables(services);
   assert.equal(resultado.length, 1);
 });
 
-test("filtrarServiciosCancelables: incluye tipo específico sin supplierName", () => {
-  // Un vuelo sin supplier en el DTO es igualmente cancelable (tipo específico).
+test("filtrarServiciosCancelables: excluye tipo específico sin resolver, aunque no tenga supplierName", () => {
+  // Un vuelo sin supplier en el DTO, pero todavía Solicitado, no es candidato:
+  // el ticket no fue emitido, así que se saca con Borrar, no con "Anular varios".
   const services = [
     { recordKind: "flight", workflowStatus: "Solicitado" },
+  ];
+  const resultado = filtrarServiciosCancelables(services);
+  assert.equal(resultado.length, 0);
+});
+
+test("filtrarServiciosCancelables: incluye tipo específico ya resuelto (ticket emitido)", () => {
+  const services = [
+    { recordKind: "flight", workflowStatus: "Emitido" },
   ];
   const resultado = filtrarServiciosCancelables(services);
   assert.equal(resultado.length, 1);
@@ -205,6 +246,24 @@ test("filtrarServiciosCancelables: excluye cancelado vía svc.status (campo alte
   ];
   const resultado = filtrarServiciosCancelables(services);
   assert.equal(resultado.length, 0, "cancelado por status.Cancelado debe quedar excluido");
+});
+
+// ─── Tests: debeMostrarBotonAnularVarios ─────────────────────────────────────
+
+test("debeMostrarBotonAnularVarios: 0 candidatos → no se muestra", () => {
+  assert.equal(debeMostrarBotonAnularVarios(0), false);
+});
+
+test("debeMostrarBotonAnularVarios: 1 candidato → no se muestra (alcanza con anular esa fila)", () => {
+  assert.equal(debeMostrarBotonAnularVarios(1), false);
+});
+
+test("debeMostrarBotonAnularVarios: 2 candidatos → se muestra", () => {
+  assert.equal(debeMostrarBotonAnularVarios(2), true);
+});
+
+test("debeMostrarBotonAnularVarios: 5 candidatos → se muestra", () => {
+  assert.equal(debeMostrarBotonAnularVarios(5), true);
 });
 
 // ─── Tests: extraerMensajeError ───────────────────────────────────────────────

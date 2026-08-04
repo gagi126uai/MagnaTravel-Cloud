@@ -12,13 +12,13 @@ import { RESERVA_STATUS_LABELS, traducirEstadoReserva } from "./reservaStatusLab
 // ─── Cobertura exhaustiva: los 10 estados que puede traer reserva.status ─────────
 
 test("traduce los 10 estados conocidos del ciclo de reserva", () => {
-  assert.equal(traducirEstadoReserva("Quotation"), "Cotizacion");
+  assert.equal(traducirEstadoReserva("Quotation"), "Cotización");
   assert.equal(traducirEstadoReserva("Budget"), "Presupuesto");
-  assert.equal(traducirEstadoReserva("InManagement"), "En gestion");
+  assert.equal(traducirEstadoReserva("InManagement"), "En gestión");
   assert.equal(traducirEstadoReserva("Confirmed"), "Confirmada");
   assert.equal(traducirEstadoReserva("Traveling"), "En viaje");
   assert.equal(traducirEstadoReserva("Closed"), "Finalizada");
-  assert.equal(traducirEstadoReserva("Lost"), "Perdido");
+  assert.equal(traducirEstadoReserva("Lost"), "Perdida");
   assert.equal(traducirEstadoReserva("Cancelled"), "Anulada");
   assert.equal(traducirEstadoReserva("PendingOperatorRefund"), "Esperando reembolso");
   assert.equal(traducirEstadoReserva("Archived"), "Archivada");

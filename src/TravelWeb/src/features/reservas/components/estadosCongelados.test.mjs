@@ -406,7 +406,7 @@ function resolverBotonesVoucher({ voucher, soloLectura, esAdmin, tienePermisoRev
     aprobarVisible: !soloLectura && voucher.status === "PendingAuthorization" && (esAdmin || esSupervisor),
     rechazarVisible: !soloLectura && voucher.status === "PendingAuthorization" && (esAdmin || esSupervisor),
     anularVisible: !soloLectura && voucher.status !== "Revoked" && tienePermisoRevoke,
-    // "Añadir Documento" se evalúa a nivel de tab, no de voucher, pero la lógica es la misma.
+    // "Agregar documento" se evalúa a nivel de tab, no de voucher, pero la lógica es la misma.
     aniadirVisible: !soloLectura,
   };
 }

@@ -37,7 +37,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
             colSpan={6}
             icon={Archive}
             title="No se encontraron reservas"
-            description="Intenta ajustar los filtros de busqueda."
+            description="Probá cambiando los filtros."
           />
         ) : (
           reservas.map((reserva) => {

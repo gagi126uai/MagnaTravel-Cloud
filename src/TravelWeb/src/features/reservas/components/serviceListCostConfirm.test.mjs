@@ -411,9 +411,11 @@ test("handleServiceUpdated: delta cero cuando costo no cambió (confirm sin modi
     assert.equal(resultado.transferBookings[0].costToConfirm, false, "costToConfirm debe actualizarse igual");
 });
 
-// ─── Tests: etiquetaEstadoServicio (FIX 3: En espera vs Solicitado) ───────────
-// Regla Gaston 2026-06-08: en Cotización/Presupuesto el badge dice "En espera"
-// (nada se pidió al operador); recién en En gestión en adelante dice "Solicitado".
+// ─── Tests: etiquetaEstadoServicio (FIX 3: etiqueta única "Solicitado") ───────
+// Regla nueva (P13 firmada 2026-08-03, pulido de textos): etiqueta ÚNICA "Solicitado"
+// para todo lo que todavía no se resolvió con el operador, sin distinción por etapa.
+// Antes (regla Gaston 2026-06-08, DEROGADA) Cotización/Presupuesto mostraban "En
+// espera" — ese matiz se sacó porque no aportaba nada al vendedor.
 // "Confirmado" siempre pasa directo (es un estado del backend).
 // 2026-07-16 (vocabulario "Cancelar" vs "Anular"): workflowStatus "Cancelado" (nombre
 // histórico del campo del backend) ahora se muestra como "Anulado" — ver el mapeo real
@@ -427,16 +429,16 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
     if (workflowStatus && workflowStatus !== 'Solicitado') {
         return workflowStatus;
     }
-    const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
-    return estaEnEtapaPrevia ? 'En espera' : 'Solicitado';
+    // Etiqueta única, sin distinción por etapa (P13, 2026-08-03).
+    return 'Solicitado';
 }
 
-test("etiquetaEstadoServicio: workflowStatus null + Quotation → 'En espera'", () => {
-    assert.equal(etiquetaEstadoServicio(null, 'Quotation'), 'En espera');
+test("etiquetaEstadoServicio: workflowStatus null + Quotation → 'Solicitado' (etiqueta única, P13)", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Quotation'), 'Solicitado');
 });
 
-test("etiquetaEstadoServicio: workflowStatus null + Budget → 'En espera'", () => {
-    assert.equal(etiquetaEstadoServicio(null, 'Budget'), 'En espera');
+test("etiquetaEstadoServicio: workflowStatus null + Budget → 'Solicitado' (etiqueta única, P13)", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Budget'), 'Solicitado');
 });
 
 test("etiquetaEstadoServicio: workflowStatus null + InManagement → 'Solicitado'", () => {
@@ -466,11 +468,11 @@ test("etiquetaEstadoServicio: workflowStatus 'Emitido' → pasa directo (estado 
     assert.equal(etiquetaEstadoServicio('Emitido', 'InManagement'), 'Emitido');
 });
 
-test("etiquetaEstadoServicio: 'Solicitado' + Cotizacion/Presupuesto → 'En espera' (el caso real que estaba roto)", () => {
-    // Los servicios traen workflowStatus 'Solicitado' como valor real (no vacio),
-    // asi que la conversion a 'En espera' debe contemplar tambien ese valor.
-    assert.equal(etiquetaEstadoServicio('Solicitado', 'Quotation'), 'En espera');
-    assert.equal(etiquetaEstadoServicio('Solicitado', 'Budget'), 'En espera');
+test("etiquetaEstadoServicio: 'Solicitado' + Cotizacion/Presupuesto → 'Solicitado' (etiqueta única, P13)", () => {
+    // Los servicios traen workflowStatus 'Solicitado' como valor real (no vacio);
+    // en Cotización/Presupuesto se muestra igual que en cualquier otra etapa previa.
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'Quotation'), 'Solicitado');
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'Budget'), 'Solicitado');
 });
 
 test("etiquetaEstadoServicio: 'Solicitado' + En gestion en adelante → 'Solicitado'", () => {

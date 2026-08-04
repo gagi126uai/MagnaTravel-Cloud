@@ -454,7 +454,7 @@ public class Reserva : IHasPublicId
     /// Sin datos sensibles (ni montos ni nombres).
     /// </summary>
     public const string NotSaleFirmForChargeMessage =
-        "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero.";
+        "No se puede registrar un cobro en este estado. Pasá la reserva a En gestión primero.";
 
     /// <summary>
     /// ADR-033 (2026-06-16): mensaje cuando la reserva ES venta firme pero ya no tiene saldo pendiente

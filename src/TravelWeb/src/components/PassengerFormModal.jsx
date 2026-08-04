@@ -289,7 +289,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
     const handleAfipSearch = async (query, field) => {
         if (!query) return;
         if (query.length < 3) {
-            showWarning("Ingresa al menos 3 caracteres.", "Padron AFIP");
+            showWarning("Escribí al menos 3 caracteres.", "Padrón AFIP");
             return;
         }
 
@@ -300,7 +300,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             const data = await api.get(`/fiscal/search?q=${encodeURIComponent(query)}${genderParam}`);
             setAfipResults(data || []);
             if (!data || data.length === 0) {
-                showWarning("No se encontraron resultados con ese DNI.", "Padron AFIP");
+                showWarning("No se encontraron resultados con ese DNI.", "Padrón AFIP");
             }
         } catch (error) {
             console.error(error);
@@ -381,7 +381,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
             // F1 (deuda 31/07): el toast YA pone "Error" como título (ver alerts.js showError) —
             // agregarle acá el prefijo "Error al guardar pasajero: " duplicaba la palabra
             // ("Error" arriba, "Error al guardar..." abajo). El texto del motor se muestra solo.
-            showError(getApiErrorMessage(error, "Error desconocido"));
+            showError(getApiErrorMessage(error, "No se pudo guardar el pasajero. Probá de nuevo."));
         } finally {
             setLoading(false);
         }
@@ -395,7 +395,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                 <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-indigo-500 to-sky-600 p-4 text-white dark:border-slate-700">
                     <h2 className="flex items-center gap-2 text-lg font-semibold">
                         <User className="h-5 w-5" />
-                        {passengerToEdit ? "Editar Pasajero" : "Nuevo Pasajero"}
+                        {passengerToEdit ? "Editar pasajero" : "Nuevo pasajero"}
                     </h2>
                     <button type="button" onClick={onClose} className="rounded-lg p-2 text-white/80 transition-colors hover:bg-white/20 hover:text-white">
                         <X className="h-5 w-5" />
@@ -438,7 +438,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
 
                             {/* ─── Campo TIPO DOCUMENTO ──────────────────────────────────── */}
                             <div>
-                                <label className={labelClass}>Tipo documento</label>
+                                <label className={labelClass}>Tipo de documento</label>
                                 <select className={inputClass} value={formData.documentType || "DNI"} onChange={(event) => updateField("documentType", event.target.value)}>
                                     <option value="DNI">DNI</option>
                                     <option value="Pasaporte">Pasaporte</option>
@@ -449,7 +449,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
 
                             {/* ─── Campo DOCUMENTO (con histórico + botón AFIP) ──────────── */}
                             <div>
-                                <label className={labelClass}>Numero de documento *</label>
+                                <label className={labelClass}>Número de documento *</label>
                                 <div className="relative">
                                     <FileText className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                                     <input
@@ -545,14 +545,14 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                         <SectionTitle icon={CalendarDays}>Datos personales</SectionTitle>
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                             <div>
-                                <label className={labelClass}>Fecha nacimiento</label>
+                                <label className={labelClass}>Fecha de nacimiento</label>
                                 <input type="date" className={inputClass} value={formData.birthDate || ""} onChange={(event) => updateField("birthDate", event.target.value)} />
                             </div>
                             <div>
                                 {/* P2 (2026-07-25): opcional a propósito — no todos los pasajeros
                                     viajan con pasaporte. Siempre visible (decisión firmada 6), no
                                     escondido detrás de ningún tipo de documento. */}
-                                <label className={labelClass}>Vencimiento pasaporte</label>
+                                <label className={labelClass}>Vencimiento del pasaporte</label>
                                 <input type="date" className={inputClass} value={formData.passportExpiry || ""} onChange={(event) => updateField("passportExpiry", event.target.value)} />
                             </div>
                             <div>
@@ -577,7 +577,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                         <SectionTitle icon={Phone}>Contacto</SectionTitle>
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div>
-                                <label className={labelClass}>Telefono</label>
+                                <label className={labelClass}>Teléfono</label>
                                 <div className="relative">
                                     <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                                     <input type="tel" className={`${inputClass} pl-10`} placeholder="+54 9 11..." value={formData.phone || ""} onChange={(event) => updateField("phone", event.target.value)} />
@@ -610,7 +610,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                         </button>
                         <button type="submit" disabled={loading} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm text-white shadow-lg shadow-indigo-200 transition-colors hover:bg-indigo-700 disabled:opacity-50 dark:shadow-none">
                             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                            {loading ? "Guardando..." : "Guardar Pasajero"}
+                            {loading ? "Guardando..." : "Guardar pasajero"}
                         </button>
                     </div>
                 </form>

@@ -137,7 +137,7 @@ public static class ReservaCapabilityPolicy
 
     /// <summary>El voucher solo se emite desde Confirmada en adelante (Decision 3 del dueño).</summary>
     public const string VoucherBeforeConfirmedReason =
-        "El voucher se puede emitir recien desde Confirmada en adelante.";
+        "El voucher se emite recién desde Confirmada en adelante.";
 
     /// <summary>Cancelar una Finalizada (Closed) no es una accion valida del ciclo (Decision 4).</summary>
     public const string ClosedNotCancellableReason =
@@ -148,7 +148,7 @@ public static class ReservaCapabilityPolicy
     /// servicio ya empezo/se presto; las correcciones van por nota de credito o ajuste, no por cancelacion.
     /// </summary>
     public const string TravelingNotCancellableReason =
-        "La reserva esta en viaje: no se cancela; corregí por nota de crédito/ajuste.";
+        "La reserva está en viaje: no se anula. Corregí con una nota de crédito o un ajuste.";
 
     /// <summary>No hay accion de cancelacion valida en este estado (pre-venta o ya terminal).</summary>
     public const string NotCancellableStatusReason =

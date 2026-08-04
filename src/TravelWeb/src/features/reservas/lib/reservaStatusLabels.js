@@ -18,13 +18,13 @@
  * como constante en `EstadoReserva.cs`, pero SÍ llega como string en `reserva.status`.
  */
 export const RESERVA_STATUS_LABELS = {
-  Quotation: "Cotizacion",
+  Quotation: "Cotización",
   Budget: "Presupuesto",
-  InManagement: "En gestion",
+  InManagement: "En gestión",
   Confirmed: "Confirmada",
   Traveling: "En viaje",
   Closed: "Finalizada",
-  Lost: "Perdido",
+  Lost: "Perdida",
   Cancelled: "Anulada",
   PendingOperatorRefund: "Esperando reembolso",
   Archived: "Archivada",

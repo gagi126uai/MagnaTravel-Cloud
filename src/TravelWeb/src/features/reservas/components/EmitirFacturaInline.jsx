@@ -245,7 +245,7 @@ const EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA = 6;
  */
 function crearItemNuevo(isMonotributista) {
   return {
-    description: "Servicios Turísticos",
+    description: "Servicios turísticos",
     quantity: 1,
     unitPrice: 0,
     alicuotaIvaId: isMonotributista ? 3 : 5,
@@ -844,7 +844,7 @@ export function EmitirFacturaInline({
             <Calculator className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
           </div>
           <div>
-            <div className="text-sm font-bold text-slate-900 dark:text-white">Nueva Factura AFIP</div>
+            <div className="text-sm font-bold text-slate-900 dark:text-white">Nueva factura AFIP</div>
             <div className="text-xs text-slate-500 dark:text-slate-400">
               {clientName || "Consumidor Final"}
               {clientCuit ? ` · CUIT ${clientCuit}` : ""}
@@ -936,10 +936,10 @@ export function EmitirFacturaInline({
                   <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
                   <div className="space-y-1">
                     <div className="font-semibold">
-                      {bloqueadoPorDeuda ? "AFIP bloqueado por deuda" : "Emisión por excepción habilitada"}
+                      {bloqueadoPorDeuda ? "No se puede facturar: el cliente debe plata" : "Podés facturar igual, con motivo"}
                     </div>
                     <p className="text-sm">
-                      {reserva?.economicBlockReason || "La reserva todavía no está cancelada económicamente."}
+                      {reserva?.economicBlockReason || "Todavía queda saldo por cobrar en esta reserva."}
                     </p>
                     {typeof reserva?.balance === "number" && (
                       <p className="text-sm font-medium">
@@ -964,14 +964,14 @@ export function EmitirFacturaInline({
                         className="mt-1 rounded border-slate-300"
                         data-testid="check-force-issue"
                       />
-                      Confirmo que se emite AFIP con deuda pendiente.
+                      Confirmo que emito la factura aunque el cliente deba plata.
                     </label>
                     <div>
                       <label
                         htmlFor="force-reason-inline"
                         className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
                       >
-                        Motivo del override
+                        ¿Por qué la emitís igual?
                       </label>
                       <textarea
                         id="force-reason-inline"
@@ -1134,7 +1134,7 @@ export function EmitirFacturaInline({
                           htmlFor="tc-justificacion-inline"
                           className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
                         >
-                          Justificación del TC *
+                          ¿De dónde sale el tipo de cambio? *
                         </label>
                         <textarea
                           id="tc-justificacion-inline"
@@ -1464,7 +1464,7 @@ export function EmitirFacturaInline({
                       Verificando...
                     </>
                   ) : requiereOverride
-                    ? "Emitir por excepción"
+                    ? "Emitir igual"
                     : esUSD
                     ? "Emitir factura en USD"
                     : "Emitir factura"}

@@ -411,10 +411,10 @@ test("calcularCandadoPorCoverage: coverage completa (isComplete=true) → mostra
 test("calcularCandadoPorCoverage: coverage incompleta → no mostrar botón, texto = missingMessage EXACTO del motor", () => {
     const resultado = calcularCandadoPorCoverage({
         isComplete: false,
-        missingMessage: "Falta el documento de 1 pasajero(s) para emitir la asistencia.",
+        missingMessage: "Falta el documento de 1 pasajero para emitir la asistencia.",
     });
     assert.equal(resultado.mostrarBoton, false);
-    assert.equal(resultado.texto, "Falta el documento de 1 pasajero(s) para emitir la asistencia.");
+    assert.equal(resultado.texto, "Falta el documento de 1 pasajero para emitir la asistencia.");
 });
 
 test("calcularCandadoPorCoverage: incompleta pero missingMessage no llegó (defensivo) → texto genérico, no undefined", () => {

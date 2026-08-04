@@ -30,14 +30,14 @@ export default function ReservaTimeline({ reservaId }) {
     }, [reservaId]);
 
     if (loading) {
-        return <div className="p-4 text-center text-slate-500">Cargando historial operativo...</div>;
+        return <div className="p-4 text-center text-slate-500">Cargando el historial…</div>;
     }
 
     if (events.length === 0) {
         return (
             <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center dark:border-slate-700 dark:bg-slate-800">
                 <Activity className="mx-auto mb-2 h-8 w-8 text-slate-400" />
-                <p className="text-slate-500 dark:text-slate-400">No hay movimientos operativos registrados.</p>
+                <p className="text-slate-500 dark:text-slate-400">Todavía no pasó nada en esta reserva.</p>
             </div>
         );
     }

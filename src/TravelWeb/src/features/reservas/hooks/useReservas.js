@@ -134,9 +134,9 @@ export function useReservas() {
     const confirmed = await showConfirm({
       title: "Archivar reserva",
       eyebrow: "Archivo",
-      text: `La reserva ${numeroReserva} pasara a archivo y quedara solo para consulta.`,
-      details: "No se elimina informacion. El historial, las cobranzas y los documentos se conservan.",
-      confirmText: "Si, archivar",
+      text: `La reserva ${numeroReserva} pasa a archivo y queda solo para consulta.`,
+      details: "No se elimina información. El historial, las cobranzas y los documentos se conservan.",
+      confirmText: "Sí, archivar",
       cancelText: "Seguir viendo",
       confirmColor: "amber",
     });

@@ -54,7 +54,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                     }
                 }
             } catch (error) {
-                if (!cancelled) showError(getApiErrorMessage(error, "No se pudieron cargar las opciones de reversion."));
+                if (!cancelled) showError(getApiErrorMessage(error, "No se pudieron cargar las opciones. Probá de nuevo."));
             } finally {
                 if (!cancelled) setLoadingOptions(false);
             }
@@ -191,7 +191,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
 
                                     {requiresAuth && (
                                         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
-                                            No sos admin. Necesitas autorizacion de un supervisor para revertir el estado.
+                                            Para cambiar el estado necesitás que te autorice un supervisor.
                                         </div>
                                     )}
 
@@ -222,15 +222,15 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                                         <label className="text-xs font-bold uppercase text-slate-500 mb-1 block">
                                             {/* reasonRequired = requiresAuth (no-admin) OR forceReason (admin en accion sensible).
                                                 En ambos casos el motivo es obligatorio con mínimo 10 caracteres. */}
-                                            Motivo {reasonRequired
+                                            Motivo del cambio {reasonRequired
                                                 ? <span className="text-rose-500">* (mín. 10 caracteres)</span>
-                                                : <span className="text-slate-400">(opcional)</span>}
+                                                : null}
                                         </label>
                                         <textarea
                                             value={reason}
                                             onChange={(e) => setReason(e.target.value)}
                                             rows={3}
-                                            placeholder={reasonRequired ? "Motivo de la reversion..." : "Motivo (opcional)..."}
+                                            placeholder={reasonRequired ? "Motivo del cambio de estado..." : "Motivo del cambio..."}
                                             className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
                                         />
                                         {reasonRequired && reason.length > 0 && reason.trim().length < 10 && (

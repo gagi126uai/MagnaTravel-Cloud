@@ -35,7 +35,7 @@ function formatTripDate(value) {
  *   Confirmed (candado) → (automatico al llegar la fecha de salida) → Traveling
  *   Traveling → [Cerrar reserva] → Closed
  *   Cualquier etapa activa → [Anular reserva] (con proceso fiscal)
- *   Quotation/Budget → [Perdido] (discreto, no hubo compra)
+ *   Quotation/Budget → [Perdida] (discreto, no hubo compra)
  *
  * ADR-036 (2026-06-21):
  *   - "Apartar para liquidar" (Traveling→ToSettle) ELIMINADO: ya no existe "A liquidar".
@@ -186,8 +186,8 @@ export function ReservaHeader({
             : CANCELLABLE_STATUSES_FALLBACK.includes(reserva.status)
     );
 
-    // ─── Boton "Perdido" ─────────────────────────────────────────────────────────
-    // "Perdido": solo desde Quotation o Budget (cuando el cliente no compro).
+    // ─── Boton "Perdida" ─────────────────────────────────────────────────────────
+    // "Perdida": solo desde Quotation o Budget (cuando el cliente no compró).
     const showMarkLostButton = ['Quotation', 'Budget'].includes(reserva.status)
         && !isArchived
         && onMarkLost;
@@ -241,7 +241,7 @@ export function ReservaHeader({
         : (reserva.balance ?? 0) <= 0;
     const canClose = endHasPast && todasLasMonedasSaldadas;
     const closeTooltip = !endHasPast
-        ? "El viaje todavia no termino"
+        ? "El viaje todavía no terminó"
         : !todasLasMonedasSaldadas
             ? "No se puede cerrar con saldo pendiente"
             : "Cerrar reserva";
@@ -269,7 +269,7 @@ export function ReservaHeader({
                         {locked && (
                             <Lock
                                 className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400"
-                                title="Esta reserva tiene el candado activo. Para editar necesitas autorizacion."
+                                title="Reserva con candado. Para editarla, pedí autorización."
                                 aria-label="Reserva bloqueada"
                             />
                         )}
@@ -463,7 +463,7 @@ export function ReservaHeader({
                                     title={
                                         faltaTitular
                                             ? "Tiene que haber un pasajero titular con el nombre cargado"
-                                            : "El cliente acepto el presupuesto — empieza la gestion con los operadores"
+                                            : "El cliente aceptó el presupuesto — arranca la gestión con los operadores"
                                     }
                                 >
                                     El cliente acepto

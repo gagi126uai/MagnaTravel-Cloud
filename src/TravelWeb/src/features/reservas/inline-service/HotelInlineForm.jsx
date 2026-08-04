@@ -206,9 +206,11 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
         ? [
               {
                   publicId: form.supplierId,
-                  // supplierName viene del resultado del buscador si el backend lo incluye;
-                  // si no, mostramos el id truncado para que sea reconocible.
-                  name: form.supplierName || `Operador sugerido (${String(form.supplierId).slice(0, 8)}…)`,
+                  // supplierName viene del resultado del buscador si el backend lo incluye.
+                  // Sin supplierName no mostramos el ID interno recortado (eso es un dato
+                  // técnico que un usuario no programador no puede leer) — mejor un texto
+                  // genérico que igual identifica que hay un operador sugerido (2026-08-03).
+                  name: form.supplierName || "Operador sugerido",
               },
               ...suppliers,
           ]
@@ -447,11 +449,11 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                         data-testid="inline-hotel-meal-plan"
                         aria-label="Régimen de comidas del hotel"
                     >
-                        <option value="Solo Alojamiento">Solo Alojamiento</option>
+                        <option value="Solo Alojamiento">Solo alojamiento</option>
                         <option value="Desayuno">Desayuno</option>
-                        <option value="Media Pension">Media Pensión</option>
-                        <option value="Pension Completa">Pensión Completa</option>
-                        <option value="All Inclusive">All Inclusive</option>
+                        <option value="Media Pension">Media pensión</option>
+                        <option value="Pension Completa">Pensión completa</option>
+                        <option value="All Inclusive">All inclusive</option>
                     </select>
                 </div>
                 <div>

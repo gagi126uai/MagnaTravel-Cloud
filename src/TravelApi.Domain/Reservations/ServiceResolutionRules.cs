@@ -116,7 +116,7 @@ public static class ServiceResolutionRules
             }
         }
 
-        CheckType(reserva.FlightSegments, IsCancelled, IsResolved, "un aereo (sin emitir)");
+        CheckType(reserva.FlightSegments, IsCancelled, IsResolved, "un aéreo (sin emitir)");
         CheckType(reserva.HotelBookings, IsCancelled, IsResolved, "un hotel");
         CheckType(reserva.TransferBookings, IsCancelled, IsResolved, "un traslado");
         CheckType(reserva.PackageBookings, IsCancelled, IsResolved, "un paquete");

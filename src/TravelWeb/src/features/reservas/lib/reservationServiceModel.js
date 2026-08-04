@@ -237,7 +237,7 @@ export function getServiceMutationEndpoint(reservaId, service) {
   const servicePublicId = getReservationServicePublicId(service);
 
   if (!servicePublicId) {
-    throw new Error("No se encontro el identificador publico del servicio.");
+    throw new Error("No pudimos identificar el servicio. Recargá la pantalla y probá de nuevo.");
   }
 
   if (service?.recordKind === SERVICE_RECORD_KIND.GENERIC) {

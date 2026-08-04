@@ -1,0 +1,1647 @@
+<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reservas — rediseño propuesto (2026-08-03)</title>
+<style>
+  :root{
+    --tinta:#0f172a; --tinta2:#475569; --tinta3:#94a3b8;
+    --linea:#e2e8f0; --fondo:#f1f5f9; --papel:#ffffff;
+    --indigo:#4f46e5; --indigo-suave:#eef2ff;
+    --rojo:#e11d48; --rojo-suave:#fff1f2;
+    --verde:#059669; --verde-suave:#ecfdf5;
+    --ambar:#b45309; --ambar-suave:#fffbeb; --ambar-borde:#fde68a;
+    --gris-suave:#f8fafc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--fondo);color:var(--tinta);
+       font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       font-size:14px;line-height:1.45}
+  .wrap{max-width:1500px;margin:0 auto;padding:28px 20px 80px}
+
+  /* ---------- cabecera del documento ---------- */
+  .doc-head{background:var(--papel);border:1px solid var(--linea);border-radius:16px;padding:24px 28px;margin-bottom:28px}
+  .doc-head h1{margin:0 0 6px;font-size:24px}
+  .doc-head p{margin:6px 0;color:var(--tinta2)}
+  .doc-head .aviso{background:var(--ambar-suave);border:1px solid var(--ambar-borde);color:#78350f;
+                   border-radius:10px;padding:12px 14px;margin-top:14px;font-size:13px}
+  .doc-head .firma{background:var(--rojo-suave);border:1px solid #fecdd3;color:#9f1239;
+                   border-radius:10px;padding:12px 14px;margin-top:10px;font-size:13px}
+
+  /* ---------- estructura pantalla + notas ---------- */
+  .seccion{margin:44px 0 0}
+  .seccion > h2{font-size:19px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  .seccion > h2 .num{background:var(--indigo);color:#fff;border-radius:8px;width:28px;height:28px;
+                     display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+  .seccion > .sub{color:var(--tinta2);margin:0 0 16px}
+  .fila{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:22px;align-items:start}
+  @media (max-width:1180px){.fila{grid-template-columns:1fr}}
+
+  .pantalla{background:var(--papel);border:1px solid var(--linea);border-radius:14px;overflow:hidden;
+            box-shadow:0 1px 2px rgba(15,23,42,.05)}
+  .pantalla .barra-nav{background:#0f172a;color:#cbd5e1;padding:7px 14px;font-size:11px;letter-spacing:.04em}
+  .cuerpo{padding:22px 24px}
+
+  .notas{display:flex;flex-direction:column;gap:10px;position:sticky;top:16px}
+  .nota{background:#fffdf5;border:1px solid var(--ambar-borde);border-left:4px solid #f59e0b;
+        border-radius:10px;padding:10px 12px;font-size:12.5px;color:#78350f}
+  .nota b{color:#7c2d12}
+  .nota.ok{background:var(--verde-suave);border-color:#a7f3d0;border-left-color:var(--verde);color:#065f46}
+  .nota.ok b{color:#064e3b}
+  .nota.preg{background:var(--indigo-suave);border-color:#c7d2fe;border-left-color:var(--indigo);color:#3730a3}
+  .nota.preg b{color:#312e81}
+  .nota.falta{background:var(--rojo-suave);border-color:#fecdd3;border-left-color:var(--rojo);color:#9f1239}
+  .nota.falta b{color:#881337}
+  .nota .tag{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.06em;
+             text-transform:uppercase;opacity:.75;margin-bottom:3px}
+
+  /* ---------- piezas de UI ---------- */
+  .titulo-pag{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+  .titulo-pag h3{margin:0;font-size:22px}
+  .btn{display:inline-flex;align-items:center;gap:7px;border-radius:9px;padding:8px 14px;
+       font-size:13px;font-weight:600;border:1px solid var(--linea);background:var(--papel);
+       color:var(--tinta);cursor:default;white-space:nowrap}
+  .btn.pri{background:var(--indigo);border-color:var(--indigo);color:#fff}
+  .btn.peligro{background:var(--rojo-suave);border-color:#fecdd3;color:var(--rojo)}
+  .btn.apagado{background:var(--gris-suave);color:var(--tinta3);border-color:var(--linea)}
+  .btn.chico{padding:5px 10px;font-size:12px}
+  .btn.solo{padding:6px 9px}
+
+  .kpis{display:flex;flex-wrap:wrap;gap:8px 26px;align-items:baseline;padding:12px 16px;
+        background:var(--gris-suave);border:1px solid var(--linea);border-radius:11px;margin-bottom:14px}
+  .kpi{display:flex;align-items:baseline;gap:8px}
+  .kpi .r{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--tinta3);font-weight:700}
+  .kpi .v{font-size:16px;font-weight:800}
+  .kpi .v.rojo{color:var(--rojo)} .kpi .v.ind{color:var(--indigo)}
+  .kpi .sep{color:var(--linea)}
+
+  .tabs{display:flex;gap:2px;overflow:hidden;border-bottom:1px solid var(--linea);margin-bottom:14px;flex-wrap:wrap}
+  .tab{padding:8px 12px;font-size:12.5px;color:var(--tinta2);border-bottom:2px solid transparent;white-space:nowrap}
+  .tab .c{display:inline-block;background:var(--fondo);border-radius:20px;padding:0 6px;font-size:11px;
+          margin-left:5px;color:var(--tinta2)}
+  .tab.act{color:var(--indigo);border-bottom-color:var(--indigo);font-weight:700}
+  .tab.act .c{background:var(--indigo-suave);color:var(--indigo)}
+  .tab.cero{color:var(--tinta3);opacity:.55}
+  .tab.cero .c{background:transparent;border:1px solid var(--linea)}
+
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .buscador{flex:1;min-width:260px;display:flex;align-items:center;gap:8px;border:1px solid var(--linea);
+            border-radius:9px;padding:8px 12px;background:var(--papel);color:var(--tinta3);font-size:13px}
+  .filtro{display:flex;align-items:center;gap:6px;border:1px solid var(--linea);border-radius:9px;
+          padding:7px 11px;font-size:12.5px;color:var(--tinta2);background:var(--papel)}
+
+  table{width:100%;border-collapse:collapse}
+  thead th{text-align:left;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+           color:var(--tinta3);padding:8px 10px;border-bottom:1px solid var(--linea);font-weight:700}
+  tbody td{padding:11px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+  tbody tr:hover{background:#fafbff}
+  .num-res{font-weight:800}
+  .sub-res{font-size:12px;color:var(--tinta2);margin-top:1px}
+  .viaja{font-size:11px;color:var(--indigo);margin-top:3px;font-weight:600}
+  .cli{font-weight:600} .pax{font-size:11px;color:var(--tinta3);margin-top:2px}
+  .der{text-align:right} .cen{text-align:center}
+  .plata{font-weight:800}
+  .plata .otra{display:block;font-weight:700;color:var(--tinta2);font-size:12.5px}
+
+  .chip{display:inline-block;border-radius:20px;padding:2px 9px;font-size:11px;font-weight:700;
+        letter-spacing:.02em}
+  .chip.gris{background:#f1f5f9;color:#475569}
+  .chip.verde{background:var(--verde-suave);color:#047857}
+  .chip.rojo{background:var(--rojo-suave);color:var(--rojo)}
+  .chip.ambar{background:var(--ambar-suave);color:var(--ambar)}
+  .chip.ind{background:var(--indigo-suave);color:var(--indigo)}
+  .chip.cyan{background:#ecfeff;color:#0e7490}
+  .chip.grande{font-size:12px;padding:4px 12px}
+
+  .vacio{padding:44px 20px;text-align:center;color:var(--tinta2)}
+  .vacio .t{font-weight:700;color:var(--tinta);margin-bottom:4px}
+  .pie{display:flex;justify-content:space-between;align-items:center;padding:12px 4px 0;
+       font-size:12px;color:var(--tinta2);border-top:1px solid var(--linea);margin-top:6px}
+
+  /* ficha */
+  .miga{font-size:12.5px;color:var(--tinta2);margin-bottom:10px}
+  .ficha-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap}
+  .ficha-head h3{margin:0;font-size:23px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .ficha-head .cliente{font-size:16px;font-weight:700;margin-top:4px}
+  .ficha-head .destino{font-size:12.5px;color:var(--tinta2);margin-top:1px}
+  .linea-plata{margin-top:9px;font-size:12px;color:var(--tinta2)}
+  .linea-plata b{color:var(--tinta)}
+  .fechas{display:inline-flex;align-items:center;gap:10px;border:1px solid var(--linea);border-radius:9px;
+          padding:7px 12px;font-size:12.5px;margin-top:12px;background:var(--gris-suave)}
+  .acciones{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+  .numeros{display:flex;align-items:flex-end;gap:34px;margin:20px 0 6px;flex-wrap:wrap}
+  .n-grande .r{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--tinta3);font-weight:800}
+  .n-grande .v{font-size:30px;font-weight:800;color:var(--rojo);line-height:1.1}
+  .n-grande .de{font-size:12px;color:var(--tinta3);margin-top:2px}
+  .n-chico{font-size:13px;color:var(--tinta2)}
+  .n-chico b{color:var(--tinta)}
+  .n-cero{font-size:13px;color:var(--tinta3)}
+
+  .aviso-fila{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:9px 14px;
+              border-radius:10px;font-size:13px;margin-top:10px}
+  .aviso-fila.accion{background:var(--ambar-suave);border:1px solid var(--ambar-borde);color:#78350f}
+  .aviso-fila.info{background:var(--gris-suave);border:1px solid var(--linea);color:var(--tinta2)}
+  .aviso-fila.terminal{background:var(--rojo-suave);border:1px solid #fecdd3;color:#9f1239}
+  .aviso-fila.guia{background:var(--indigo-suave);border:1px solid #c7d2fe;color:#3730a3}
+
+  .tabs-ficha{display:flex;gap:4px;border-bottom:1px solid var(--linea);margin:20px 0 0}
+  .tabs-ficha .tab{padding:10px 14px}
+
+  .panel{border:1px solid var(--linea);border-top:none;border-radius:0 0 12px 12px;padding:18px}
+  .panel h4{margin:0 0 12px;font-size:15px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+
+  .serv-fila td{padding:12px 10px}
+  .serv-desc{font-weight:700} .serv-op{font-size:11.5px;color:var(--tinta2);margin-top:2px}
+  .acc-linea{display:flex;gap:12px;justify-content:flex-end;font-size:12px;color:var(--tinta2)}
+  .acc-linea span{white-space:nowrap}
+
+  .men{display:inline-block;position:relative}
+  .men-caja{position:absolute;right:0;top:calc(100% + 4px);background:var(--papel);border:1px solid var(--linea);
+            border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.12);padding:6px;width:210px;font-size:12.5px;z-index:5}
+  .men-caja div{padding:7px 9px;border-radius:7px;color:var(--tinta2)}
+  .men-caja div:hover{background:var(--gris-suave)}
+
+  .movil{width:390px;max-width:100%;border:10px solid #0f172a;border-radius:26px;overflow:hidden;background:var(--papel)}
+  .movil .cuerpo{padding:14px}
+  .tarjeta-m{border:1px solid var(--linea);border-radius:11px;padding:12px;margin-bottom:9px}
+  .scroll-hint{position:relative}
+  .scroll-hint::after{content:"›";position:absolute;right:-2px;top:50%;transform:translateY(-50%);
+    background:linear-gradient(90deg,rgba(255,255,255,0),#fff 55%);padding:6px 6px 6px 22px;color:var(--tinta3);font-weight:800}
+
+  .leyenda{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 0;font-size:12px;color:var(--tinta2)}
+  .leyenda i{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:-1px}
+  code{background:#f1f5f9;border-radius:4px;padding:1px 5px;font-size:12px}
+
+  /* ---------- respuestas firmadas ---------- */
+  .firmado{background:var(--verde-suave);border:1px solid #a7f3d0;color:#065f46;border-radius:10px;
+           padding:12px 14px;margin-top:10px;font-size:13px}
+  .firmado b{color:#064e3b}
+  .firmado ul{margin:8px 0 0;padding-left:18px}
+  .firmado li{margin:3px 0}
+
+  /* ---------- historial (línea de tiempo) ---------- */
+  .dia{display:flex;align-items:center;gap:10px;margin:18px 0 8px;font-size:12px;font-weight:800;
+       color:var(--tinta2);text-transform:none}
+  .dia::after{content:"";flex:1;height:1px;background:var(--linea)}
+  .hito{display:grid;grid-template-columns:52px 16px minmax(0,1fr);gap:10px;align-items:start;padding:7px 0}
+  .hito .hora{font-size:12px;color:var(--tinta3);padding-top:1px}
+  .hito .punto{position:relative;padding-top:5px}
+  .hito .punto i{width:9px;height:9px;border-radius:50%;background:var(--tinta3);display:block}
+  .hito .punto::before{content:"";position:absolute;left:4px;top:16px;bottom:-16px;width:1px;background:var(--linea)}
+  .hito:last-child .punto::before{display:none}
+  .hito .que{font-size:13.5px}
+  .hito .det{font-size:12.5px;color:var(--tinta2);margin-top:2px}
+  .hito .plus{color:var(--verde);font-weight:700}
+  .hito .minus{color:var(--tinta);font-weight:700}
+
+  /* ---------- extracto ---------- */
+  .moneda-bloque{border:1px solid var(--linea);border-radius:11px;overflow:hidden;margin-bottom:16px}
+  .moneda-bloque .cab{background:var(--gris-suave);padding:9px 14px;font-size:12px;font-weight:800;
+                      letter-spacing:.05em;text-transform:uppercase;color:var(--tinta2);
+                      border-bottom:1px solid var(--linea);display:flex;justify-content:space-between}
+  .moneda-bloque table{font-size:13px}
+  .moneda-bloque tbody td{padding:9px 12px}
+  .moneda-bloque thead th{padding:7px 12px}
+  .moneda-bloque tfoot td{padding:10px 12px;font-weight:800;border-top:1px solid var(--linea);background:var(--gris-suave)}
+  .anulado td{color:var(--tinta3)}
+  .anulado .tach{text-decoration:line-through}
+
+  /* ---------- documentos / pasajeros ---------- */
+  .bloque{border:1px solid var(--linea);border-radius:11px;padding:14px;margin-bottom:16px}
+  .bloque > .t{font-size:11.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;
+               color:var(--tinta3);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+  .item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;
+        border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
+  .item:last-child{border-bottom:none}
+  .item .nom{font-weight:700}
+  .item .met{font-size:12px;color:var(--tinta2);margin-top:2px}
+  .zona{border:2px dashed var(--linea);border-radius:11px;padding:22px;text-align:center;color:var(--tinta2)}
+  .pax-fila{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid var(--linea);
+            border-radius:10px;padding:11px 13px;margin-bottom:8px;flex-wrap:wrap}
+  .pax-fila .tipo{font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--tinta3);margin-right:8px}
+  .pax-fila .nom{font-weight:700}
+  .pax-fila .doc{font-size:12px;color:var(--tinta2);margin-top:2px}
+  .pax-fila.sin{background:var(--gris-suave)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="doc-head">
+  <h1>Reservas — cómo queda la pantalla</h1>
+  <p><b>Fecha:</b> 03/08/2026 (actualizada a la tarde, con tus respuestas) ·
+     <b>Acompaña a:</b> <code>docs/ux/2026-08-03-auditoria-reservas.md</code></p>
+  <p>Esto <b>ya no es una propuesta</b>: es <b>lo que elegiste</b>. Contestaste las 14 preguntas y acá está
+  dibujado. No es la app funcionando, es un dibujo para mirar. Los cuadraditos de la derecha explican en
+  criollo por qué cada cosa está donde está.</p>
+
+  <div class="firmado">
+    <b>Tus 14 respuestas, aplicadas en este dibujo (03/08/2026):</b>
+    <ul>
+      <li><b>P1 = C</b> — la reserva <b>nace siempre como BORRADOR</b>. Afuera hay <b>un solo botón:
+        "+ Nueva reserva"</b>; adentro, <b>"Pasar a presupuesto"</b>. La solapa se llama <b>"Borradores"</b>,
+        a secas. <i>(Es distinta de la que yo recomendaba: manda la tuya. Consecuencia: la palabra
+        "Cotización" desaparece de la pantalla — esa etapa se llama Borrador en todos lados.)</i></li>
+      <li><b>P2 = A</b> — tres números en tira fina, con pesos y dólares separados.</li>
+      <li><b>P3 = B</b> — las solapas en 0 quedan, apagadas y sin poder tocarlas.</li>
+      <li><b>P4 = A</b> — bajo el número de reserva va el <b>destino</b>.</li>
+      <li><b>P5 = A</b> — en la fila, una sola acción: <b>"Archivar"</b>, con palabra y motivo a la vista.</li>
+      <li><b>P6 = A</b> — el alta deja de ser ventana: <b>fila en línea</b> arriba del listado
+        (ajustada a P1: lo que crea es un <b>borrador</b>).</li>
+      <li><b>P7 = A</b> — el estado va con el título; pago y factura, renglón aparte.</li>
+      <li><b>P8 = A</b> — la solapa <b>Pasajeros existe desde el borrador</b>, y el motivo del botón apagado
+        es el enlace <b>"Cargar el titular"</b>.</li>
+      <li><b>P9 = A</b> — las acciones de excepción viven detrás del <b>"⋯"</b>.</li>
+      <li><b>P10 = A</b> — número grande <b>solo el que tiene plata</b>.</li>
+      <li><b>P11 = A</b> — el aviso que <b>pide algo</b> va ámbar; el que <b>solo informa</b>, gris de una línea.</li>
+      <li><b>P12 = A</b> — <b>una sola solapa "Documentos"</b>, con dos bloques adentro.</li>
+      <li><b>P13</b> — la etiqueta del servicio dice <b>"SOLICITADO"</b> en todas las etapas.</li>
+      <li><b>P14 = A</b> — <b>"Anular reserva" queda solo arriba</b>.</li>
+      <li>Dos palabras más: <b>"Forma de pago"</b> (nunca "Método") y <b>"Emitir igual"</b>
+        (nunca "Emitir por excepción").</li>
+    </ul>
+  </div>
+  <div class="aviso">
+    <b>Los huesos no se tocan.</b> El modelo de estados, el candado con su explicación, el "Volver atrás",
+    la auditoría a la vista ("Anulado por X el 03/08"), los chips de estado y las fichas de trabajo en línea
+    <b>quedan tal cual</b>. Lo que cambia es la piel (qué grita y qué susurra) y la voz (cómo está escrito).
+  </div>
+  <div class="firma">
+    <b>Regla del dueño firmada hoy (03/08/2026):</b> <i>"las reservas no se borran, se anulan; nada importante
+    se borra"</i>. <b>Nada se borra: ni reservas ni presupuestos.</b> Por eso en esta maqueta el botón
+    <b>"Eliminar"</b> del presupuesto <b>ya no está</b>: lo que no prospera va a <b>Perdida</b>, y lo que
+    molesta a la vista se <b>Archiva</b>. El rastro siempre queda.
+  </div>
+  <div class="leyenda">
+    <span><i style="background:#f59e0b"></i>Nota de diseño</span>
+    <span><i style="background:#059669"></i>Esto ya estaba bien: queda igual</span>
+    <span><i style="background:#4f46e5"></i>Sale de una respuesta tuya del 03/08</span>
+    <span><i style="background:#e11d48"></i>Falta que decidas (P15 · P16 · P17)</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 1. LISTADO ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">1</span> El listado de reservas</h2>
+  <p class="sub">Antes: cinco números gigantes, diez solapas (tres en cero), títulos autogenerados y dos iconitos mudos.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="barra-nav">MODO HOMOLOGACIÓN ACTIVO · COMPROBANTES SIN VALIDEZ LEGAL</div>
+      <div class="cuerpo">
+
+        <div class="titulo-pag">
+          <div>
+            <h3>Reservas</h3>
+          </div>
+          <span class="btn pri">+ Nueva reserva</span>
+        </div>
+
+        <!-- KPIs -->
+        <div class="kpis">
+          <div class="kpi"><span class="r">Reservas activas</span><span class="v">12</span></div>
+          <span class="sep">│</span>
+          <div class="kpi"><span class="r">Por cobrar</span><span class="v rojo">$ 223.445,00</span><span class="v rojo">· US$ 1.200,00</span></div>
+          <span class="sep">│</span>
+          <div class="kpi"><span class="r">Vendido</span><span class="v ind">$ 268.535,00</span><span class="v ind">· US$ 3.400,00</span></div>
+        </div>
+
+        <!-- Solapas -->
+        <div class="tabs">
+          <div class="tab act">Todas <span class="c">63</span></div>
+          <div class="tab">Borradores <span class="c">3</span></div>
+          <div class="tab">Presupuestos <span class="c">2</span></div>
+          <div class="tab cero">En gestión <span class="c">0</span></div>
+          <div class="tab">Confirmadas <span class="c">12</span></div>
+          <div class="tab cero">En viaje <span class="c">0</span></div>
+          <div class="tab">Finalizadas <span class="c">9</span></div>
+          <div class="tab">Anuladas <span class="c">29</span></div>
+          <div class="tab">Perdidas <span class="c">1</span></div>
+          <div class="tab">Archivadas <span class="c">7</span></div>
+        </div>
+
+        <!-- Filtros -->
+        <div class="toolbar">
+          <div class="buscador">🔍 Buscar por N° de reserva o cliente…</div>
+          <div class="filtro">Por fecha de creación ▾</div>
+          <div class="filtro">◀ &nbsp;Agosto 2026&nbsp; ▶</div>
+        </div>
+
+        <!-- Tabla -->
+        <table>
+          <thead>
+            <tr>
+              <th>Reserva</th><th>Cliente / pasajeros</th><th>Estado</th><th>Creada</th>
+              <th class="der">Finanzas</th><th class="cen">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <div class="num-res">#F-2026-1066</div>
+                <div class="viaja">• Viaja: 10/12/2026</div>
+              </td>
+              <td><div class="cli">Marisa Rosana Salafia</div><div class="pax">2 pasajeros</div></td>
+              <td><span class="chip gris">Borrador</span></td>
+              <td>03/08/2026<div class="pax">Maite</div></td>
+              <td class="der"><div class="plata" style="color:var(--tinta3)">$ 0,00</div><span class="chip gris">Sin movimientos</span></td>
+              <td class="cen"><span class="btn chico">🗄 Archivar</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="num-res">#F-2026-1004</div>
+                <div class="sub-res">Cancún · Riviera Maya</div>
+                <div class="viaja">• Viaja: 06/02/2026</div>
+              </td>
+              <td><div class="cli">Gastón Albornoz Salafia</div><div class="pax">2 pasajeros</div></td>
+              <td><span class="chip gris">Finalizada</span></td>
+              <td>06/02/2026<div class="pax">Maite</div></td>
+              <td class="der"><div class="plata">$ 6.440,00</div><span class="chip rojo">Debe $ 1.440,00</span></td>
+              <td class="cen"><span class="btn chico">🗄 Archivar</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="num-res">#F-2026-1064</div>
+                <div class="sub-res">Mendoza</div>
+                <div class="viaja">• Viaja: 10/11/2026</div>
+              </td>
+              <td><div class="cli">PI0724 Consumidor Final</div><div class="pax">1 pasajero</div></td>
+              <td><span class="chip ambar">Confirmada 🔒</span></td>
+              <td>25/07/2026<div class="pax">Maite</div></td>
+              <td class="der"><div class="plata">$ 212.000,00</div><span class="chip rojo">Debe $ 212.000,00</span></td>
+              <td class="cen">
+                <span class="btn chico apagado">🗄 Archivar</span>
+                <div class="pax" style="margin-top:4px">No se puede: tiene saldo sin cobrar</div>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <div class="num-res">#F-2026-1063</div>
+                <div class="sub-res">Bariloche</div>
+                <div class="viaja">• Viaja: 10/09/2026</div>
+              </td>
+              <td><div class="cli">Cliente Prueba Claude E2</div><div class="pax">1 pasajero</div></td>
+              <td><span class="chip ind">Presupuesto</span></td>
+              <td>02/08/2026<div class="pax">Maite</div></td>
+              <td class="der">
+                <div class="plata">$ 8.000,00<span class="otra">US$ 300,00</span></div>
+                <span class="chip gris">Sin movimientos</span>
+              </td>
+              <td class="cen"><span class="btn chico">🗄 Archivar</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="num-res">#F-2026-1065</div>
+                <div class="viaja">• Viaja: 10/12/2026</div>
+              </td>
+              <td><div class="cli">PI0724 Consumidor Final</div><div class="pax">1 pasajero</div></td>
+              <td><span class="chip rojo">Anulada</span></td>
+              <td>03/08/2026<div class="pax">Maite</div></td>
+              <td class="der"><div class="plata">$ 0,00</div><span class="chip verde">A favor $ 4.000,00</span></td>
+              <td class="cen"><span class="btn chico">🗄 Archivar</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="pie">
+          <span>1-5 de 63</span>
+          <span>Mostrar 25 &nbsp;·&nbsp; Página 1 de 3 &nbsp; ‹ &nbsp; ›</span>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota preg"><span class="tag">Un solo botón · P1 = C</span>
+        Arriba a la derecha queda <b>"+ Nueva reserva"</b>, uno solo. Lo que crea es un <b>Borrador</b>:
+        el paso a presupuesto se hace <b>adentro</b> de la reserva. La solapa vieja "Borradores anteriores"
+        pasa a llamarse <b>"Borradores"</b> y ahora <b>sí tiene cosas</b> (es por donde entra todo).
+        La palabra "Cotización" ya no se ve en ningún lado.</div>
+
+      <div class="nota preg"><span class="tag">Números de arriba · P2 = A</span>
+        De cinco pasan a <b>tres, en una tira fina de una línea</b>: activas, por cobrar y vendido.
+        Y cada importe muestra <b>pesos y dólares por separado</b> — hoy los suma en un solo número, que es
+        la regla más dura del producto y está rota.</div>
+
+      <div class="nota preg"><span class="tag">Solapas · P3 = B</span>
+        Las que están en <b>0 quedan apagadas y no se pueden tocar</b> (no se esconden: "cero" también es
+        información).</div>
+
+      <div class="nota ok"><span class="tag">Ya estaba bien</span>
+        "Todas" primera y seleccionada al entrar, el período arrancando en el mes en curso, "Anuladas" con
+        solapa propia y el badge de estado por fila. <b>Nada de eso se toca.</b></div>
+
+      <div class="nota"><span class="tag">Buscador</span>
+        Pasa a ser <b>lo más ancho de la fila</b> y dice qué encuentra: "Buscar por N° de reserva o cliente…".
+        Busca en <b>todas</b> las reservas, ignorando la solapa y el mes (firmado, hoy incumplido).</div>
+
+      <div class="nota preg"><span class="tag">Renglón chico · P4 = A</span>
+        Donde antes decía <b>"Reserva F-2026-1023"</b> o <b>"File F-2026-1004"</b> (el sistema repitiendo el
+        número solo), ahora va el <b>destino</b>. Si la reserva todavía no tiene servicios, no aparece nada
+        (mirá el borrador de la primera fila).</div>
+
+      <div class="nota preg"><span class="tag">Acciones · P5 = A</span>
+        Se va el globito de chat (abría la reserva… que ya se abre haciendo clic en la fila). Queda
+        <b>"Archivar" con la palabra al lado</b>, y cuando no se puede, <b>el motivo escrito debajo</b>, no
+        escondido en el mouse.</div>
+
+      <div class="nota"><span class="tag">Plata por fila</span>
+        Si la reserva tiene dos monedas, se muestran <b>una debajo de la otra</b>. Nunca sumadas.
+        <i>(Necesita que el motor mande la moneda de cada fila: hoy no la manda.)</i></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 1-bis. VACÍO ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">2</span> El listado cuando el mes está vacío</h2>
+  <p class="sub">Antes: cinco ceros gigantes y un cartel que te decía "ajustá los filtros" sin darte con qué.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="titulo-pag"><div><h3>Reservas</h3></div><span class="btn pri">+ Nueva reserva</span></div>
+        <div class="kpis">
+          <div class="kpi"><span class="r">Reservas activas</span><span class="v">0</span></div>
+          <span class="sep">│</span>
+          <div class="kpi"><span class="r">Por cobrar</span><span class="v" style="color:var(--tinta3)">$ 0,00</span></div>
+          <span class="sep">│</span>
+          <div class="kpi"><span class="r">Vendido</span><span class="v" style="color:var(--tinta3)">$ 0,00</span></div>
+        </div>
+        <div class="tabs">
+          <div class="tab act">Todas <span class="c">0</span></div>
+          <div class="tab cero">Borradores <span class="c">0</span></div>
+          <div class="tab cero">Presupuestos <span class="c">0</span></div>
+          <div class="tab cero">En gestión <span class="c">0</span></div>
+          <div class="tab cero">Confirmadas <span class="c">0</span></div>
+          <div class="tab cero">En viaje <span class="c">0</span></div>
+          <div class="tab cero">Finalizadas <span class="c">0</span></div>
+          <div class="tab cero">Anuladas <span class="c">0</span></div>
+          <div class="tab cero">Perdidas <span class="c">0</span></div>
+          <div class="tab cero">Archivadas <span class="c">0</span></div>
+        </div>
+        <div class="toolbar">
+          <div class="buscador">🔍 Buscar por N° de reserva o cliente…</div>
+          <div class="filtro">Por fecha de creación ▾</div>
+          <div class="filtro">◀ &nbsp;Agosto 2026&nbsp; ▶</div>
+        </div>
+        <div class="vacio" style="border:1px dashed var(--linea);border-radius:12px">
+          <div class="t">No hay reservas creadas en agosto de 2026</div>
+          <div style="margin-bottom:14px">Probá con otro mes, o buscá por número de reserva o cliente — el buscador mira en todas.</div>
+          <span class="btn">◀ Ir a julio 2026</span>
+          <span class="btn">Ver todos los meses</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota"><span class="tag">El vacío da salida</span>
+        La regla dice que <b>ningún mensaje puede dejar al usuario sin salida</b>. "Intentá ajustar los
+        filtros" no es una salida: es un consejo. Ahora el cartel trae <b>los dos botones</b> que resuelven
+        el 100% de los casos: el mes anterior, o sacar el filtro de mes.</div>
+      <div class="nota"><span class="tag">Los ceros no gritan</span>
+        Con la tira fina, un mes vacío deja de ser una pared de números. Los importes en cero van en gris.</div>
+      <div class="nota"><span class="tag">Si se cae la conexión</span>
+        Ese mismo lugar muestra el cartel rojo <b>con botón "Probar de nuevo"</b> (igual que en Copias de
+        seguridad). Hoy había que salir de la pantalla y volver a entrar.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 3. ALTA ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">3</span> Crear una reserva nueva</h2>
+  <p class="sub">Antes: una ventana encima con DOS controles para elegir un solo cliente, un "(Opcional)" y una leyenda de más.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="titulo-pag"><div><h3>Reservas</h3></div><span class="btn pri">+ Nueva reserva</span></div>
+
+        <div style="border:2px solid var(--indigo);border-radius:12px;padding:16px;margin-bottom:14px;background:#fbfbff">
+          <div style="font-weight:800;margin-bottom:12px">Nueva reserva</div>
+
+          <div style="font-size:12px;font-weight:700;color:var(--tinta2);margin-bottom:5px">Cliente</div>
+          <div class="buscador" style="background:#fff">🔍 alborn</div>
+          <div style="border:1px solid var(--linea);border-top:none;border-radius:0 0 9px 9px;background:#fff">
+            <div style="padding:9px 12px;border-bottom:1px solid #f1f5f9">
+              <b>Gastón Albornoz Salafia</b> <span class="pax" style="display:inline">· DNI 27.123.456</span>
+            </div>
+            <div style="padding:9px 12px;border-bottom:1px solid #f1f5f9">
+              <b>Marisa Rosana Salafia</b> <span class="pax" style="display:inline">· DNI 30.987.654</span>
+            </div>
+            <div style="padding:9px 12px;color:var(--indigo);font-weight:700">+ Es un cliente nuevo: crearlo acá</div>
+          </div>
+
+          <div style="display:flex;gap:14px;align-items:flex-end;margin-top:14px;flex-wrap:wrap">
+            <div>
+              <div style="font-size:12px;font-weight:700;color:var(--tinta2);margin-bottom:5px">Salida</div>
+              <div class="filtro" style="width:170px;justify-content:space-between">dd/mm/aaaa 📅</div>
+            </div>
+            <div style="flex:1"></div>
+            <span class="btn">Cancelar</span>
+            <span class="btn pri">Crear reserva</span>
+          </div>
+        </div>
+
+        <table>
+          <thead><tr><th>Reserva</th><th>Cliente / pasajeros</th><th>Estado</th><th class="der">Finanzas</th></tr></thead>
+          <tbody>
+            <tr><td><div class="num-res">#F-2026-1004</div><div class="sub-res">Cancún · Riviera Maya</div></td>
+                <td><div class="cli">Gastón Albornoz Salafia</div></td>
+                <td><span class="chip gris">Finalizada</span></td>
+                <td class="der"><div class="plata">$ 6.440,00</div></td></tr>
+          </tbody>
+        </table>
+
+        <div class="aviso-fila guia" style="margin-top:14px">
+          <span>Al apretar <b>"Crear reserva"</b> se abre la ficha nueva en estado <b>Borrador</b>
+            (pantalla 4). El presupuesto se arma adentro.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota preg"><span class="tag">P6 = A · ajustada por P1 = C</span>
+        El alta <b>deja de ser ventana</b>: se abre como una fila arriba del listado, igual que todo el
+        resto del producto ("el modal me parece horrible"). Y como la reserva ahora <b>nace borrador</b>,
+        la fila se llama <b>"Nueva reserva"</b> y el botón dice <b>"Crear reserva"</b>: ya no se nombra
+        ninguna etapa acá.</div>
+
+      <div class="nota"><span class="tag">Un solo casillero</span>
+        Antes había un buscador <b>que solo filtraba</b> y debajo una lista desplegable <b>que era la que
+        elegía de verdad</b>: dos controles para una sola decisión. Ahora escribís y elegís del mismo lugar,
+        como ya hacés con los productos del tarifario y con los pasajeros.</div>
+
+      <div class="nota"><span class="tag">Si el cliente no existe</span>
+        Última opción de la lista: <b>"Es un cliente nuevo: crearlo acá"</b>. Hoy el camino era abandonar,
+        ir a Clientes, crearlo y volver a empezar.</div>
+
+      <div class="nota"><span class="tag">Se fueron dos textos</span>
+        "Se usará para facturación y contacto" y el <b>"(Opcional)"</b> de la fecha: los dos están prohibidos
+        por la regla de "nada de cartelitos aclarativos". Si el campo se llama "Cliente", ya se entiende.</div>
+
+      <div class="nota"><span class="tag">Dos campos, nada más</span>
+        Cliente y salida. Todo lo demás (destino, servicios, pasajeros) se carga adentro, con la reserva ya
+        creada: crear no puede ser un cuestionario.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 4. FICHA BORRADOR (NUEVA) ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">4</span> La ficha de un Borrador <span style="font-size:12px;background:var(--indigo-suave);color:var(--indigo);border-radius:20px;padding:3px 10px">pantalla nueva · P1 = C</span></h2>
+  <p class="sub">Es donde cae toda reserva recién creada. Antes esta etapa existía en el motor pero no entraba nadie: la solapa estaba clavada en 0.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado</div>
+
+        <div class="ficha-head">
+          <div>
+            <h3>Reserva #F-2026-1066 <span class="chip gris grande">BORRADOR</span></h3>
+            <div class="cliente">Marisa Rosana Salafia</div>
+            <div class="destino">Sin servicios cargados todavía</div>
+            <div class="linea-plata">Pago: <b>Sin movimientos</b> &nbsp;·&nbsp; Factura: <b>Sin facturar</b></div>
+            <div class="fechas">📅 Salida <b>10/12/2026</b> &nbsp;·&nbsp; Regreso <b style="color:var(--tinta3);font-weight:600">sin cargar</b>
+              &nbsp;&nbsp;<span class="btn chico">✏ Editar fechas</span></div>
+          </div>
+          <div class="acciones" style="align-items:flex-start">
+            <div>
+              <span class="btn apagado">Pasar a presupuesto</span>
+              <div style="font-size:12px;color:var(--tinta2);margin-top:5px;max-width:230px">
+                Cargá al menos un servicio. <b style="color:var(--indigo)">Agregar servicio →</b>
+              </div>
+            </div>
+            <span class="btn">⊗ Perdida</span>
+            <span class="btn">🗄 Archivar</span>
+          </div>
+        </div>
+
+        <div class="numeros">
+          <div class="n-cero">Saldo a cobrar <b>$ 0,00</b> &nbsp;·&nbsp; Recaudado <b>$ 0,00</b> &nbsp;·&nbsp; Inversión <b>$ 0,00</b></div>
+        </div>
+
+        <div class="aviso-fila guia">
+          <span><b>Borrador.</b> Armá el viaje tranquilo. Cuando esté listo para mandárselo al cliente,
+            usá "Pasar a presupuesto".</span>
+        </div>
+
+        <div class="tabs-ficha">
+          <div class="tab act">Servicios</div>
+          <div class="tab">Pasajeros <span class="c">0 de 2</span></div>
+          <div class="tab">Historial</div>
+        </div>
+
+        <div class="panel">
+          <h4>Servicios contratados <span class="btn chico pri">+ Agregar servicio</span></h4>
+          <div class="vacio" style="border:1px dashed var(--linea);border-radius:12px">
+            <div class="t">Todavía no cargaste ningún servicio</div>
+            <div style="margin-bottom:14px">Empezá por el vuelo, el hotel o el paquete: podés ir agregando de a uno.</div>
+            <span class="btn pri">+ Agregar servicio</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota preg"><span class="tag">Por qué existe esta pantalla · P1 = C</span>
+        Elegiste que la reserva <b>nazca siempre como borrador</b>: un lugar para hacer números tranquilo
+        antes de que sea un documento para el cliente. Afuera hay <b>un solo botón</b> ("+ Nueva reserva")
+        y el segundo paso vive <b>acá adentro</b>: <b>"Pasar a presupuesto"</b>.</div>
+
+      <div class="nota preg"><span class="tag">Cómo se llama la etapa</span>
+        En todos lados dice <b>"Borrador"</b>: la solapa del listado, el cartelito de la fila y este
+        cartelito grande. La palabra <b>"Cotización"</b> desaparece del producto — una cosa, una palabra.</div>
+
+      <div class="nota falta"><span class="tag">Falta que decidas · P16</span>
+        Dibujé el botón <b>apagado hasta que haya un servicio cargado</b>, con el motivo escrito debajo y
+        un enlace que te lleva a cargarlo. <b>No lo decidí yo</b>: es la pregunta <b>P16</b>. Si querés que
+        se pueda pasar siempre, aunque esté vacío, se saca el freno y listo.</div>
+
+      <div class="nota"><span class="tag">Las tres salidas del borrador</span>
+        <b>Pasar a presupuesto</b> (sigue el circuito), <b>Perdida</b> (no prosperó) y <b>Archivar</b>
+        (sacarlo de la vista). <b>No hay "Eliminar":</b> nada se borra, firmado hoy.</div>
+
+      <div class="nota preg"><span class="tag">Pasajeros desde acá · P8 = A</span>
+        La solapa <b>Pasajeros ya existe en el borrador</b>, con el contador "0 de 2". Así el titular se
+        puede cargar desde el principio y nunca aparece el callejón sin salida de más adelante.</div>
+
+      <div class="nota"><span class="tag">La plata no grita</span>
+        Un borrador no tiene plata: los tres números van en <b>una línea chiquita gris</b> (P10 = A).</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 4. FICHA CONFIRMADA ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">5</span> La ficha de una reserva Confirmada</h2>
+  <p class="sub">Antes: cuatro cartelitos peleando en el título, tres números gigantes y dos bloques amarillos apilados.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado</div>
+
+        <div class="ficha-head">
+          <div>
+            <h3>Reserva #F-2026-1064 <span class="chip ambar grande">CONFIRMADA 🔒</span></h3>
+            <div class="cliente">PI0724 Consumidor Final</div>
+            <div class="destino">Mendoza · 1 pasajero</div>
+            <div class="linea-plata">Pago: <b>Pendiente</b> &nbsp;·&nbsp; Factura: <b>Facturada y devuelta</b></div>
+            <div class="fechas">📅 Salida <b>10/11/2026</b> &nbsp;·&nbsp; Regreso <b>15/11/2026</b>
+              &nbsp;&nbsp;<span class="btn chico apagado">🔒 Editar fechas</span>
+              <span class="btn chico apagado">🔒 Reprogramar viaje</span>
+            </div>
+          </div>
+          <div class="acciones">
+            <span class="btn peligro">🚫 Anular reserva</span>
+            <span class="btn apagado">🗄 Archivar</span>
+            <span class="men"><span class="btn solo">⋯</span>
+              <span class="men-caja">
+                <div>Volver atrás</div>
+                <div>Destrabar reserva</div>
+              </span>
+            </span>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--tinta3);margin-top:6px">
+          Archivar — no se puede: la reserva tiene saldo sin cobrar
+        </div>
+
+        <div class="numeros">
+          <div class="n-grande">
+            <div class="r">Saldo a cobrar</div>
+            <div class="v">$ 212.000,00</div>
+            <div class="de">de $ 212.000,00 presupuestado</div>
+          </div>
+          <div class="n-chico">Recaudado <b>$ 0,00</b></div>
+          <div class="n-chico">Inversión <b>$ 173.000,00</b></div>
+        </div>
+
+        <div class="aviso-fila accion">
+          <span>🔒 <b>Reserva confirmada.</b> Para cambiar algo, pedí autorización.</span>
+          <span class="btn chico">Destrabar reserva</span>
+        </div>
+        <div class="aviso-fila info">
+          <span>1 servicio sin confirmar: <b>Aéreo</b></span>
+          <span class="btn chico">Ver</span>
+        </div>
+
+        <div class="tabs-ficha">
+          <div class="tab act">Servicios</div>
+          <div class="tab">Pasajeros <span class="c">1</span></div>
+          <div class="tab">Historial</div>
+          <div class="tab">Estado de cuenta</div>
+          <div class="tab">Documentos</div>
+        </div>
+
+        <div class="panel">
+          <h4>Servicios contratados
+            <span>
+              <span class="btn chico apagado">🔒 Agregar servicio</span>
+            </span>
+          </h4>
+
+          <table>
+            <thead><tr><th>Tipo</th><th>Descripción</th><th>Fecha</th><th>Estado</th><th class="der">Costo</th><th class="der">Venta</th><th>Avisos</th><th class="der">Acciones</th></tr></thead>
+            <tbody>
+              <tr class="serv-fila">
+                <td>✈ Aéreo</td>
+                <td><div class="serv-desc">AEP-MDZ PI0724</div><div class="serv-op">Operador: TEST TEST · <span class="chip ambar">Operador impago</span></div></td>
+                <td>10/08/2026</td>
+                <td><span class="chip ambar">Solicitado</span></td>
+                <td class="der">$ 50.000,00</td>
+                <td class="der">$ 60.000,00</td>
+                <td><span class="chip ambar">⏰ Empieza el 10/08 (en 7 días)</span></td>
+                <td class="der">
+                  <div class="acc-linea">
+                    <span class="btn chico">✔ Marcar emitido</span>
+                    <span>✏ Editar</span><span>🗑 Borrar</span>
+                  </div>
+                  <div class="acc-linea" style="margin-top:5px"><span>👥 Para: Todos</span> <span>Ver historial</span></div>
+                </td>
+              </tr>
+              <tr class="serv-fila">
+                <td>🏨 Hotel</td>
+                <td><div class="serv-desc">RIU Mendoza</div><div class="serv-op">Operador: SANTA CATALINA · <span class="chip verde">Operador pagado</span></div></td>
+                <td>10/11 al 15/11</td>
+                <td><span class="chip verde">Confirmado</span></td>
+                <td class="der">$ 123.000,00</td>
+                <td class="der">$ 152.000,00</td>
+                <td>—</td>
+                <td class="der">
+                  <div class="acc-linea"><span>✏ Editar</span><span>🚫 Cancelar</span></div>
+                  <div class="acc-linea" style="margin-top:5px"><span>👥 Para: Todos</span> <span>Ver historial</span></div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="text-align:right;margin-top:10px;font-weight:800">TOTAL: $ 212.000,00</div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota preg"><span class="tag">Título · P7 = A</span>
+        El <b>estado se queda con el título</b> (es lo primero que mirás) y los cartelitos de plata bajan a
+        <b>su propio renglón</b>: "Pago: … · Factura: …". Ninguno desaparece — los firmaste todos — solo
+        dejan de pelear con el número de reserva.</div>
+
+      <div class="nota"><span class="tag">Se fue "File F-2026-…"</span>
+        Debajo del cliente va el <b>destino y la cantidad de pasajeros</b>, no el nombre que el sistema se
+        inventaba solo. Y la palabra "file" no existe más a la vista.</div>
+
+      <div class="nota preg"><span class="tag">Los tres números · P10 = A</span>
+        <b>Solo el que importa grita.</b> El saldo a cobrar va grande; recaudado e inversión pasan a una
+        línea chiquita al lado. En una reserva sin plata, los tres van chiquitos y grises (ver pantalla 5).
+        Saqué el <b>puntito rojo que latía</b>: competía con los avisos de verdad.</div>
+
+      <div class="nota preg"><span class="tag">Avisos · P11 = A</span>
+        El del candado <b>te pide hacer algo</b> → queda en ámbar. El de "1 servicio sin confirmar"
+        <b>solo informa</b> → pasa a <b>gris, una sola línea</b>. Se acabó la pila amarilla. El orden y
+        cuáles se pliegan ya estaba firmado y no lo toqué.</div>
+
+      <div class="nota preg"><span class="tag">Acciones raras · P9 = A</span>
+        "Volver atrás" y "Destrabar" pasan detrás del <b>⋯</b>: son correcciones de último recurso (piden
+        motivo y quedan en el historial), no acciones de todos los días. Un clic y están.</div>
+
+      <div class="nota"><span class="tag">Archivar apagado</span>
+        El motivo va <b>escrito debajo del botón</b>, siempre a la vista. Antes había que apoyar el mouse
+        para enterarte, y eso está prohibido.</div>
+
+      <div class="nota ok"><span class="tag">Ya estaba bien</span>
+        Los servicios con "Editar" y "Borrar/Cancelar" <b>con la palabra al lado</b>, el "Para: Todos", el
+        aviso "⏰ Empieza el 10/08", el "Ver historial" y el total al pie. Todo queda.</div>
+
+      <div class="nota"><span class="tag">Etiqueta del operador</span>
+        Dice <b>"Operador impago"</b> a secas: <b>sin el monto</b>. Hoy muestra "($ 50.000,00)", y está
+        firmado que esa etiqueta nunca lleva plata (así la puede ver también quien no tiene permiso de costos).</div>
+
+      <div class="nota"><span class="tag">Botón que faltaba</span>
+        En la fila del servicio pendiente aparece <b>"✔ Marcar emitido"</b> (o "Marcar confirmado" según el
+        tipo): está firmado desde el 24/07 y en la pantalla real no estaba.</div>
+
+      <div class="nota preg"><span class="tag">Solapas · P12 = A</span>
+        "Vouchers" y "Documentos" se juntan en una sola solapa <b>Documentos</b>, con dos bloques adentro
+        (pantalla 10). Las solapas de la ficha pasan de seis a <b>cinco</b>.</div>
+
+      <div class="nota preg"><span class="tag">Una sola palabra · P13</span>
+        La etiqueta del aéreo dice <b>"Solicitado"</b>, y va a decir eso <b>en todas las etapas</b>.
+        "En espera" desaparece: el mismo servicio no cambia de nombre por estar en otra etapa.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 5. FICHA PRESUPUESTO ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">6</span> La ficha de un Presupuesto — el callejón sin salida, resuelto</h2>
+  <p class="sub">Antes: el botón te pedía un titular… y no había ningún lado para cargarlo. Más tres ceros gigantes y un botón "Eliminar" que no debe existir.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado</div>
+
+        <div class="ficha-head">
+          <div>
+            <h3>Reserva #F-2026-1065 <span class="chip ind grande">PRESUPUESTO</span></h3>
+            <div class="cliente">PI0724 Consumidor Final</div>
+            <div class="destino">Sin servicios cargados todavía</div>
+            <div class="linea-plata">Pago: <b>Sin movimientos</b> &nbsp;·&nbsp; Factura: <b>Sin facturar</b></div>
+            <div class="fechas">📅 Salida <b>10/12/2026</b> &nbsp;·&nbsp; Regreso <b style="color:var(--tinta3);font-weight:600">sin cargar</b>
+              &nbsp;&nbsp;<span class="btn chico">✏ Editar fechas</span></div>
+          </div>
+          <div class="acciones" style="align-items:flex-start">
+            <div>
+              <span class="btn apagado">El cliente aceptó</span>
+              <div style="font-size:12px;color:var(--tinta2);margin-top:5px;max-width:230px">
+                Falta cargar el titular. <b style="color:var(--indigo)">Cargar el titular →</b>
+              </div>
+            </div>
+            <span class="btn">⊗ Perdida</span>
+            <span class="btn apagado">🗄 Archivar</span>
+          </div>
+        </div>
+
+        <div class="numeros">
+          <div class="n-cero">Saldo a cobrar <b>$ 0,00</b> &nbsp;·&nbsp; Recaudado <b>$ 0,00</b> &nbsp;·&nbsp; Inversión <b>$ 0,00</b></div>
+        </div>
+
+        <div class="aviso-fila guia">
+          <span><b>Presupuesto.</b> Cuando el cliente confirme, usá "El cliente aceptó" para pasar a En gestión.</span>
+        </div>
+
+        <div class="tabs-ficha">
+          <div class="tab">Servicios</div>
+          <div class="tab act">Pasajeros <span class="c">0 de 1</span></div>
+          <div class="tab">Historial</div>
+        </div>
+
+        <div class="panel">
+          <h4>Pasajeros del viaje <span class="btn chico">+ Agregar pasajero</span></h4>
+
+          <div style="display:flex;gap:22px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap">
+            <div><div style="font-size:11px;font-weight:800;color:var(--tinta3);letter-spacing:.06em">ADULTOS</div>
+                 <div class="filtro" style="width:110px;justify-content:center;font-size:15px;font-weight:700">1</div></div>
+            <div><div style="font-size:11px;font-weight:800;color:var(--tinta3);letter-spacing:.06em">MENORES</div>
+                 <div class="filtro" style="width:110px;justify-content:center;font-size:15px;font-weight:700">0</div></div>
+            <div><div style="font-size:11px;font-weight:800;color:var(--tinta3);letter-spacing:.06em">INFANTES</div>
+                 <div class="filtro" style="width:110px;justify-content:center;font-size:15px;font-weight:700">0</div></div>
+          </div>
+
+          <div style="border:2px solid var(--indigo);border-radius:11px;padding:14px;background:#fbfbff">
+            <div style="font-weight:700;margin-bottom:10px">Adulto 1 — titular</div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+              <div><div style="font-size:12px;font-weight:700;color:var(--tinta2);margin-bottom:4px">Nombre y apellido</div>
+                   <div class="filtro" style="width:270px">&nbsp;</div></div>
+              <div><div style="font-size:12px;font-weight:700;color:var(--tinta2);margin-bottom:4px">Documento</div>
+                   <div class="filtro" style="width:120px">DNI ▾</div></div>
+              <div><div style="font-size:12px;font-weight:700;color:var(--tinta2);margin-bottom:4px">&nbsp;</div>
+                   <div class="filtro" style="width:170px">🔍</div></div>
+              <div style="flex:1"></div>
+              <span class="btn">Cancelar</span>
+              <span class="btn pri">Guardar</span>
+            </div>
+            <div style="margin-top:10px;font-size:12.5px;color:var(--indigo);font-weight:600">+ Más detalles</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota preg"><span class="tag">De dónde viene · P1 = C</span>
+        A esta pantalla se llega apretando <b>"Pasar a presupuesto"</b> desde el borrador (pantalla 4).
+        Ya no se crea nada directo acá.</div>
+
+      <div class="nota preg"><span class="tag">El callejón · P8 = A</span>
+        El motivo del botón apagado ahora es <b>una puerta</b>: "Falta cargar el titular. <b>Cargar el
+        titular →</b>". Te lleva a la solapa Pasajeros, que <b>ahora existe desde el presupuesto</b> (antes
+        aparecía recién en En gestión, justo después de que el sistema te la exigiera).</div>
+
+      <div class="nota" style="background:#fff1f2;border-color:#fecdd3;border-left-color:#e11d48;color:#9f1239">
+        <span class="tag">Firmado hoy: nada se borra</span>
+        <b>Se sacó el botón "Eliminar".</b> Las reservas y los presupuestos <b>no se borran, se anulan</b>:
+        el registro queda siempre. Un presupuesto que no prospera va a <b>Perdida</b>; si molesta a la
+        vista, se <b>Archiva</b>. La botonera queda en tres: <b>El cliente aceptó · Perdida · Archivar</b>.</div>
+
+      <div class="nota"><span class="tag">Se fue el texto muerto</span>
+        El párrafo "los nombres se agregan en la solapa Pasajeros" <b>mentía</b> (esa solapa no existía acá)
+        y además era un cartelito aclarativo, que están prohibidos. Se borró: ahora el lugar está a la vista.</div>
+
+      <div class="nota"><span class="tag">Sin "Guardar cantidades"</span>
+        Las cantidades se guardan solas, como todo el resto del producto. Antes había un botón aparte y un
+        globito de "Cantidades actualizadas" para tres numeritos.</div>
+
+      <div class="nota preg"><span class="tag">Los ceros · P10 = A</span>
+        Los tres números en cero pasan a <b>una línea chiquita gris</b>. Cuando haya plata, el que importe
+        se agranda solo.</div>
+
+      <div class="nota"><span class="tag">Regreso</span>
+        Si no cargaste regreso, dice <b>"sin cargar"</b>. Nunca copia la fecha de salida: el sistema no
+        inventa datos del viaje.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 7. PASAJEROS (NUEVA) ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">7</span> La solapa Pasajeros <span style="font-size:12px;background:var(--indigo-suave);color:var(--indigo);border-radius:20px;padding:3px 10px">pantalla nueva</span></h2>
+  <p class="sub">Antes: dos iconitos mudos (un lápiz y un tacho) que en una reserva confirmada se volvían dos candaditos sin decir qué tapaban.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado &nbsp;·&nbsp; Reserva #F-2026-1065 · <b>EN GESTIÓN</b></div>
+
+        <div class="tabs-ficha">
+          <div class="tab">Servicios</div>
+          <div class="tab act">Pasajeros <span class="c">1 de 3</span></div>
+          <div class="tab">Historial</div>
+          <div class="tab">Estado de cuenta</div>
+          <div class="tab">Documentos</div>
+        </div>
+
+        <div class="panel">
+          <h4>Pasajeros del viaje <span class="btn chico pri">+ Agregar pasajero</span></h4>
+          <div style="font-size:12.5px;color:var(--verde);font-weight:700;margin:-6px 0 12px">1 de 3 nombres cargados</div>
+
+          <div style="display:flex;gap:22px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap">
+            <div><div style="font-size:11px;font-weight:800;color:var(--tinta3);letter-spacing:.06em">ADULTOS</div>
+                 <div class="filtro" style="width:110px;justify-content:center;font-size:15px;font-weight:700">2</div></div>
+            <div><div style="font-size:11px;font-weight:800;color:var(--tinta3);letter-spacing:.06em">MENORES</div>
+                 <div class="filtro" style="width:110px;justify-content:center;font-size:15px;font-weight:700">1</div></div>
+            <div><div style="font-size:11px;font-weight:800;color:var(--tinta3);letter-spacing:.06em">INFANTES</div>
+                 <div class="filtro" style="width:110px;justify-content:center;font-size:15px;font-weight:700">0</div></div>
+          </div>
+
+          <div class="pax-fila">
+            <div>
+              <div><span class="tipo">ADULTO 1 · TITULAR</span><span class="nom">PRUEBA DNI CHIP</span>
+                   <span class="chip rojo" style="margin-left:8px">DNI vencido para el viaje</span></div>
+              <div class="doc">DNI 99.111.222 · vence 01/09/2026</div>
+            </div>
+            <div class="acc-linea"><span>✏ Editar</span><span>🗑 Borrar</span></div>
+          </div>
+
+          <div class="pax-fila">
+            <div>
+              <div><span class="tipo">ADULTO 2</span><span class="nom">JUAN PÉREZ</span>
+                   <span class="chip ambar" style="margin-left:8px">Pasaporte vence antes de volver</span></div>
+              <div class="doc">Pasaporte AAF123456 · vence 20/12/2026</div>
+            </div>
+            <div class="acc-linea"><span>✏ Editar</span><span>🗑 Borrar</span></div>
+          </div>
+
+          <div class="pax-fila sin">
+            <div><span class="tipo">MENOR 1</span><span style="color:var(--tinta3)">sin cargar</span></div>
+            <span class="btn chico">Cargar</span>
+          </div>
+        </div>
+
+        <div style="height:22px"></div>
+
+        <div class="miga">La misma solapa, con la reserva <b>CONFIRMADA</b> (con candado):</div>
+        <div class="panel" style="border-top:1px solid var(--linea);border-radius:12px">
+          <div class="aviso-fila accion" style="margin-top:0">
+            <span>🔒 <b>Reserva confirmada.</b> Para cambiar un pasajero, pedí autorización.</span>
+            <span class="btn chico">Destrabar reserva</span>
+          </div>
+          <div class="pax-fila" style="margin-top:12px">
+            <div>
+              <div><span class="tipo">ADULTO 1 · TITULAR</span><span class="nom">PI0724 PASAJERO UNO</span>
+                   <span class="chip rojo" style="margin-left:8px">Pasaporte vencido para el viaje</span></div>
+              <div class="doc">DNI 99.999.001</div>
+            </div>
+            <div class="acc-linea"><span class="btn chico apagado">🔒 Editar</span><span class="btn chico apagado">🔒 Borrar</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota"><span class="tag">Cada iconito con su palabra</span>
+        Antes había <b>un lápiz y un tacho</b> pelados. Ahora dicen <b>"✏ Editar"</b> y <b>"🗑 Borrar"</b>:
+        la palabra va siempre al lado, nunca escondida en el mouse.</div>
+
+      <div class="nota"><span class="tag">Los candaditos ya no son mudos</span>
+        Con la reserva confirmada, los dos botones quedan <b>grises con candadito y con su palabra</b>, y el
+        motivo lo dice <b>la franja de arriba</b> — una sola vez, no repetido en cada renglón. Al tocarlos se
+        pide la autorización, como en el resto de la app.</div>
+
+      <div class="nota ok"><span class="tag">Ya estaba bien</span>
+        El contador <b>"1 de 3 nombres cargados"</b>, el renglón por pasajero con "ADULTO 1", los renglones
+        <b>"sin cargar"</b> con su botón [Cargar], el alta y la edición <b>en línea</b> (sin ventana) y los
+        cartelitos de documento vencido. Todo queda.</div>
+
+      <div class="nota preg"><span class="tag">Desde el borrador · P8 = A</span>
+        Esta solapa <b>ya existe desde el borrador y el presupuesto</b> (ahí arriba, además, están los tres
+        casilleros de cantidades — pantallas 4 y 6). Se acabó el "cargá el titular" que mandaba a una solapa
+        que no existía.</div>
+
+      <div class="nota"><span class="tag">Los cartelitos de documento</span>
+        Los dejé como están hoy: rojo cuando el documento <b>ya no sirve para el viaje</b> y ámbar cuando
+        <b>vence en el medio</b>. El detalle fino de esos cartelitos (orden, dónde se carga la fecha) se está
+        decidiendo aparte, en la obra del semáforo de documentos del mismo día. Acá no la toco.</div>
+
+      <div class="nota"><span class="tag">Reservas terminadas</span>
+        En Anulada, Perdida, Finalizada y Archivada, la lista es <b>solo para mirar</b>: no aparece
+        "+ Agregar pasajero" ni Editar/Borrar.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 8. HISTORIAL (NUEVA) ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">8</span> La solapa Historial — contada como habla una agencia
+      <span style="font-size:12px;background:var(--indigo-suave);color:var(--indigo);border-radius:20px;padding:3px 10px">pantalla nueva</span></h2>
+  <p class="sub">Tu frase: <i>"no es muy clara, parece más de programador que de usuario de agencia de viajes"</i>. Antes decía "Cambio en una Factura <b>por Sistema</b>" y un cobro aparecía <b>en negativo</b>.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado &nbsp;·&nbsp; Reserva #F-2026-1064 · <b>CONFIRMADA</b></div>
+
+        <div class="tabs-ficha">
+          <div class="tab">Servicios</div>
+          <div class="tab">Pasajeros <span class="c">1</span></div>
+          <div class="tab act">Historial</div>
+          <div class="tab">Estado de cuenta</div>
+          <div class="tab">Documentos</div>
+        </div>
+
+        <div class="panel">
+          <h4>Qué pasó con esta reserva
+            <span class="filtro">Ver: Todo ▾</span>
+          </h4>
+
+          <div class="dia">Hoy — 03/08/2026</div>
+
+          <div class="hito">
+            <div class="hora">14:32</div><div class="punto"><i style="background:var(--rojo)"></i></div>
+            <div><div class="que"><b>Maite</b> anuló el traslado <b>"Aeropuerto → Hotel"</b>.</div>
+                 <div class="det">Motivo: el cliente se arrepintió.</div></div>
+          </div>
+
+          <div class="hito">
+            <div class="hora">11:05</div><div class="punto"><i style="background:var(--verde)"></i></div>
+            <div><div class="que"><b>Maite</b> cobró <span class="plus">$ 50.000,00</span>.</div>
+                 <div class="det">Forma de pago: Efectivo · Recibo N° 0001-00000087.</div></div>
+          </div>
+
+          <div class="hito">
+            <div class="hora">10:20</div><div class="punto"><i></i></div>
+            <div><div class="que">Se confirmó el hotel <b>RIU Mendoza</b> con el operador SANTA CATALINA.</div>
+                 <div class="det">N° de confirmación: CONF-123.</div></div>
+          </div>
+
+          <div class="dia">Ayer — 02/08/2026</div>
+
+          <div class="hito">
+            <div class="hora">18:41</div><div class="punto"><i style="background:var(--indigo)"></i></div>
+            <div><div class="que"><b>Maite</b> emitió la <b>Factura B 0003-00001234</b> por $ 212.000,00.</div></div>
+          </div>
+
+          <div class="hito">
+            <div class="hora">18:40</div><div class="punto"><i></i></div>
+            <div><div class="que">La reserva pasó de <b>En gestión</b> a <b>Confirmada</b>.</div>
+                 <div class="det">La hizo Maite.</div></div>
+          </div>
+
+          <div class="hito">
+            <div class="hora">09:15</div><div class="punto"><i></i></div>
+            <div><div class="que"><b>Maite</b> agregó el aéreo <b>AEP-MDZ</b> para el 10/08/2026.</div>
+                 <div class="det">Se le vende al cliente en $ 60.000,00.</div></div>
+          </div>
+
+          <div class="dia">Viernes 25/07/2026</div>
+
+          <div class="hito">
+            <div class="hora">02:07</div><div class="punto"><i></i></div>
+            <div><div class="que"><b>Maite</b> creó la reserva para <b>PI0724 Consumidor Final</b>.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota"><span class="tag">Se acabó el "por Sistema"</span>
+        Antes decía <b>"Cambio en una Factura por Sistema"</b>. Eso es el nombre de una operación de base de
+        datos, no algo que pasó en una agencia. Ahora cada renglón dice <b>qué pasó</b>, con
+        <b>nombre y apellido</b> de quien lo hizo. Cuando el cambio no lo hizo una persona (lo trajo el
+        operador, lo disparó un vencimiento), la frase arranca por lo que pasó
+        ("Se confirmó el hotel…"), nunca por "el sistema".</div>
+
+      <div class="nota"><span class="tag">Agrupado por día</span>
+        <b>Hoy · Ayer · Viernes 25/07/2026.</b> Es como uno se acuerda de las cosas ("eso lo hicimos ayer"),
+        y de paso deja de repetir la fecha en cada renglón. La hora al costado, en hora de Argentina, y las
+        fechas siempre <b>día/mes/año</b>.</div>
+
+      <div class="nota"><span class="tag">El cobro ya no está en negativo</span>
+        Antes: <i>"Alta de un Pago — Cobro registrado: <b>-$ 140.000,00</b>"</i>. Un cobro <b>entra</b> plata:
+        va en verde y sin el menos. La plata que sale (una devolución, una nota de crédito) va con su palabra,
+        no con un signo que hay que interpretar.</div>
+
+      <div class="nota falta"><span class="tag">Falta que decidas · P15</span>
+        Dibujé el desplegable <b>"Ver: Todo"</b> (Todo · Plata · Servicios · Pasajeros y papeles · Estado de
+        la reserva). <b>No lo decidí yo</b>: es la pregunta <b>P15</b> — cuánto se cuenta en este historial.
+        Si preferís la lista pelada sin filtro, se saca el desplegable y no cambia nada más.</div>
+
+      <div class="nota"><span class="tag">Los costos, solo para quien puede verlos</span>
+        Los renglones que nombran plata de <b>costo</b> (lo que se le paga al operador) solo los ve quien
+        tiene permiso de costos. Al resto le aparece el hecho sin el monto ("se pagó al operador"), igual que
+        en el resto de la app.</div>
+
+      <div class="nota"><span class="tag">Cuando no hay nada / cuando falla</span>
+        Una reserva recién creada muestra un solo renglón ("Maite creó la reserva"). Si el historial no se
+        puede traer, sale el cartel rojo <b>con botón "Probar de nuevo"</b>, igual que en el listado.</div>
+
+      <div class="nota ok"><span class="tag">Ya estaba bien</span>
+        Que exista la línea de tiempo con <b>quién y cuándo</b>. Ese es uno de los huesos: no se toca, se
+        traduce.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 9. ESTADO DE CUENTA (NUEVA) ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">9</span> La solapa Estado de cuenta — como un extracto del banco
+      <span style="font-size:12px;background:var(--indigo-suave);color:var(--indigo);border-radius:20px;padding:3px 10px">pantalla nueva</span></h2>
+  <p class="sub">Antes: un "Anular reserva" rojo repetido acá adentro y la plata de distintas monedas conviviendo en la misma cuenta.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado &nbsp;·&nbsp; Reserva #F-2026-1064 · <b>CONFIRMADA</b></div>
+
+        <div class="tabs-ficha">
+          <div class="tab">Servicios</div>
+          <div class="tab">Pasajeros <span class="c">1</span></div>
+          <div class="tab">Historial</div>
+          <div class="tab act">Estado de cuenta</div>
+          <div class="tab">Documentos</div>
+        </div>
+
+        <div class="panel">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            <span class="btn pri">+ Registrar cobro</span>
+            <span class="btn">📄 Emitir factura</span>
+          </div>
+
+          <div class="bloque">
+            <div class="t">Venta y facturación</div>
+            <div style="display:flex;gap:30px;flex-wrap:wrap;align-items:baseline">
+              <div><div class="pax">Vendido firme</div><div style="font-weight:800">$ 212.000,00</div></div>
+              <div><div class="pax">Facturado</div><div style="font-weight:800">$ 212.000,00</div></div>
+              <div><div class="pax">Falta facturar</div><div style="font-weight:800;color:var(--tinta3)">$ 0,00</div></div>
+              <span class="chip verde">✓ Facturada y devuelta</span>
+            </div>
+          </div>
+
+          <div class="moneda-bloque">
+            <div class="cab"><span>En pesos</span><span>Saldo al 03/08/2026: $ 0,00</span></div>
+            <table>
+              <thead><tr><th style="width:110px">Fecha</th><th>Concepto</th><th class="der">Debe</th><th class="der">Haber</th><th class="der">Saldo</th></tr></thead>
+              <tbody>
+                <tr><td>25/07/2026</td>
+                    <td>Factura B 0003-00001234</td>
+                    <td class="der">212.000,00</td><td class="der">—</td><td class="der">212.000,00</td></tr>
+                <tr><td>26/07/2026</td>
+                    <td>Cobro · Forma de pago: Efectivo · Recibo 0001-00000087</td>
+                    <td class="der">—</td><td class="der">140.000,00</td><td class="der">72.000,00</td></tr>
+                <tr class="anulado"><td>28/07/2026</td>
+                    <td><span class="tach">Factura B 0003-00001240</span><br>
+                        <span style="font-size:12px">Anulada por Maite el 28/07/2026 · Motivo: se cargó al cliente equivocado</span></td>
+                    <td class="der tach">8.000,00</td><td class="der">—</td><td class="der">72.000,00</td></tr>
+                <tr><td>03/08/2026</td>
+                    <td>Nota de crédito 0003-00000012 — por la anulación del traslado</td>
+                    <td class="der">—</td><td class="der">72.000,00</td><td class="der">0,00</td></tr>
+              </tbody>
+              <tfoot>
+                <tr><td colspan="4" class="der">Saldo en pesos</td><td class="der">$ 0,00</td></tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div class="moneda-bloque">
+            <div class="cab"><span>En dólares</span><span>Saldo al 03/08/2026: US$ 300,00</span></div>
+            <table>
+              <thead><tr><th style="width:110px">Fecha</th><th>Concepto</th><th class="der">Debe</th><th class="der">Haber</th><th class="der">Saldo</th></tr></thead>
+              <tbody>
+                <tr><td>02/08/2026</td>
+                    <td>Factura E 0003-00000045 — excursión Cañón del Atuel</td>
+                    <td class="der">300,00</td><td class="der">—</td><td class="der">300,00</td></tr>
+              </tbody>
+              <tfoot>
+                <tr><td colspan="4" class="der">Saldo en dólares</td><td class="der">US$ 300,00</td></tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div style="font-size:12.5px;color:var(--tinta2)">
+            Este cliente <b>debe US$ 300,00</b> y no debe nada en pesos. Los dos saldos no se juntan nunca.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota preg"><span class="tag">Se fue el botón repetido · P14 = A</span>
+        <b>"Anular reserva" ya no está acá.</b> Anular es una decisión sobre toda la reserva y vive con las
+        acciones de la reserva, arriba. Acá quedan las dos acciones de plata:
+        <b>Registrar cobro</b> y <b>Emitir factura</b>.</div>
+
+      <div class="nota"><span class="tag">Un extracto de verdad</span>
+        Cinco columnas: <b>Fecha · Concepto · Debe · Haber · Saldo</b>, en orden de cuándo pasó y con el
+        <b>saldo después de cada movimiento</b>. Es el mismo formato que ya usa la cuenta corriente del
+        cliente, así que el que mira una entiende la otra sin aprender nada nuevo.</div>
+
+      <div class="nota"><span class="tag">Una cuenta por moneda</span>
+        Los pesos y los dólares van en <b>dos bloques separados, cada uno con su propio saldo</b>. Nunca se
+        suman ni se convierten. Si la reserva es solo en pesos, el segundo bloque no aparece.</div>
+
+      <div class="nota"><span class="tag">Lo anulado se ve, tachado</span>
+        La factura anulada <b>sigue en la lista</b>, tachada, con <b>quién la anuló, cuándo y por qué</b>, y
+        sin mover el saldo. Nada se borra: si desapareciera, el extracto tendría un agujero que nadie puede
+        explicar.</div>
+
+      <div class="nota"><span class="tag">Solo para mirar</span>
+        Los renglones <b>no tienen botones</b>: es un documento de consulta. Todo lo que hay para hacer está
+        en los dos botones de arriba.</div>
+
+      <div class="nota"><span class="tag">Cuando no se puede cobrar</span>
+        Si no hay saldo pendiente, <b>"Registrar cobro" queda gris con el motivo escrito al lado</b>
+        ("No hay saldo para cobrar"), no desaparece. Y si la facturación está frenada por una deuda, el
+        camino de excepción se llama <b>"Emitir igual"</b>.</div>
+
+      <div class="nota"><span class="tag">Sin plata todavía</span>
+        Un presupuesto muestra: <i>"Todavía no hay movimientos de plata en esta reserva"</i> y el botón para
+        cobrar o facturar según corresponda. Sin tablas vacías con encabezados colgando.</div>
+
+      <div class="nota"><span class="tag">Sin repetir la plata de arriba</span>
+        Los tres números grandes de la reserva ya están en el encabezado: acá <b>no se repiten</b>. Lo único
+        que se muestra dos veces es el chip de facturación, porque encabeza el bloque que lo explica.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 10. DOCUMENTOS (NUEVA) ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">10</span> La solapa Documentos — vouchers y archivos en un solo lugar
+      <span style="font-size:12px;background:var(--indigo-suave);color:var(--indigo);border-radius:20px;padding:3px 10px">pantalla nueva · P12 = A</span></h2>
+  <p class="sub">Antes: dos solapas para lo mismo. "Vouchers" adentro se titulaba "Documentación" y tenía botón "Añadir Documento"; "Documentos" era la zona de arrastrar archivos.</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado &nbsp;·&nbsp; Reserva #F-2026-1064 · <b>CONFIRMADA</b></div>
+
+        <div class="tabs-ficha">
+          <div class="tab">Servicios</div>
+          <div class="tab">Pasajeros <span class="c">1</span></div>
+          <div class="tab">Historial</div>
+          <div class="tab">Estado de cuenta</div>
+          <div class="tab act">Documentos</div>
+        </div>
+
+        <div class="panel">
+          <div class="bloque">
+            <div class="t">Vouchers del viaje</div>
+
+            <div class="item">
+              <div>
+                <div class="nom">🏨 Hotel RIU Mendoza</div>
+                <div class="met">Emitido por Maite el 10/07/2026 · 10/11 al 15/11/2026</div>
+              </div>
+              <div class="acc-linea"><span class="btn chico">Ver</span><span class="btn chico">Descargar</span>
+                   <span class="btn chico">Enviar al pasajero</span></div>
+            </div>
+
+            <div class="item">
+              <div>
+                <div class="nom">✈ Aéreo AEP-MDZ</div>
+                <div class="met">Todavía no se emitió — el servicio está <b>Solicitado</b>.</div>
+              </div>
+              <div class="acc-linea"><span class="btn chico apagado">Ver</span><span class="btn chico apagado">Descargar</span>
+                   <span class="btn chico apagado">Enviar al pasajero</span></div>
+            </div>
+          </div>
+
+          <div class="bloque">
+            <div class="t">Archivos de la reserva <span class="btn chico pri">+ Subir archivo</span></div>
+
+            <div class="zona" style="margin-bottom:12px">
+              <div style="font-weight:700;color:var(--tinta)">Hacé clic o arrastrá los archivos acá</div>
+              <div style="font-size:12.5px">DNI, pasaportes, permisos, autorizaciones y adjuntos generales (hasta 25 MB)</div>
+            </div>
+
+            <div class="item">
+              <div>
+                <div class="nom">📄 pasaporte-perez.pdf</div>
+                <div class="met">PDF · 1,2 MB · subido por Maite el 12/07/2026</div>
+              </div>
+              <div class="acc-linea"><span class="btn chico">Ver</span><span class="btn chico">Descargar</span>
+                   <span class="btn chico">Quitar</span></div>
+            </div>
+
+            <div class="item">
+              <div>
+                <div class="nom">🖼 dni-frente-perez.jpg</div>
+                <div class="met">Imagen · 480 KB · subido por Maite el 12/07/2026</div>
+              </div>
+              <div class="acc-linea"><span class="btn chico">Ver</span><span class="btn chico">Descargar</span>
+                   <span class="btn chico">Quitar</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota preg"><span class="tag">Una puerta sola · P12 = A</span>
+        Cuando buscás "el papel del hotel" no pensás si lo emitió el sistema o lo subiste vos: pensás
+        <b>"los papeles de esta reserva"</b>. Una sola solapa, dos bloques adentro:
+        <b>Vouchers del viaje</b> y <b>Archivos de la reserva</b>. La ficha pasa de seis solapas a cinco.</div>
+
+      <div class="nota"><span class="tag">El voucher que no está, se ve</span>
+        El aéreo todavía no tiene voucher: en vez de no aparecer, <b>aparece apagado con el motivo escrito</b>
+        ("el servicio está Solicitado"). Así el vendedor sabe qué le falta sin ir a buscarlo a otra solapa.</div>
+
+      <div class="nota ok"><span class="tag">Ya estaba bien</span>
+        <b>"Enviar al pasajero"</b> por voucher, la zona de arrastrar archivos y la línea que dice qué se
+        puede subir y hasta cuánto pesa. Todo queda igual.</div>
+
+      <div class="nota"><span class="tag">Se fueron dos frases</span>
+        "Gestiona vouchers generados <b>por el sistema</b>…" (el sistema no es sujeto de nada) y
+        "Haz clic o arrastra documentos aqui" (español neutro y sin tildes). Y la solapa ya no se llama de
+        una forma por fuera y de otra por dentro.</div>
+
+      <div class="nota falta"><span class="tag">Falta que decidas · P17</span>
+        Dibujé <b>"Quitar"</b> en los archivos subidos a mano: saca el archivo de la lista y deja anotado en
+        el historial quién lo sacó y cuándo. <b>No lo decidí yo</b>: es la pregunta <b>P17</b>, porque roza
+        la regla "nada se borra" que firmaste hoy. Los <b>vouchers no se quitan nunca</b>: eso ya está
+        firmado (lo emitido se sigue viendo y descargando siempre).</div>
+
+      <div class="nota"><span class="tag">Las facturas no viven acá</span>
+        Los comprobantes fiscales (facturas, notas de crédito, recibos) se ven en <b>Estado de cuenta</b>,
+        que es donde están con su plata. No se repiten en esta solapa: un dato, un lugar.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 11. ANULADA ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">11</span> La ficha de una reserva Anulada</h2>
+  <p class="sub">Antes: "solo lectura" arriba… y abajo tres botones vivos, entre ellos "Volver atrás".</p>
+
+  <div class="fila">
+    <div class="pantalla">
+      <div class="cuerpo">
+        <div class="miga">← Volver al listado</div>
+        <div class="ficha-head">
+          <div>
+            <h3>Reserva #F-2026-1065 <span class="chip rojo grande">ANULADA</span></h3>
+            <div class="cliente">PI0724 Consumidor Final</div>
+            <div class="destino">1 de 1 servicio anulado</div>
+            <div class="linea-plata">Pago: <b>Saldo a favor</b> &nbsp;·&nbsp; Factura: <b>Sin facturar</b></div>
+            <div class="fechas">📅 Salida <b>10/12/2026</b> &nbsp;·&nbsp; Regreso <b style="color:var(--tinta3);font-weight:600">sin cargar</b></div>
+          </div>
+          <div class="acciones">
+            <span class="btn">🗄 Archivar</span>
+          </div>
+        </div>
+
+        <div class="numeros">
+          <div class="n-grande">
+            <div class="r">Saldo a favor del cliente</div>
+            <div class="v" style="color:var(--verde)">$ 4.000,00</div>
+            <div class="de">se puede usar en otra reserva o devolver</div>
+          </div>
+          <div class="n-chico">Recaudado <b>$ 4.000,00</b></div>
+          <div class="n-chico">Inversión <b>$ 0,00</b></div>
+        </div>
+
+        <div class="aviso-fila terminal"><span><b>Reserva anulada</b> — solo lectura.</span></div>
+
+        <div class="tabs-ficha">
+          <div class="tab act">Servicios</div>
+          <div class="tab">Pasajeros <span class="c">1</span></div>
+          <div class="tab">Historial</div>
+          <div class="tab">Estado de cuenta</div>
+          <div class="tab">Documentos</div>
+        </div>
+
+        <div class="panel">
+          <h4>Servicios contratados</h4>
+          <table>
+            <thead><tr><th>Tipo</th><th>Descripción</th><th>Fecha</th><th>Estado</th><th class="der">Costo</th><th class="der">Venta</th></tr></thead>
+            <tbody>
+              <tr class="serv-fila" style="color:var(--tinta3)">
+                <td>✈ Aéreo</td>
+                <td><div class="serv-desc" style="text-decoration:line-through">AEP-COR PRUEBA DNI</div>
+                    <div class="serv-op">Operador: TEST TEST<br><b>Anulado por Maite el 03/08/2026</b> · Motivo: el cliente se arrepintió</div></td>
+                <td>10/12/2026</td>
+                <td><span class="chip rojo">Anulado</span></td>
+                <td class="der" style="text-decoration:line-through">$ 100,00</td>
+                <td class="der" style="text-decoration:line-through">$ 150,00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="notas">
+      <div class="nota"><span class="tag">Botonera limpia</span>
+        En una reserva anulada <b>solo queda "Archivar"</b>. Hoy siguen los tres botones: dos grises sin
+        motivo y "Volver atrás" <b>encendido</b> — sobre una pantalla que dice "solo lectura". Está firmado
+        que en Anulada y Perdida se sacan los botones de acción.</div>
+
+      <div class="nota"><span class="tag">Ya no hay "SALDO —"</span>
+        Antes el primer número era una rayita muda y al lado dos ceros gigantes. Ahora el número grande dice
+        <b>lo único que importa acá</b>: cuánta plata del cliente quedó a favor y qué se puede hacer con ella.</div>
+
+      <div class="nota ok"><span class="tag">El hueso que se conserva</span>
+        El servicio <b>tachado</b>, con <b>"Anulado por Maite el 03/08/2026"</b> y el motivo, y los importes
+        tachados. Eso es exactamente lo que pediste conservar: <b>la auditoría a la vista</b>. Ni se toca.</div>
+
+      <div class="nota"><span class="tag">Se puede seguir viendo todo</span>
+        Documentos, vouchers y facturas ya emitidos se siguen <b>viendo, descargando y reimprimiendo</b>.
+        Lo único apagado es emitir cosas nuevas.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ 7. ANGOSTO ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">12</span> En pantalla angosta (celular)</h2>
+  <p class="sub">Antes: cinco tarjetas con una huérfana, solapas cortadas sin señal, y dos importes que se pisaban.</p>
+
+  <div class="fila">
+    <div style="display:flex;gap:24px;flex-wrap:wrap">
+
+      <div class="movil">
+        <div class="barra-nav">MODO HOMOLOGACIÓN ACTIVO</div>
+        <div class="cuerpo">
+          <div style="font-size:20px;font-weight:800;margin-bottom:10px">Reservas</div>
+          <span class="btn pri" style="width:100%;justify-content:center;margin-bottom:12px">+ Nueva reserva</span>
+
+          <div class="kpis" style="flex-direction:column;gap:6px;align-items:flex-start">
+            <div class="kpi"><span class="r">Activas</span><span class="v">12</span></div>
+            <div class="kpi"><span class="r">Por cobrar</span><span class="v rojo">$ 223.445,00</span></div>
+            <div class="kpi"><span class="r">Vendido</span><span class="v ind">$ 268.535,00</span></div>
+          </div>
+
+          <div class="buscador" style="margin-bottom:10px">🔍 Buscar por N° o cliente…</div>
+
+          <div class="tabs scroll-hint" style="flex-wrap:nowrap;overflow:hidden;margin-bottom:12px">
+            <div class="tab act">Todas <span class="c">63</span></div>
+            <div class="tab">Borradores <span class="c">3</span></div>
+            <div class="tab">Presup…</div>
+          </div>
+
+          <div class="tarjeta-m">
+            <div style="display:flex;justify-content:space-between;gap:8px">
+              <div class="num-res">#F-2026-1064</div>
+              <span class="chip ambar">Confirmada 🔒</span>
+            </div>
+            <div class="sub-res">Mendoza</div>
+            <div style="margin-top:7px;font-weight:600">PI0724 Consumidor Final</div>
+            <div class="viaja">• Viaja: 10/11/2026</div>
+            <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+              <span class="plata">$ 212.000,00</span>
+              <span class="chip rojo">Debe $ 212.000,00</span>
+            </div>
+          </div>
+
+          <div class="tarjeta-m">
+            <div style="display:flex;justify-content:space-between;gap:8px">
+              <div class="num-res">#F-2026-1065</div>
+              <span class="chip rojo">Anulada</span>
+            </div>
+            <div style="margin-top:7px;font-weight:600">PI0724 Consumidor Final</div>
+            <div class="viaja">• Viaja: 10/12/2026</div>
+            <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+              <span class="plata">$ 0,00</span>
+              <span class="chip verde">A favor $ 4.000,00</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="movil">
+        <div class="barra-nav">MODO HOMOLOGACIÓN ACTIVO</div>
+        <div class="cuerpo">
+          <div class="miga">← Volver al listado</div>
+          <div style="font-size:19px;font-weight:800">Reserva #F-2026-1064</div>
+          <div style="margin:6px 0"><span class="chip ambar grande">CONFIRMADA 🔒</span></div>
+          <div style="font-weight:700;font-size:15px">PI0724 Consumidor Final</div>
+          <div class="destino">Mendoza · 1 pasajero</div>
+          <div class="linea-plata">Pago: <b>Pendiente</b><br>Factura: <b>Facturada y devuelta</b></div>
+
+          <div class="fechas" style="display:flex;width:100%;justify-content:space-between">
+            <span>📅 10/11/2026</span><span>→</span><span>15/11/2026</span>
+          </div>
+
+          <div style="margin-top:14px">
+            <div class="r" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--tinta3);font-weight:800">Saldo a cobrar</div>
+            <div style="font-size:27px;font-weight:800;color:var(--rojo);line-height:1.15">$ 212.000,00</div>
+            <div class="de" style="font-size:12px;color:var(--tinta3)">de $ 212.000,00 presupuestado</div>
+            <div class="n-chico" style="margin-top:6px">Recaudado <b>$ 0,00</b> · Inversión <b>$ 173.000,00</b></div>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+            <span class="btn peligro" style="flex:1;justify-content:center">🚫 Anular</span>
+            <span class="btn apagado">🗄 Archivar</span>
+            <span class="btn solo">⋯</span>
+          </div>
+
+          <div class="aviso-fila accion" style="flex-direction:column;align-items:flex-start;gap:8px">
+            <span>🔒 <b>Reserva confirmada.</b> Para cambiar algo, pedí autorización.</span>
+            <span class="btn chico">Destrabar reserva</span>
+          </div>
+          <div class="aviso-fila info"><span>1 servicio sin confirmar: <b>Aéreo</b></span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="notas">
+      <div class="nota"><span class="tag">Los números no se pisan</span>
+        En la pantalla real, "$ 212.000,00" y "$ 0,00" se <b>superponían</b> (se leía "$ 212.000,0$0,00").
+        Al pasar a un número grande + una línea chica, el problema desaparece solo.</div>
+
+      <div class="nota"><span class="tag">Las solapas avisan que siguen</span>
+        Se agrega el degradado con la flechita <b>›</b> al borde: se ve que hay más solapas a la derecha.
+        Hoy se cortan secas y no hay forma de saber que existen "Anuladas" o "Archivadas".</div>
+
+      <div class="nota"><span class="tag">Sin tarjeta huérfana</span>
+        Los tres números van uno debajo del otro en una tira, no en tarjetas de dos columnas que dejan
+        una sola colgando.</div>
+
+      <div class="nota"><span class="tag">Un número, no dos</span>
+        La tarjeta del listado ya no dice "Reserva F-2026-1065" arriba y "#F-2026-1065" abajo. El mismo
+        dato no se dice dos veces.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ CIERRE ══════════════════════════ -->
+<div class="seccion">
+  <h2><span class="num">✓</span> Qué falta para poder construir esto</h2>
+  <div class="pantalla"><div class="cuerpo">
+    <p style="margin-top:0">Las <b>14 preguntas están contestadas</b> y este dibujo ya es <b>lo que elegiste</b>.
+    Al dibujar las cuatro pantallas que faltaban aparecieron <b>tres decisiones nuevas</b>, cortitas, que
+    están al final de <code>docs/ux/2026-08-03-auditoria-reservas.md</code>. Podés contestar:
+    <i>"15B, 16B, 17A"</i>.</p>
+
+    <div class="firma" style="margin-top:0">
+      <b>Las tres que faltan:</b>
+      <ul style="margin:8px 0 0">
+        <li><b>P15 — el historial:</b> ¿se cuenta <b>todo</b> lo que pasa, todo <b>con un filtro</b> arriba,
+          o <b>solo lo grueso</b>? <i>(Dibujé el filtro.)</i></li>
+        <li><b>P16 — pasar de borrador a presupuesto:</b> ¿se puede siempre, o hace falta <b>al menos un
+          servicio cargado</b>? <i>(Dibujé el freno con el servicio.)</i></li>
+        <li><b>P17 — un archivo subido por error:</b> ¿se <b>quita dejando rastro</b>, queda <b>tachado a la
+          vista</b>, o se <b>borra</b>? <i>(Dibujé "Quitar" con rastro.)</i></li>
+      </ul>
+    </div>
+
+    <p style="margin-top:16px"><b>Lo que NO espera respuesta</b> (son reglas que ya firmaste y hoy están rotas;
+    se arreglan igual):</p>
+    <ul style="color:var(--tinta2)">
+      <li>Sacar el botón <b>"Eliminar"</b> del presupuesto — <i>nada se borra</i> (firmado hoy).</li>
+      <li>Las etiquetas del operador dejan de mostrar montos.</li>
+      <li>Cada iconito de acción lleva su palabra al lado, y cada botón apagado su motivo a la vista.</li>
+      <li>El historial deja de decir <b>"por Sistema"</b> y el cobro deja de mostrarse en negativo.</li>
+      <li>El "Regreso" deja de copiarse solo de la "Salida".</li>
+      <li>Una reserva anulada deja de mostrar botones vivos.</li>
+      <li>El alta deja de pedir el cliente con dos controles.</li>
+      <li>El buscador dice qué encuentra y busca en todas las reservas.</li>
+      <li>La plata deja de sumar pesos con dólares.</li>
+      <li>Los servicios dicen <b>"Solicitado"</b> siempre, y las palabras <b>"Forma de pago"</b> y
+        <b>"Emitir igual"</b> quedan iguales en toda la app.</li>
+    </ul>
+
+    <p style="margin-top:16px"><b>Lo que necesita que el motor mande datos que hoy no manda</b> (esto no lo
+    decide nadie, hay que construirlo antes o la pantalla miente):</p>
+    <ul style="color:var(--tinta2)">
+      <li><b>La moneda de cada reserva en el listado</b> y el resumen separado por moneda: sin eso, los
+        importes del listado son una suma de pesos con dólares.</li>
+      <li><b>El destino de la reserva</b> para el renglón bajo el número (sale de los servicios cargados).</li>
+      <li><b>El historial contado en criollo:</b> hoy el motor manda el nombre de la operación interna y la
+        palabra "Sistema". Tiene que mandar <b>qué pasó y quién lo hizo</b>.</li>
+      <li><b>El extracto por moneda</b> de la reserva, con los renglones anulados incluidos y marcados.</li>
+    </ul>
+  </div></div>
+</div>
+
+</div>
+</body>
+</html>

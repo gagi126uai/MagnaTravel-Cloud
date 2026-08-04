@@ -211,7 +211,6 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
                 value={numero}
                 onChange={(e) => setNumero(e.target.value)}
                 disabled={guardando}
-                placeholder="Opcional"
                 className="w-32 rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-400 dark:border-emerald-800 dark:bg-slate-900 dark:text-white"
                 data-testid={`input-numero-confirmacion-${servicePublicId}`}
             />

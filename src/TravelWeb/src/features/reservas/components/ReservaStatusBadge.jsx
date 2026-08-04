@@ -67,7 +67,7 @@ export const statusConfig = {
         color: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
         icon: '✅',
     },
-    // Perdido: cotizacion o presupuesto que el cliente no compro. Queda en historial.
+    // Perdida: cotización o presupuesto que el cliente no compró. Queda en historial.
     // Decisión #10 (guia UX 2026-06-08): gris oscuro + tachado visual — indica "no prospero".
     Lost: {
         label: RESERVA_STATUS_LABELS.Lost,

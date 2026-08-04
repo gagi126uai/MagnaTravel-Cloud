@@ -160,7 +160,7 @@ function DocumentRow({ file, onDelete, onDownload, onRename, soloLectura = false
         window.open(url, "_blank", "noopener,noreferrer");
         window.setTimeout(() => URL.revokeObjectURL(url), 2000);
       } catch {
-        toast.error("Error al abrir PDF");
+        toast.error("No se pudo abrir el documento");
       }
     }
   };
@@ -332,7 +332,7 @@ export function ReservaDocumentsTab({ reservaId, canUploadDocument }) {
   const handleUpload = async (file) => {
     if (!file) return;
     if (file.size > 25 * 1024 * 1024) {
-      toast.error("El archivo es demasiado grande (max 25 MB).");
+      toast.error("El archivo pesa más de 25 MB.");
       return;
     }
 
@@ -380,11 +380,11 @@ export function ReservaDocumentsTab({ reservaId, canUploadDocument }) {
 
   const handleDelete = async (id, fileName) => {
     const result = await Swal.fire({
-      title: "Eliminar documento?",
-      text: `Se eliminara "${fileName}" permanentemente.`,
+      title: "¿Eliminar el documento?",
+      text: `Se elimina "${fileName}" para siempre.`,
       icon: "warning",
       showCancelButton: true,
-      confirmButtonText: "Si, eliminar",
+      confirmButtonText: "Sí, eliminar",
       cancelButtonText: "Cancelar",
       confirmButtonColor: "#ef4444",
     });
@@ -407,16 +407,18 @@ export function ReservaDocumentsTab({ reservaId, canUploadDocument }) {
     try {
       const blob = await api.get(`/attachments/${id}/download`, { responseType: "blob" });
       if (!blob || blob.size === 0) {
-        throw new Error("El archivo descargado esta vacio o corrupto.");
+        throw new Error("El archivo llegó incompleto. Probá descargarlo de nuevo.");
       }
 
       downloadBlob(blob, fileName);
       toast.dismiss(loadingToast);
-      toast.success("Descarga iniciada.");
+      toast.success("Descargando el documento…");
     } catch (error) {
+      // No mostramos error.message: es el mensaje crudo de JS/red (data-exposure-reviewer,
+      // categoria 5 del inventario de textos) — el usuario ve siempre un texto de negocio fijo.
       console.error("Download error:", error);
       toast.dismiss(loadingToast);
-      toast.error(`Error al descargar: ${error.message || "Error desconocido"}`);
+      toast.error("No se pudo descargar el documento. Probá de nuevo.");
     }
   };
 
@@ -472,7 +474,7 @@ export function ReservaDocumentsTab({ reservaId, canUploadDocument }) {
             )}
             <div>
               <div className="text-base font-medium text-gray-900 dark:text-gray-100">
-                {uploading ? "Subiendo documento..." : "Haz clic o arrastra documentos aqui"}
+                {uploading ? "Subiendo documento..." : "Arrastrá los documentos acá o tocá para elegirlos"}
               </div>
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 DNI, pasaportes, permisos, autorizaciones y adjuntos generales (max 25 MB)
@@ -497,7 +499,7 @@ export function ReservaDocumentsTab({ reservaId, canUploadDocument }) {
         ) : (attachments?.length || 0) === 0 ? (
           <div className="py-12 text-center text-sm text-gray-500">
             <FileText className="mx-auto mb-3 h-10 w-10 text-gray-300" />
-            <p>No hay documentos cargados todavia.</p>
+            <p>Todavía no hay documentos cargados.</p>
             {/* En solo lectura informamos que no se pueden agregar documentos nuevos */}
             {soloLecturaDocumentos && (
               <p className="mt-1 text-xs text-slate-400">

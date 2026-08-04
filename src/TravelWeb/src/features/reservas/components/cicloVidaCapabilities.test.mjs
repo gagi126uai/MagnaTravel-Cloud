@@ -28,8 +28,9 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
     if (reservaStatus === 'Cancelled') return 'Anulado';
     if (workflowStatus === 'Finalizado') return 'Finalizado';
     if (workflowStatus && workflowStatus !== 'Solicitado') return workflowStatus;
-    const estaEnEtapaPrevia = reservaStatus === 'Quotation' || reservaStatus === 'Budget';
-    return estaEnEtapaPrevia ? 'En espera' : 'Solicitado';
+    // Etiqueta única, sin distinción por etapa (P13 firmada 2026-08-03). Antes
+    // Quotation/Budget devolvían 'En espera' — esa rama ya no existe en ServiceList.jsx.
+    return 'Solicitado';
 }
 
 // ─── Réplica de claseColorEstadoServicio (ServiceList.jsx) ────────────────────
@@ -39,7 +40,6 @@ function claseColorEstadoServicio(workflowStatus, reservaStatus) {
     if (etiqueta === 'Confirmado') return 'bg-green-100 text-green-700';
     if (etiqueta === 'Cancelado') return 'bg-rose-100 text-rose-700';
     if (etiqueta === 'Anulado') return 'bg-slate-100 text-slate-500';
-    if (etiqueta === 'En espera') return 'bg-slate-100 text-slate-600';
     if (etiqueta === 'Finalizado') return 'bg-emerald-50 text-emerald-600';
     return 'bg-amber-100 text-amber-700';
 }
@@ -115,6 +115,20 @@ test("G1: color Finalizado es diferente del color Confirmado (verde intenso vs e
     assert.notEqual(colorFinalizado, colorConfirmado);
     assert.ok(colorFinalizado.includes('emerald'));
     assert.ok(colorConfirmado.includes('green-100'));
+});
+
+// P13 (2026-08-03): en Quotation/Budget la etiqueta es 'Solicitado', igual que en el
+// resto de las etapas previas a resolución — ya no existe la etiqueta 'En espera'.
+test("P13: workflowStatus null en Quotation/Budget → etiqueta única 'Solicitado' (no 'En espera')", () => {
+    assert.equal(etiquetaEstadoServicio(null, 'Quotation'), 'Solicitado');
+    assert.equal(etiquetaEstadoServicio(null, 'Budget'), 'Solicitado');
+});
+
+test("P13: color de 'Solicitado' en Quotation/Budget es el mismo ámbar que en cualquier otra etapa", () => {
+    const colorQuotation = claseColorEstadoServicio(null, 'Quotation');
+    const colorInManagement = claseColorEstadoServicio(null, 'InManagement');
+    assert.equal(colorQuotation, colorInManagement, "no debe existir un color/rama especial para Quotation/Budget");
+    assert.ok(colorQuotation.includes('amber'));
 });
 
 // =============================================================================

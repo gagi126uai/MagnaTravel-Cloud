@@ -46,7 +46,7 @@
  * El usuario siempre puede cambiarla a mano.
  *
  * Props:
- *   serviciosCancelables   — array de servicios candidatos (los "con proveedor" activos)
+ *   serviciosCancelables   — array de servicios candidatos (los "resueltos" activos)
  *   reservaPublicId        — GUID de la reserva
  *   blockReason            — string|null; si no es null, toda la reserva está bloqueada
  *   onCerrar               — callback: el usuario cerró la sección (botón Cerrar / X)
@@ -210,7 +210,7 @@ export function CancelarVariosServiciosInline({
         resultados.push({
           svc,
           ok: false,
-          mensajeError: "Tipo de servicio no reconocido.",
+          mensajeError: "Este servicio no se puede anular desde acá. Anulalo desde su fila.",
           esBloqueo409: false,
         });
         continue;
@@ -492,7 +492,8 @@ export function CancelarVariosServiciosInline({
               <>
                 <p className="font-bold mb-2">
                   {procesoEstado.resultados.filter((r) => r.ok).length} de{" "}
-                  {procesoEstado.resultados.length} servicios anulados.
+                  {procesoEstado.resultados.length}{" "}
+                  {procesoEstado.resultados.length === 1 ? "servicio anulado." : "servicios anulados."}
                 </p>
                 {procesoEstado.resultados
                   .filter((r) => !r.ok)
@@ -503,13 +504,13 @@ export function CancelarVariosServiciosInline({
                         <span>
                           <strong>{r.svc.name}:</strong>{" "}
                           {r.esBloqueo409
-                            ? `Bloqueo fiscal — ${r.mensajeError}`
+                            ? `No se pudo anular — ${r.mensajeError}`
                             : r.mensajeError}
                         </span>
                         {/* Paridad con el flujo individual (ModalBloqueoCancelacionServicio
                             en ServiceList.jsx): si la fila falló por bloqueo fiscal, ofrecemos
                             el mismo camino para resolverlo. Filas con otro tipo de error (ej.
-                            "Tipo de servicio no reconocido") no lo muestran — ahí no hay
+                            "Este servicio no se puede anular desde acá") no lo muestran — ahí no hay
                             factura que ir a ver. */}
                         {r.esBloqueo409 && onIrAFacturas && (
                           <div className="mt-1">

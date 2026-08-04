@@ -43,12 +43,16 @@ public partial class BookingService
         await ReservaCapacityRules.EnsureReschedulableByStateAsync(_db, reservaId, ct);
         //    (b) candado de AUTORIZACION: en Confirmada exige autorizacion viva (si no, 409). Registra la
         //        operacion como ReservaDataEdited (es una mutacion de cabecera que afecta a todos los servicios).
+        // Ojo con Math.Abs(int): si daysShift fuera int.MinValue, Math.Abs tira OverflowException (no hay
+        // valor positivo equivalente en int). Comparamos contra 1 y -1 directo, sin pasar por Abs, para que
+        // un shift patologicamente grande nunca vuelva un 500 en vez del 409 esperado.
+        var dayWord = (daysShift == 1 || daysShift == -1) ? "día" : "días";
         await GuardReservaLockAsync(
             reservaId,
             ReservaEditAuthorizationOperations.ReservaDataEdited,
             entityType: AuditActions.ReservaEntityName,
             entityId: reservaId,
-            summary: $"Reprogramacion del viaje: {daysShift:+#;-#;0} dia(s)",
+            summary: $"Reprogramación del viaje: {daysShift:+#;-#;0} {dayWord}",
             ct);
         //    (c) guard FISCAL: si hay factura con CAE vivo o voucher emitido, NO se reprograma por aca (va por
         //        anulacion/reemision). Mismo mensaje y misma fuente que la edicion de fechas de la reserva (CODE-03).

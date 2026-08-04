@@ -28,7 +28,7 @@
   - **Perdida** (icono ⊗) — solo en Cotización / Presupuesto.
   - **Cancelar** (icono ⊘) — en En gestión / Confirmada / En viaje / A liquidar (estados con proceso fiscal).
   - **Volver atrás** (icono ↩) — donde se permite regresar de etapa.
-  - **Eliminar** (icono 🗑) — solo en Cotización / Presupuesto (sin pagos).
+  - ~~**Eliminar** (icono 🗑) — solo en Cotización / Presupuesto (sin pagos).~~ **DEROGADO (Gastón, 2026-08-03): NADA SE BORRA.** Ver la sección **"Nada se borra: ni reservas ni presupuestos (2026-08-03)"** más abajo. El botón "Eliminar" desaparece de toda la sección Reservas.
   - **Archivar** (icono 🗄) — siempre que se pueda archivar.
 - **(2026-06-08) Wording de los iconos de cada servicio de la lista:**
   - **Editar** (lápiz) — texto fijo "Editar".
@@ -394,6 +394,27 @@ Ronda 2:
   motivo), se muestran **como hoy**; si el texto del rechazo es largo va al **Cartel emergente único**
   (tratamiento único de avisos de bloqueo, 2026-07-22). El front nunca muestra el texto crudo del error
   ni jerga interna.
+
+## Nada se borra: ni reservas ni presupuestos (2026-08-03, regla del dueño)
+
+> **Origen:** auditoría de diseño de la sección Reservas (2026-08-03). Revisando la ficha de un
+> Presupuesto, Gastón cortó la discusión con una regla, textual:
+> **"las reservas no se borran, se anulan; nada importante se borra"**.
+
+- **(2026-08-03) NADA se borra en la sección Reservas: ni reservas, ni presupuestos.** El registro
+  queda siempre, con su rastro (quién, cuándo, por qué). El verbo del producto es **Anular** (deja sin
+  efecto, el documento queda) — nunca "eliminar" ni "borrar" una reserva.
+- **(2026-08-03) El botón "Eliminar" de la ficha de un Presupuesto es un SOBRANTE y se saca de la
+  pantalla.** Esto **DEROGA** el punto "Eliminar (icono 🗑) — solo en Cotización / Presupuesto (sin
+  pagos)" del wording de acciones de cabecera (2026-06-08). Ese botón deja de existir.
+- **(2026-08-03) La botonera de un Presupuesto queda en TRES acciones:**
+  **"El cliente aceptó" · "Perdida" · "Archivar"**.
+- **(2026-08-03) Un presupuesto que no prospera va a "Perdida"** (estado que ya existe, ADR-048); si
+  además molesta a la vista, se **Archiva**. Esos son los dos únicos caminos para sacarlo del medio.
+- **(2026-08-03) No existe ningún borrado de documentos en toda la sección Reservas.** (Sigue valiendo
+  aparte la regla de servicios del 2026-06-07/08: un SERVICIO que el operador todavía no confirmó se
+  borra —era un borrador, sin compromiso con nadie—; uno ya confirmado se cancela y queda tachado. Esa
+  regla es sobre servicios sueltos, no sobre la reserva.)
 
 ## Pasajeros de una reserva — reglas de negocio (2026-06-08)
 
@@ -2138,3 +2159,127 @@ DÓNDE viven esos textos, nunca QUÉ dicen.
   vacío ("Todavía no hay ninguna copia guardada") · **no se pudo traer la lista → cartel rojo CON
   botón "Probar de nuevo"** (hoy no tenía salida: había que cerrar y volver a abrir) · en proceso ·
   éxito · rechazo. Nunca un globito que se va solo para un error (P-6).
+
+## Reservas — rediseño completo de la sección (2026-08-03, respuestas de Gastón P1..P14)
+
+> **Origen:** auditoría de diseño elemento por elemento de toda la sección Reservas
+> (`docs/ux/2026-08-03-auditoria-reservas.md`, 162 elementos) nacida de la frase del dueño
+> *"me gusta lo actual pero a la vez no me cierra"* → **se conservan los huesos, se rediseña la piel y
+> la voz**. Gastón contestó las 14 preguntas el mismo día. Dibujo firmado:
+> `docs/ux/maquetas/2026-08-03-reservas-rediseno.html`. **NO reabrir.**
+> Los huesos que NO se tocaron: modelo de estados, candado con su explicación, "Volver atrás",
+> auditoría a la vista ("Anulado por X el fecha"), chips de tres ejes (Estado / Pago / Factura) y
+> fichas de trabajo en línea.
+
+**Regla general firmada el mismo día (ya está arriba, se repite acá por su alcance):**
+
+- **(2026-08-03) NADA SE BORRA.** Textual: *"las reservas no se borran, se anulan; nada importante se
+  borra"*. **DEROGA** la parte de la regla del 2026-06-08 que permitía "Eliminar (🗑) solo en
+  Cotización/Presupuesto": **ese botón deja de existir en toda la sección Reservas.** Lo que no
+  prospera va a **Perdida**; lo que molesta a la vista, se **Archiva**.
+
+**Cómo nace y cómo se llaman las etapas:**
+
+- **(2026-08-03, P1=C) La reserva nace SIEMPRE como BORRADOR.** Afuera hay **un solo botón:
+  "+ Nueva reserva"**. El segundo paso vive **adentro** de la ficha: **"Pasar a presupuesto"**. La
+  solapa del listado se llama **"Borradores"**, a secas (muere "Borradores anteriores").
+  **Consecuencia directa firmada:** la palabra **"Cotización" desaparece de la pantalla** — esa etapa
+  se llama **Borrador** en todos lados (una cosa, una palabra: P-16). Esto **confirma** la regla del
+  2026-06-07 ("nace siempre como cotización") y **corrige el motor**, que hoy crea la reserva
+  directamente en Presupuesto.
+- **(2026-08-03, P13) La etiqueta del servicio dice "SOLICITADO" en TODAS las etapas.** **DEROGA** la
+  regla del 2026-06-08 de los dos textos según la etapa: "EN ESPERA" desaparece. El mismo servicio no
+  cambia de nombre por estar en otra etapa.
+
+**Listado de reservas:**
+
+- **(2026-08-03, P2=A) Arriba van TRES números, en una tira fina de una línea:** **Reservas activas ·
+  Por cobrar · Vendido**, cada importe con **pesos y dólares separados** (P-3: nunca sumados). Se van
+  "Operativos" y "Rentabilidad Est." (ese vive en Reportes).
+- **(2026-08-03, P3=B) Las solapas en 0 quedan siempre, apagadas y no clickeables.** No se esconden:
+  "cero" también es información.
+- **(2026-08-03, P4=A) Bajo el número de reserva va el DESTINO del viaje.** Muere el nombre
+  autogenerado ("Reserva F-2026-1023", "File F-2026-1004"). Si la reserva todavía no tiene servicios,
+  el renglón no aparece.
+- **(2026-08-03, P5=A) En la fila queda UNA sola acción: "Archivar", con la palabra al lado** (P-10) y,
+  cuando no se puede, **el motivo escrito debajo** (P-9, nunca en el tooltip). Se va el ícono de globo
+  de chat: la fila entera ya abre la reserva.
+- **(2026-08-03) El vacío da salida:** "No hay reservas creadas en {mes}" + botones **"Ir a {mes
+  anterior}"** y **"Ver todos los meses"** (P-11). Si no se puede traer la lista: cartel rojo **con
+  botón "Probar de nuevo"** (mismo criterio que Copias de seguridad).
+
+**Alta de una reserva:**
+
+- **(2026-08-03, P6=A) El alta deja de ser ventana flotante: se abre como una fila EN LÍNEA arriba del
+  listado** (P-5, "el modal me parece horrible"). Se llama **"Nueva reserva"** y el botón dice
+  **"Crear reserva"**: no se nombra ninguna etapa. Lo que crea es un **Borrador** (P1=C).
+- **(2026-08-03) El cliente se elige con UN SOLO casillero** con sugerencias debajo (muere el doble
+  control buscador + lista desplegable), y la última opción de la lista es **"Es un cliente nuevo:
+  crearlo acá"** (P-11). Se van la leyenda "Se usará para facturación y contacto" y el "(Opcional)"
+  de la fecha (P-15).
+
+**Ficha de la reserva:**
+
+- **(2026-08-03, P7=A) El estado se queda con el TÍTULO; los chips de pago y factura bajan a un
+  renglón propio abajo.** Ninguno desaparece (los tres ejes siguen firmados): solo dejan de pelear en
+  la misma línea.
+- **(2026-08-03, P8=A) La solapa "Pasajeros" existe desde el BORRADOR y el PRESUPUESTO**, y el motivo
+  del botón apagado es un **enlace "Cargar el titular"** que lleva ahí (mata el callejón sin salida,
+  P-11). En esa solapa, arriba, siguen los tres casilleros de cantidades (2026-06-15 P1); **se van el
+  párrafo explicativo y el botón "Guardar cantidades"**: las cantidades se guardan solas.
+- **(2026-08-03, P9=A) Las acciones de excepción viven detrás de un botón "⋯"** al final de la fila de
+  acciones: **Volver atrás · Destrabar reserva · Sacar de viaje · Reabrir**. Cumple F-16 ("discreta,
+  nunca un botón normal") sin esconderlas: están a un clic.
+- **(2026-08-03, P10=A) Número grande SOLO el que tiene plata; los que están en cero van en una línea
+  chiquita gris.** Los tres números siguen siendo los mismos (Saldo a cobrar · Recaudado · Inversión) y
+  la línea "de $ X presupuestado" queda. **Se saca el puntito rojo que latía** al lado del saldo:
+  competía con los avisos de verdad.
+- **(2026-08-03, P11=A) Primera regla de la sección "Colores y estilo" (estaba vacía): el aviso que
+  PIDE HACER ALGO va con color (ámbar); el que SOLO INFORMA va gris y en una sola línea.** Cuántos
+  avisos hay y en qué orden no cambia (firmado 2026-07-05).
+- **(2026-08-03, P14=A) "Anular reserva" queda SOLO arriba, en la botonera de la reserva.** Se saca el
+  botón repetido de la solapa Estado de cuenta, donde quedan **"Registrar cobro"** y **"Emitir
+  factura"**.
+- **(2026-08-03) En Anulada y Perdida la botonera queda solo con "Archivar"** (ADR-036 punto 3), y el
+  primer número grande pasa a decir lo único que importa ahí: **el saldo a favor del cliente**.
+
+**Solapas de la ficha (de seis a cinco):**
+
+- **(2026-08-03, P12=A) "Vouchers" y "Documentos" se funden en UNA sola solapa: "Documentos"**, con dos
+  bloques adentro: **"Vouchers del viaje"** y **"Archivos de la reserva"**. Un voucher que todavía no
+  se puede emitir **aparece apagado con el motivo escrito**, no desaparece. Los **vouchers no se
+  quitan nunca** (P-18: lo emitido se sigue viendo y descargando).
+- **(2026-08-03) La solapa "Historial" se cuenta en criollo del negocio.** Frase del dueño: *"no es muy
+  clara, parece más de programador que de usuario de agencia de viajes"*. Reglas:
+  - Cada renglón dice **qué pasó** y **quién lo hizo**, con nombre: *"Maite cobró $ 50.000,00 · Forma
+    de pago: Efectivo"*, *"Maite anuló el traslado 'Aeropuerto → Hotel' — Motivo: …"*. **Nunca** el
+    nombre de la operación interna ("Alta de un Pago", "Cambio en una Reserva") ni **"por Sistema"**
+    (P-17 regla 1, T-5). Cuando no lo hizo una persona, la frase arranca por el hecho: *"Se confirmó el
+    hotel RIU Mendoza con el N° CONF-123"*.
+  - **Agrupado por día**, con encabezado "Hoy" / "Ayer" / "Viernes 25/07/2026", y la **hora al costado**
+    (hora argentina, T-14). Fechas **dd/MM/aaaa** (P-2).
+  - **Un cobro NO se muestra en negativo:** entra plata, va sin el signo menos.
+  - Los renglones que nombran **costos** solo los ve quien tiene permiso de costos (F-14).
+- **(2026-08-03) La solapa "Estado de cuenta" es un EXTRACTO, con el mismo formato que la cuenta
+  corriente del cliente:** cinco columnas **Fecha · Concepto · Debe · Haber · Saldo**, en orden
+  cronológico y con el **saldo después de cada movimiento**; **un bloque por moneda, cada uno con su
+  propio saldo** (P-3: jamás se suman ni se convierten); los **movimientos anulados se ven, tachados**,
+  con quién los anuló, cuándo y por qué, sin mover el saldo. **Sin botones por renglón** (documento de
+  consulta, igual que el extracto del cliente del 2026-07-16). Arriba queda el bloque "Venta y
+  facturación" (2026-06-22 punto 3). Vacío: *"Todavía no hay movimientos de plata en esta reserva"*.
+- **(2026-08-03) La solapa "Pasajeros": cada acción de la fila lleva su palabra** ("✏ Editar",
+  "🗑 Borrar"). Con la reserva trabada, esos botones quedan **grises con candadito y CON la palabra**, y
+  el motivo lo dice **la franja de arriba una sola vez** (no se repite por renglón). Todo lo demás de
+  la solapa queda como está (contador "N de M nombres cargados", renglones "sin cargar" con [Cargar],
+  alta y edición en línea, cartelitos de documento vencido).
+
+**Dos palabras firmadas el mismo día (valen en toda la app):**
+
+- **(2026-08-03) "Forma de pago"**, nunca "Método".
+- **(2026-08-03) "Emitir igual"**, nunca "Emitir por excepción".
+
+**Preguntas abiertas de esta obra (2026-08-03, tarde — todavía SIN respuesta):** **P15** qué entra en
+el historial (todo / todo con filtro / solo lo grueso) · **P16** si el paso de borrador a presupuesto
+pide algo (recomendado: al menos un servicio cargado) · **P17** qué pasa con un archivo subido por
+error (recomendado: quitar dejando rastro). Están al final de
+`docs/ux/2026-08-03-auditoria-reservas.md`. **Hasta que se respondan, esas tres cosas no se construyen.**

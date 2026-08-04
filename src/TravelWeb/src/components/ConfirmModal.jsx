@@ -5,7 +5,7 @@ export default function ConfirmModal({
     onClose, 
     onConfirm, 
     title = "Confirmar acción", 
-    message = "¿Estás seguro de que deseas realizar esta acción?",
+    message = "¿Estás seguro de que querés realizar esta acción?",
     confirmText = "Confirmar",
     cancelText = "Cancelar",
     type = "warning", // 'warning', 'danger', 'info', 'question'

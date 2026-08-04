@@ -173,7 +173,7 @@ public class Adr032CollectableStateRuleTests
     [Fact]
     public void EnsureCollectable_Throws_OnNonFirm_WithSaleFirmMessage()
     {
-        // ADR-033: una Cancelada no es venta firme -> mensaje "pasala a En gestion primero".
+        // ADR-033: una Cancelada no es venta firme -> mensaje "Pasá la reserva a En gestión primero".
         var reserva = new Reserva { Status = EstadoReserva.Cancelled, Balance = 1000m };
         var ex = Assert.Throws<InvalidOperationException>(() => reserva.EnsureCollectable());
         Assert.Equal(Reserva.NotSaleFirmForChargeMessage, ex.Message);

@@ -19,8 +19,8 @@ export function CapacityWarning({ paxCount, capacity }) {
                 </div>
                 <div className="ml-3">
                     <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                        Atencion: hay <strong>{paxCount}</strong> pasajeros cargados pero los servicios contratados solo soportan <strong>{cap.total}</strong>{detalle.length > 0 ? ` (${detalle.join(", ")})` : ""}.
-                        <br /><span className="text-xs opacity-75">Ajusta la capacidad de los servicios o agrega uno nuevo antes de continuar.</span>
+                        Atención: hay <strong>{paxCount}</strong> {paxCount === 1 ? "pasajero cargado" : "pasajeros cargados"} y los servicios contratados alcanzan para <strong>{cap.total}</strong>{detalle.length > 0 ? ` (${detalle.join(", ")})` : ""}.
+                        <br /><span className="text-xs opacity-75">Ajustá la capacidad de los servicios o sumá uno más antes de seguir.</span>
                     </p>
                 </div>
             </div>

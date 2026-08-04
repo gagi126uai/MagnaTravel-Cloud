@@ -124,7 +124,9 @@ public class ReservaServiceCancellationCaeGuardTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None));
 
-        Assert.Contains("CAE", ex.Message);
+        // Inventario de textos 2026-08-03 (fila 102): el mensaje al usuario dejo de nombrar "CAE" (jerga
+        // fiscal), pero sigue siendo el guard de facturas vivas -> se verifica con el texto de negocio nuevo.
+        Assert.Contains("facturas vivas", ex.Message);
         // El estado se preserva.
         var reserva = await ctx.Reservas.AsNoTracking().FirstAsync();
         Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
@@ -271,7 +273,9 @@ public class ReservaServiceCancellationCaeGuardTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None));
-        Assert.Contains("CAE", ex.Message);
+        // Ver comentario en Cancel_Reserva_WithLiveCaeInvoice_Throws_InvalidOperationException: mismo guard,
+        // texto de negocio nuevo sin la palabra "CAE".
+        Assert.Contains("facturas vivas", ex.Message);
     }
 
     [Fact]

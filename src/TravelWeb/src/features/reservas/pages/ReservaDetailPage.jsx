@@ -641,13 +641,13 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
       </div>
       <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/50">
         <div className="text-sm">
-          <div className="font-bold text-slate-700 dark:text-slate-200">Total: {total} pasajeros</div>
+          <div className="font-bold text-slate-700 dark:text-slate-200">Total: {total} {total === 1 ? "pasajero" : "pasajeros"}</div>
           {expectedCapacity > 0 ? (
             <div className={`text-xs ${overCapacity ? "text-rose-600 font-bold" : "text-slate-500"}`}>
-              Servicios cargados esperan {expectedCapacity} pasajeros{overCapacity ? " (excede!)" : ""}
+              Los servicios cargados esperan {expectedCapacity} {expectedCapacity === 1 ? "pasajero" : "pasajeros"}{overCapacity ? " (excede!)" : ""}
             </div>
           ) : (
-            <div className="text-xs text-slate-400 italic">Agrega servicios para validar capacidad</div>
+            <div className="text-xs text-slate-400 italic">Cargá servicios para chequear la capacidad</div>
           )}
         </div>
         <button
@@ -813,8 +813,8 @@ export default function ReservaDetailPage() {
   const askConfirmation = (config) => {
     setConfirmConfig({
       isOpen: true,
-      title: config.title || "Confirmar accion",
-      message: config.message || "Estas seguro?",
+      title: config.title || "Confirmar",
+      message: config.message || "¿Seguro que querés seguir?",
       type: config.type || "warning",
       isLoading: false,
       onConfirm: async () => {
@@ -990,8 +990,8 @@ export default function ReservaDetailPage() {
   const handleVoidReceipt = async (payment) => {
     const confirmed = await showConfirm({
       title: "Anular comprobante",
-      text: "Esta accion marcara el comprobante como anulado. El pago sigue vigente.",
-      confirmText: "Si, anular",
+      text: "El comprobante queda anulado. El pago del cliente sigue registrado.",
+      confirmText: "Sí, anular",
       confirmColor: "red",
     });
     if (!confirmed) return;
@@ -1135,7 +1135,7 @@ export default function ReservaDetailPage() {
   };
 
   /**
-   * Flujo "El cliente acepto": pasa DIRECTO a En gestion sin abrir modal de nombres.
+   * Flujo "El cliente aceptó": pasa DIRECTO a En gestión sin abrir modal de nombres.
    *
    * ADR-031 (2026-06-15): el modal de pasajeros FUE ELIMINADO del flujo de avance.
    *
@@ -1224,7 +1224,7 @@ export default function ReservaDetailPage() {
     return (
       <div className="m-8 rounded-2xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
         <h3 className="text-xl font-bold text-slate-900 dark:text-white">Reserva no encontrada</h3>
-        <p className="mt-2 text-slate-500 dark:text-slate-400">No se pudo cargar la informacion. Verifica que la URL sea correcta.</p>
+        <p className="mt-2 text-slate-500 dark:text-slate-400">No pudimos abrir esta reserva. Volvé al listado y entrá de nuevo.</p>
         <div className="mt-6 flex justify-center">
           <button onClick={() => navigate("/reservas")} className="rounded-lg bg-indigo-600 px-4 py-2 text-white shadow-sm transition-colors hover:bg-indigo-700">
             Volver a la lista
@@ -1252,16 +1252,16 @@ export default function ReservaDetailPage() {
         onEditDates={() => setShowEditDatesModal(true)}
         onDelete={() =>
           askConfirmation({
-            title: "Eliminar reserva?",
-            message: "Accion irreversible. Solo aplicable a reservas sin pagos.",
+            title: "¿Eliminar la reserva?",
+            message: "No se puede deshacer. Solo se eliminan reservas sin cobros.",
             type: "danger",
             onConfirm: handleDeleteReserva,
           })
         }
         onArchive={() =>
           askConfirmation({
-            title: "Archivar reserva?",
-            message: "El estado pasara a 'Archivado'.",
+            title: "¿Archivar la reserva?",
+            message: "La reserva pasa a Archivada y queda solo para consulta.",
             type: "warning",
             onConfirm: handleArchiveReserva,
           })
@@ -1981,7 +1981,7 @@ export default function ReservaDetailPage() {
       {/* ── Estados activos: orientan al vendedor sobre el siguiente paso ── */}
       {reserva.status === "Quotation" ? (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-300">
-          <strong className="font-bold">Cotizacion.</strong>{" "}
+          <strong className="font-bold">Cotización.</strong>{" "}
           Carga los servicios y pasa a Presupuesto cuando tengas el armado listo para mostrarle al cliente.
         </div>
       ) : null}
@@ -2062,7 +2062,7 @@ export default function ReservaDetailPage() {
             <div>
               <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Origen comercial</div>
               <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                Esta reserva conserva la trazabilidad de la gestion comercial que la genero.
+                Esta reserva guarda el rastro de la gestión comercial que la originó.
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -2079,7 +2079,7 @@ export default function ReservaDetailPage() {
                   onClick={() => navigate("/quotes", { state: { openQuoteId: getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId") } })}
                   className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
                 >
-                  Abrir cotizacion origen
+                  Abrir la cotización de origen
                 </button>
               ) : null}
             </div>
@@ -2134,7 +2134,7 @@ export default function ReservaDetailPage() {
             <div className="space-y-6">
               {/* ADR-031: en Cotizacion/Presupuesto se carga la CANTIDAD de pasajeros aca
                   (los nombres van despues, por servicio). Sin esto el total queda en 0 y el
-                  boton "El cliente acepto" no se habilita. La solapa Pasajeros se redirige a
+                  boton "El cliente aceptó" no se habilita. La solapa Pasajeros se redirige a
                   Servicios en etapa temprana, asi que este es el lugar para cargar la cantidad. */}
               {isEarlyStage && (
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -2243,7 +2243,7 @@ export default function ReservaDetailPage() {
 
               {/* Ficha de carga en línea (ADR-017): solo aparece con EnableCatalogFindOrCreate ON.
                   Se monta debajo de la lista de servicios cuando el usuario hace clic en
-                  "Agregar Servicio" o en el lápiz de editar. Con flag OFF nunca se renderiza. */}
+                  "Agregar servicio" o en el lápiz de editar. Con flag OFF nunca se renderiza. */}
               {isCatalogFindOrCreateEnabled && showInlineCard && (
                 <ServiceInlineCard
                   reservaId={publicId}
@@ -2297,8 +2297,8 @@ export default function ReservaDetailPage() {
               }}
               onDeletePassenger={(passengerId) =>
                 askConfirmation({
-                  title: "Eliminar pasajero?",
-                  message: "Estas seguro de eliminar este pasajero de la reserva?",
+                  title: "¿Sacar al pasajero?",
+                  message: "¿Seguro que querés sacar a este pasajero de la reserva?",
                   type: "danger",
                   onConfirm: () => handleDeletePassenger(passengerId),
                 })

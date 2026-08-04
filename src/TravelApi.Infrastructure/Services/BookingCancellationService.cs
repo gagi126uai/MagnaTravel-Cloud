@@ -7049,7 +7049,7 @@ public class BookingCancellationService
             bc.PublicId, invoicesToEnqueue.Count, userId);
 
         return await MapToDtoAsync(bc.Id, ct)
-            ?? throw new InvalidOperationException("No se pudo completar la operacion. Volve a intentar.");
+            ?? throw new InvalidOperationException("No se pudo completar. Probá de nuevo.");
     }
 
     /// <summary>

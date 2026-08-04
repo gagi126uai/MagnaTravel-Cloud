@@ -810,7 +810,7 @@ function itemBackendALocal(itemDto) {
  */
 function crearItemNuevo(isMonotributista) {
   return {
-    description: "Servicios Turísticos",
+    description: "Servicios turísticos",
     quantity: 1,
     unitPrice: 0,
     alicuotaIvaId: isMonotributista ? 3 : 5,
