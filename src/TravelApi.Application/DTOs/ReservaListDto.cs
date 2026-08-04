@@ -17,6 +17,16 @@ public class ReservaListDto
     public int PassengerCount { get; set; }
     public string? ResponsibleUserId { get; set; }
     public string? ResponsibleUserName { get; set; }
+
+    /// <summary>
+    /// Tanda 1 rediseño listado (2026-08-04, plan A2): destino(s) de la reserva, sacado de los
+    /// servicios cargados (ciudad de destino del vuelo, ciudad del hotel, destino del paquete,
+    /// destino de los servicios genericos del tarifario), en el ORDEN en que se cargaron y sin
+    /// repetidos (comparacion sin distinguir mayus/minus). Varios destinos distintos se unen con
+    /// " · " (ej. "Cancún · Riviera Maya"). Null si la reserva no tiene servicios o ninguno trae
+    /// dato de destino cargado — nunca se inventa un destino a partir del codigo de aeropuerto solo.
+    /// </summary>
+    public string? Destino { get; set; }
     public bool IsEconomicallySettled { get; set; }
     public bool CanMoveToOperativo { get; set; }
     public bool CanEmitVoucher { get; set; }

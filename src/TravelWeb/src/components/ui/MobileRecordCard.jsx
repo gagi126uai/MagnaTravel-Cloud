@@ -32,7 +32,7 @@ export function MobileRecordCard({
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{title}</div>
             {subtitle ? (
-              <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{subtitle}</div>
+              <div className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{subtitle}</div>
             ) : null}
           </div>
         </div>

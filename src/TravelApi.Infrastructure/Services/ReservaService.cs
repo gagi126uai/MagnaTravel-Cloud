@@ -2643,40 +2643,53 @@ public class ReservaService : IReservaService
         {
             summaryBaseQuery = summaryBaseQuery.Where(r => r.ResponsibleUserId == ownerFilterUserId);
         }
-        
-        // B1.15 Fase D' (2026-05-11): filtros de fecha convertidos via AgencyTimezone.
-        // El query string entrega DateTime con Kind=Unspecified; las columnas son
-        // timestamptz en Postgres y Npgsql tira 500 al comparar Unspecified.
-        // Ademas, rango cerrado-abierto [from, to+1day) captura todo el dia local
-        // final sin perder eventos posteriores a la medianoche UTC.
-        if (query.CreatedFrom.HasValue)
-        {
-            var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.CreatedFrom.Value, isEndOfDay: false);
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt >= fromUtc);
-        }
 
-        if (query.CreatedTo.HasValue)
-        {
-            var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.CreatedTo.Value, isEndOfDay: true);
-            // EXCLUSIVE end: rango cerrado-abierto [from, to+1day). Captura todo el dia "to" local.
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt < toUtc);
-        }
+        // Tanda 1 rediseño listado (2026-08-04, plan A3, fix B1 de review): el buscador GLOBAL se activa
+        // con una señal EXPLICITA (query.GlobalSearch), NO con "hay texto en Search". GET /api/reservas
+        // tiene otro caller (PaymentsByReservaPage.jsx, Cobranzas por reserva) que manda view+periodo+
+        // search JUNTOS y SI espera que la pestaña/periodo sigan filtrando — deducirlo del texto solo le
+        // rompia el filtro en silencio. Con el flag en false (default), texto en Search NO alcanza para
+        // saltear pestaña/periodo: mismo comportamiento historico. Cuando el flag viene true SIN texto,
+        // tampoco hay nada que saltear (no tiene sentido "buscar global" sin busqueda).
+        bool useGlobalSearch = query.GlobalSearch && !string.IsNullOrWhiteSpace(query.Search);
 
-        if (query.TravelFrom.HasValue)
+        if (!useGlobalSearch)
         {
-            var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.TravelFrom.Value, isEndOfDay: false);
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value >= fromUtc);
-        }
+            // B1.15 Fase D' (2026-05-11): filtros de fecha convertidos via AgencyTimezone.
+            // El query string entrega DateTime con Kind=Unspecified; las columnas son
+            // timestamptz en Postgres y Npgsql tira 500 al comparar Unspecified.
+            // Ademas, rango cerrado-abierto [from, to+1day) captura todo el dia local
+            // final sin perder eventos posteriores a la medianoche UTC.
+            if (query.CreatedFrom.HasValue)
+            {
+                var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.CreatedFrom.Value, isEndOfDay: false);
+                summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt >= fromUtc);
+            }
 
-        if (query.TravelTo.HasValue)
-        {
-            var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.TravelTo.Value, isEndOfDay: true);
-            // EXCLUSIVE end para no perder reservas que arrancan al final del dia "to" local.
-            summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value < toUtc);
+            if (query.CreatedTo.HasValue)
+            {
+                var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.CreatedTo.Value, isEndOfDay: true);
+                // EXCLUSIVE end: rango cerrado-abierto [from, to+1day). Captura todo el dia "to" local.
+                summaryBaseQuery = summaryBaseQuery.Where(r => r.CreatedAt < toUtc);
+            }
+
+            if (query.TravelFrom.HasValue)
+            {
+                var fromUtc = AgencyTimezone.ToUtcFromAgencyDay(query.TravelFrom.Value, isEndOfDay: false);
+                summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value >= fromUtc);
+            }
+
+            if (query.TravelTo.HasValue)
+            {
+                var toUtc = AgencyTimezone.ToUtcFromAgencyDay(query.TravelTo.Value, isEndOfDay: true);
+                // EXCLUSIVE end para no perder reservas que arrancan al final del dia "to" local.
+                summaryBaseQuery = summaryBaseQuery.Where(r => r.StartDate.HasValue && r.StartDate.Value < toUtc);
+            }
         }
 
         // ADR-020: ciclo unico. Los tabs y contadores reflejan las etapas nuevas.
-        var filteredQuery = ApplyReservaView(summaryBaseQuery, query.View);
+        // Tanda 1 (A3): con GlobalSearch activo, las filas NO se filtran por pestaña.
+        var filteredQuery = useGlobalSearch ? summaryBaseQuery : ApplyReservaView(summaryBaseQuery, query.View);
 
         var summary = new ReservaListSummaryDto
         {
@@ -2701,28 +2714,78 @@ public class ReservaService : IReservaService
             CancelledCount = await summaryBaseQuery.CountAsync(
                 r => EstadoReserva.VoidedStatuses.Contains(r.Status), cancellationToken),
             ArchivedCount = await summaryBaseQuery.CountAsync(r => r.Status == "Archived", cancellationToken),
-            LostCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Lost, cancellationToken),
-            // Totales "activos" via patron NEGATIVO (todo lo que NO esta cerrado/cancelado/archivado/perdido).
-            // ADR-020: ahora excluimos Lost igual que Cancelled (una reserva Perdida nunca tuvo venta exigible).
-            TotalSaleActive = await summaryBaseQuery
-                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived")
-                .SumAsync(r => (decimal?)r.TotalSale, cancellationToken) ?? 0m,
-            TotalCostActive = await summaryBaseQuery
-                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived")
-                .SumAsync(r => (decimal?)r.TotalCost, cancellationToken) ?? 0m,
-            // ADR-040 (cuenta corriente, review B4): este KPI es el "saldo pendiente de la cartera ACTIVA" y por
-            // diseño EXCLUYE Closed (una reserva finalizada salio de la operativa). Con cuenta corriente puede
-            // haber deuda viva en reservas Closed (un cliente a cuenta cerro su viaje debiendo). Esa deuda NO
-            // desaparece de la cartera: vive en la CUENTA CORRIENTE del cliente / AR canonico
-            // (FinancePositionService, cuyo ReceivableDebtStatuses SI incluye Closed con Balance>0). Este KPI de
-            // "activos" se deja como esta a proposito; el seguimiento de la deuda de Account cerrados es el AR /
-            // la cuenta del cliente, no este contador. Un KPI dedicado de "cartera vencida" (aging) es aditivo y
-            // llega con la Fase 2.
-            TotalPendingBalance = await summaryBaseQuery
-                .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived" && r.Balance > 0)
-                .SumAsync(r => (decimal?)r.Balance, cancellationToken) ?? 0m
+            LostCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Lost, cancellationToken)
         };
-        summary.GrossProfit = summary.TotalSaleActive - summary.TotalCostActive;
+
+        // Tanda 1 rediseño listado (2026-08-04, plan A1): "activas" via patron NEGATIVO (todo lo que
+        // NO esta cerrado/cancelado/archivado/perdido) — MISMO alcance que antes usaban los escalares
+        // TotalSaleActive/TotalPendingBalance que este resumen reemplaza. ADR-040 (review B4): el
+        // "por cobrar" de la cartera ACTIVA excluye Closed a proposito (esa deuda vive en la cuenta
+        // corriente del cliente / AR canonico, no en este contador — ver FinancePositionService).
+        var activeReservasQuery = summaryBaseQuery.Where(r =>
+            r.Status != EstadoReserva.Closed &&
+            r.Status != EstadoReserva.Cancelled &&
+            r.Status != EstadoReserva.Lost &&
+            r.Status != "Archived");
+
+        // P-3⭐: nunca se suman pesos y dolares. En vez de un escalar unico, se agrupa por moneda
+        // leyendo la tabla hija materializada ReservaMoneyByCurrency (misma fuente que ya usa el
+        // desglose PorMoneda de cada fila — no se inventa un segundo camino de calculo).
+        summary.VendidoPorMoneda = await (
+            from money in _context.ReservaMoneyByCurrency.AsNoTracking()
+            join reservaActiva in activeReservasQuery on money.ReservaId equals reservaActiva.Id
+            group money.TotalSale by money.Currency into porMoneda
+            select new ReservaSummaryAmountByCurrencyDto { Currency = porMoneda.Key, Amount = porMoneda.Sum() }
+        ).ToListAsync(cancellationToken);
+
+        summary.PorCobrarPorMoneda = await (
+            from money in _context.ReservaMoneyByCurrency.AsNoTracking()
+            join reservaActiva in activeReservasQuery on money.ReservaId equals reservaActiva.Id
+            where money.Balance > 0
+            group money.Balance by money.Currency into porMoneda
+            select new ReservaSummaryAmountByCurrencyDto { Currency = porMoneda.Key, Amount = porMoneda.Sum() }
+        ).ToListAsync(cancellationToken);
+
+        // Fix N2 de review (2026-08-04): "una sola regla por entidad, todas las pantallas la obedecen".
+        // La FILA (FillPorMonedaForListAsync) tiene un fallback para reservas activas que TODAVIA no
+        // tienen ninguna fila hija en ReservaMoneyByCurrency (nunca pasaron por el persister — legacy sin
+        // backfill, o recien creadas), pero ESE fallback deja PorMoneda VACIO (solo deriva CollectionStatus
+        // desde el escalar de la reserva, sin asignarle moneda a nada). Si el KPI no hiciera nada distinto,
+        // esas mismas reservas quedarian afuera del vendido/por-cobrar por moneda (el KPI las perderia,
+        // aunque la fila SI las cuenta via su escalar). Aca asumimos ARS porque la cabecera de la reserva
+        // no guarda con que moneda vendio (misma convencion que Monedas.Normalizar: "sin dato de moneda =
+        // ARS"). Anti-join (GroupJoin + "sin filas") en vez de un Any() correlacionado: mismo estilo de
+        // join explicito que el resto del archivo, se banca igual en Postgres y en el proveedor InMemory
+        // de los tests.
+        var reservasActivasSinFilasHijas = await (
+            from reservaActiva in activeReservasQuery
+            join money in _context.ReservaMoneyByCurrency.AsNoTracking() on reservaActiva.Id equals money.ReservaId into filasDeEstaReserva
+            where !filasDeEstaReserva.Any()
+            select new { reservaActiva.TotalSale, reservaActiva.Balance })
+            .ToListAsync(cancellationToken);
+
+        var vendidoLegacyEnArs = reservasActivasSinFilasHijas.Sum(r => r.TotalSale);
+        var porCobrarLegacyEnArs = reservasActivasSinFilasHijas
+            .Where(r => r.Balance > 0)
+            .Sum(r => r.Balance);
+
+        AgregarMontoALaLineaDeMoneda(summary.VendidoPorMoneda, Monedas.ARS, vendidoLegacyEnArs);
+        AgregarMontoALaLineaDeMoneda(summary.PorCobrarPorMoneda, Monedas.ARS, porCobrarLegacyEnArs);
+
+        // "Monedas con 0 no viajan": se filtra al final, ya con el fallback legacy sumado adentro.
+        summary.VendidoPorMoneda.RemoveAll(linea => linea.Amount == 0m);
+        summary.PorCobrarPorMoneda.RemoveAll(linea => linea.Amount == 0m);
+
+        // Orden estable para la pantalla (review 2026-08-04): pesos primero, el resto alfabetico.
+        // El GROUP BY no garantiza orden y el front pinta la lista tal cual llega.
+        summary.VendidoPorMoneda = summary.VendidoPorMoneda
+            .OrderBy(linea => linea.Currency == Monedas.ARS ? 0 : 1)
+            .ThenBy(linea => linea.Currency, StringComparer.Ordinal)
+            .ToList();
+        summary.PorCobrarPorMoneda = summary.PorCobrarPorMoneda
+            .OrderBy(linea => linea.Currency == Monedas.ARS ? 0 : 1)
+            .ThenBy(linea => linea.Currency, StringComparer.Ordinal)
+            .ToList();
 
         var reservasQuery = ApplyReservaOrdering(filteredQuery, query)
             .Select(f => new ReservaListDto
@@ -2767,12 +2830,9 @@ public class ReservaService : IReservaService
             }
         }
 
-        // El summary tambien expone costos agregados — enmascarar si no aplica.
-        if (!seeCost)
-        {
-            summary.TotalCostActive = 0m;
-            summary.GrossProfit = 0m;
-        }
+        // Tanda 1 (2026-08-04): VendidoPorMoneda/PorCobrarPorMoneda son PRECIO DE VENTA, no costo —
+        // no necesitan el enmascarado de seeCost (el costo agregado del resumen murio con GrossProfit,
+        // que solo existia para calcular la rentabilidad estimada — KPI que el rediseño de listado elimina).
 
         // ADR-048 T5 (2026-07-17, hardening): lee los DOS ejes YA MATERIALIZADOS en la cabecera de cada
         // reserva (columna, no recalculo), en UNA query chica batcheada por PublicId. Con esto en mano,
@@ -2797,8 +2857,34 @@ public class ReservaService : IReservaService
         // Una sola query batcheada por pagina, y solo si hay filas anuladas (ver el helper). Ver ReservationDebtRules.
         await FillCancelledMoneyContextForListAsync(paged.Items, cancellationToken);
 
+        // Tanda 1 rediseño listado (2026-08-04, plan A2): destino(s) de cada fila, leido de los
+        // servicios tipados SOLO para los IDs de esta pagina (nunca trae las colecciones completas).
+        await FillDestinoForListAsync(paged.Items, cancellationToken);
+
         var page = ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
         return (page, ownerFilterUserId);
+    }
+
+    /// <summary>
+    /// Tanda 1 (2026-08-04, fix N2 de review): suma <paramref name="monto"/> a la linea de
+    /// <paramref name="currency"/> dentro de <paramref name="lineas"/>, creandola si todavia no
+    /// existe. Montos en 0 no crean una linea nueva (se filtran despues igual, pero evita basura
+    /// intermedia). Helper chico para no repetir el mismo "buscar o crear" en cada fallback de moneda.
+    /// </summary>
+    private static void AgregarMontoALaLineaDeMoneda(
+        List<ReservaSummaryAmountByCurrencyDto> lineas, string currency, decimal monto)
+    {
+        if (monto == 0m) return;
+
+        var lineaExistente = lineas.FirstOrDefault(linea => linea.Currency == currency);
+        if (lineaExistente != null)
+        {
+            lineaExistente.Amount += monto;
+        }
+        else
+        {
+            lineas.Add(new ReservaSummaryAmountByCurrencyDto { Currency = currency, Amount = monto });
+        }
     }
 
     /// <summary>
@@ -6895,6 +6981,153 @@ public class ReservaService : IReservaService
                 var primary = penaltiesByCurrency.Count > 0 ? penaltiesByCurrency[0] : null;
                 item.CancelledPenaltyAmount = primary?.Amount;
                 item.CancelledPenaltyCurrency = primary?.Currency;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tanda 1 rediseño listado (2026-08-04, plan A2, fixes N4/N5/N7 de review): llena <c>Destino</c>
+    /// de cada fila leyendo los servicios tipados de la reserva, PERO SOLO para los PublicId de esta
+    /// pagina (nunca trae las colecciones completas de cada reserva — eso es justo lo que el listado
+    /// evita para no desangrarse con N+1). Junta el destino de 4 fuentes: vuelo (ciudad de llegada),
+    /// hotel (ciudad), paquete (destino) y servicio generico del tarifario (destino/ciudad de la
+    /// tarifa vinculada, para Asistencia/Excursion/Otro cargados sin entidad tipada propia). Ordena
+    /// por fecha de carga (CreatedAt) para que el primer destino mostrado sea el primero que el
+    /// vendedor cargo, saca repetidos sin distinguir mayus/minus y los une con " · ".
+    ///
+    /// <para>N4: un servicio ANULADO/CANCELADO NO aporta destino (si el cliente canceló el hotel en
+    /// Cancún y solo quedó vivo el vuelo a Mendoza, el destino de la fila es "Mendoza", no "Cancún ·
+    /// Mendoza" — mostrar un destino de algo que ya no viaja confunde). Mismo criterio de "cancelado"
+    /// que usa el resto del sistema: <see cref="WorkflowStatusHelper.MapFlightStatus"/> para el
+    /// vuelo (codigos IATA) y <see cref="WorkflowStatusHelper.MapGenericStatus"/> para el resto
+    /// (texto "Cancelado"/"Cancelada"). Estos mapeos son C# puro (no EF-traducibles): se aplican
+    /// DESPUES de traer las filas, sobre los pocos servicios de la pagina.</para>
+    ///
+    /// <para>Traslados NO entran: <c>PickupLocation</c>/<c>DropoffLocation</c> no son "el destino del
+    /// viaje" (un traslado aeropuerto-hotel en el MISMO destino no aporta un dato nuevo, y modelarlo
+    /// bien exigiria distinguir traslados dentro del destino de traslados entre dos destinos — no hay
+    /// ese dato en el modelo hoy). Asistencia/seguro tampoco: <c>CoverageZone</c> es una zona amplia
+    /// ("Latinoamerica", "Mundial"), no una ciudad, mostrarla como "destino" confundiria mas de lo
+    /// que ayuda. Ninguno de los dos se inventa: si la reserva solo tiene esos servicios, Destino
+    /// queda null (igual que si no tiene servicios).</para>
+    /// </summary>
+    private async Task FillDestinoForListAsync(IReadOnlyList<ReservaListDto> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return;
+
+        var publicIds = items.Select(i => i.PublicId).ToList();
+
+        var vuelosCrudos = await (
+            from segmento in _context.FlightSegments.AsNoTracking()
+            join reservaPadre in _context.Reservas.AsNoTracking() on segmento.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId) && segmento.DestinationCity != null
+            select new { reservaPadre.PublicId, Destino = segmento.DestinationCity!, segmento.CreatedAt, segmento.Id, segmento.Status })
+            .ToListAsync(cancellationToken);
+
+        // N5: Trim ANTES de comparar contra "" — un destino cargado como espacios en blanco (" ")
+        // pasaba el filtro viejo (!= "") y quedaba mostrando un separador " · " vacio en la fila.
+        // N4: MapFlightStatus traduce los codigos IATA (UN/UC/HX/NO = cancelado); un vuelo cancelado
+        // no aporta destino aunque tenga DestinationCity cargado.
+        var destinosDeVuelos = vuelosCrudos
+            .Select(fila => (fila.PublicId, Destino: fila.Destino.Trim(), fila.CreatedAt, fila.Id, fila.Status))
+            .Where(fila => fila.Destino != "" && WorkflowStatusHelper.MapFlightStatus(fila.Status) != WorkflowStatuses.Cancelado)
+            .Select(fila => (fila.PublicId, fila.Destino, fila.CreatedAt, fila.Id))
+            .ToList();
+
+        var hotelesCrudos = await (
+            from hotel in _context.HotelBookings.AsNoTracking()
+            join reservaPadre in _context.Reservas.AsNoTracking() on hotel.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+            select new { reservaPadre.PublicId, hotel.City, hotel.CreatedAt, hotel.Id, hotel.Status })
+            .ToListAsync(cancellationToken);
+
+        var destinosDeHoteles = hotelesCrudos
+            .Select(fila => (fila.PublicId, Destino: fila.City.Trim(), fila.CreatedAt, fila.Id, fila.Status))
+            .Where(fila => fila.Destino != "" && WorkflowStatusHelper.MapGenericStatus(fila.Status) != WorkflowStatuses.Cancelado)
+            .Select(fila => (fila.PublicId, fila.Destino, fila.CreatedAt, fila.Id))
+            .ToList();
+
+        var paquetesCrudos = await (
+            from paquete in _context.PackageBookings.AsNoTracking()
+            join reservaPadre in _context.Reservas.AsNoTracking() on paquete.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId) && paquete.Destination != null
+            select new { reservaPadre.PublicId, Destino = paquete.Destination!, paquete.CreatedAt, paquete.Id, paquete.Status })
+            .ToListAsync(cancellationToken);
+
+        var destinosDePaquetes = paquetesCrudos
+            .Select(fila => (fila.PublicId, Destino: fila.Destino.Trim(), fila.CreatedAt, fila.Id, fila.Status))
+            .Where(fila => fila.Destino != "" && WorkflowStatusHelper.MapGenericStatus(fila.Status) != WorkflowStatuses.Cancelado)
+            .Select(fila => (fila.PublicId, fila.Destino, fila.CreatedAt, fila.Id))
+            .ToList();
+
+        // Servicio generico del tarifario (Rate): Destination cubre Aereo, City cubre Hotel. El resto de
+        // tipos de servicio generico (Traslado/Asistencia/Excursion/Otro en Rate) no trae ciudad — igual
+        // que sus pares tipados, quedan afuera del destino en vez de mostrar un dato que no existe.
+        // N7: parentesis explicitos en el OR para que la precedencia && > || quede clara a simple vista.
+        var genericosCrudos = await (
+            from servicio in _context.Servicios.AsNoTracking()
+            join reservaPadre in _context.Reservas.AsNoTracking() on servicio.ReservaId equals reservaPadre.Id
+            join tarifa in _context.Rates.AsNoTracking() on servicio.RateId equals (int?)tarifa.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+                && ((tarifa.Destination != null) || (tarifa.City != null))
+            select new
+            {
+                reservaPadre.PublicId,
+                DestinoDeTarifa = tarifa.Destination,
+                CiudadDeTarifa = tarifa.City,
+                servicio.CreatedAt,
+                servicio.Id,
+                servicio.Status
+            })
+            .ToListAsync(cancellationToken);
+
+        var destinosDeGenericos = genericosCrudos
+            .Select(fila => (
+                fila.PublicId,
+                Destino: (!string.IsNullOrWhiteSpace(fila.DestinoDeTarifa) ? fila.DestinoDeTarifa! : fila.CiudadDeTarifa ?? "").Trim(),
+                fila.CreatedAt,
+                fila.Id,
+                fila.Status))
+            .Where(fila => fila.Destino != "" && WorkflowStatusHelper.MapGenericStatus(fila.Status) != WorkflowStatuses.Cancelado)
+            .Select(fila => (fila.PublicId, fila.Destino, fila.CreatedAt, fila.Id))
+            .ToList();
+
+        var todasLasFilasDeDestino = destinosDeVuelos
+            .Concat(destinosDeHoteles)
+            .Concat(destinosDePaquetes)
+            .Concat(destinosDeGenericos)
+            .ToList();
+
+        var filasPorReserva = todasLasFilasDeDestino
+            .GroupBy(fila => fila.PublicId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderBy(fila => fila.CreatedAt).ThenBy(fila => fila.Id).ToList());
+
+        // El front trunca visualmente la celda; este tope evita mandar un string enorme cuando una
+        // reserva tiene muchisimos servicios con destinos todos distintos (caso raro, pero posible).
+        const int cantidadMaximaDeDestinosEnLaFila = 5;
+
+        foreach (var item in items)
+        {
+            if (!filasPorReserva.TryGetValue(item.PublicId, out var filasDeEstaReserva))
+            {
+                continue; // Sin servicios con destino cargado: Destino queda null (default del DTO).
+            }
+
+            var destinosSinRepetir = new List<string>();
+            var yaVistos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var fila in filasDeEstaReserva)
+            {
+                if (!yaVistos.Add(fila.Destino)) continue;
+
+                destinosSinRepetir.Add(fila.Destino);
+                if (destinosSinRepetir.Count >= cantidadMaximaDeDestinosEnLaFila) break;
+            }
+
+            if (destinosSinRepetir.Count > 0)
+            {
+                item.Destino = string.Join(" · ", destinosSinRepetir);
             }
         }
     }

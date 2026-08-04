@@ -171,15 +171,24 @@ export function getStatusConfig(status) {
 /**
  * Badge de estado de la reserva.
  * El color y el label se leen del statusConfig canonico.
+ *
+ * `mostrarCandado` (Tanda 1 rediseño listado, 2026-08-04, plan B4): opt-in, apagado
+ * por default a propósito — este badge se usa en 17+ pantallas distintas y agregar
+ * el candado 🔒 a TODAS rompería la maqueta firmada de cada una. Solo el listado de
+ * Reservas lo prende explícitamente. El candado únicamente tiene sentido visual en
+ * "Confirmada" (es el aviso de que editar la reserva pide autorización — ver
+ * isStatusLocked): en Traveling/Closed, que también están "bloqueados" para editar,
+ * el ícono normal de su propio estado (✈️/✅) ya cumple ese rol.
  */
-export function ReservaStatusBadge({ status }) {
+export function ReservaStatusBadge({ status, mostrarCandado = false }) {
     const cfg = getStatusConfig(status);
     // Fix bloqueante del reviewer (2026-07-27): mismo motivo que translateStatus — nunca
     // mostrar la clave cruda del backend si el status no esta en el mapa.
     const label = traducirEstadoReserva(status);
+    const conCandado = mostrarCandado && status === "Confirmed";
     return (
         <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>
-            {label}
+            {label}{conCandado ? " 🔒" : ""}
         </span>
     );
 }

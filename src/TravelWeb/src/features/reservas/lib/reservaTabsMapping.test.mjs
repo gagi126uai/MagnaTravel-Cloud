@@ -11,7 +11,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { tabCountKey, calcularContadorTodas } from "./reservaTabsMapping.js";
+import {
+  tabCountKey,
+  calcularContadorTodas,
+  esSolapaApagada,
+  resolverSolapaVisible,
+  debeSaltarATodas,
+} from "./reservaTabsMapping.js";
 
 test("tabCountKey: in-management es el unico caso especial (guion en la URL, camelCase en el resumen)", () => {
   assert.equal(tabCountKey("in-management"), "inManagement");
@@ -68,4 +74,46 @@ test("calcularContadorTodas: summary vacio -> 0", () => {
 test("calcularContadorTodas: summary null/undefined -> 0 (conservador)", () => {
   assert.equal(calcularContadorTodas(null), 0);
   assert.equal(calcularContadorTodas(undefined), 0);
+});
+
+// ─── Tanda 1 rediseño listado (2026-08-04, B2/B3) ──────────────────────────────
+
+test("esSolapaApagada: contador 0 en una solapa que no es 'Todas' -> apagada", () => {
+  assert.equal(esSolapaApagada("in-management", 0), true);
+});
+
+test("esSolapaApagada: contador > 0 -> NO apagada", () => {
+  assert.equal(esSolapaApagada("in-management", 3), false);
+});
+
+test("esSolapaApagada: 'all' con contador 0 -> NUNCA se apaga (mes sin datos, sigue siendo la solapa por defecto)", () => {
+  assert.equal(esSolapaApagada("all", 0), false);
+});
+
+test("resolverSolapaVisible: buscando -> siempre se ve 'all' marcada, sin importar la solapa real", () => {
+  assert.equal(resolverSolapaVisible("confirmed", true), "all");
+});
+
+test("resolverSolapaVisible: sin buscar -> se ve la solapa real tal cual", () => {
+  assert.equal(resolverSolapaVisible("confirmed", false), "confirmed");
+});
+
+test("debeSaltarATodas: la solapa activa se quedó en 0 -> hay que saltar a 'Todas' (P-11⭐)", () => {
+  const tabCounts = { inManagement: 0, all: 5 };
+  assert.equal(debeSaltarATodas("in-management", tabCounts, false), true);
+});
+
+test("debeSaltarATodas: la solapa activa todavía tiene resultados -> no salta", () => {
+  const tabCounts = { inManagement: 2, all: 5 };
+  assert.equal(debeSaltarATodas("in-management", tabCounts, false), false);
+});
+
+test("debeSaltarATodas: ya está en 'Todas' -> nunca salta (no tiene a dónde)", () => {
+  const tabCounts = { all: 0 };
+  assert.equal(debeSaltarATodas("all", tabCounts, false), false);
+});
+
+test("debeSaltarATodas: mientras se está buscando -> no salta (la solapa real queda congelada)", () => {
+  const tabCounts = { inManagement: 0, all: 5 };
+  assert.equal(debeSaltarATodas("in-management", tabCounts, true), false);
 });

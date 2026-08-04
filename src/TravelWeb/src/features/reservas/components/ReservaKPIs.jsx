@@ -1,56 +1,72 @@
 import React from 'react';
-import { FolderOpen, Plane, TrendingUp, Wallet, AlertCircle } from "lucide-react";
-import { formatCurrency } from "../../../lib/utils";
-import { isAdmin } from "../../../auth";
+import { formatMontosPorMoneda } from "../lib/reservaMoneyDisplay";
 
+/**
+ * Tira fina de KPIs arriba del listado de Reservas.
+ *
+ * Tanda 1 rediseño listado (2026-08-04, B1): reemplaza los CINCO números viejos
+ * (que mezclaban pesos y dólares en un solo escalar, violando P-3⭐ — la regla más
+ * dura del producto: las monedas nunca se suman) por TRES, en una sola línea,
+ * separados por "│": reservas activas, por cobrar y vendido. "Operativos" y
+ * "Rentabilidad estimada" (antes solo-admin) murieron en este rediseño.
+ *
+ * Cada importe muestra sus monedas SEPARADAS con "·" (ej. "$ 223.445,00 ·
+ * US$1.200,00"), nunca sumadas. Sin plata en ninguna moneda → "$ 0,00" en gris,
+ * para no dejar el número en blanco.
+ */
 export function ReservaKPIs({ stats }) {
-    const admin = isAdmin();
-    // Estos totales son un agregado de TODAS las reservas listadas y el DTO del
-    // resumen (ReservaListSummaryDto) no trae desglose por moneda: pasamos ARS
-    // explícito solo para evitar el formato gringo en-US del default legacy.
-    // Riesgo ya existente (no lo genera este fix): si hay reservas en USD, este
-    // total puede estar mezclando montos de distinta moneda en una sola suma.
     return (
-        <div className={`grid grid-cols-2 ${admin ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
-            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-                    <FolderOpen className="h-3.5 w-3.5" />
-                    Reservas activas
-                </div>
-                <div className="text-xl font-bold text-slate-900 dark:text-white">{stats.activeCount}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-                    <Plane className="h-3.5 w-3.5" />
-                    Operativos
-                </div>
-                <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{stats.operativeCount}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-                    <TrendingUp className="h-3.5 w-3.5" />
-                    Venta total
-                </div>
-                <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(stats.totalSaleActive, "ARS")}</div>
-            </div>
-            {admin && (
-                <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-                        <Wallet className="h-3.5 w-3.5 shrink-0" />
-                        Rentabilidad estimada
-                    </div>
-                    <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{formatCurrency(stats.grossProfit, "ARS")}</div>
-                </div>
-            )}
-            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-                    <AlertCircle className="h-3.5 w-3.5" />
-                    Por cobrar
-                </div>
-                <div className={`text-xl font-bold ${stats.totalPendingBalance > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {formatCurrency(stats.totalPendingBalance, "ARS")}
-                </div>
-            </div>
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40">
+            <Kpi label="Reservas activas">
+                <span className="text-base font-extrabold text-slate-900 dark:text-white">
+                    {stats.activeCount}
+                </span>
+            </Kpi>
+
+            <Separador />
+
+            <Kpi label="Por cobrar">
+                <MontoPorMoneda lineas={stats.porCobrarPorMoneda} colorClass="text-rose-600 dark:text-rose-400" />
+            </Kpi>
+
+            <Separador />
+
+            <Kpi label="Vendido">
+                <MontoPorMoneda lineas={stats.vendidoPorMoneda} colorClass="text-indigo-600 dark:text-indigo-400" />
+            </Kpi>
         </div>
+    );
+}
+
+function Separador() {
+    return (
+        <span className="hidden text-slate-300 dark:text-slate-700 sm:inline" aria-hidden="true">
+            │
+        </span>
+    );
+}
+
+function Kpi({ label, children }) {
+    return (
+        <div className="flex items-baseline gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                {label}
+            </span>
+            {children}
+        </div>
+    );
+}
+
+/**
+ * Texto del importe, con sus monedas separadas por "·" (nunca sumadas, P-3⭐).
+ * Sin líneas (nada que cobrar/vender en ninguna moneda), se ve en gris "$ 0,00"
+ * para que un mes vacío no deje el número en blanco.
+ */
+function MontoPorMoneda({ lineas, colorClass }) {
+    const sinDatos = !lineas || lineas.length === 0;
+    return (
+        <span className={`text-base font-extrabold ${sinDatos ? "text-slate-300 dark:text-slate-700" : colorClass}`}>
+            {formatMontosPorMoneda(lineas)}
+        </span>
     );
 }

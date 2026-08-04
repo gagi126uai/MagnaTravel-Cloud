@@ -45,3 +45,43 @@ export function calcularContadorTodas(summary) {
     (s.archivedCount || 0)
   );
 }
+
+// ─── Tanda 1 rediseño listado (2026-08-04, B2/B3) ──────────────────────────────
+
+/**
+ * B2: una solapa con contador en 0 queda VISIBLE pero apagada y no se puede
+ * tocar — "cero" también es información, no se esconde la solapa (spec firmada).
+ * "Todas" es la excepción: aunque su contador dé 0 (ej. un mes sin ninguna
+ * reserva), sigue siendo la solapa por defecto y se puede tocar siempre.
+ */
+export function esSolapaApagada(tabValue, count) {
+  if (tabValue === "all") return false;
+  return (count || 0) === 0;
+}
+
+/**
+ * B3: mientras el usuario está escribiendo en el buscador, el buscador ignora la
+ * solapa y el mes (lo resuelve el motor con `globalSearch=true`, ver useReservas.js).
+ * Para que la pantalla no mienta, la solapa que se ve MARCADA como activa pasa a
+ * ser "Todas" — pero el estado real (`viewFilter`) no se toca acá, así que al
+ * borrar el texto de búsqueda la solapa anterior se restaura sola.
+ */
+export function resolverSolapaVisible(viewFilter, estaBuscando) {
+  return estaBuscando ? "all" : viewFilter;
+}
+
+/**
+ * B2: si la solapa activa se queda sin resultados (ej. se archivaron todas las
+ * reservas "En gestión" y ese contador bajó a 0), hay que saltar a "Todas" para
+ * no dejar al usuario mirando una pantalla vacía sin ninguna salida (P-11⭐).
+ *
+ * No aplica mientras se está buscando: ahí la solapa real queda "congelada" tal
+ * cual estaba y se restaura cuando se borra el texto (ver resolverSolapaVisible)
+ * — cambiarla de verdad acá rompería esa restauración.
+ */
+export function debeSaltarATodas(viewFilter, tabCounts, estaBuscando) {
+  if (estaBuscando) return false;
+  if (viewFilter === "all") return false;
+  const count = (tabCounts || {})[tabCountKey(viewFilter)] || 0;
+  return count === 0;
+}

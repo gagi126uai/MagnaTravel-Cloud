@@ -21,10 +21,38 @@ public class ReservaListSummaryDto
     // Pestaña "Archivadas" (soft-delete legacy).
     public int ArchivedCount { get; set; }
     public int LostCount { get; set; }
-    public decimal TotalSaleActive { get; set; }
-    public decimal TotalCostActive { get; set; }
-    public decimal TotalPendingBalance { get; set; }
-    public decimal GrossProfit { get; set; }
+
+    /// <summary>
+    /// Tanda 1 rediseño listado (2026-08-04, P-3⭐/T-4): reemplaza a los escalares
+    /// <c>TotalSaleActive</c>/<c>TotalCostActive</c>/<c>TotalPendingBalance</c>/<c>GrossProfit</c>
+    /// (eliminados: mezclaban pesos y dólares en un solo número, la regla de plata mas importante
+    /// del producto es que las monedas NUNCA se suman). "Vendido" de las reservas ACTIVAS (mismo
+    /// alcance que antes usaba TotalSaleActive: excluye Cerradas/Anuladas/Perdidas/Archivadas),
+    /// una linea por moneda. Una moneda en $0 no viaja (el front pinta "$ 0,00" gris cuando la
+    /// lista viene vacia, no hace falta mandar un cero explicito).
+    /// </summary>
+    public List<ReservaSummaryAmountByCurrencyDto> VendidoPorMoneda { get; set; } = new();
+
+    /// <summary>
+    /// Tanda 1 (2026-08-04, fix N3 de review): saldo PENDIENTE de cobro de las reservas activas, por
+    /// moneda. Mismo alcance de reservas que antes usaba el escalar TotalPendingBalance, pero el
+    /// filtro de saldo positivo ahora se aplica POR FILA DE MONEDA (<c>money.Balance &gt; 0</c> sobre
+    /// cada linea de <c>ReservaMoneyByCurrency</c>), no sobre un escalar unico de la reserva — una
+    /// reserva puede deber en ARS y tener saldo a favor en USD al mismo tiempo (P-3⭐: cada moneda se
+    /// evalua sola, nunca se compensan entre si).
+    /// </summary>
+    public List<ReservaSummaryAmountByCurrencyDto> PorCobrarPorMoneda { get; set; } = new();
+}
+
+/// <summary>
+/// Tanda 1 (2026-08-04): una linea {moneda, monto} del resumen del listado de reservas. Mismo
+/// patron minimo que <c>CashByCurrencyDto</c>/<c>CancelledPenaltyByCurrencyDto</c> — se reusa la
+/// forma en vez de inventar una nueva por cada pantalla que necesita un total separado por moneda.
+/// </summary>
+public class ReservaSummaryAmountByCurrencyDto
+{
+    public string Currency { get; set; } = "ARS";
+    public decimal Amount { get; set; }
 }
 
 public class ReservaListPageDto : PagedResponse<ReservaListDto>

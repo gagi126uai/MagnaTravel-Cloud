@@ -241,6 +241,11 @@ public class FaseDStateSetTests
         context.Reservas.Add(new Reserva { Id = 2, Name = "T", NumeroReserva = "R-2", Status = EstadoReserva.Traveling, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 3, Name = "C", NumeroReserva = "R-3", Status = EstadoReserva.Closed, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 4, Name = "X", NumeroReserva = "R-4", Status = EstadoReserva.Cancelled, TotalSale = 1000m });
+        // Tanda 1 rediseño listado (2026-08-04): VendidoPorMoneda reemplazo a TotalSaleActive y lee
+        // la tabla hija ReservaMoneyByCurrency (P-3⭐, nunca se suman monedas) — sin estas filas, el
+        // escalar TotalSale de arriba no alcanza para que el nuevo resumen tenga datos.
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", TotalSale = 1000m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", TotalSale = 1000m });
         await context.SaveChangesAsync();
 
         var service = BuildReservaService(context);
@@ -248,8 +253,10 @@ public class FaseDStateSetTests
         var page = await service.GetReservasAsync(new ReservaListQuery(), CancellationToken.None);
         var summary = page.Summary;
 
-        // Solo InManagement + Traveling aportan a TotalSaleActive (2 x 1000). Closed/Cancelled afuera.
-        Assert.Equal(2000m, summary.TotalSaleActive);
+        // Solo InManagement + Traveling aportan al vendido activo (2 x 1000 ARS). Closed/Cancelled afuera.
+        var vendidoEnArs = Assert.Single(summary.VendidoPorMoneda);
+        Assert.Equal("ARS", vendidoEnArs.Currency);
+        Assert.Equal(2000m, vendidoEnArs.Amount);
         // Y ambos cuentan como "activas".
         Assert.Equal(2, summary.ActiveCount);
     }

@@ -73,8 +73,12 @@ internal static class EconomicRulesHelper
 
     public static string? GetArchiveBlockReason(Reserva reserva)
     {
+        // Tanda 1 rediseño listado (2026-08-04, plan A5): "Operativo" era jerga interna (nombre viejo
+        // del estado Traveling) que no coincide con el termino que el resto de la pantalla usa para
+        // ese mismo estado ("En viaje", ver RESERVA_STATUS_LABELS en el front). "Cerradas" pasa a
+        // "Finalizadas" por la misma razon: son los DOS UNICOS labels de estado que el negocio conoce.
         if (reserva.Status != EstadoReserva.Traveling && reserva.Status != EstadoReserva.Closed)
-            return "Solo se pueden archivar reservas que hayan pasado a Operativo o estén Cerradas.";
+            return "Solo se pueden archivar reservas que estén En viaje o Finalizadas.";
 
         if (Math.Round(reserva.Balance, 2, MidpointRounding.AwayFromZero) > 0m)
             return "No se puede archivar una reserva con saldo pendiente.";

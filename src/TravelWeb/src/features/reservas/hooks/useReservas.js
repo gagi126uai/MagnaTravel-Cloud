@@ -32,10 +32,12 @@ const emptyPage = {
     // (fallback: comportamiento actual, sin romper si el campo no esta presente).
     cancelledCount: 0,
     archivedCount: 0,
-    totalSaleActive: 0,
-    totalCostActive: 0,
-    totalPendingBalance: 0,
-    grossProfit: 0,
+    // Tanda 1 rediseño listado (2026-08-04, P-3⭐): reemplazan a los viejos escalares
+    // totalSaleActive/totalCostActive/totalPendingBalance/grossProfit, que mezclaban
+    // pesos y dólares en un solo número (la regla más dura del producto es que las
+    // monedas NUNCA se suman). Cada uno es una lista [{ currency, amount }].
+    vendidoPorMoneda: [],
+    porCobrarPorMoneda: [],
   },
 };
 
@@ -47,6 +49,11 @@ export function useReservas() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
+  // Tanda 1 (2026-08-04, B5): mensaje del cartel rojo "no pudimos traer las reservas"
+  // con botón "Probar de nuevo" (mismo patrón que la solapa Copias de seguridad). Se
+  // separa de databaseUnavailable porque ese caso ya tiene su propia pantalla (DB
+  // caída es distinto de "el pedido falló por otra razón": timeout, error 500, etc).
+  const [loadError, setLoadError] = useState(null);
   // Obra 4 (firma de Gastón 2026-07-27): al entrar a Reservas la pestaña "Todas" queda
   // seleccionada y la lista muestra todo — "lo que se ve es lo que dice la pestaña".
   // Antes arrancaba en "active" (En gestión + Confirmadas), un filtro invisible para
@@ -67,11 +74,19 @@ export function useReservas() {
 
   const loadReservas = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
         view: viewFilter,
+        // Tanda 1 (2026-08-04, plan B3/A3): SOLO este buscador (el del listado de
+        // Reservas) manda esta bandera — es la que le dice al motor "ignorá la
+        // pestaña y el mes, buscá en todo". El motor la respeta únicamente cuando
+        // además hay texto en "search"; sin texto no cambia nada, así que es seguro
+        // mandarla siempre. Ninguna otra pantalla (ej. PaymentsByReservaPage, que
+        // necesita que la pestaña SÍ filtre) debe copiar esta línea.
+        globalSearch: "true",
       });
 
       const fromKey = dateRange.field === "travel" ? "travelFrom" : "createdFrom";
@@ -101,8 +116,16 @@ export function useReservas() {
     } catch (error) {
       console.error(error);
       setReservasPage(emptyPage);
-      setDatabaseUnavailable(isDatabaseUnavailableError(error));
-      showError(`Error cargando reservas: ${getApiErrorMessage(error, "Error desconocido")}`);
+      const esBaseDeDatosCaida = isDatabaseUnavailableError(error);
+      setDatabaseUnavailable(esBaseDeDatosCaida);
+      // B5 (P-11: ningún error deja al usuario sin salida): la base de datos caída ya
+      // tiene su propia pantalla (DatabaseUnavailableState, sin retry — es un estado
+      // de infraestructura). Para cualquier OTRO error (red, timeout, 500) mostramos
+      // el cartel rojo con "Probar de nuevo" en el mismo lugar de la tabla, en vez de
+      // un toast que desaparece solo.
+      if (!esBaseDeDatosCaida) {
+        setLoadError(getApiErrorMessage(error, "No pudimos traer las reservas."));
+      }
     } finally {
       setLoading(false);
     }
@@ -160,6 +183,10 @@ export function useReservas() {
     reservas: reservasPage.items || [],
     loading,
     searchTerm,
+    // Fix de review (2026-08-04): la pagina decide "estoy buscando" con el MISMO texto que viajo
+    // al motor (el debounced), no con lo que se esta tipeando — si no, durante los ~300 ms de
+    // debounce la UI marca "Todas" mientras la lista todavia obedece a la solapa vieja.
+    debouncedSearch,
     setSearchTerm,
     viewFilter,
     setViewFilter,
@@ -168,6 +195,10 @@ export function useReservas() {
     totalCount: reservasPage.totalCount || 0,
     totalPages: reservasPage.totalPages || 0,
     hasPreviousPage: Boolean(reservasPage.hasPreviousPage),
+    // Bug de arrastre (no forma parte del plan de esta tanda, pero está en la misma
+    // línea que se está tocando): faltaba devolver hasNextPage, así que el botón
+    // "siguiente" de la paginación quedaba SIEMPRE deshabilitado (undefined es falsy).
+    hasNextPage: Boolean(reservasPage.hasNextPage),
     setPage,
     setPageSize,
     dateRange,
@@ -177,6 +208,7 @@ export function useReservas() {
     loadReservas,
     handleArchive,
     databaseUnavailable,
+    loadError,
     tabCounts: {
       // ADR-020: todos los estados del ciclo unico, sin flags.
       // ADR-036: toSettle eliminado — "A liquidar" ya no existe como estado visible en la UI.
@@ -199,14 +231,14 @@ export function useReservas() {
       // calcularContadorTodas). No hay campo "AllCount" propio en el backend.
       all: calcularContadorTodas(summary),
     },
+    // Tanda 1 (2026-08-04, B1): la tira de KPIs de arriba del listado quedó en solo
+    // 3 números (activas / por cobrar / vendido) — "Operativos" y "Rentabilidad
+    // estimada" murieron (ver ReservaKPIs.jsx). Los importes viajan por moneda,
+    // nunca como escalar mezclado (P-3⭐).
     stats: {
-      budgetCount: summary.budgetCount || 0,
       activeCount: summary.activeCount || 0,
-      operativeCount: summary.operativeCount || 0,
-      totalSaleActive: summary.totalSaleActive || 0,
-      totalCostActive: summary.totalCostActive || 0,
-      totalPendingBalance: summary.totalPendingBalance || 0,
-      grossProfit: summary.grossProfit || 0,
+      vendidoPorMoneda: summary.vendidoPorMoneda || [],
+      porCobrarPorMoneda: summary.porCobrarPorMoneda || [],
     },
   };
 }

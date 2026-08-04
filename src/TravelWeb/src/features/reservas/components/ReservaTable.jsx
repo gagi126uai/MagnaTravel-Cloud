@@ -1,5 +1,5 @@
 import React from "react";
-import { User, Users, Archive, MessageCircle, DollarSign } from "lucide-react";
+import { User, Users, Archive } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import {
   DataGrid,
@@ -16,9 +16,23 @@ import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
-import { getMoneyStatus } from "../moneyStatus";
+import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSES } from "../lib/reservaMoneyDisplay";
 
-export function ReservaTable({ reservas, onRowClick, onArchive }) {
+/**
+ * Tabla del listado de Reservas (versión de escritorio). Tanda 1 rediseño
+ * (2026-08-04, plan B4): el renglón chico bajo el número de reserva pasa a
+ * mostrar el DESTINO en vez del nombre autogenerado ("Reserva F-2026-…"), la
+ * columna Finanzas separa cada moneda en su propia línea (P-3⭐) y la única
+ * acción por fila es "Archivar" con la palabra al lado del ícono y, si está
+ * bloqueada, el motivo del motor escrito debajo (P-9/P-10/P-13⭐) — se elimina
+ * el botón de chat, que solo repetía lo que ya hace un clic en la fila.
+ *
+ * `emptyState`: nodo opcional que reemplaza el cartel por default cuando no hay
+ * filas. ReservasPage arma un mensaje distinto según el motivo (mes sin datos,
+ * búsqueda sin resultados) porque solo esa pantalla tiene los datos del filtro
+ * activo (mes, período) para escribir un mensaje útil.
+ */
+export function ReservaTable({ reservas, onRowClick, onArchive, emptyState }) {
   return (
     <DataGrid minWidth="920px">
       <DataGridHeader>
@@ -33,23 +47,26 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
       </DataGridHeader>
       <DataGridBody>
         {reservas.length === 0 ? (
-          <DataGridEmptyState
-            colSpan={6}
-            icon={Archive}
-            title="No se encontraron reservas"
-            description="Probá cambiando los filtros."
-          />
+          emptyState ? (
+            <tr>
+              <td colSpan={6} className="p-0">
+                {emptyState}
+              </td>
+            </tr>
+          ) : (
+            <DataGridEmptyState
+              colSpan={6}
+              icon={Archive}
+              title="No se encontraron reservas"
+              description="Probá cambiando los filtros."
+            />
+          )
         ) : (
           reservas.map((reserva) => {
             const archiveBlockReason = getReservaArchiveBlockReason(reserva);
             const canArchive = !archiveBlockReason;
-            // Fix C2 (Tanda 6, 2026-07-05): la columna "Finanzas" ya NO decide mirando
-            // reserva.balance > 0 a mano — delega en getMoneyStatus (moneyStatus.js), la
-            // MISMA función que usan ReservaSummaryStrip/ReservaStatusChips/CustomerAccountPage.
-            // Esto también arregla una reserva ANULADA con deuda "congelada": antes mostraba
-            // "Debe: $X" en rojo como si fuera cobrable; ahora muestra su saldo a favor o la
-            // multa por anulación con contexto (o nada, si el dato es inconsistente).
-            const moneyStatus = getMoneyStatus(reserva);
+            const ventaLineas = getReservaSaleLines(reserva);
+            const chips = getReservaFinanzasChips(reserva);
 
             return (
               <DataGridRow
@@ -62,7 +79,11 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                     <span className="text-sm font-bold text-slate-900 transition-colors hover:text-indigo-600 dark:text-white dark:hover:text-indigo-400">
                       #{reserva.numeroReserva}
                     </span>
-                    <span className="mt-0.5 line-clamp-1 text-xs text-slate-500 dark:text-slate-400">{reserva.name}</span>
+                    {reserva.destino ? (
+                      <span className="mt-0.5 line-clamp-1 text-xs text-slate-500 dark:text-slate-400">
+                        {reserva.destino}
+                      </span>
+                    ) : null}
                     {reserva.startDate ? (
                       <span className="mt-1 flex items-center gap-1 text-[10px] font-medium text-indigo-500 dark:text-indigo-400">
                         <span className="h-1 w-1 rounded-full bg-indigo-400" />
@@ -84,7 +105,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                   </div>
                 </DataGridCell>
                 <DataGridCell>
-                  <ReservaStatusBadge status={reserva.status} />
+                  <ReservaStatusBadge status={reserva.status} mostrarCandado />
                 </DataGridCell>
                 <DataGridCell>
                   <div className="flex flex-col">
@@ -99,80 +120,60 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                   </div>
                 </DataGridCell>
                 <DataGridCell align="right">
-                  {/* ReservaListDto no trae moneda por fila (TotalSale/Balance son un escalar
-                      sin bandera de moneda). Pasamos ARS solo para evitar el formato gringo
-                      en-US del default legacy; no resuelve el riesgo de mezcla de monedas. */}
                   <div className="flex flex-col items-end gap-1">
-                    <span className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(reserva.totalSale, "ARS")}</span>
-                    {(moneyStatus.kind === "debe" || moneyStatus.kind === "vencidaConDeuda" || moneyStatus.kind === "debeNoViaja") ? (
-                      <div className="flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:bg-rose-900/20 dark:text-rose-400">
-                        <DollarSign className="h-2.5 w-2.5" />
-                        Debe: {formatCurrency(reserva.balance, "ARS")}
-                      </div>
-                    ) : moneyStatus.kind === "sinMovimientos" ? (
-                      // Sin movimientos: reserva nueva, sin cargos ni cobros todavía.
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                        Sin movimientos
-                      </span>
-                    ) : moneyStatus.kind === "pagada" ? (
-                      // Saldado: el backend lo confirmó explícitamente.
-                      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
-                        Saldado
-                      </span>
-                    ) : moneyStatus.kind === "saldoAFavor" ? (
-                      // El cliente pagó de más: hay saldo a favor en su cuenta.
-                      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400">
-                        A favor
-                      </span>
-                    ) : moneyStatus.kind === "saldoAFavorAnulada" ? (
-                      // Reserva anulada: quedó plata del cliente sin devolver ni aplicar.
-                      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400">
-                        Saldo a favor: {formatCurrency(Math.abs(reserva.balance ?? 0), "ARS")}
-                      </span>
-                    ) : moneyStatus.kind === "multaPorCobrar" ? (
-                      // Reserva anulada: la multa por anulación todavía no se cobró.
-                      // Tanda "multa fantasma" (2026-07-06): el monto sale de moneyStatus (la multa
-                      // exacta, con fallback al balance si el backend todavía no la manda) —
-                      // ya no se recalcula acá con el balance total de la reserva.
-                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
-                        Multa: {formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency)}
-                      </span>
-                    ) : (
-                      // kind === "none": reserva anulada sin plata pendiente que mostrar
-                      // (o dato "Inconsistente" — eso lo revisa un vigía interno, no esta pantalla).
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                        Sin movimientos
-                      </span>
-                    )}
+                    <div className="flex flex-col items-end">
+                      {ventaLineas.map((linea, index) => {
+                        const enCero = Number(linea.amount) === 0;
+                        return (
+                          <span
+                            key={linea.currency}
+                            className={
+                              index === 0
+                                ? `text-sm font-bold ${enCero ? "text-slate-300 dark:text-slate-700" : "text-slate-900 dark:text-white"}`
+                                : `text-xs font-semibold ${enCero ? "text-slate-300 dark:text-slate-700" : "text-slate-500 dark:text-slate-400"}`
+                            }
+                          >
+                            {formatCurrency(linea.amount, linea.currency)}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      {chips.map((chip, index) => (
+                        <span key={index} className={FINANZAS_CHIP_TONE_CLASSES[chip.tone]}>
+                          {chip.text}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </DataGridCell>
                 <DataGridActionCell
                   align="center"
                   onClick={(event) => event.stopPropagation()}
                 >
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20"
-                    onClick={() => onRowClick(getPublicId(reserva))}
-                    title="Ver detalles"
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={!canArchive}
-                    className={`h-8 w-8 ${
-                      canArchive
-                        ? "text-slate-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/20"
-                        : "text-slate-300 dark:text-slate-700"
-                    }`}
-                    onClick={() => onArchive(reserva)}
-                    title={archiveBlockReason || "Archivar"}
-                  >
-                    <Archive className="h-4 w-4" />
-                  </Button>
+                  <div className="flex flex-col items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!canArchive}
+                      onClick={() => onArchive(reserva)}
+                      className={`h-7 gap-1.5 px-2.5 text-xs font-semibold ${
+                        canArchive
+                          ? "text-slate-600 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 dark:text-slate-300 dark:hover:bg-amber-900/20"
+                          : "text-slate-400 dark:text-slate-600"
+                      }`}
+                    >
+                      <Archive className="h-3.5 w-3.5" />
+                      Archivar
+                    </Button>
+                    {archiveBlockReason ? (
+                      // P-9/P-13⭐: el motivo va escrito debajo del botón, tal cual lo
+                      // manda el motor — nunca escondido en un tooltip.
+                      <span className="max-w-[130px] text-center text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                        {archiveBlockReason}
+                      </span>
+                    ) : null}
+                  </div>
                 </DataGridActionCell>
               </DataGridRow>
             );

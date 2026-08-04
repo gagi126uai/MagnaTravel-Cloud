@@ -52,6 +52,17 @@ public class ReservaListQuery : PagedQuery
     public DateTime? TravelFrom { get; set; }
     public DateTime? TravelTo { get; set; }
 
+    /// <summary>
+    /// Tanda 1 rediseño listado (2026-08-04, fix B1 de review, T-8): señal EXPLICITA de "el buscador
+    /// del listado de Reservas es GLOBAL" (ignora pestaña y periodo). Antes esto se deducia de
+    /// <c>Search</c> no vacio, pero <c>GET /api/reservas</c> tiene OTRO cliente
+    /// (<c>PaymentsByReservaPage.jsx</c>, pantalla de Cobranzas por reserva) que manda <c>view</c> +
+    /// <c>createdFrom/To</c> + <c>search</c> JUNTOS y SI espera que la pestaña/periodo sigan filtrando
+    /// — con la deduccion vieja, ese buscador perdia el filtro en silencio. Default <c>false</c>:
+    /// mismo comportamiento historico para cualquier caller que no mande este flag.
+    /// </summary>
+    public bool GlobalSearch { get; set; } = false;
+
     public ReservaListQuery()
     {
         SortBy = "startDate";
