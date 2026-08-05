@@ -3891,6 +3891,14 @@ public class BookingCancellationService
             ExchangeRateSource = invoiceIsForeign ? source : (ExchangeRateSource?)null,
             ExchangeRateFetchedAt = invoiceIsForeign ? targetInvoice.ExchangeRateFetchedAt : null,
             ExchangeRateJustification = invoiceIsForeign ? manualJustification : null,
+            // ADR-011 §6.2 (enmienda 2026-08-05, fix detalle #4 revision post-implementacion): la NC
+            // hereda TAMBIEN el puntero de procedencia de la factura destino, no solo Source/FetchedAt.
+            // Sin esto, una NC sobre una factura cuyo TC vino de la libreta (AfipOficial) quedaba con
+            // ExchangeRateQuoteId=NULL — perdia la trazabilidad hacia la fila real de ExchangeRateQuotes
+            // aunque el Source siguiera diciendo "AfipOficial" (dato inconsistente: dice de donde vino
+            // pero no APUNTA a la fila). NULL si la factura destino fue manual (nunca tuvo fila) o es en pesos.
+            ExchangeRateQuoteId = invoiceIsForeign ? targetInvoice.ExchangeRateQuoteId : null,
+            ExchangeRateFchCotiz = invoiceIsForeign ? targetInvoice.ExchangeRateFchCotiz : null,
         };
 
         var ncDto = await _invoiceService.CreateAsync(request, userId, userName, ct);
@@ -8950,6 +8958,12 @@ public class BookingCancellationService
                 MonCotiz = nd.MonCotiz,
                 ExchangeRateSource = nd.ExchangeRateSource,
                 ExchangeRateFetchedAt = nd.ExchangeRateFetchedAt,
+                // ADR-011 §6.2 (fix detalle #4, revision post-implementacion 2026-08-05): hereda TAMBIEN
+                // el puntero de procedencia de la ND (no solo Source/FetchedAt) — misma razon que el otro
+                // builder de NC de este archivo: sin esto, "deshacer la multa" perdia la trazabilidad hacia
+                // la fila real de ExchangeRateQuotes aunque Source siguiera diciendo AfipOficial.
+                ExchangeRateQuoteId = nd.ExchangeRateQuoteId,
+                ExchangeRateFchCotiz = nd.ExchangeRateFchCotiz,
                 ExchangeRateJustification = string.IsNullOrWhiteSpace(nd.ExchangeRateJustification)
                     ? nd.ExchangeRateJustification
                     : $"Anulación de Nota de Débito por multa mal emitida — TC heredado: {nd.ExchangeRateJustification}",
@@ -11108,6 +11122,11 @@ public class BookingCancellationService
             // validacion frena y el blindaje del caller rutea a revision manual (nunca un comprobante mal valuado).
             ExchangeRateSource = ndTargetInvoice.ExchangeRateSource,
             ExchangeRateFetchedAt = ndTargetInvoice.ExchangeRateFetchedAt,
+            // ADR-011 §6.2 (fix detalle #4, revision post-implementacion 2026-08-05): hereda TAMBIEN
+            // el puntero de procedencia de la factura resuelta — mismo criterio que Source/FetchedAt
+            // de arriba, para que la ND pueda explicar de que fila de la libreta salio el TC.
+            ExchangeRateQuoteId = ndTargetInvoice.ExchangeRateQuoteId,
+            ExchangeRateFchCotiz = ndTargetInvoice.ExchangeRateFchCotiz,
             // N1 (review 2026-07-08): dejamos explicito en la justificacion que este TC es HEREDADO del
             // comprobante original (no recotizado), asi el contador ve de un vistazo por que la ND lleva ese TC.
             ExchangeRateJustification = string.IsNullOrWhiteSpace(ndTargetInvoice.ExchangeRateJustification)

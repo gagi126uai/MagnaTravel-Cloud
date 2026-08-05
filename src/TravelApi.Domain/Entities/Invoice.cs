@@ -120,14 +120,14 @@ public class Invoice : IHasPublicId
 
     // ============================================================
     // ADR-012 MVP (facturar en dolares, 2026-05-29): trazabilidad del tipo de
-    // cambio cuando la factura es en moneda extranjera. Las tres columnas son
+    // cambio cuando la factura es en moneda extranjera. Las columnas son
     // NULLABLE y aditivas: las facturas en pesos (todo lo que existe hoy + todo
     // lo que sale con el flag EnableMultiCurrencyInvoicing OFF) las dejan en NULL.
     //
-    // IMPORTANTE: el MVP es 100% MANUAL. El operador carga el TC a mano y escribe
-    // por que. NO hay FK a ninguna tabla de cotizaciones (eso es ADR-011, que NO
-    // existe todavia). El dia que ADR-011 traiga un resolver automatico, esta
-    // estructura sigue sirviendo (solo cambia quien rellena la justificacion).
+    // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): agrega ExchangeRateQuoteId +
+    // ExchangeRateFchCotiz (mas abajo), que apuntan a la libreta de cotizaciones
+    // (ExchangeRateQuotes) cuando el TC vino de ahi. Siguen NULL cuando el TC es manual —
+    // el operador todavia puede cargarlo a mano y el modelo lo sigue soportando igual.
     // ============================================================
 
     /// <summary>
@@ -155,6 +155,37 @@ public class Invoice : IHasPublicId
     /// </summary>
     [MaxLength(500)]
     public string? ExchangeRateJustification { get; set; }
+
+    /// <summary>
+    /// ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): puntero de PROCEDENCIA — "este
+    /// comprobante uso exactamente esta fila de <c>ExchangeRateQuotes</c>". Lo llena el servidor en
+    /// DOS casos, nunca el request (bindeable desde HTTP bloqueado con <c>[JsonIgnore]</c> en
+    /// <c>CreateInvoiceRequest</c> — fix BLOQUEANTE F-4, revision post-implementacion 2026-08-05):
+    /// <list type="bullet">
+    ///   <item><b>Factura de venta genuina</b>: cuando <c>MonCotiz</c> coincidio EXACTO con la
+    ///   sugerencia oficial que le ofrecio el resolver (<see cref="ExchangeRateSource.AfipOficial"/>
+    ///   u otra fuente de la libreta).</item>
+    ///   <item><b>NC/ND</b>: HEREDADO del comprobante que corrige (§6.2, "nunca se recotiza") — mismo
+    ///   criterio que <c>MonId</c>/<c>MonCotiz</c>/<c>ExchangeRateSource</c>. Ver
+    ///   <c>BookingCancellationService</c> (los 3 builders de NC/ND) y el camino legacy F2.2 de
+    ///   <c>InvoiceService</c>.</item>
+    /// </list>
+    /// NULL cuando el TC fue manual (el usuario piso el numero sugerido), el comprobante original
+    /// nunca tuvo este dato (legacy anterior a esta obra), o el comprobante es en pesos. La FK es
+    /// <c>ON DELETE RESTRICT</c>: una fila citada por un comprobante con CAE no se puede borrar
+    /// jamas (regla F-6, "nada se borra, se tacha").
+    /// </summary>
+    public int? ExchangeRateQuoteId { get; set; }
+
+    /// <summary>
+    /// ADR-011: el <c>FchCotiz</c> que efectivamente devolvio ARCA para la cotizacion usada (viaja
+    /// junto con <see cref="ExchangeRateQuoteId"/>, poblado por el servidor en los mismos DOS casos
+    /// — venta genuina con match exacto, o NC/ND heredando del original). Es el dato que defiende
+    /// el numero ante una inspeccion: puede diferir de la fecha de emision del comprobante (ej. un
+    /// comprobante emitido en fin de semana usa el TC del ultimo dia habil). NULL cuando el TC fue
+    /// manual o el comprobante/original es anterior a esta obra.
+    /// </summary>
+    public DateOnly? ExchangeRateFchCotiz { get; set; }
 
     /// <summary>
     /// ADR-042 §3.3.1 (2026-07-01): valor fiscal <c>CanMisMonExt</c> ("Cancela en Misma Moneda

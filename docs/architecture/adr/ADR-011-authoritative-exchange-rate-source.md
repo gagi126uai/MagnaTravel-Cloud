@@ -1,6 +1,23 @@
 # ADR-011 — Fuente confiable de tipo de cambio (USD->ARS) para el circuito fiscal
 
-- **Status**: Propuesto (Draft) — pendiente de review del `software-architect-reviewer` y de definicion fiscal del contador. **NO Accepted**: la activacion (prender el flag) depende de un signoff fiscal explicito (ver §10).
+> **ENMIENDA (2026-08-05, "tipo de cambio real")**: este ADR quedo **ENMENDADO** por la spec
+> definitiva `docs/architecture/2026-08-05-tipo-de-cambio-real-spec-final.md` (aprobada por
+> `software-architect-reviewer`, implementada), en tres puntos de fondo que reemplazan lo que
+> dice el cuerpo original mas abajo:
+>
+> 1. **Sin feature flag** (regla T-11 de la constitucion). No existe `EnableAuthoritativeExchangeRate`.
+>    El resolver + el job salen DIRECTOS, sin activacion condicionada.
+> 2. **Fuente primaria = ARCA `FEParamGetCotizacion`**, no BCRA A3500 ni scraping externo (D-4:
+>    no se suma argentinadatos.com ni dolarapi.com). El respaldo es el scraper de Banco Nacion
+>    que ya existia, no una fuente nueva.
+> 3. **El camino interactivo (lo que ve la pantalla) NO llama a ARCA ni a ninguna red externa** —
+>    SOLO lee la libreta historica (`ExchangeRateQuotes`) que el job diario ya escribio. El
+>    resolver multi-proveedor con throttle contra WSAA que describe §5-§7 mas abajo NO se
+>    construyo: se reemplazo por esta version mas simple.
+>
+> Si estas por implementar algo de este ADR, **leé primero la spec definitiva**, no este cuerpo.
+
+- **Status**: Propuesto (Draft) — pendiente de review del `software-architect-reviewer` y de definicion fiscal del contador. **NO Accepted**: la activacion (prender el flag) depende de un signoff fiscal explicito (ver §10). **(Ver enmienda arriba: la version implementada NO usa flag.)**
 - **Date**: 2026-05-29.
 - **Author(s)**: software-architect agent.
 - **Related**:

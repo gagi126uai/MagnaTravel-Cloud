@@ -42,6 +42,14 @@ public class InvoiceService : IInvoiceService
     private readonly IApprovalRequestService? _approvalService;
     // B1.15 Fase B'' (2026-05-11): opcional por la misma razon.
     private readonly IApprovalPolicyService? _approvalPolicyService;
+    // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): resolver de sugerencia de TC.
+    // Opcional para no romper los ~15 archivos de tests que instancian InvoiceService a mano sin
+    // pasarlo (mismo patron que permissionResolver/httpContextAccessor). Si es null,
+    // ValidateMultiCurrencyInvoicingAsync NO llama al resolver y preserva el comportamiento
+    // previo a esta obra (el request manda su propia fuente, como en ADR-012 MVP) — esto SOLO
+    // pasa en tests que no cablean la pieza nueva; en produccion Program.cs siempre la registra
+    // (no hay flag, T-11), asi que en runtime real este campo nunca es null.
+    private readonly IExchangeRateResolver? _exchangeRateResolver;
     // FC1.2.1 (BR-V2-04, MR-V2-02): el bridge "chico" hacia BookingCancellationService
     // NO se inyecta en el ctor. Se resuelve LAZY (recien cuando el job post-CAE lo necesita)
     // a traves de _serviceProvider.
@@ -83,7 +91,8 @@ public class InvoiceService : IInvoiceService
         IHttpContextAccessor? httpContextAccessor = null,
         IApprovalRequestService? approvalService = null,
         IApprovalPolicyService? approvalPolicyService = null,
-        IServiceProvider? serviceProvider = null)
+        IServiceProvider? serviceProvider = null,
+        IExchangeRateResolver? exchangeRateResolver = null)
     {
         _context = context;
         _entityReferenceResolver = entityReferenceResolver;
@@ -98,6 +107,7 @@ public class InvoiceService : IInvoiceService
         _httpContextAccessor = httpContextAccessor;
         _approvalService = approvalService;
         _approvalPolicyService = approvalPolicyService;
+        _exchangeRateResolver = exchangeRateResolver;
         // El IServiceProvider es opcional para no romper unit tests que arman el service a mano.
         // Si es null, GetBcBridge() devuelve null y el flujo se comporta como configuracion
         // standalone (sin modulo de cancelacion), igual que antes cuando _bcBridge llegaba null.
@@ -343,6 +353,39 @@ public class InvoiceService : IInvoiceService
 
     public async Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct)
     {
+        // ADR-011 (fix BLOQUEANTE F-4, revision post-implementacion 2026-08-05): limpieza
+        // INCONDICIONAL de la trazabilidad del TC de VENTA GENUINA apenas se entra al metodo —
+        // mismo patron que IssuedByUserId/IssuedByUserName un poco mas abajo (el actor de auditoria
+        // NUNCA se confia al body; aca es la PROCEDENCIA del TC la que nunca se confia al body).
+        //
+        // Por que hacia falta: aunque las 4 propiedades ahora tienen [JsonIgnore] (no deberian
+        // llegar bindeadas desde HTTP), esta limpieza es la SEGUNDA capa: protege tambien contra un
+        // caller interno o un test que arme el DTO a mano y deje basura. Sin esto habia TRES caminos
+        // donde un ExchangeRateSource/QuoteId ya presente en el objeto viajaba tal cual hasta la
+        // Invoice sin que el servidor lo tocara: flag EnableMultiCurrencyInvoicing OFF y moneda PES
+        // (los dos cortan ValidateMultiCurrencyInvoicingAsync ANTES de llegar al gate de §8.2) — y
+        // el guard de FK podia recibir un QuoteId inexistente -> 500 en vez de un mensaje claro.
+        // Resultado sin este fix: una factura en pesos (o con el flag apagado) podia terminar con
+        // ExchangeRateQuoteId apuntando a una fila real de la libreta sin que esa fila tuviera nada
+        // que ver con el comprobante — procedencia fiscal FALSA pegada a un comprobante con CAE
+        // (regla F-4, F-6).
+        //
+        // SOLO para venta genuina (!IsCreditNote && !IsDebitNote): la NC/ND recibe las 4
+        // propiedades COMPLETAS y LEGITIMAS del caller interno (hereda el TC CONGELADO del
+        // comprobante original -> INCLUYE ExchangeRateQuoteId desde esta revision, §6.2 — ver
+        // BookingCancellationService), asi que limpiarlas aca le romperia la herencia a un flujo que
+        // es correcto. El vector de ataque via HTTP para NC/ND ya esta cerrado por [JsonIgnore]
+        // (QuoteId/FchCotiz) — Source/FetchedAt de una NC SIEMPRE se validan igual que antes
+        // (guards 2/3 mas abajo), asi que un valor inventado ahi no cambia nada fiscalmente
+        // (la NC no puede "ganar" una fuente mejor que la que ya tenia el original).
+        if (!request.IsCreditNote && !request.IsDebitNote)
+        {
+            request.ExchangeRateSource = null;
+            request.ExchangeRateFetchedAt = null;
+            request.ExchangeRateQuoteId = null;
+            request.ExchangeRateFchCotiz = null;
+        }
+
         var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(request.ReservaId, ct);
         var reserva = await _context.Reservas
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
@@ -740,7 +783,8 @@ public class InvoiceService : IInvoiceService
 
         // Cotizacion coherente: mismo criterio que el guard de la NC parcial (InvoiceService
         // ~1884). Un dolar no vale 0 ni 1 peso; un TC <= 0 o == 1 para moneda extranjera es
-        // un dato corrupto y emitiriamos un comprobante mal valuado.
+        // un dato corrupto y emitiriamos un comprobante mal valuado. Corre ANTES de preguntarle
+        // nada al resolver: no tiene sentido comparar un numero corrupto contra la sugerencia.
         bool exchangeRateIncoherent = request.MonCotiz <= 0m || request.MonCotiz == 1m;
         if (exchangeRateIncoherent)
         {
@@ -749,9 +793,25 @@ public class InvoiceService : IInvoiceService
                 "(debe ser mayor a 0 y distinta de 1). No se puede valuar una moneda extranjera como pesos.");
         }
 
-        // Trazabilidad del TC manual (patron INV-120): no se permite emitir en moneda
-        // extranjera sin registrar de donde salio el TC, cuando y por que. Es lo que el
-        // contador necesita para reconstruir la valuacion del comprobante.
+        // ADR-011 (enmienda 2026-08-05): SOLO para facturas de venta GENUINAS. La NC/ND jamas pasa
+        // por aca: hereda MonCotiz/ExchangeRateSource/ExchangeRateQuoteId del comprobante que
+        // corrige (regla INAMOVIBLE, §6.2 — "nunca se recotiza"), ya vienen completos en el
+        // request (ver BookingCancellationService: la NC/ND arma su propio request heredando esos
+        // campos del original ANTES de llamar CreateAsync). Comparar un TC heredado contra "la
+        // sugerencia de hoy" seria comparar peras con bananas: la fecha de la NC casi nunca
+        // coincide con la fecha del comprobante que corrige.
+        bool isGenuineSaleInvoice = !request.IsCreditNote && !request.IsDebitNote;
+        if (isGenuineSaleInvoice)
+        {
+            await ResolveExchangeRateSourceServerSideAsync(request, ct);
+        }
+
+        // Trazabilidad del TC (patron INV-120): no se permite emitir en moneda extranjera sin
+        // fuente ni fecha registradas. Para una factura de venta genuina con el resolver
+        // disponible, ResolveExchangeRateSourceServerSideAsync YA los dejo completos (siempre
+        // AfipOficial/el respaldo o Manual, nunca null) — este guard sigue siendo la ultima linea
+        // de defensa para el resto de los caminos (NC/ND heredando de un dato legacy incompleto,
+        // o los tests que no cablean el resolver).
         if (request.ExchangeRateSource is null
             || request.ExchangeRateSource == Domain.Entities.ExchangeRateSource.Unset)
         {
@@ -765,10 +825,98 @@ public class InvoiceService : IInvoiceService
                 "Debe indicar la fecha/hora del tipo de cambio para facturar en moneda extranjera.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.ExchangeRateJustification))
+        // ADR-011 §8.1: la justificacion pasa de ser SIEMPRE obligatoria a ser obligatoria SOLO
+        // cuando la fuente es Manual (el usuario piso el numero que el sistema le sugirio, o no
+        // habia sugerencia). Si el sistema propuso el numero oficial y el usuario lo acepto tal
+        // cual, no hay nada que justificar — el origen ya quedo registrado (ExchangeRateSource +
+        // ExchangeRateQuoteId). Para NC/ND, que heredan Source del original, esto no afloja nada
+        // en la practica: el original YA tenia justificacion (INV-120 se la exigio al emitirse),
+        // asi que sigue viajando completa.
+        bool justificationRequired = request.ExchangeRateSource == Domain.Entities.ExchangeRateSource.Manual;
+        if (justificationRequired && string.IsNullOrWhiteSpace(request.ExchangeRateJustification))
         {
             throw new InvalidOperationException(
                 "Debe indicar una justificacion del tipo de cambio para facturar en moneda extranjera.");
+        }
+    }
+
+    /// <summary>
+    /// ADR-011 §8.2 (enmienda 2026-08-05): el SERVIDOR decide de donde salio el tipo de cambio de
+    /// una factura de venta en moneda extranjera — nunca el request (F-4, T-13). Compara
+    /// <c>request.MonCotiz</c> (el numero que efectivamente va a viajar al comprobante) contra la
+    /// sugerencia oficial del resolver, por IGUALDAD DECIMAL EXACTA, sin tolerancia ni redondeo:
+    /// cualquier margen de tolerancia significaria etiquetar como "numero oficial de ARCA" un
+    /// numero que NO es el de ARCA, que es exactamente el problema que esta obra vino a cerrar
+    /// (antes los dos formularios de factura mandaban una fuente inventada sin haber consultado
+    /// nada). El front normal no necesita puntear exacto "a mano": precarga el valor tal cual
+    /// recibio la sugerencia, asi que si el usuario no lo toca, empata solo.
+    /// </summary>
+    private async Task ResolveExchangeRateSourceServerSideAsync(CreateInvoiceRequest request, CancellationToken ct)
+    {
+        if (_exchangeRateResolver is null)
+        {
+            // Sin resolver cableado (SOLO pasa en tests unitarios viejos que no lo pasan al ctor —
+            // en produccion Program.cs siempre lo registra, T-11 sin flag): preservamos el
+            // comportamiento previo a esta obra, el request manda su propia fuente/fecha tal cual
+            // las mando el caller. Nunca deberia ejecutarse fuera de un test.
+            //
+            // LogWarning (fix detalle #9, revision post-implementacion 2026-08-05): antes esto
+            // degradaba en SILENCIO — si por un error de configuracion de DI el resolver real no se
+            // registrara en produccion, nadie se enteraria de que la trazabilidad del TC volvio al
+            // camino "confia en el request" (justo lo que ADR-011 vino a cerrar). El warning deja
+            // rastro operativo sin frenar la emision (P-21: el sistema nunca bloquea al usuario).
+            _logger.LogWarning(
+                "ADR-011: ResolveExchangeRateSourceServerSideAsync corrio sin IExchangeRateResolver " +
+                "cableado. La factura en moneda extranjera queda con la fuente que mando el request, " +
+                "sin verificar contra la libreta de cotizaciones. Esto NUNCA deberia pasar en produccion.");
+            return;
+        }
+
+        // request.MonId ya esta normalizado a codigo ARCA ("DOL") a esta altura del metodo; el
+        // resolver indexa la libreta por codigo ISO ("USD"), asi que hay que volver.
+        string? isoCurrency = ArcaCurrencyMapper.ToIso(request.MonId);
+
+        // ADR-011 §8.2 / D-2 (aclaracion revision post-implementacion 2026-08-05): la spec pide la
+        // fecha de EMISION del comprobante, no "hoy" a secas. EQUIVALENCIA DELIBERADA: en este punto
+        // (CreateAsync, la Invoice PENDING todavia no existe) no hay un CbteFch calculado — ese
+        // numero lo arma recien ProcessInvoiceJob (Hangfire), que se encola AL TIRO despues de crear
+        // la Invoice (ver CreateAsync mas abajo: "_backgroundJobClient.Enqueue<IAfipService>(...)")
+        // y corre casi siempre en el mismo dia calendario argentino. CreateInvoiceRequest tampoco
+        // expone hoy un campo de "fecha de emision deseada" que el caller pueda pasar: agregarlo
+        // seria una obra aparte (cambiaria el contrato del endpoint). Por eso "hoy en Argentina" ES
+        // la fecha de emision en la practica de este sistema — si algun dia se permite programar una
+        // emision para OTRO dia (factura diferida), este es el lugar donde hay que leer esa fecha en
+        // vez de ArgentinaTime.GetArgentinaToday().
+        ExchangeRateSuggestion? suggestion = isoCurrency is null
+            ? null
+            : await _exchangeRateResolver.GetSuggestionAsync(
+                isoCurrency,
+                DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday()),
+                ct);
+
+        bool matchesSuggestionExactly = suggestion is not null && suggestion.Rate == request.MonCotiz;
+
+        if (matchesSuggestionExactly)
+        {
+            request.ExchangeRateSource = suggestion!.Source;
+            request.ExchangeRateQuoteId = suggestion.QuoteId;
+            request.ExchangeRateFchCotiz = suggestion.ArcaFchCotiz;
+            // "Cuando se tomo el TC" para el sello fiscal: el momento en que el job realmente lo
+            // trajo de la fuente (suggestion.FetchedAt), no el momento de esta emision — es el
+            // dato que el contador necesita para saber cuando se publico ese numero.
+            request.ExchangeRateFetchedAt = suggestion.FetchedAt;
+        }
+        else
+        {
+            // Distinto de la sugerencia (el usuario lo piso), o no hubo sugerencia disponible para
+            // hoy: Manual. El servidor IGNORA a proposito cualquier ExchangeRateSource que haya
+            // llegado en el request (un front viejo todavia manda "BNA_VendedorDivisa" inventado
+            // sin haber consultado nada — regla de compatibilidad del Deploy 1, §10) y pone la
+            // suya. QuoteId/FchCotiz quedan NULL: no hay fila de la libreta detras de un TC manual.
+            request.ExchangeRateSource = Domain.Entities.ExchangeRateSource.Manual;
+            request.ExchangeRateQuoteId = null;
+            request.ExchangeRateFchCotiz = null;
+            request.ExchangeRateFetchedAt = DateTime.UtcNow;
         }
     }
 
@@ -2970,6 +3118,19 @@ public class InvoiceService : IInvoiceService
             // F2.5: moneda + cotizacion calculadas arriba. Viajan hasta el XML SOAP.
             MonId = monId,
             MonCotiz = monCotiz,
+            // ADR-011 §6.2 (fix detalle #4, revision post-implementacion 2026-08-05): este camino
+            // LEGACY (F2.2, llama CreatePendingInvoice DIRECTO — nunca paso por CreateAsync ni por
+            // ValidateMultiCurrencyInvoicingAsync) nunca seteaba trazabilidad del TC, ni siquiera
+            // antes de esta obra: una NC parcial en USD quedaba con ExchangeRateSource=NULL aunque
+            // MonId="DOL". Se completa aca heredando de la factura ORIGINAL (mismo criterio que los
+            // otros 3 builders de NC/ND del modulo: nunca se recotiza, §6.2). NULL para pesos (no
+            // aplica) o si la original nunca tuvo estos campos poblados (dato legacy anterior a
+            // ADR-012/ADR-011).
+            ExchangeRateSource = monId != "PES" ? originalInvoice.ExchangeRateSource : null,
+            ExchangeRateFetchedAt = monId != "PES" ? originalInvoice.ExchangeRateFetchedAt : null,
+            ExchangeRateJustification = monId != "PES" ? originalInvoice.ExchangeRateJustification : null,
+            ExchangeRateQuoteId = monId != "PES" ? originalInvoice.ExchangeRateQuoteId : null,
+            ExchangeRateFchCotiz = monId != "PES" ? originalInvoice.ExchangeRateFchCotiz : null,
         };
 
         // FC1.3.F2.6 (counter): contamos la EMISION (el momento en que mandamos la NC

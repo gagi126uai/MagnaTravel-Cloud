@@ -466,6 +466,12 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
         // CASCADE igual la arrastraria al truncar el padre o las Invoices. Los tests
         // de Fase 3 (xmin + CHECK) seedean casos reales y necesitan la tabla limpia
         // entre tests para no chocar contra el indice UNIQUE de CreditNoteInvoiceId.
+        // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): se agregan "ExchangeRateQuotes" y
+        // "AfipSettings" al TRUNCATE. Los tests de integracion del resolver (Postgres real, ORDER BY
+        // traducible a SQL) siembran filas reales de cotizacion + la config de entorno y necesitan
+        // partir de una tabla limpia entre tests para que la precedencia de fuentes no se contamine
+        // con filas de una corrida anterior. "AfipSettings" no tenia filas en ningun test previo de
+        // este fixture (nadie la sembraba); truncarla es inocuo para el resto del modulo.
         await ctx.Database.ExecuteSqlRawAsync("""
             TRUNCATE TABLE
                 "PartialCreditNoteReconciliationReceipts",
@@ -485,7 +491,9 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
                 "Suppliers",
                 "ApprovalRequests",
                 "ArcaIdempotencyKeys",
-                "AuditLogs"
+                "AuditLogs",
+                "ExchangeRateQuotes",
+                "AfipSettings"
             RESTART IDENTITY CASCADE;
             """);
     }

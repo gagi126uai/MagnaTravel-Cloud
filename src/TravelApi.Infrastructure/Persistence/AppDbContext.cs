@@ -334,6 +334,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<BusinessSequence> BusinessSequences => Set<BusinessSequence>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<BnaExchangeRateSnapshot> BnaExchangeRateSnapshots => Set<BnaExchangeRateSnapshot>();
+    // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): libreta historica de cotizaciones.
+    public DbSet<ExchangeRateQuote> ExchangeRateQuotes => Set<ExchangeRateQuote>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
     public DbSet<ApprovalPolicy> ApprovalPolicies => Set<ApprovalPolicy>();
 
@@ -776,6 +778,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasConversion<int>();
             entity.Property(i => i.ExchangeRateJustification)
                   .HasMaxLength(500);
+
+            // ADR-011 (enmienda 2026-08-05): puntero de procedencia hacia la libreta de
+            // cotizaciones. RESTRICT (no SetNull, no Cascade): una fila citada por un comprobante
+            // con CAE no se puede borrar jamas — el motor lo impone, no queda librado a que nadie
+            // se olvide de chequearlo antes de un DELETE (regla F-6).
+            entity.HasOne<ExchangeRateQuote>()
+                  .WithMany()
+                  .HasForeignKey(i => i.ExchangeRateQuoteId)
+                  .OnDelete(DeleteBehavior.Restrict);
 
             // ADR-042 §3.3.1 (2026-07-01): CanMisMonExt congelado al emitir. NULLABLE y SIN default:
             // pesos/facturas historicas quedan NULL (no se emite el nodo, byte-identico). Divisa emite 'N'.
@@ -2627,6 +2638,45 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(k => k.Key)
                   .IsUnique()
                   .HasDatabaseName("IX_ArcaIdempotencyKeys_Key");
+        });
+
+        // ===== ExchangeRateQuote (ADR-011 enmienda 2026-08-05, "tipo de cambio real") =====
+        // Libreta historica de cotizaciones. Ver comentario de la entidad para el detalle de
+        // cada columna y por que la fila es INMUTABLE una vez escrita.
+        modelBuilder.Entity<ExchangeRateQuote>(entity =>
+        {
+            entity.Property(q => q.Currency).IsRequired().HasMaxLength(3);
+            entity.Property(q => q.Rate).HasPrecision(18, 6);
+            entity.Property(q => q.ProviderName).IsRequired().HasMaxLength(60);
+            // Mismo patron que Invoice.ExchangeRateSource: el enum se persiste como int para que
+            // la auditoria fiscal lea ambas tablas del mismo modo.
+            entity.Property(q => q.Source).HasConversion<int>();
+
+            // CHECK "Rate > 0": defensa a nivel BD contra un valor invalido que se filtre por un
+            // camino que no pase por el guard aplicativo del job (ver ExchangeRateSyncJob §7.5).
+            entity.ToTable(t => t.HasCheckConstraint(
+                "ck_ExchangeRateQuotes_rate_positive", "\"Rate\" > 0"));
+
+            // Un registro por moneda+fecha+fuente+entorno: el upsert idempotente del job (ON
+            // CONFLICT DO NOTHING) se apoya en este indice UNIQUE para no duplicar filas si corre
+            // varias veces el mismo dia.
+            entity.HasIndex(q => new { q.Currency, q.QuoteDate, q.Source, q.IsProductionSource })
+                  .IsUnique()
+                  .HasDatabaseName("ux_ExchangeRateQuotes_currency_date_source_env");
+
+            // Indice de lectura del resolver: "todas las filas de esta moneda/entorno, mas
+            // recientes primero" — es el patron de acceso del walk-back (§5.1 paso 2).
+            entity.HasIndex(q => new { q.Currency, q.IsProductionSource, q.QuoteDate })
+                  .IsDescending(false, false, true)
+                  .HasDatabaseName("ix_ExchangeRateQuotes_lookup");
+
+            // Auto-referencia para la correccion por reemplazo (F-6): SIN nav prop (no hace falta
+            // navegar la cadena de correcciones desde código, solo filtrar por NULL). Restrict:
+            // no tiene sentido borrar una fila mientras otra la sigue superseding.
+            entity.HasOne<ExchangeRateQuote>()
+                  .WithMany()
+                  .HasForeignKey(q => q.SupersededByQuoteId)
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ===== ADR-019 (avisos "Proximos inicios", 2026-06-06) =====

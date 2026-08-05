@@ -880,6 +880,13 @@ public class AfipService : IAfipService
              ExchangeRateSource = request.ExchangeRateSource,
              ExchangeRateFetchedAt = request.ExchangeRateFetchedAt,
              ExchangeRateJustification = request.ExchangeRateJustification,
+             // ADR-011 (enmienda 2026-08-05): puntero de procedencia hacia la libreta de
+             // cotizaciones. InvoiceService.ValidateMultiCurrencyInvoicingAsync ya los completo
+             // ANTES de llamar aca (misma mecanica que la normalizacion de MonId): quedan NULL
+             // cuando el TC fue manual, es un comprobante en pesos, o el caller no paso por ese
+             // gate (NC/ND, que heredan el TC del original y nunca recotizan).
+             ExchangeRateQuoteId = request.ExchangeRateQuoteId,
+             ExchangeRateFchCotiz = request.ExchangeRateFchCotiz,
              CreatedAt = DateTime.UtcNow,
              WasForced = request.ForceIssue,
              ForceReason = request.ForceReason,
@@ -2772,6 +2779,230 @@ public class AfipService : IAfipService
             ImporteTotal: detail.ImporteTotal,
             MonId: detail.MonId,
             MonCotiz: detail.MonCotiz);
+    }
+
+    // ========================================================================================
+    // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): consulta a ARCA de la cotizacion
+    // oficial. La llama UNICAMENTE ExchangeRateSyncJob (el job diario), nunca un camino
+    // interactivo — asi no hay riesgo de raga contra WSAA ni de quemar el ticket que necesita
+    // la facturacion.
+    // ========================================================================================
+
+    /// <summary>
+    /// Guard del ticket de acceso WSAA, respetando el entorno (helper NUEVO, NO copiar
+    /// <see cref="GetStatus"/>). <see cref="EnsureAuth"/> guarda el ticket de PRODUCCION en
+    /// <c>ProdTokenExpiration</c> y el de HOMOLOGACION en <c>TokenExpiration</c> — <c>GetStatus</c>
+    /// tiene un bug latente (V5 del diseño) que lee siempre <c>TokenExpiration</c> sin mirar
+    /// <c>IsProduction</c>. Este helper hace lo correcto: mira el campo que corresponde al entorno
+    /// vigente. NO se usa para arreglar el bug de <c>GetStatus</c> (eso es un ticket aparte, fuera
+    /// de esta obra) — solo para decidir, aca, si hace falta volver a autenticar antes de consultar
+    /// <c>FEParamGetCotizacion</c>.
+    ///
+    /// <para><c>internal</c> (no <c>private</c>) para que el test que blinda la "trampa del bug V5"
+    /// (<c>InternalsVisibleTo("TravelApi.Tests")</c> ya configurado) pueda probarlo directo, sin
+    /// reflection.</para>
+    /// </summary>
+    internal static bool IsAuthTicketValid(AfipSettings settings)
+    {
+        var expiration = settings.IsProduction
+            ? settings.ProdTokenExpiration
+            : settings.TokenExpiration;
+
+        return expiration.HasValue && expiration.Value > DateTime.UtcNow;
+    }
+
+    /// <inheritdoc />
+    public async Task<ArcaExchangeRate?> GetOfficialExchangeRateAsync(
+        string monId, DateOnly fchCotiz, CancellationToken ct)
+    {
+        var settings = await _context.AfipSettings.FirstOrDefaultAsync(ct);
+        if (settings == null)
+        {
+            _logger.LogWarning("FEParamGetCotizacion: AFIP no esta configurado, no se pudo consultar {MonId}.", monId);
+            return null;
+        }
+
+        // Solo re-autenticamos si el ticket vigente para ESTE entorno ya vencio. Como este metodo
+        // solo lo llama el job (una vez al dia), esto evita pegarle a WSAA en cada llamada — la
+        // mayoria de las corridas reusan el ticket que la facturacion normal ya mantiene vivo.
+        if (!IsAuthTicketValid(settings))
+        {
+            try
+            {
+                await EnsureAuth(settings);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "FEParamGetCotizacion: no se pudo renovar el ticket WSAA para consultar {MonId}.", monId);
+                return null;
+            }
+        }
+
+        var fchCotizText = fchCotiz.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+
+        // 2 reintentos con backoff (§7.3): es el job, nadie espera la respuesta en pantalla, asi
+        // que preferimos absorber un timeout transitorio de ARCA antes de rendirnos por el dia.
+        const int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var result = await TryFetchOfficialExchangeRateOnceAsync(settings, monId, fchCotizText, ct);
+            if (result != null)
+            {
+                return result;
+            }
+
+            if (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), ct);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Un solo intento de <c>FEParamGetCotizacion</c>. Separado de <see cref="GetOfficialExchangeRateAsync"/>
+    /// para que el retry con backoff quede legible arriba. Devuelve <c>null</c> ante CUALQUIER
+    /// problema (timeout, XML invalido, <c>Errors</c> no vacio, cotizacion invalida) — nunca
+    /// propaga una excepcion: el job tiene que poder seguir con el resto de las fechas/monedas
+    /// aunque una consulta puntual falle.
+    /// </summary>
+    private async Task<ArcaExchangeRate?> TryFetchOfficialExchangeRateOnceAsync(
+        AfipSettings settings, string monId, string fchCotizText, CancellationToken ct)
+    {
+        var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
+        var action = "http://ar.gov.afip.dif.FEV1/FEParamGetCotizacion";
+
+        var soapEnv = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+  <soap:Body>
+    <FEParamGetCotizacion xmlns=""http://ar.gov.afip.dif.FEV1/"">
+      <Auth>
+        <Token>{GetAuthToken(settings)}</Token>
+        <Sign>{GetAuthSign(settings)}</Sign>
+        <Cuit>{settings.Cuit}</Cuit>
+      </Auth>
+      <MonId>{monId}</MonId>
+      <FchCotiz>{fchCotizText}</FchCotiz>
+    </FEParamGetCotizacion>
+  </soap:Body>
+</soap:Envelope>";
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
+        httpRequest.Headers.Add("SOAPAction", action);
+        httpRequest.Content = new StringContent(soapEnv, Encoding.UTF8, "text/xml");
+
+        // Timeout 15s (§7.3): es el job, no hay nadie esperando en pantalla, pero tampoco puede
+        // colgarse indefinidamente si ARCA no contesta.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(15));
+
+        HttpResponseMessage response;
+        string responseXml;
+        try
+        {
+            response = await _httpClient.SendAsync(httpRequest, timeoutCts.Token);
+            responseXml = await response.Content.ReadAsStringAsync(ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("FEParamGetCotizacion: timeout consultando ARCA para {MonId}/{FchCotiz}.", monId, fchCotizText);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "FEParamGetCotizacion: fallo de red consultando ARCA para {MonId}/{FchCotiz}.", monId, fchCotizText);
+            return null;
+        }
+
+        return ParseCotizacionResponse(responseXml, monId, fchCotizText, _logger);
+    }
+
+    /// <summary>
+    /// Parsea la respuesta cruda de <c>FEParamGetCotizacion</c> y aplica los guards de §7.5 ANTES
+    /// de devolver un valor: <c>Errors</c> no vacio, <c>MonCotiz</c> parseable, y coherente (no
+    /// <c>&lt;= 0</c> ni <c>== 1</c>). <c>internal static</c> (mismo patron que
+    /// <see cref="ParseVoucherDetailExtras"/>) para poder blindar con un test unitario el parseo
+    /// EXACTO que corre en produccion, sin necesidad de un <c>HttpClient</c> real — el caso mas
+    /// delicado es <c>InvariantCulture</c>: con la cultura del servidor, <c>"1234.56"</c> podria
+    /// leerse como <c>123456</c> (error de escala de 100x en un dato que termina en un comprobante
+    /// fiscal).
+    /// </summary>
+    internal static ArcaExchangeRate? ParseCotizacionResponse(
+        string responseXml, string requestedMonId, string requestedFchCotizText, ILogger logger)
+    {
+        const string ns = "http://ar.gov.afip.dif.FEV1/";
+
+        XDocument doc;
+        try
+        {
+            doc = XDocument.Parse(responseXml);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "FEParamGetCotizacion: respuesta de ARCA no es XML valido para {MonId}/{FchCotiz}.", requestedMonId, requestedFchCotizText);
+            return null;
+        }
+
+        var result = doc.Descendants(XName.Get("FEParamGetCotizacionResult", ns)).FirstOrDefault();
+        if (result == null)
+        {
+            logger.LogWarning("FEParamGetCotizacion: respuesta sin FEParamGetCotizacionResult para {MonId}/{FchCotiz}.", requestedMonId, requestedFchCotizText);
+            return null;
+        }
+
+        // Errors no vacio: ARCA rechazo la consulta (moneda invalida, fecha invalida, etc). Nunca
+        // se propaga como excepcion — el job loguea y sigue con la siguiente fecha/moneda.
+        var errors = result.Element(XName.Get("Errors", ns))?.Elements(XName.Get("Err", ns)).ToList();
+        if (errors is { Count: > 0 })
+        {
+            var firstError = errors[0];
+            var code = firstError.Element(XName.Get("Code", ns))?.Value;
+            var msg = firstError.Element(XName.Get("Msg", ns))?.Value;
+            logger.LogWarning(
+                "FEParamGetCotizacion devolvio error para {MonId}/{FchCotiz}: Code={Code} Msg={Msg}",
+                requestedMonId, requestedFchCotizText, code, msg);
+            return null;
+        }
+
+        var resultGet = result.Element(XName.Get("ResultGet", ns));
+        var monCotizText = resultGet?.Element(XName.Get("MonCotiz", ns))?.Value;
+        if (string.IsNullOrWhiteSpace(monCotizText))
+        {
+            logger.LogWarning("FEParamGetCotizacion: respuesta sin MonCotiz para {MonId}/{FchCotiz}.", requestedMonId, requestedFchCotizText);
+            return null;
+        }
+
+        // El MonCotiz de ARCA viaja como s:double en el XML: parsear SIEMPRE con InvariantCulture.
+        if (!decimal.TryParse(monCotizText, NumberStyles.Any, CultureInfo.InvariantCulture, out var rate))
+        {
+            logger.LogWarning(
+                "FEParamGetCotizacion: MonCotiz '{MonCotizText}' no se pudo parsear para {MonId}/{FchCotiz}.",
+                monCotizText, requestedMonId, requestedFchCotizText);
+            return null;
+        }
+
+        // Mismo criterio que los guards de InvoiceService (V3) y de la NC: un dolar no vale 0 ni 1
+        // peso. Si ARCA devolviera un valor asi (dato corrupto de su lado, o un mock de homologacion
+        // que no cotiza de verdad), NO lo persistimos — mejor sin sugerencia que una sugerencia mala.
+        if (rate <= 0m || rate == 1m)
+        {
+            logger.LogWarning(
+                "FEParamGetCotizacion: cotizacion incoherente ({Rate}) para {MonId}/{FchCotiz}. No se persiste.",
+                rate, requestedMonId, requestedFchCotizText);
+            return null;
+        }
+
+        var returnedMonId = resultGet?.Element(XName.Get("MonId", ns))?.Value;
+        var monIdFinal = string.IsNullOrWhiteSpace(returnedMonId) ? requestedMonId : returnedMonId;
+
+        var returnedFchCotizText = resultGet?.Element(XName.Get("FchCotiz", ns))?.Value;
+        var fchCotizFinal = DateTime.TryParseExact(
+                returnedFchCotizText, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedFch)
+            ? DateOnly.FromDateTime(parsedFch)
+            : DateOnly.ParseExact(requestedFchCotizText, "yyyyMMdd", CultureInfo.InvariantCulture);
+
+        return new ArcaExchangeRate(monIdFinal, rate, fchCotizFinal);
     }
 
     // ========================================================================================

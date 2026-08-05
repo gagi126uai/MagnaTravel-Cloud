@@ -553,6 +553,11 @@ builder.Services.AddScoped<IBankAccountService, BankAccountService>();
 builder.Services.AddScoped<IPassengerSearchService, PassengerSearchService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IBnaExchangeRateService, BnaExchangeRateService>();
+// ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): resolver de sugerencia de TC (solo LEE la
+// libreta ExchangeRateQuotes, nunca le pega a ARCA) + el job diario que la llena (unico que le pega
+// a ARCA). Sin flag (T-11): sale directo.
+builder.Services.AddScoped<IExchangeRateResolver, ExchangeRateResolver>();
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.ExchangeRateSyncJob>();
 builder.Services.AddScoped<IServicioReservaService, ServicioReservaService>();
 builder.Services.AddScoped<ICommissionService, CommissionService>();
 builder.Services.AddScoped<IAlertService, AlertService>();
@@ -937,6 +942,15 @@ if (hangfireSchedulerEnabled)
         "coherence-watchdog",
         job => job.RunScheduledAsync(CancellationToken.None),
         Cron.Daily(6));
+
+    // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): 15:00 UTC ≈ 12:00 ART, DELIBERADAMENTE
+    // no junto al housekeeping de la madrugada. A las 6am UTC (3am ART) la cotizacion del dia
+    // todavia no esta publicada en ARCA; el job siempre traeria el dia anterior. Backfill de 7 dias
+    // + reconciliacion viven DENTRO del job (ver ExchangeRateSyncJob), no en la cron.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.ExchangeRateSyncJob>(
+        "exchange-rate-sync",
+        job => job.RunAsync(CancellationToken.None),
+        "0 15 * * *");
 }
 
 // 3. Health Check

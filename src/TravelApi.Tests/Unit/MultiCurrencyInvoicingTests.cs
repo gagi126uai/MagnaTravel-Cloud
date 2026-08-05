@@ -42,6 +42,12 @@ public class MultiCurrencyInvoicingTests
     private readonly Mock<IBackgroundJobClient> _jobClientMock = new();
     private readonly Mock<IAfipService> _afipMock = new();
     private readonly Mock<IInvoicePdfService> _pdfMock = new();
+    // ADR-011 (enmienda 2026-08-05): resolver mockeado. Por defecto devuelve null (simula la
+    // libreta ExchangeRateQuotes vacia, el estado real el dia 1 del Deploy 1 antes de que el job
+    // corra) — asi cualquier request en USD que no matchee EXACTO cae a Manual, que es el
+    // comportamiento correcto §8.2. Los tests que necesitan una sugerencia que SI matchea la
+    // reconfiguran puntualmente.
+    private readonly Mock<IExchangeRateResolver> _exchangeRateResolverMock = new();
 
     public MultiCurrencyInvoicingTests()
     {
@@ -51,6 +57,10 @@ public class MultiCurrencyInvoicingTests
             .Options;
 
         _mapper = new MapperConfiguration(c => c.AddProfile<MappingProfile>()).CreateMapper();
+
+        _exchangeRateResolverMock
+            .Setup(r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExchangeRateSuggestion?)null);
     }
 
     // ============================================================
@@ -75,7 +85,11 @@ public class MultiCurrencyInvoicingTests
     private InvoiceService BuildInvoiceService(
         AppDbContext context,
         bool enableMultiCurrency,
-        out List<CreateInvoiceRequest> capturedRequests)
+        out List<CreateInvoiceRequest> capturedRequests,
+        // ADR-011: por defecto SI se cablea el resolver mockeado (comportamiento real de
+        // produccion, donde Program.cs siempre lo registra). Pasar null explicito reproduce el
+        // camino legacy sin resolver (solo deberia usarse para blindar ese fallback puntual).
+        bool wireExchangeRateResolver = true)
     {
         var settingsServiceMock = new Mock<IOperationalFinanceSettingsService>();
         settingsServiceMock
@@ -107,7 +121,11 @@ public class MultiCurrencyInvoicingTests
             settingsServiceMock.Object,
             BuildUserManager(),
             permissionResolver: null,
-            httpContextAccessor: null);
+            httpContextAccessor: null,
+            approvalService: null,
+            approvalPolicyService: null,
+            serviceProvider: null,
+            exchangeRateResolver: wireExchangeRateResolver ? _exchangeRateResolverMock.Object : null);
     }
 
     // PublicId fijo de la reserva: el service resuelve ReservaId del request como PublicId
@@ -170,24 +188,28 @@ public class MultiCurrencyInvoicingTests
     }
 
     // ============================================================
-    // (b) Flag ON + USD con TC valido + fuente + fecha + justificacion -> pasa y forwardea.
-    //     (El poblado real de columnas se verifica en el test de AfipService de abajo.)
+    // (b) Flag ON + USD sin sugerencia disponible (libreta vacia) + justificacion -> pasa como
+    //     Manual y forwardea. ADR-011 cambia el comportamiento: antes de esta obra el request
+    //     mandaba la fuente y el service la dejaba pasar tal cual; ahora el SERVIDOR decide (§8.2)
+    //     e IGNORA lo que mando el request (test 19 de la spec) — sin sugerencia que matchee,
+    //     siempre es Manual. (El poblado real de columnas se verifica en el test de AfipService de
+    //     abajo, y el camino "matchea la sugerencia" en los tests ADR-011 mas abajo.)
     // ============================================================
 
     [Fact]
-    public async Task FlagOn_WithValidForeignCurrency_PassesAndForwardsTraceFields()
+    public async Task FlagOn_SinSugerenciaDisponible_PasaComoManual_IgnorandoLaFuenteDelRequest()
     {
         using var context = new AppDbContext(_dbOptions);
         await SeedSettledReservaAsync(context);
 
         var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
 
-        var fetchedAt = DateTime.UtcNow;
         var request = BuildBaseRequest();
         request.MonId = "DOL";
         request.MonCotiz = 1234.56m;
+        // El front (viejo o nuevo, da igual) manda una fuente inventada: el servidor la ignora.
         request.ExchangeRateSource = ExchangeRateSource.BNA_VendedorDivisa;
-        request.ExchangeRateFetchedAt = fetchedAt;
+        request.ExchangeRateFetchedAt = DateTime.UtcNow;
         request.ExchangeRateJustification = "TC vendedor divisa BNA dia habil anterior (RG 5616).";
 
         await service.CreateAsync(request, userId: "u1", userName: "User 1", CancellationToken.None);
@@ -195,8 +217,9 @@ public class MultiCurrencyInvoicingTests
         Assert.Single(captured);
         Assert.Equal("DOL", captured[0].MonId);
         Assert.Equal(1234.56m, captured[0].MonCotiz);
-        Assert.Equal(ExchangeRateSource.BNA_VendedorDivisa, captured[0].ExchangeRateSource);
-        Assert.Equal(fetchedAt, captured[0].ExchangeRateFetchedAt);
+        Assert.Equal(ExchangeRateSource.Manual, captured[0].ExchangeRateSource);
+        Assert.Null(captured[0].ExchangeRateQuoteId);
+        Assert.NotNull(captured[0].ExchangeRateFetchedAt);
         Assert.False(string.IsNullOrWhiteSpace(captured[0].ExchangeRateJustification));
     }
 
@@ -335,10 +358,16 @@ public class MultiCurrencyInvoicingTests
     [Fact]
     public async Task FlagOn_WithoutSource_Throws()
     {
+        // ADR-011: con el resolver CABLEADO (comportamiento real de produccion), una factura de
+        // venta genuina SIEMPRE termina con Source resuelto por el servidor (AfipOficial o Manual) —
+        // el concepto de "el request no trajo fuente" deja de poder ocurrir para ese camino. Este
+        // guard sigue vivo por el camino LEGACY sin resolver (que en produccion nunca pasa, T-11 sin
+        // flag) y por NC/ND con datos heredados incompletos; lo probamos aca con
+        // wireExchangeRateResolver:false para ejercitar exactamente ESE fallback.
         using var context = new AppDbContext(_dbOptions);
         await SeedSettledReservaAsync(context);
 
-        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured, wireExchangeRateResolver: false);
 
         var request = BuildBaseRequest();
         request.MonId = "DOL";
@@ -367,6 +396,276 @@ public class MultiCurrencyInvoicingTests
         await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
 
         Assert.Single(captured);
+    }
+
+    // ============================================================
+    // ADR-011 fix BLOQUEANTE F-4 (revision post-implementacion 2026-08-05): la procedencia del TC
+    // NUNCA se confia al request. Dos capas de defensa, un test por capa:
+    //   1) limpieza incondicional en InvoiceService.CreateAsync (venta genuina, CUALQUIER flag/moneda);
+    //   2) [JsonIgnore] en CreateInvoiceRequest (bloquea el binding HTTP incluso para NC/ND, que la
+    //      capa 1 deliberadamente NO limpia porque la NC/ND SI hereda QuoteId legitimamente — ver
+    //      el test Adr011_NotaDeCredito_HeredaElTcDelOriginal_YNuncaLlamaAlResolver mas abajo).
+    // ============================================================
+
+    /// <summary>
+    /// Capa 1: aunque el objeto YA traiga un Source/QuoteId "inventado" (simula que, por el motivo
+    /// que sea, algo los dejo poblados antes de llamar CreateAsync), con el flag OFF una factura de
+    /// venta genuina en USD queda SIN esa procedencia falsa — CreateAsync los limpia ANTES de que
+    /// ValidateMultiCurrencyInvoicingAsync (que con el flag OFF ni siquiera corre) llegue a mirarlos.
+    /// </summary>
+    [Fact]
+    public async Task Adr011_FlagOff_ConSourceYQuoteIdInventados_LaFacturaQuedaSinProcedenciaFalsa()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: false, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "DOL";
+        request.MonCotiz = 1m; // "malo" a proposito: con el flag OFF nada lo valida, pero tampoco importa.
+        // Simula un ExchangeRateQuoteId que NO corresponde a nada real de la libreta.
+        request.ExchangeRateSource = ExchangeRateSource.AfipOficial;
+        request.ExchangeRateQuoteId = 999999;
+        request.ExchangeRateFchCotiz = new DateOnly(2020, 01, 01);
+        request.ExchangeRateFetchedAt = DateTime.UtcNow;
+
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        Assert.Null(captured[0].ExchangeRateSource);
+        Assert.Null(captured[0].ExchangeRateQuoteId);
+        Assert.Null(captured[0].ExchangeRateFchCotiz);
+        Assert.Null(captured[0].ExchangeRateFetchedAt);
+    }
+
+    /// <summary>
+    /// Capa 2: para el camino de NC/ND (donde CreateAsync deliberadamente NO limpia QuoteId, porque
+    /// la NC/ND legitima lo hereda del original), la unica defensa contra un
+    /// <c>exchangeRateQuoteId</c> inventado por un cliente HTTP es <c>[JsonIgnore]</c> — verificamos
+    /// que System.Text.Json (el mismo serializador que usa ASP.NET Core para <c>[FromBody]</c>, con
+    /// las opciones "Web" default: camelCase + case-insensitive) IGNORA la propiedad al deserializar,
+    /// sea cual sea el valor que mande el JSON, y CUALQUIERA sea <c>isCreditNote</c>.
+    /// </summary>
+    [Fact]
+    public void Adr011_IsCreditNoteConQuoteIdInventadoEnElJson_SeIgnoraAlDeserializar()
+    {
+        const string jsonConQuoteIdInventado = """
+            {
+              "reservaId": "11111111-1111-1111-1111-111111111111",
+              "isCreditNote": true,
+              "isDebitNote": false,
+              "monId": "DOL",
+              "monCotiz": 1234.56,
+              "exchangeRateQuoteId": 999999,
+              "exchangeRateFchCotiz": "2020-01-01"
+            }
+            """;
+
+        var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        var deserialized = System.Text.Json.JsonSerializer.Deserialize<CreateInvoiceRequest>(jsonConQuoteIdInventado, options);
+
+        Assert.NotNull(deserialized);
+        Assert.True(deserialized!.IsCreditNote);
+        Assert.Equal("DOL", deserialized.MonId); // el resto del payload SI deserializa normal.
+        // [JsonIgnore]: el binder NUNCA pobla estas dos propiedades, sea cual sea el valor del JSON.
+        Assert.Null(deserialized.ExchangeRateQuoteId);
+        Assert.Null(deserialized.ExchangeRateFchCotiz);
+    }
+
+    // ============================================================
+    // ADR-011 §8.2 (enmienda 2026-08-05): el SERVIDOR resuelve Source/QuoteId/FchCotiz comparando
+    // el MonCotiz del request contra la sugerencia del resolver, por IGUALDAD EXACTA. Tests 16-21
+    // de la spec.
+    // ============================================================
+
+    private static readonly ExchangeRateSuggestion SampleSuggestion = new(
+        Rate: 1234.56m,
+        RateDate: new DateOnly(2026, 08, 05),
+        Source: ExchangeRateSource.AfipOficial,
+        ProviderName: "ARCA_WSFEv1",
+        ArcaFchCotiz: new DateOnly(2026, 08, 05),
+        IsStale: false,
+        QuoteId: 77,
+        FetchedAt: new DateTime(2026, 08, 05, 12, 0, 0, DateTimeKind.Utc));
+
+    /// <summary>Test 16: MonCotiz EXACTAMENTE igual a la sugerencia -> AfipOficial + QuoteId, SIN justificacion.</summary>
+    [Fact]
+    public async Task Adr011_MonCotizIgualALaSugerencia_QuedaAfipOficial_SinJustificacionRequerida()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        _exchangeRateResolverMock
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SampleSuggestion);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "DOL";
+        request.MonCotiz = SampleSuggestion.Rate; // exactamente igual, byte a byte.
+        request.ExchangeRateJustification = null; // el front NO manda justificacion cuando acepta la sugerencia.
+
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        Assert.Equal(ExchangeRateSource.AfipOficial, captured[0].ExchangeRateSource);
+        Assert.Equal(SampleSuggestion.QuoteId, captured[0].ExchangeRateQuoteId);
+        Assert.Equal(SampleSuggestion.ArcaFchCotiz, captured[0].ExchangeRateFchCotiz);
+        Assert.Equal(SampleSuggestion.FetchedAt, captured[0].ExchangeRateFetchedAt);
+    }
+
+    /// <summary>Test 17: MonCotiz distinto de la sugerencia (aunque sea por 0.000001) -> Manual + justificacion exigida.</summary>
+    [Fact]
+    public async Task Adr011_MonCotizDistintoDeLaSugerencia_QuedaManual_YExigeJustificacion()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        _exchangeRateResolverMock
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SampleSuggestion);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "DOL";
+        // Distinto por la mas minima fraccion: el usuario piso el numero sugerido.
+        request.MonCotiz = SampleSuggestion.Rate + 0.000001m;
+        request.ExchangeRateJustification = null;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateAsync(request, "u1", "User 1", CancellationToken.None));
+        Assert.Contains("justificacion", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(captured);
+
+        // Con la justificacion puesta, ahora si pasa y queda Manual (no AfipOficial, aunque el
+        // numero este a un centesimo de milesimo de distancia).
+        request.ExchangeRateJustification = "El cliente pidio un TC distinto al sugerido.";
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        Assert.Equal(ExchangeRateSource.Manual, captured[0].ExchangeRateSource);
+        Assert.Null(captured[0].ExchangeRateQuoteId);
+    }
+
+    /// <summary>Test 18: sin sugerencia disponible -> Manual + justificacion exigida.</summary>
+    [Fact]
+    public async Task Adr011_SinSugerenciaDisponible_QuedaManual_YExigeJustificacion()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+        // El mock del ctor ya devuelve null por defecto (libreta vacia).
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "DOL";
+        request.MonCotiz = 1234.56m;
+        request.ExchangeRateJustification = null;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateAsync(request, "u1", "User 1", CancellationToken.None));
+        Assert.Empty(captured);
+    }
+
+    /// <summary>Test 19: el request manda un ExchangeRateSource inventado -> el servidor lo ignora y pone el suyo.</summary>
+    [Fact]
+    public async Task Adr011_ElServidorIgnoraLaFuenteInventadaDelRequest()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        _exchangeRateResolverMock
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SampleSuggestion);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.MonId = "DOL";
+        request.MonCotiz = SampleSuggestion.Rate;
+        // Front "viejo" (pre-Deploy2) que sigue mandando una fuente inventada sin haber consultado nada.
+        request.ExchangeRateSource = ExchangeRateSource.BNA_VendedorDivisa;
+        var fechaInventadaPorElFrontViejo = DateTime.UtcNow.AddDays(-30);
+        request.ExchangeRateFetchedAt = fechaInventadaPorElFrontViejo;
+
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        // El servidor puso AfipOficial (lo que devolvio el resolver), NO lo que mando el request.
+        // OJO: captured[0] es el MISMO objeto que request (se pasa por referencia), asi que hay que
+        // comparar contra el valor original guardado ANTES de la llamada, no contra request.* despues.
+        Assert.Equal(ExchangeRateSource.AfipOficial, captured[0].ExchangeRateSource);
+        Assert.NotEqual(fechaInventadaPorElFrontViejo, captured[0].ExchangeRateFetchedAt);
+        Assert.Equal(SampleSuggestion.FetchedAt, captured[0].ExchangeRateFetchedAt);
+    }
+
+    /// <summary>Test 20: no-regresion en pesos — payload y MonCotiz byte-identicos a antes de esta obra.</summary>
+    [Fact]
+    public async Task Adr011_NoRegresionEnPesos_MonCotizQuedaByteIdenticoAlDefault()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest(); // MonId="PES" (default), MonCotiz=1m (default).
+
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        Assert.Equal("PES", captured[0].MonId);
+        Assert.Equal(1m, captured[0].MonCotiz);
+        Assert.Null(captured[0].ExchangeRateSource);
+        Assert.Null(captured[0].ExchangeRateQuoteId);
+        // El resolver NUNCA se llama para pesos (corta antes, ni siquiera pregunta).
+        _exchangeRateResolverMock.Verify(
+            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// Test 21: la NC sigue copiando MonCotiz del original y heredando Source/QuoteId; NO llama al
+    /// resolver (§6.2, "nunca se recotiza"). Igual que la NC/ND real (BookingCancellationService),
+    /// el request ya llega con los campos heredados COMPLETOS antes de pasar por CreateAsync.
+    /// </summary>
+    [Fact]
+    public async Task Adr011_NotaDeCredito_HeredaElTcDelOriginal_YNuncaLlamaAlResolver()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedSettledReservaAsync(context);
+
+        var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
+
+        var request = BuildBaseRequest();
+        request.IsCreditNote = true;
+        // La NC necesita un OriginalInvoiceId para el pipeline real; CreatePendingInvoice esta
+        // mockeado en este test asi que no hace falta que resuelva a una factura real en BD.
+        request.OriginalInvoiceId = Guid.NewGuid().ToString();
+        request.MonId = "DOL";
+        request.MonCotiz = 1300m; // el TC CONGELADO del original, no una sugerencia de hoy.
+        request.ExchangeRateSource = ExchangeRateSource.BNA_VendedorDivisa; // heredado del original.
+        request.ExchangeRateFetchedAt = new DateTime(2026, 07, 01, 12, 0, 0, DateTimeKind.Utc);
+        request.ExchangeRateJustification = "Heredado de la factura original.";
+        // ADR-011 §6.2 (fix detalle #4, revision post-implementacion 2026-08-05): la NC ahora
+        // hereda TAMBIEN el puntero de procedencia (antes solo Source/FetchedAt/Justification).
+        request.ExchangeRateQuoteId = 55;
+        request.ExchangeRateFchCotiz = new DateOnly(2026, 07, 01);
+
+        await service.CreateAsync(request, "u1", "User 1", CancellationToken.None);
+
+        Assert.Single(captured);
+        Assert.Equal(1300m, captured[0].MonCotiz);
+        Assert.Equal(ExchangeRateSource.BNA_VendedorDivisa, captured[0].ExchangeRateSource);
+        // QuoteId/FchCotiz sobreviven intactos: CreateAsync NO los limpia para IsCreditNote=true
+        // (la limpieza incondicional del fix BLOQUEANTE F-4 es SOLO para venta genuina).
+        Assert.Equal(55, captured[0].ExchangeRateQuoteId);
+        Assert.Equal(new DateOnly(2026, 07, 01), captured[0].ExchangeRateFchCotiz);
+        _exchangeRateResolverMock.Verify(
+            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ============================================================

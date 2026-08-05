@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Application.DTOs;
@@ -76,6 +77,39 @@ public class CreateInvoiceRequest
     /// vacio) con el flag multimoneda ON + moneda extranjera.
     /// </summary>
     public string? ExchangeRateJustification { get; set; }
+
+    /// <summary>
+    /// ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): puntero de PROCEDENCIA hacia la
+    /// libreta de cotizaciones. NO es un campo que el front deba mandar — es un canal INTERNO
+    /// server-a-server: <c>InvoiceService.ValidateMultiCurrencyInvoicingAsync</c> lo completa
+    /// (mutando el request en memoria, mismo patron que ya usa para normalizar <c>MonId</c>) recien
+    /// despues de comparar el TC contra la sugerencia del resolver, y <c>AfipService.CreatePendingInvoice</c>
+    /// lo copia a <c>Invoice.ExchangeRateQuoteId</c>.
+    ///
+    /// <para><b>[JsonIgnore] (fix BLOQUEANTE F-4, revision post-implementacion 2026-08-05)</b>: sin
+    /// esto, un cliente HTTP podia mandar <c>"exchangeRateQuoteId": 999</c> en el body de
+    /// <c>POST /api/invoices</c> y ese numero llegaba bindeado tal cual — si <c>999</c> era el Id de
+    /// una fila REAL de la libreta, el comprobante quedaba con una procedencia fiscal FALSA (regla
+    /// F-4/F-6: la procedencia la calcula el servidor, nunca el request); si no existia, el INSERT
+    /// de la Invoice rebotaba con un 500 crudo por violacion de FK en vez de un error claro. Con
+    /// <c>[JsonIgnore]</c>, System.Text.Json ni siquiera INTENTA poblar esta propiedad al
+    /// deserializar el body — despues de <c>[FromBody]</c> SIEMPRE vale <c>null</c>,
+    /// independientemente de lo que mande el cliente. El gate server-side
+    /// (<c>InvoiceService.CreateAsync</c>/<c>ValidateMultiCurrencyInvoicingAsync</c>) lo sigue
+    /// pudiendo setear DESPUES de la deserializacion, mutando el mismo objeto en memoria — eso NO
+    /// se ve afectado por el atributo (solo aplica al (de)serializador JSON).</para>
+    /// </summary>
+    [JsonIgnore]
+    public int? ExchangeRateQuoteId { get; set; }
+
+    /// <summary>
+    /// ADR-011: el <c>FchCotiz</c> que ARCA devolvio para la cotizacion usada. Mismo canal interno
+    /// que <see cref="ExchangeRateQuoteId"/> — lo llena el servidor, nunca el request entrante.
+    /// <c>[JsonIgnore]</c> por el mismo motivo (fix BLOQUEANTE F-4): bloquea el binding desde HTTP,
+    /// no el seteo server-side posterior a la deserializacion.
+    /// </summary>
+    [JsonIgnore]
+    public DateOnly? ExchangeRateFchCotiz { get; set; }
 
     /// <summary>
     /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): desglose de totales YA REDONDEADO que el

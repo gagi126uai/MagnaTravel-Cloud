@@ -60,4 +60,25 @@ public interface IAfipService
         int cbteTipo,
         int? lastSeenNumeroBeforePost,
         CancellationToken ct);
+
+    // ---- ADR-011 (enmienda 2026-08-05, "tipo de cambio real") ----
+
+    /// <summary>
+    /// Consulta a ARCA (<c>FEParamGetCotizacion</c>) la cotizacion OFICIAL de una moneda para una
+    /// fecha dada. SOLO LECTURA, no emite nada. La llama UNICAMENTE <c>ExchangeRateSyncJob</c> (el
+    /// job diario) — ningun camino interactivo de la app le pega a ARCA para esto, para no arriesgar
+    /// el ticket WSAA que necesita la facturacion (ver <c>docs/architecture</c> ADR-011).
+    /// </summary>
+    /// <param name="monId">Codigo de moneda de ARCA ("DOL" para dolar). NO es ISO 4217.</param>
+    /// <param name="fchCotiz">Fecha para la que se pide la cotizacion.</param>
+    /// <returns>El dato si ARCA respondio bien; <c>null</c> ante cualquier fallo, timeout, o
+    /// respuesta con errores — nunca propaga una excepcion al job.</returns>
+    Task<ArcaExchangeRate?> GetOfficialExchangeRateAsync(
+        string monId, DateOnly fchCotiz, CancellationToken ct);
 }
+
+/// <summary>
+/// Cotizacion oficial devuelta por ARCA para una moneda y fecha. <see cref="FchCotiz"/> es la
+/// fecha que ARCA REALMENTE contesto (puede diferir de la pedida un fin de semana/feriado).
+/// </summary>
+public record ArcaExchangeRate(string MonId, decimal MonCotiz, DateOnly FchCotiz);
