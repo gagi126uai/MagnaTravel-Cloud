@@ -343,6 +343,55 @@ public class AlertServiceOperationalDeadlinesTests
         Assert.False(HasKey(payload, "PassportExpiries"));
     }
 
+    [Fact]
+    public async Task Passport_ReservaTodoNacionalConAmbitoDefinido_NoAlerta_FixB1()
+    {
+        // Fix B1 del review de backend (2026-08-05, F-1 "dos superficies, dos verdades"): esta campanita
+        // tenia su PROPIA regla de pasaporte, sin el gate por ambito que ya frena el chip de la solapa
+        // Pasajeros (PassportAlertScopeGate). Una reserva 100% Nacional (cabotaje/Mercosur: se viaja con
+        // DNI) tiene que dejar de generar este bucket, igual que la solapa deja de mostrar el chip.
+        await using var context = new AppDbContext(NewDbOptions());
+        context.Reservas.Add(BuildReserva(1));
+        var tripStart = Today.AddDays(30);
+        context.Servicios.Add(new ServicioReserva
+        {
+            ReservaId = 1,
+            DepartureDate = tripStart,
+            Status = "Solicitado",
+            GeographicScope = ServiceGeographicScope.Domestic,
+        });
+        context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Juan Viajero", PassportExpiry = tripStart.AddMonths(3) });
+        await context.SaveChangesAsync();
+
+        var payload = await BuildService(context).GetAlertsAsync(Admin, CancellationToken.None);
+
+        Assert.False(HasKey(payload, "PassportExpiries"));
+    }
+
+    [Fact]
+    public async Task Passport_ReservaConTramoInternacional_SigueAlertando_FixB1()
+    {
+        // Contraparte del test anterior: con un tramo Internacional el gate sigue abierto, la campanita
+        // tiene que seguir avisando exactamente igual que antes del fix B1.
+        await using var context = new AppDbContext(NewDbOptions());
+        context.Reservas.Add(BuildReserva(1));
+        var tripStart = Today.AddDays(30);
+        context.Servicios.Add(new ServicioReserva
+        {
+            ReservaId = 1,
+            DepartureDate = tripStart,
+            Status = "Solicitado",
+            GeographicScope = ServiceGeographicScope.International,
+        });
+        context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Juan Viajero", PassportExpiry = tripStart.AddMonths(3) });
+        await context.SaveChangesAsync();
+
+        var payload = await BuildService(context).GetAlertsAsync(Admin, CancellationToken.None);
+
+        var item = Assert.Single(Bucket(payload, "PassportExpiries"));
+        Assert.Equal("Juan Viajero", Prop<string>(item, "PassengerName"));
+    }
+
     // ===================== ownership + fail-closed (compartido por las 3 alarmas) =====================
 
     [Fact]

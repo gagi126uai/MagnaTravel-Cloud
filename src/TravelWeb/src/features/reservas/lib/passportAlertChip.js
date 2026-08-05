@@ -42,7 +42,11 @@ export function construirChipPasaporte(pasajero, reserva) {
             key: "pasaporte-vence-justo",
             label: "Pasaporte vence justo",
             className: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800",
-            title: pasajero?.passportAlertText || "Al pasaporte le quedan menos de 6 meses después del viaje.",
+            // Texto de respaldo reformulado 2026-08-05 (PARTE 2, firmado): ya no afirma "6 meses" como LA
+            // regla de todos los destinos (varía: Schengen 3 meses, EEUU sin margen extra).
+            // COPIA LITERAL de PassportExpiryRules.TightMarginAfterTripWarning — si el motor cambia, esto
+            // cambia con él (T-6); el test de este archivo fija el string completo.
+            title: pasajero?.passportAlertText || "El pasaporte vence cerca de la fecha del viaje. Verificá el requisito del destino: cada país pide una vigencia distinta.",
         };
     }
 

@@ -22,9 +22,17 @@ public static class PassportExpiryRules
     public const string ExpiredBeforeTripEndWarning =
         "El pasaporte de este pasajero se vence antes del fin del viaje.";
 
-    /// <summary>Texto del AMBAR: sirve para viajar, pero no le sobra margen despues.</summary>
+    /// <summary>
+    /// Texto del AMBAR: sirve para viajar, pero no le sobra margen despues. Reformulado (decision firmada
+    /// del dueño, 2026-08-05, PARTE 2): la version vieja afirmaba "6 meses" como SI fuera LA regla de
+    /// todos los destinos, y eso es un aviso de menos o de mas segun a donde se viaje (EEUU no exige ese
+    /// margen; el espacio Schengen pide 3 meses y pasaporte emitido hace menos de 10 años). El disparador
+    /// del AMBAR sigue usando 6 meses como umbral interno (es el margen mas exigente y comun, asi que
+    /// avisa "temprano" y nunca se queda corto), pero el TEXTO ya no lo presenta como un hecho fijo:
+    /// manda a revisar el requisito puntual del destino.
+    /// </summary>
     public const string TightMarginAfterTripWarning =
-        "Al pasaporte le quedan menos de 6 meses después del viaje; muchos destinos exigen ese margen.";
+        "El pasaporte vence cerca de la fecha del viaje. Verificá el requisito del destino: cada país pide una vigencia distinta.";
 
     /// <summary>
     /// D2 (decision firmada del dueño, 2026-07-31 tarde): amplia el aviso de pasaporte para que mire las

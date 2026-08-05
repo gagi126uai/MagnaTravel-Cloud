@@ -433,9 +433,10 @@ public class FieldValidatorsTests
 
         Assert.NotNull(alerta);
         Assert.Equal(PassportAlertLevel.Tight, alerta!.Level);
-        // T-6: literal EXACTO, no la constante.
+        // T-6: literal EXACTO, no la constante. Texto reformulado 2026-08-05 (PARTE 2): ya no afirma
+        // "6 meses" como LA regla de todos los destinos (Schengen pide 3, EEUU no exige margen).
         Assert.Equal(
-            "Al pasaporte le quedan menos de 6 meses después del viaje; muchos destinos exigen ese margen.",
+            "El pasaporte vence cerca de la fecha del viaje. Verificá el requisito del destino: cada país pide una vigencia distinta.",
             alerta.Text);
     }
 

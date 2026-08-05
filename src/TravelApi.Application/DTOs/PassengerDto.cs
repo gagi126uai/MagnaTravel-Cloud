@@ -58,4 +58,18 @@ public class PassengerDto
 
     /// <summary>Texto exacto del aviso de <see cref="DniAlertLevel"/> (mismo texto para toda la pantalla, T-6).</summary>
     public string? DniAlertText { get; set; }
+
+    /// <summary>
+    /// Chip "revisar autorización de salida del país" (decisión firmada del dueño, 2026-08-05, PARTE 3):
+    /// mismo patrón que <see cref="DniAlertLevel"/>, pero para un pasajero MENOR DE EDAD en un tramo
+    /// Internacional. Ver <see cref="TravelApi.Domain.Helpers.MinorTravelAuthorizationRules"/>.
+    ///
+    /// <para>Sin llave de configuración (P-20: es un aviso, no un candado, igual que el de pasaporte).
+    /// Único valor posible: <c>"Notice"</c>. Null cuando falta la fecha de nacimiento, cuando la reserva
+    /// no tiene ningún tramo Internacional, o cuando el pasajero ya es mayor de edad al fin del viaje.</para>
+    /// </summary>
+    public string? MinorAlertLevel { get; set; }
+
+    /// <summary>Texto exacto del aviso de <see cref="MinorAlertLevel"/> (mismo texto para toda la pantalla, T-6).</summary>
+    public string? MinorAlertText { get; set; }
 }

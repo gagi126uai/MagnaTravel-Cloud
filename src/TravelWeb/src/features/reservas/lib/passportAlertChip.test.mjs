@@ -52,3 +52,17 @@ test("sin passportAlertText: usa un texto de respaldo, nunca deja el tooltip vac
     const chip = construirChipPasaporte({ passportAlertLevel: "Expired" }, {});
     assert.ok(chip.title.length > 0);
 });
+
+// Fija el respaldo ámbar como COPIA LITERAL del motor (PassportExpiryRules.TightMarginAfterTripWarning).
+// El 2026-08-05 el respaldo quedó truncado respecto del motor y la suite no lo agarró porque ningún
+// test comparaba el string completo — este test cierra esa puerta (T-6).
+test("Tight sin passportAlertText: el respaldo es la copia literal completa del texto del motor", () => {
+    const chip = construirChipPasaporte(
+        { passportAlertLevel: "Tight" },
+        { startDate: "2026-08-01", endDate: "2026-08-10" }
+    );
+    assert.equal(
+        chip.title,
+        "El pasaporte vence cerca de la fecha del viaje. Verificá el requisito del destino: cada país pide una vigencia distinta."
+    );
+});

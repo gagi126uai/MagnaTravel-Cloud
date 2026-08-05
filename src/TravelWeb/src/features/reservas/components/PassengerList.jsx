@@ -42,6 +42,7 @@ import { PasajeroInlineForm } from "./PasajeroInlineForm";
 import { tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { construirChipPasaporte } from "../lib/passportAlertChip";
 import { construirChipDni } from "../lib/dniAlertChip";
+import { construirChipMenor } from "../lib/minorAlertChip";
 
 /**
  * Franja de sugerencia de cantidad de pasajeros (Pieza C — ADR-031 v2.1).
@@ -289,6 +290,11 @@ export function PassengerList({
                         // pasaporte de arriba. Va DESPUÉS en la fila (P1 firmado: pasaporte primero,
                         // DNI después) porque cada chip avisa de un documento distinto.
                         const chipDni = tieneNombre ? construirChipDni(slot.pasajero, reserva) : null;
+                        // Chip "menor en tramo internacional" (decisión UX 2026-08-05 derivada de
+                        // patrones firmados: P11=A ámbar + spec DNI 2026-08-03; label a validar): tercer
+                        // chip de la fila, va DESPUÉS de pasaporte y DNI porque avisa de otra cosa
+                        // (autorización de salida del país, no un documento vencido).
+                        const chipMenor = tieneNombre ? construirChipMenor(slot.pasajero) : null;
 
                         return (
                             <div key={index}>
@@ -350,6 +356,18 @@ export function PassengerList({
                                                     title={chipDni.title}
                                                 >
                                                     {chipDni.label}
+                                                </span>
+                                            )}
+                                            {/* Chip "menor en tramo internacional" (tercer chip, decisión
+                                                UX 2026-08-05 derivada de patrones firmados): va después de
+                                                pasaporte y DNI, sin reordenar nada. */}
+                                            {chipMenor && (
+                                                <span
+                                                    data-testid={`chip-menor-autorizacion-${index}`}
+                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipMenor.className}`}
+                                                    title={chipMenor.title}
+                                                >
+                                                    {chipMenor.label}
                                                 </span>
                                             )}
                                         </div>

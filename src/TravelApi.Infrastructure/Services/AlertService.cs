@@ -627,6 +627,12 @@ public class AlertService : IAlertService
     ///
     /// <para>PII: solo expone el nombre del pasajero (ya viaja en otros buckets como holderName), NO el
     /// numero de documento ni la nacionalidad. Mismo gating de visibilidad que las otras alarmas.</para>
+    ///
+    /// <para><b>Gate por ambito (fix B1 del review de backend, 2026-08-05, F-1)</b>: antes de armar el
+    /// aviso se aplica <see cref="PassportAlertScopeGate"/> — la MISMA regla que ya frena el chip de
+    /// pasaporte de la solapa Pasajeros. Sin esto, una reserva 100% Nacional (cabotaje/Mercosur, donde se
+    /// viaja con DNI) dejaba la solapa muda pero la campanita seguia gritando igual: dos superficies, dos
+    /// verdades distintas para la MISMA pregunta.</para>
     /// </summary>
     private async Task<List<object>> ComputePassportExpiriesAsync(AlertCallerContext caller, CancellationToken ct)
     {
@@ -659,11 +665,27 @@ public class AlertService : IAlertService
         var tripStartByReserva = await UpcomingStartCalculator.ComputeFirstStartsAsync(
             _context, reservaIds, maxStartDateInclusive: null, ct);
 
+        // Fix B1 del review de backend (2026-08-05, F-1: dos superficies, dos verdades): esta campanita
+        // tenia su PROPIA regla de pasaporte, sin el gate de ambito que ya frena el chip de la solapa
+        // Pasajeros (PassportAlertScopeGate) — asi que una reserva 100% Nacional dejaba la solapa muda
+        // pero la campanita seguia avisando igual. Se resuelve en LOTE (una consulta para todas las
+        // reservas candidatas), no reserva por reserva, para no meter un N+1 en esta alarma.
+        var liveScopeByReserva = await ServiceGeographicScopeQueries.ResolveLiveScopeForReservasAsync(
+            _context, reservaIds, ct);
+
         var alerts = new List<object>();
         foreach (var candidate in candidates)
         {
             if (!tripStartByReserva.TryGetValue(candidate.ReservaId, out var tripStart))
                 continue; // sin viaje (todos los servicios cancelados o sin servicios): no avisa
+
+            var liveScope = liveScopeByReserva.TryGetValue(candidate.ReservaId, out var scope)
+                ? scope
+                : LiveServiceGeographicScope.Empty;
+            var scopeAllowsPassportAlert = PassportAlertScopeGate.IsOpen(
+                liveScope.HasAnyService, liveScope.HasInternationalService, liveScope.HasUndefinedScopeService);
+            if (!scopeAllowsPassportAlert)
+                continue; // reserva 100% Nacional con ambito definido: en cabotaje/Mercosur se viaja con DNI
 
             // Regla de vigencia: avisar si el pasaporte vence ANTES de [inicio del viaje + 6 meses].
             var validityRequiredUntil = tripStart.AddMonths(PassportValidityMonthsAfterTrip);

@@ -4534,18 +4534,21 @@ public class ReservaService : IReservaService
             .ProjectTo<PassengerDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
 
-        // Semaforo de DNI vencido para cabotaje (2026-08-03): se resuelve UNA vez para toda la reserva
-        // (llave de agencia + si hay algun servicio Nacional), no por cada pasajero del listado.
-        var (dniAlertEnabled, hasDomesticService) = await ResolveDniAlertContextAsync(reservaId, CancellationToken.None);
+        // Ambito geografico de los servicios de la reserva (2026-08-05): se resuelve UNA vez para toda
+        // la reserva (no por pasajero) porque lo usan las TRES reglas de esta pantalla — el gate de
+        // pasaporte, el semaforo de DNI y el chip de menores.
+        var scopeContext = await ResolveServiceGeographicScopeContextAsync(reservaId, CancellationToken.None);
+        var dniAlertEnabled = await ResolveDniAlertEnabledAsync(CancellationToken.None);
 
         foreach (var dto in dtos)
         {
             // dto.PassportExpiry ya viene de la proyeccion real de EF (ProjectTo arriba), a diferencia de
             // BuildPassengerResult donde el dto puede salir de un mapper simplificado en tests.
-            ApplyPassportAlert(dto, dto.PassportExpiry, tripDates?.StartDate, tripDates?.EndDate);
+            ApplyPassportAlert(dto, dto.PassportExpiry, tripDates?.StartDate, tripDates?.EndDate, scopeContext);
             ApplyDniAlert(
                 dto, dto.DocumentType, dto.DocumentExpiry, dto.PassportExpiry,
-                dniAlertEnabled, hasDomesticService, tripDates?.StartDate, tripDates?.EndDate);
+                dniAlertEnabled, scopeContext.HasDomesticService, tripDates?.StartDate, tripDates?.EndDate);
+            ApplyMinorAlert(dto, dto.BirthDate, scopeContext.HasInternationalService, tripDates?.StartDate, tripDates?.EndDate);
         }
 
         return dtos;
@@ -4561,44 +4564,91 @@ public class ReservaService : IReservaService
     /// <c>dto.PassportExpiry</c> siempre) a proposito: en <c>BuildPassengerResult</c> el dto sale de
     /// <c>_mapper.Map</c>, que en algunos tests unitarios esta mockeado y no copia todos los campos. Pasar
     /// el vencimiento explicito desde la ENTIDAD evita ese acoplamiento fragil.</para>
+    ///
+    /// <para><b>Gate por ambito (2026-08-05, PARTE 1)</b>: antes de evaluar el vencimiento se chequea con
+    /// <see cref="PassportAlertScopeGate"/> si el aviso corresponde segun el ambito de los servicios de la
+    /// reserva — en cabotaje y Mercosur se viaja con DNI, asi que una reserva 100% Nacional no necesita
+    /// este aviso. Con el gate cerrado, los dos campos quedan en null sin evaluar el vencimiento (mismo
+    /// "no existe" total que la llave apagada del DNI).</para>
     /// </summary>
-    private static void ApplyPassportAlert(PassengerDto dto, DateTime? passportExpiry, DateTime? tripStart, DateTime? tripEnd)
+    private static void ApplyPassportAlert(
+        PassengerDto dto,
+        DateTime? passportExpiry,
+        DateTime? tripStart,
+        DateTime? tripEnd,
+        ServiceGeographicScopeContext scopeContext)
     {
-        var alert = PassportExpiryRules.GetAlertOrNull(passportExpiry, tripStart, tripEnd);
+        var scopeAllowsPassportAlert = PassportAlertScopeGate.IsOpen(
+            scopeContext.HasAnyService, scopeContext.HasInternationalService, scopeContext.HasUndefinedScopeService);
+
+        var alert = scopeAllowsPassportAlert
+            ? PassportExpiryRules.GetAlertOrNull(passportExpiry, tripStart, tripEnd)
+            : null;
         dto.PassportAlertLevel = alert?.Level.ToString();
         dto.PassportAlertText = alert?.Text;
     }
 
     /// <summary>
-    /// Semaforo de DNI vencido para cabotaje (decision firmada del dueño, 2026-08-03): resuelve, UNA sola
-    /// vez por RESERVA (no por pasajero), los dos datos que necesita <see cref="DniExpiryRules"/> ademas
-    /// de lo propio de cada pasajero: si la llave de agencia esta prendida, y si la reserva tiene algun
-    /// servicio Nacional — ya sea un servicio generico (<c>Servicios</c>) o un vuelo real
-    /// (<c>FlightSegments</c>, el camino que usa la ficha de vuelo de verdad). Se llama desde el listado
-    /// y desde cada alta/edicion (F-1: misma regla siempre).
+    /// Ambito geografico de los servicios de una reserva (2026-08-05), resuelto UNA sola vez por RESERVA
+    /// (no por pasajero): lo comparten las tres reglas de esta pantalla — el gate de pasaporte
+    /// (<see cref="PassportAlertScopeGate"/>), el semaforo de DNI (<see cref="DniExpiryRules"/>) y el
+    /// chip de menores (<see cref="MinorTravelAuthorizationRules"/>).
     ///
-    /// <para>Si la llave esta apagada, NI SIQUIERA consultamos si hay servicio Nacional — con la llave OFF
-    /// el aviso tiene que dar null siempre, sin excepcion, y nos ahorramos una consulta que no hace falta.</para>
+    /// <para><b>Fix B2 del review de backend (2026-08-05)</b>: <c>HasDomesticService</c> (el que consume
+    /// el semaforo de DNI) mira TODOS los servicios de la reserva SIN filtrar por estado — asi estaba
+    /// deployado en PROD desde el 2026-08-03 y esta obra NO lo toca (compat con lo firmado). Los otros
+    /// tres campos (<c>HasAnyService</c>/<c>HasInternationalService</c>/<c>HasUndefinedScopeService</c>,
+    /// que consumen el gate de pasaporte y el chip de menores — los DOS consumidores NUEVOS de esta obra)
+    /// SI excluyen servicios cancelados, con el mismo filtro "vivo" que usa
+    /// <see cref="UpcomingStartCalculator"/> (F-2: el estado derivado se calcula sobre las lineas vivas).
+    /// Es una inconsistencia DELIBERADA entre los dos grupos de campos, no un descuido: sin el filtro
+    /// "vivo" en los nuevos, un Internacional cancelado dejaba el chip de menores prendido para siempre,
+    /// y un unico Nacional cancelado apagaba el aviso de pasaporte (anti-conservador).</para>
+    ///
+    /// <para>El ambito se carga desde DOS lugares — el servicio generico (<c>Servicios</c>, tabla
+    /// "Reservations") y el vuelo real (<c>FlightSegments</c>, el camino que usa la ficha de vuelo de
+    /// verdad) — asi que se consultan y combinan los dos (mismo fix 2026-08-03 del semaforo de DNI: un
+    /// vuelo cargado por la ficha real tiene que contar igual que un servicio generico).</para>
     /// </summary>
-    private async Task<(bool AlertEnabled, bool HasDomesticService)> ResolveDniAlertContextAsync(int reservaId, CancellationToken ct)
-    {
-        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
-        if (!settings.EnableDomesticDniExpiryAlert)
-        {
-            return (false, false);
-        }
+    private readonly record struct ServiceGeographicScopeContext(
+        bool HasDomesticService,
+        bool HasAnyService,
+        bool HasInternationalService,
+        bool HasUndefinedScopeService);
 
-        // Fix 2026-08-03: el ambito Nacional se carga desde DOS lugares — el servicio generico
-        // (Servicios, tabla "Reservations") y el vuelo real (FlightSegments, el camino que usa
-        // el 99% de las cargas de aereo). Antes este metodo solo miraba Servicios, asi que un
-        // vuelo cargado como Nacional por la ficha real NUNCA prendia el semaforo de DNI.
+    private async Task<ServiceGeographicScopeContext> ResolveServiceGeographicScopeContextAsync(int reservaId, CancellationToken ct)
+    {
+        // DNI (semaforo, decision firmada 2026-08-03): SIN filtrar por estado, exactamente igual que hoy
+        // en PROD — ver el "OJO" del doc de arriba, no se toca a proposito.
         var hasDomesticGenericService = await _context.Servicios
             .AnyAsync(s => s.ReservaId == reservaId && s.GeographicScope == ServiceGeographicScope.Domestic, ct);
-
         var hasDomesticFlight = await _context.FlightSegments
             .AnyAsync(f => f.ReservaId == reservaId && f.GeographicScope == ServiceGeographicScope.Domestic, ct);
 
-        return (true, hasDomesticGenericService || hasDomesticFlight);
+        // Pasaporte + menores (consumidores NUEVOS): solo servicios VIVOS (ver ServiceGeographicScopeQueries).
+        var liveScopeByReserva = await ServiceGeographicScopeQueries.ResolveLiveScopeForReservasAsync(
+            _context, new[] { reservaId }, ct);
+        var liveScope = liveScopeByReserva.TryGetValue(reservaId, out var scope)
+            ? scope
+            : LiveServiceGeographicScope.Empty;
+
+        return new ServiceGeographicScopeContext(
+            HasDomesticService: hasDomesticGenericService || hasDomesticFlight,
+            HasAnyService: liveScope.HasAnyService,
+            HasInternationalService: liveScope.HasInternationalService,
+            HasUndefinedScopeService: liveScope.HasUndefinedScopeService);
+    }
+
+    /// <summary>
+    /// Solo la LLAVE de agencia del semaforo de DNI (<c>OperationalFinanceSettings.EnableDomesticDniExpiryAlert</c>,
+    /// decision firmada del dueño, 2026-08-03). El dato de "hay servicio Nacional" ahora sale de
+    /// <see cref="ResolveServiceGeographicScopeContextAsync"/> (compartido con pasaporte y menores), asi
+    /// que este metodo dejo de consultar Servicios/FlightSegments por su cuenta.
+    /// </summary>
+    private async Task<bool> ResolveDniAlertEnabledAsync(CancellationToken ct)
+    {
+        var settings = await _operationalFinanceSettingsService.GetEntityAsync(ct);
+        return settings.EnableDomesticDniExpiryAlert;
     }
 
     /// <summary>
@@ -4626,6 +4676,24 @@ public class ReservaService : IReservaService
         var alert = DniExpiryRules.GetAlertOrNull(documentType, documentExpiry, hasDomesticService, passportExpiry, tripStart, tripEnd);
         dto.DniAlertLevel = alert?.Level.ToString();
         dto.DniAlertText = alert?.Text;
+    }
+
+    /// <summary>
+    /// Chip "revisar autorizacion de salida del pais" (2026-08-05, PARTE 3): mismo patron que
+    /// <see cref="ApplyDniAlert"/>/<see cref="ApplyPassportAlert"/> — se llama SIEMPRE desde el mismo
+    /// lugar en lectura y en alta/edicion (F-1). Sin llave de configuracion: es un aviso, no un candado
+    /// (P-20), igual que el de pasaporte.
+    /// </summary>
+    private static void ApplyMinorAlert(
+        PassengerDto dto,
+        DateTime? birthDate,
+        bool hasInternationalService,
+        DateTime? tripStart,
+        DateTime? tripEnd)
+    {
+        var alert = MinorTravelAuthorizationRules.GetAlertOrNull(birthDate, hasInternationalService, tripStart, tripEnd);
+        dto.MinorAlertLevel = alert?.Level.ToString();
+        dto.MinorAlertText = alert?.Text;
     }
 
     /// <summary>
@@ -4803,15 +4871,21 @@ public class ReservaService : IReservaService
     private async Task<PassengerDto> BuildPassengerResultAsync(Passenger passenger, DateTime? tripStart, DateTime? tripEnd)
     {
         var dto = _mapper.Map<PassengerDto>(passenger);
-        ApplyPassportAlert(dto, passenger.PassportExpiry, tripStart, tripEnd);
+
+        // Ambito geografico de los servicios de la reserva (2026-08-05): mismo dato compartido por el
+        // gate de pasaporte, el semaforo de DNI y el chip de menores. Se calcula UNA vez aca para que el
+        // pasajero que ve el vendedor apenas guarda sea IDENTICO al que ve despues al recargar (F-1).
+        var scopeContext = await ResolveServiceGeographicScopeContextAsync(passenger.ReservaId, CancellationToken.None);
+
+        ApplyPassportAlert(dto, passenger.PassportExpiry, tripStart, tripEnd, scopeContext);
         dto.Warning = dto.PassportAlertText;
 
-        // Semaforo de DNI vencido para cabotaje (2026-08-03): mismo calculo que en el listado, para que
-        // el chip que ve el vendedor apenas guarda sea IDENTICO al que ve despues al recargar (F-1).
-        var (dniAlertEnabled, hasDomesticService) = await ResolveDniAlertContextAsync(passenger.ReservaId, CancellationToken.None);
+        var dniAlertEnabled = await ResolveDniAlertEnabledAsync(CancellationToken.None);
         ApplyDniAlert(
             dto, passenger.DocumentType, passenger.DocumentExpiry, passenger.PassportExpiry,
-            dniAlertEnabled, hasDomesticService, tripStart, tripEnd);
+            dniAlertEnabled, scopeContext.HasDomesticService, tripStart, tripEnd);
+
+        ApplyMinorAlert(dto, passenger.BirthDate, scopeContext.HasInternationalService, tripStart, tripEnd);
 
         return dto;
     }
