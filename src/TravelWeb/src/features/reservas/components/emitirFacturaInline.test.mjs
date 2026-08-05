@@ -22,6 +22,10 @@ import assert from "node:assert/strict";
 // moneyStatus.js. Esto evita tener una copia manual de la lógica en el test
 // que se puede desactualizar sola si cambia el original.
 import { elegirGrupoPrecarga } from "../lib/invoiceCurrencyDefault.js";
+// debeMostrarJustificacionTC vive en features/invoices/lib (compartida con
+// CreateInvoiceModal.jsx) — se importa acá para no duplicar la regla de "cuándo
+// pedir justificación" en la copia local de validarCamposUSD de más abajo.
+import { debeMostrarJustificacionTC } from "../../invoices/lib/exchangeRateSuggestion.js";
 
 // ─── Lógica pura: copiada de EmitirFacturaInline.jsx ─────────────────────────
 // El resto de las funciones de este archivo (hayDescuadre, validarCamposUSD)
@@ -40,8 +44,12 @@ function hayDescuadre(totalItems, suggestedTotal, tolerancia = 0.5) {
 /**
  * Valida los campos de tipo de cambio para facturas en USD.
  * Devuelve string de error, o null si todo está bien.
+ *
+ * 2026-08-05: la justificación ya no es obligatoria siempre — depende de
+ * debeMostrarJustificacionTC (importada de la lib compartida, NO copiada acá,
+ * para no arrastrar una copia de la regla que se pueda desactualizar sola).
  */
-function validarCamposUSD(tipoCambio, justificacion) {
+function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboSugerencia }) {
   const tcNum = Number(tipoCambio);
   if (!tipoCambio || isNaN(tcNum) || tcNum <= 0) {
     return "Ingresá el tipo de cambio para facturas en dólares.";
@@ -49,7 +57,12 @@ function validarCamposUSD(tipoCambio, justificacion) {
   if (tcNum === 1) {
     return "El tipo de cambio no puede ser 1. Ingresá el valor en pesos del dólar (ej: 1200).";
   }
-  if (!String(justificacion ?? "").trim()) {
+  const requiereJustificacion = debeMostrarJustificacionTC({
+    tipoCambioEscrito: tipoCambio,
+    tipoCambioSugerido,
+    huboSugerencia,
+  });
+  if (requiereJustificacion && !String(justificacion ?? "").trim()) {
     return "Ingresá la justificación del tipo de cambio.";
   }
   return null;
@@ -207,57 +220,138 @@ test("hayDescuadre — totales iguales → false", () => {
 });
 
 // ─── Tests: validarCamposUSD ──────────────────────────────────────────────────
+// Los casos "sin sugerencia" (huboSugerencia: false) reproducen el Momento C de la
+// spec: no hubo sugerencia del motor, así que la justificación se pide SIEMPRE —
+// mismo comportamiento que tenía la pantalla antes del 2026-08-05.
 
-test("validarCamposUSD — todo válido → null (sin error)", () => {
-  // TC 1200 y justificación completa → puede emitirse.
-  const resultado = validarCamposUSD("1200", "Dólar BNA vendedor divisa del 13/06/2026");
+test("validarCamposUSD — sin sugerencia, todo válido → null (sin error)", () => {
+  const resultado = validarCamposUSD({
+    tipoCambio: "1200",
+    justificacion: "Dólar BNA vendedor divisa del 13/06/2026",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.equal(resultado, null);
 });
 
 test("validarCamposUSD — TC vacío → error de TC faltante", () => {
-  const resultado = validarCamposUSD("", "Justificación válida");
+  const resultado = validarCamposUSD({
+    tipoCambio: "",
+    justificacion: "Justificación válida",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.ok(typeof resultado === "string" && resultado.length > 0, "Debe devolver error");
   assert.ok(resultado.includes("tipo de cambio"), `El error debe mencionar tipo de cambio: '${resultado}'`);
 });
 
 test("validarCamposUSD — TC cero → error", () => {
-  const resultado = validarCamposUSD("0", "Justificación válida");
+  const resultado = validarCamposUSD({
+    tipoCambio: "0",
+    justificacion: "Justificación válida",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.ok(resultado !== null);
 });
 
 test("validarCamposUSD — TC negativo → error", () => {
-  const resultado = validarCamposUSD("-100", "Justificación válida");
+  const resultado = validarCamposUSD({
+    tipoCambio: "-100",
+    justificacion: "Justificación válida",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.ok(resultado !== null);
 });
 
 test("validarCamposUSD — TC = 1 → error específico (no puede ser 1)", () => {
   // TC = 1 significaría 1 peso por dólar, que es claramente un error de tipeo.
-  const resultado = validarCamposUSD("1", "Justificación válida");
+  const resultado = validarCamposUSD({
+    tipoCambio: "1",
+    justificacion: "Justificación válida",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.ok(typeof resultado === "string");
   assert.ok(resultado.includes("no puede ser 1"), `El error debe explicar por qué no puede ser 1: '${resultado}'`);
 });
 
-test("validarCamposUSD — TC válido pero justificación vacía → error", () => {
-  const resultado = validarCamposUSD("1200", "");
+test("validarCamposUSD — sin sugerencia, TC válido pero justificación vacía → error", () => {
+  const resultado = validarCamposUSD({
+    tipoCambio: "1200",
+    justificacion: "",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.ok(typeof resultado === "string");
   assert.ok(resultado.includes("justificación"), `El error debe mencionar la justificación: '${resultado}'`);
 });
 
 test("validarCamposUSD — justificación solo espacios → error (no se acepta)", () => {
-  const resultado = validarCamposUSD("1200", "   ");
+  const resultado = validarCamposUSD({
+    tipoCambio: "1200",
+    justificacion: "   ",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.ok(resultado !== null, "Solo espacios no es una justificación válida");
 });
 
 test("validarCamposUSD — TC como número (no string) → válido si es > 1", () => {
   // El campo llega como string del input pero la función debe tolerar number también.
-  const resultado = validarCamposUSD(1200, "Justificación completa del TC");
+  const resultado = validarCamposUSD({
+    tipoCambio: 1200,
+    justificacion: "Justificación completa del TC",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
   assert.equal(resultado, null, "TC como número también debe funcionar");
 });
 
 test("validarCamposUSD — TC = 1.5 (dólar oficial no es 1) → válido, sin error", () => {
   // Aunque 1.5 parece bajo, la función solo rechaza exactamente 1.
   // La validación de rango de mercado es responsabilidad del operador y del backend.
-  const resultado = validarCamposUSD("1.5", "Tipo de cambio oficial fijado");
+  const resultado = validarCamposUSD({
+    tipoCambio: "1.5",
+    justificacion: "Tipo de cambio oficial fijado",
+    tipoCambioSugerido: null,
+    huboSugerencia: false,
+  });
+  assert.equal(resultado, null);
+});
+
+// ─── Tests: validarCamposUSD — condicionalidad con sugerencia (spec 2026-08-05) ─
+
+test("validarCamposUSD — CON sugerencia, número aceptado tal cual → no pide justificación", () => {
+  // El usuario dejó el número que le propuso el sistema: no hace falta justificar nada.
+  const resultado = validarCamposUSD({
+    tipoCambio: "1234.5",
+    justificacion: "",
+    tipoCambioSugerido: 1234.5,
+    huboSugerencia: true,
+  });
+  assert.equal(resultado, null, "Con el número sugerido intacto, la justificación vacía no debe bloquear");
+});
+
+test("validarCamposUSD — CON sugerencia, número pisado por el usuario sin justificar → error", () => {
+  const resultado = validarCamposUSD({
+    tipoCambio: "1300",
+    justificacion: "",
+    tipoCambioSugerido: 1234.5,
+    huboSugerencia: true,
+  });
+  assert.ok(typeof resultado === "string");
+  assert.ok(resultado.includes("justificación"));
+});
+
+test("validarCamposUSD — CON sugerencia, número pisado y justificado → null", () => {
+  const resultado = validarCamposUSD({
+    tipoCambio: "1300",
+    justificacion: "Cotización que me pasó el operador",
+    tipoCambioSugerido: 1234.5,
+    huboSugerencia: true,
+  });
   assert.equal(resultado, null);
 });
 

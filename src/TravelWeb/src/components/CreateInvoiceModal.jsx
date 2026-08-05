@@ -13,7 +13,18 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Calculator, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
-import { formatDate } from "../lib/utils";
+import { formatDate, hoyArgentina } from "../lib/utils";
+// TC sugerido al facturar en USD (2026-08-05, ADR-011 "tipo de cambio real"):
+// mismo hook y misma regla de "cuándo pedir justificación" que usa
+// EmitirFacturaInline.jsx (la ficha de la reserva) — viven en un solo lugar para
+// que las dos pantallas no puedan divergir. Ver docs/ux/specs/2026-08-05-tc-sugerido-en-facturar.md.
+import { useTipoCambioSugerido } from "../features/invoices/hooks/useTipoCambioSugerido";
+import {
+  debeMostrarJustificacionTC,
+  faltaJustificacionTC,
+  textoLeyendaTC,
+  construirCamposUSDParaPayload,
+} from "../features/invoices/lib/exchangeRateSuggestion";
 
 // Alícuotas de IVA según catálogo de ARCA/AFIP.
 // El id coincide con el AlicuotaIvaId que espera el backend.
@@ -40,11 +51,6 @@ const CURRENCY_OPTIONS = [
   { value: "ARS", label: "Pesos (ARS)" },
   { value: "USD", label: "Dólares (USD)" },
 ];
-
-// Valor del enum ExchangeRateSource en el backend para "BNA vendedor divisa".
-// El backend NO tiene JsonStringEnumConverter, así que espera el int, NO el string.
-// Ver: src/TravelApi.Domain/Entities/ExchangeRateSource.cs — BNA_VendedorDivisa = 6
-const EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA = 6;
 
 /**
  * Formatea un número como moneda según la moneda activa del formulario.
@@ -102,6 +108,10 @@ export default function CreateInvoiceModal({
   const [selectedCurrency, setSelectedCurrency] = useState("ARS");
   const [exchangeRate, setExchangeRate] = useState("");
   const [exchangeRateJustification, setExchangeRateJustification] = useState("");
+  // "Se tocó" el casillero de TC: mientras sea false, la precarga de la sugerencia
+  // lo puede seguir pisando (spec 2026-08-05 §4 punto 3). NO decide si se pide
+  // justificación — esa cuenta es number vs number (debeMostrarJustificacionTC).
+  const [exchangeRateTocado, setExchangeRateTocado] = useState(false);
 
   const isMonotributista =
     afipSettings?.taxCondition?.trim() === "Monotributo" ||
@@ -114,6 +124,32 @@ export default function CreateInvoiceModal({
   // Si la feature está desactivada, siempre trabajamos en ARS (estado invisible).
   const activeCurrency = isMultiCurrencyEnabled ? selectedCurrency : "ARS";
   const isUSD = activeCurrency === "USD";
+
+  // TC sugerido (2026-08-05): la fecha de emisión es SIEMPRE hoy en Argentina (este
+  // modal no deja elegir otra fecha de emisión — spec §4 punto 2). `enabled: isOpen
+  // && isUSD` evita gastar pedidos con el modal cerrado o en pesos.
+  const { tipoCambioSugerido, leyenda: leyendaTC, cargando: buscandoTC } =
+    useTipoCambioSugerido("USD", hoyArgentina(), { enabled: isOpen && isUSD });
+  const huboSugerenciaTC = tipoCambioSugerido != null;
+
+  // Pre-carga el casillero con la sugerencia apenas llega, mientras el usuario no
+  // haya tocado el campo — mismo criterio que EmitirFacturaInline.jsx.
+  useEffect(() => {
+    if (!exchangeRateTocado) {
+      setExchangeRate(tipoCambioSugerido != null ? String(tipoCambioSugerido) : "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoCambioSugerido]);
+
+  // Justificación: solo cuando el número escrito difiere del sugerido, o cuando no
+  // hubo sugerencia (spec §4 punto 5) — comparación número contra número.
+  // Fix N1 (review 2026-08-05): `!buscandoTC` evita que el campo parpadee mientras
+  // la consulta está en vuelo — el Momento D de la spec solo muestra "Buscando…".
+  const mostrarJustificacionTC = isUSD && !buscandoTC && debeMostrarJustificacionTC({
+    tipoCambioEscrito: exchangeRate,
+    tipoCambioSugerido,
+    huboSugerencia: huboSugerenciaTC,
+  });
 
   const requiresOverride = Boolean(reserva && !reserva.isEconomicallySettled && reserva.canEmitAfipInvoice);
   const isBlockedByDebt = Boolean(reserva && !reserva.isEconomicallySettled && !reserva.canEmitAfipInvoice);
@@ -174,6 +210,7 @@ export default function CreateInvoiceModal({
     setSelectedCurrency("ARS");
     setExchangeRate("");
     setExchangeRateJustification("");
+    setExchangeRateTocado(false);
   }, [fetchingSettings, initialAmount, isMonotributista, isOpen]);
 
   const totals = useMemo(() => {
@@ -281,7 +318,10 @@ export default function CreateInvoiceModal({
         showError("El tipo de cambio no puede ser 1. Ingresá el valor en pesos del dólar (ej: 1200).");
         return;
       }
-      if (!exchangeRateJustification.trim()) {
+      // 2026-08-05: la justificación solo es obligatoria cuando el número escrito
+      // difiere del sugerido (o no hubo sugerencia) — faltaJustificacionTC (lib
+      // compartida) hace esa cuenta con la MISMA regla que EmitirFacturaInline.jsx.
+      if (faltaJustificacionTC({ mostrar: mostrarJustificacionTC, texto: exchangeRateJustification })) {
         showError("Ingresá la justificación del tipo de cambio (de dónde lo tomaste).");
         return;
       }
@@ -312,15 +352,18 @@ export default function CreateInvoiceModal({
       // Campos de multimoneda: solo se agregan al payload cuando la moneda es USD.
       // Para ARS el payload queda idéntico al original (no manda monId ni monCotiz),
       // y el backend usa sus defaults ("PES" / 1) sin cambios de comportamiento.
+      // construirCamposUSDParaPayload (lib compartida con EmitirFacturaInline.jsx):
+      // TC tal cual sin redondear, y exchangeRateJustification SOLO si corresponde.
+      // exchangeRateSource/exchangeRateFetchedAt YA NO se mandan — el servidor los
+      // resuelve solo comparando el número (spec §4 punto 11; antes se mandaba
+      // SIEMPRE una fuente fija falsa, aunque el número lo hubiera escrito el
+      // usuario a mano — bug V8).
       if (isUSD) {
-        payload.monId = "USD";
-        payload.monCotiz = Number(exchangeRate);
-        // ExchangeRateSource en el backend es un enum sin JsonStringEnumConverter.
-        // El serializador de .NET espera el int, no el string del nombre.
-        payload.exchangeRateSource = EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA;
-        // Momento exacto en que el operador confirmó el TC (ISO 8601 con zona horaria).
-        payload.exchangeRateFetchedAt = new Date().toISOString();
-        payload.exchangeRateJustification = exchangeRateJustification.trim();
+        Object.assign(payload, construirCamposUSDParaPayload({
+          tipoCambio: exchangeRate,
+          justificacion: exchangeRateJustification,
+          mostrarJustificacion: mostrarJustificacionTC,
+        }));
       }
 
       await api.post("/invoices", payload);
@@ -488,6 +531,9 @@ export default function CreateInvoiceModal({
                         // Limpiar los campos de TC al cambiar de moneda para no mandar datos viejos.
                         setExchangeRate("");
                         setExchangeRateJustification("");
+                        // Si vuelve a USD, que la precarga pueda escribir la sugerencia
+                        // de nuevo (spec §4 punto 1).
+                        setExchangeRateTocado(false);
                       }}
                       data-testid={`radio-currency-${option.value}`}
                     />
@@ -496,76 +542,67 @@ export default function CreateInvoiceModal({
                 ))}
               </div>
 
-              {/* Campos de tipo de cambio: solo se muestran cuando la moneda elegida es USD. */}
+              {/* Campos de tipo de cambio: solo se muestran cuando la moneda elegida es USD.
+                  2026-08-05: se saca la franja celeste "Fuente del TC: BNA vendedor
+                  divisa..." (mentía cuando el número lo escribía el operador a mano) y
+                  el renglón "Fecha del TC que se registrará" (repetía lo que ya dice la
+                  leyenda del motor). Los reemplaza la leyenda gris debajo del casillero,
+                  igual que en la pantalla de la multa. Ver spec §2 y §7, preguntas P2/P3. */}
               {isUSD && (
                 <div className="space-y-3 pt-2 border-t border-indigo-200 dark:border-indigo-700">
-                  {/* Informamos la fuente del TC (fija en el MVP = BNA vendedor divisa).
-                      No es un dropdown porque en el MVP solo hay una fuente válida. */}
-                  <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/40 px-3 py-2 rounded-lg">
-                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                    Fuente del TC: BNA vendedor divisa (dólar del día hábil anterior)
+                  <div className="w-full sm:w-40">
+                    <label
+                      htmlFor="exchange-rate-input"
+                      className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
+                    >
+                      Tipo de cambio ($/USD) *
+                    </label>
+                    <input
+                      id="exchange-rate-input"
+                      type="number"
+                      step="0.01"
+                      min="1.01"
+                      value={exchangeRate}
+                      onChange={(event) => {
+                        setExchangeRate(event.target.value);
+                        setExchangeRateTocado(true);
+                      }}
+                      placeholder="Ej: 1200.50"
+                      className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
+                      data-testid="input-tipo-cambio"
+                    />
+                    {/* Texto que manda el motor (leyendaTC), tal cual — T-13. */}
+                    <div
+                      className="mt-1 text-xs text-slate-500 dark:text-slate-400"
+                      role="status"
+                      data-testid="leyenda-tc-sugerido"
+                    >
+                      {textoLeyendaTC({ cargando: buscandoTC, huboSugerencia: huboSugerenciaTC, leyenda: leyendaTC })}
+                    </div>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <div className="w-full sm:w-40">
-                      <label
-                        htmlFor="exchange-rate-input"
-                        className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
-                      >
-                        Tipo de cambio ($/USD) *
-                      </label>
-                      <input
-                        id="exchange-rate-input"
-                        type="number"
-                        step="0.01"
-                        min="1.01"
-                        value={exchangeRate}
-                        onChange={(event) => setExchangeRate(event.target.value)}
-                        placeholder="Ej: 1200.50"
-                        className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
-                        data-testid="input-tipo-cambio"
-                      />
-                    </div>
-
-                    <div className="flex-1">
+                  {/* Justificación: aparece solo cuando el número escrito difiere del
+                      sugerido (o cuando no hubo sugerencia) — ver mostrarJustificacionTC. */}
+                  {mostrarJustificacionTC && (
+                    <div>
                       <label
                         htmlFor="exchange-rate-justification"
                         className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
                       >
-                        Justificación del TC *
+                        ¿De dónde sacaste este tipo de cambio? *
                       </label>
-                      <textarea
+                      <input
                         id="exchange-rate-justification"
+                        type="text"
                         value={exchangeRateJustification}
                         onChange={(event) => setExchangeRateJustification(event.target.value)}
-                        rows={2}
-                        placeholder="Ej: Dólar vendedor divisa BNA del 29/05/2026, $1200.50 según web oficial."
+                        maxLength={500}
+                        placeholder="Cotización que me pasó el operador, dólar de la web del banco…"
                         className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white px-3 py-2 text-sm"
                         data-testid="input-justificacion-tc"
                       />
                     </div>
-                  </div>
-
-                  {/* Fecha del TC: se usa la fecha actual al momento del submit.
-                      Se muestra read-only para que el operador sepa qué fecha va a quedar registrada. */}
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Fecha del TC que se registrará:{" "}
-                    <span className="font-medium text-slate-700 dark:text-slate-200">
-                      {/* Regla del dueño: la fecha/hora que se muestra es SIEMPRE la de Argentina,
-                          sin importar el huso del navegador del operador.
-                          hallazgo #19 del barrido (2026-07-24): `hourCycle: "h23"` explícito, si no
-                          Intl arma la hora en formato 12hs con "a. m."/"p. m." — acá va 24hs. */}
-                      {new Date().toLocaleDateString("es-AR", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        timeZone: "America/Argentina/Buenos_Aires",
-                        hourCycle: "h23",
-                      })}
-                    </span>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -806,10 +843,15 @@ export default function CreateInvoiceModal({
                 totals.total <= 0 ||
                 isBlockedByDebt ||
                 (requiresOverride && !forceIssue) ||
-                // Si la moneda es USD, bloqueamos hasta que el operador ingrese
-                // un TC válido (> 0 y distinto de 1) y una justificación.
+                // Si la moneda es USD, bloqueamos hasta que el operador ingrese un TC
+                // válido (> 0 y distinto de 1) y, SOLO si corresponde (ver
+                // mostrarJustificacionTC — 2026-08-05), la justificación.
                 // Esto evita que el submit llegue al handleSubmit con datos incompletos.
-                (isUSD && (!(Number(exchangeRate) > 0) || Number(exchangeRate) === 1 || !exchangeRateJustification.trim()))
+                (isUSD && (
+                  !(Number(exchangeRate) > 0) ||
+                  Number(exchangeRate) === 1 ||
+                  faltaJustificacionTC({ mostrar: mostrarJustificacionTC, texto: exchangeRateJustification })
+                ))
               }
               data-testid="btn-emitir-factura"
               className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-900 disabled:opacity-50 flex items-center gap-2"

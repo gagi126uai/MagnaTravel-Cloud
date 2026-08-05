@@ -34,9 +34,12 @@
  *
  * Funciones puras exportadas (testeable sin React):
  *   - hayDescuadre(totalItems, suggestedTotal, tolerancia)
- *   - validarCamposUSD(tipoCambio, justificacion) → null | string de error
+ *   - validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboSugerencia }) → null | string de error
  *   - resolverEstadoFiscal(statusItems) → { estado, factura }
- * (elegirGrupoPrecarga vive en lib/invoiceCurrencyDefault.js — se importa acá.)
+ * (elegirGrupoPrecarga vive en lib/invoiceCurrencyDefault.js — se importa acá.
+ *  debeMostrarJustificacionTC vive en features/invoices/lib/exchangeRateSuggestion.js
+ *  — se importa acá y en CreateInvoiceModal.jsx, para que la regla de "cuándo pedir
+ *  justificación" no pueda divergir entre las dos pantallas.)
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -44,7 +47,7 @@ import { AlertCircle, Calculator, CheckCircle2, Loader2, Plus, Trash2, X } from 
 import { api } from "../../../api";
 import { showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
-import { formatCurrency, formatDate } from "../../../lib/utils";
+import { formatCurrency, formatDate, hoyArgentina } from "../../../lib/utils";
 // Paso 3 (H2 2026-06-24): helper compartido con ReservaDetailPage para formatear
 // el número de comprobante. Evita que el formato "Factura B 0001-00012345" diverga.
 import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
@@ -53,6 +56,17 @@ import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
 // testearla directo con Node, igual que moneyStatus.js — evita que el test tenga
 // una copia manual de la lógica que se puede desactualizar sola.
 import { elegirGrupoPrecarga } from "../lib/invoiceCurrencyDefault";
+// TC sugerido al facturar en USD (2026-08-05, ADR-011 "tipo de cambio real"):
+// hook hermano de useBnaUsdRateForDate (carpeta cancellations) + regla compartida
+// de "cuándo pedir justificación", que vive en un solo lugar para no divergir entre
+// esta pantalla y CreateInvoiceModal.jsx (Pagos). Ver docs/ux/specs/2026-08-05-tc-sugerido-en-facturar.md.
+import { useTipoCambioSugerido } from "../../invoices/hooks/useTipoCambioSugerido";
+import {
+  debeMostrarJustificacionTC,
+  faltaJustificacionTC,
+  textoLeyendaTC,
+  construirCamposUSDParaPayload,
+} from "../../invoices/lib/exchangeRateSuggestion";
 
 // ─── Funciones puras exportables ─────────────────────────────────────────────
 // Están fuera del componente para poder testearlas con Node sin necesidad de React.
@@ -104,11 +118,16 @@ export function hayDescuadre(totalItems, suggestedTotal, tolerancia = 0.5) {
 /**
  * Valida los campos de tipo de cambio para facturas en USD.
  *
- * @param {string|number} tipoCambio    - valor ingresado por el usuario
- * @param {string}        justificacion - texto de justificación del TC
+ * 2026-08-05 (spec TC sugerido): la justificación ya NO es obligatoria siempre —
+ * solo cuando el número que quedó en el casillero es distinto del que sugirió el
+ * motor (o cuando no hubo sugerencia). Esa cuenta la hace debeMostrarJustificacionTC
+ * (compartida con CreateInvoiceModal.jsx) para que las dos pantallas la pidan en el
+ * mismo momento, sin divergir.
+ *
+ * @param {{ tipoCambio: string|number, justificacion: string, tipoCambioSugerido: number|null, huboSugerencia: boolean }} params
  * @returns {string | null} mensaje de error legible, o null si todo está bien
  */
-export function validarCamposUSD(tipoCambio, justificacion) {
+export function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboSugerencia }) {
   const tcNum = Number(tipoCambio);
   if (!tipoCambio || isNaN(tcNum) || tcNum <= 0) {
     return "Ingresá el tipo de cambio para facturas en dólares.";
@@ -116,7 +135,12 @@ export function validarCamposUSD(tipoCambio, justificacion) {
   if (tcNum === 1) {
     return "El tipo de cambio no puede ser 1. Ingresá el valor en pesos del dólar (ej: 1200).";
   }
-  if (!String(justificacion ?? "").trim()) {
+  const requiereJustificacion = debeMostrarJustificacionTC({
+    tipoCambioEscrito: tipoCambio,
+    tipoCambioSugerido,
+    huboSugerencia,
+  });
+  if (faltaJustificacionTC({ mostrar: requiereJustificacion, texto: justificacion })) {
     return "Ingresá la justificación del tipo de cambio.";
   }
   return null;
@@ -230,10 +254,6 @@ const MONEDAS_FACTURA = [
   { value: "USD", label: "Dólares (USD)" },
 ];
 
-// Valor del enum ExchangeRateSource=BNA_VendedorDivisa (ver ExchangeRateSource.cs).
-// El backend NO tiene JsonStringEnumConverter, espera el int.
-const EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA = 6;
-
 /**
  * Crea un renglón vacío listo para agregar a la tabla de items.
  * isMonotributista=true → alícuota 0% (Factura C no discrimina IVA).
@@ -302,6 +322,12 @@ export function EmitirFacturaInline({
   // Campos de tipo de cambio: solo obligatorios cuando monedaSeleccionada === "USD"
   const [tipoCambio, setTipoCambio] = useState("");
   const [justificacionTC, setJustificacionTC] = useState("");
+  // "Se tocó" el casillero de TC: false hasta el primer cambio del usuario. Mientras
+  // sea false, la precarga de la sugerencia lo puede seguir pisando; apenas el
+  // usuario escribe algo, dejamos de tocarlo (spec 2026-08-05 §4 punto 3 — mismo
+  // patrón que ConfirmarMultaOperadorInline.jsx). OJO: esto NO decide si se pide
+  // justificación (esa cuenta es number vs number, ver debeMostrarJustificacionTC).
+  const [tipoCambioTocado, setTipoCambioTocado] = useState(false);
 
   // Override de emisión cuando la reserva tiene deuda pero canEmitAfipInvoice=true
   const [forceIssue, setForceIssue] = useState(false);
@@ -365,6 +391,36 @@ export function EmitirFacturaInline({
   // Moneda efectiva: si el flag está OFF, forzamos ARS (transparente para el usuario).
   const monedaEfectiva = isMultiCurrencyEnabled ? monedaSeleccionada : "ARS";
   const esUSD = monedaEfectiva === "USD";
+
+  // TC sugerido (2026-08-05): la fecha de emisión de estas facturas es SIEMPRE hoy
+  // en Argentina (ninguna de las dos pantallas deja elegir otra fecha de emisión —
+  // spec §4 punto 2). `enabled: esUSD` evita gastar pedidos mientras la moneda
+  // elegida es pesos.
+  const { tipoCambioSugerido, leyenda: leyendaTC, cargando: buscandoTC } =
+    useTipoCambioSugerido("USD", hoyArgentina(), { enabled: esUSD });
+  const huboSugerenciaTC = tipoCambioSugerido != null;
+
+  // Pre-carga el casillero de TC con la sugerencia apenas llega (spec §4 punto 3:
+  // "viene ya escrito y se pisa escribiendo encima"). Si el usuario YA tocó el
+  // campo, no lo pisamos. Si la sugerencia se va y el campo sigue sin tocar, lo
+  // vaciamos — mismo criterio que ConfirmarMultaOperadorInline.jsx:352-357.
+  useEffect(() => {
+    if (!tipoCambioTocado) {
+      setTipoCambio(tipoCambioSugerido != null ? String(tipoCambioSugerido) : "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoCambioSugerido]);
+
+  // Justificación: aparece solo cuando el número escrito difiere del sugerido, o
+  // cuando no hubo sugerencia (spec §4 punto 5). Comparación número contra número,
+  // no "tocó la tecla" — ver debeMostrarJustificacionTC.
+  // Fix N1 (review 2026-08-05): `!buscandoTC` evita que el campo parpadee mientras
+  // la consulta está en vuelo — el Momento D de la spec solo muestra "Buscando…".
+  const mostrarJustificacionTC = esUSD && !buscandoTC && debeMostrarJustificacionTC({
+    tipoCambioEscrito: tipoCambio,
+    tipoCambioSugerido,
+    huboSugerencia: huboSugerenciaTC,
+  });
 
   // ── Derivados de reserva ───────────────────────────────────────────────────
   const requiereOverride = Boolean(
@@ -462,6 +518,10 @@ export function EmitirFacturaInline({
     setMonedaSeleccionada(nuevaMoneda);
     setTipoCambio("");
     setJustificacionTC("");
+    // Si vuelve a USD más adelante, que la precarga pueda escribir la sugerencia
+    // de nuevo (spec §4 punto 1: "si el usuario pasa de dólares a pesos y vuelve,
+    // se vuelve a consultar").
+    setTipoCambioTocado(false);
 
     // Fix N1: al cambiar moneda limpiar errores y warnings previos.
     // Si el usuario tuvo un error en ARS y cambia a USD, el error viejo no aplica.
@@ -677,7 +737,12 @@ export function EmitirFacturaInline({
       return;
     }
     if (esUSD) {
-      const errorUSD = validarCamposUSD(tipoCambio, justificacionTC);
+      const errorUSD = validarCamposUSD({
+        tipoCambio,
+        justificacion: justificacionTC,
+        tipoCambioSugerido,
+        huboSugerencia: huboSugerenciaTC,
+      });
       if (errorUSD) {
         setErrorEnvio(errorUSD);
         return;
@@ -757,13 +822,18 @@ export function EmitirFacturaInline({
 
       // Campos multimoneda: solo se agregan cuando la moneda es USD.
       // Con ARS el payload es idéntico al original (backend usa defaults "PES"/1).
+      // construirCamposUSDParaPayload (lib compartida con CreateInvoiceModal.jsx):
+      // TC tal cual sin redondear, y exchangeRateJustification SOLO si corresponde.
+      // exchangeRateSource/exchangeRateFetchedAt YA NO se mandan — el servidor los
+      // resuelve solo comparando el número (spec §4 punto 11; antes se mandaba
+      // SIEMPRE una fuente fija falsa, aunque el número lo hubiera escrito el
+      // usuario a mano — bug V8).
       if (esUSD) {
-        payload.monId = "USD";
-        payload.monCotiz = Number(tipoCambio);
-        // ExchangeRateSource es un enum sin JsonStringEnumConverter → enviar el int.
-        payload.exchangeRateSource = EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA;
-        payload.exchangeRateFetchedAt = new Date().toISOString();
-        payload.exchangeRateJustification = justificacionTC.trim();
+        Object.assign(payload, construirCamposUSDParaPayload({
+          tipoCambio,
+          justificacion: justificacionTC,
+          mostrarJustificacion: mostrarJustificacionTC,
+        }));
       }
 
       const response = await api.post("/invoices", payload);
@@ -1101,52 +1171,68 @@ export function EmitirFacturaInline({
                   ))}
                 </div>
 
-                {/* Campos de tipo de cambio: solo cuando moneda = USD */}
+                {/* Campos de tipo de cambio: solo cuando moneda = USD (2026-08-05:
+                    la franja celeste "Fuente del TC: BNA vendedor divisa..." se saca
+                    de acá — mentía cuando el número lo escribía el usuario a mano.
+                    La reemplaza la leyenda del motor, en gris, debajo del casillero,
+                    igual que en la pantalla de la multa. Ver spec §2 y §7.) */}
                 {esUSD && (
                   <div className="space-y-3 pt-2 border-t border-indigo-200 dark:border-indigo-700">
-                    <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/40 px-3 py-2 rounded-lg">
-                      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                      Fuente del TC: BNA vendedor divisa (dólar del día hábil anterior)
+                    <div className="w-full sm:w-40">
+                      <label
+                        htmlFor="tc-inline-input"
+                        className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
+                      >
+                        Tipo de cambio ($/USD) *
+                      </label>
+                      <input
+                        id="tc-inline-input"
+                        type="number"
+                        step="0.01"
+                        min="1.01"
+                        value={tipoCambio}
+                        onChange={(e) => {
+                          setTipoCambio(e.target.value);
+                          setTipoCambioTocado(true);
+                        }}
+                        placeholder="Ej: 1200.50"
+                        className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
+                        data-testid="input-tipo-cambio-inline"
+                      />
+                      {/* Texto que manda el motor (leyendaTC), tal cual — T-13. Mientras
+                          se consulta, un texto neutro de "buscando". Sin color extra ni
+                          ícono aunque el dato sea de otro día: la leyenda ya lo dice. */}
+                      <div
+                        className="mt-1 text-xs text-slate-500 dark:text-slate-400"
+                        role="status"
+                        data-testid="leyenda-tc-sugerido"
+                      >
+                        {textoLeyendaTC({ cargando: buscandoTC, huboSugerencia: huboSugerenciaTC, leyenda: leyendaTC })}
+                      </div>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <div className="w-full sm:w-40">
-                        <label
-                          htmlFor="tc-inline-input"
-                          className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
-                        >
-                          Tipo de cambio ($/USD) *
-                        </label>
-                        <input
-                          id="tc-inline-input"
-                          type="number"
-                          step="0.01"
-                          min="1.01"
-                          value={tipoCambio}
-                          onChange={(e) => setTipoCambio(e.target.value)}
-                          placeholder="Ej: 1200.50"
-                          className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
-                          data-testid="input-tipo-cambio-inline"
-                        />
-                      </div>
-                      <div className="flex-1">
+                    {/* Justificación: aparece solo cuando el número escrito difiere del
+                        sugerido (o cuando no hubo sugerencia) — ver mostrarJustificacionTC. */}
+                    {mostrarJustificacionTC && (
+                      <div>
                         <label
                           htmlFor="tc-justificacion-inline"
                           className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
                         >
-                          ¿De dónde sale el tipo de cambio? *
+                          ¿De dónde sacaste este tipo de cambio? *
                         </label>
-                        <textarea
+                        <input
                           id="tc-justificacion-inline"
+                          type="text"
                           value={justificacionTC}
                           onChange={(e) => setJustificacionTC(e.target.value)}
-                          rows={2}
-                          placeholder="Ej: Dólar vendedor divisa BNA del 13/06/2026, $1200.50 según web oficial."
+                          maxLength={500}
+                          placeholder="Cotización que me pasó el operador, dólar de la web del banco…"
                           className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white px-3 py-2 text-sm"
                           data-testid="input-justificacion-tc-inline"
                         />
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1448,11 +1534,15 @@ export function EmitirFacturaInline({
                     totales.total <= 0 ||
                     bloqueadoPorDeuda ||
                     (requiereOverride && !forceIssue) ||
-                    // USD: bloquear hasta que el operador ingrese TC > 1 y justificación
+                    // USD: bloquear hasta que el operador ingrese TC > 1 y, SOLO si
+                    // corresponde (ver mostrarJustificacionTC — spec 2026-08-05),
+                    // la justificación. Fix B1 (review): antes exigía la
+                    // justificación SIEMPRE, aunque el campo no estuviera ni
+                    // mostrándose (sugerencia aceptada tal cual) → botón trabado.
                     (esUSD &&
                       (!(Number(tipoCambio) > 0) ||
                         Number(tipoCambio) === 1 ||
-                        !justificacionTC.trim()))
+                        faltaJustificacionTC({ mostrar: mostrarJustificacionTC, texto: justificacionTC })))
                   }
                   data-testid="btn-emitir-factura-inline"
                   className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-900 disabled:opacity-50 flex items-center gap-2 transition-colors"
