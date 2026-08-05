@@ -90,6 +90,56 @@
 - **Implementación de referencia:** la decisión de qué aviso es informativo vive en un helper puro
   (`avisosFicha.js`) para que el contador de la barra y el propio aviso nunca diverjan entre sí.
 
+### Cartel emergente único (2026-07-22) — el patrón para "lo intentaste y te frenó / te pide confirmar"
+
+> **Origen:** Gastón probando en producción, textual: *"los mensajes largos e importantes tendrían
+> que salir como un mensaje emergente y todos este tipo de mensajes emergentes tratarlos de la misma
+> forma ya que rompen la estética."* Antes cada rechazo largo del motor se dibujaba INCRUSTADO (una
+> fila, una ficha) con su propia pinta (recuadro rojo angosto, banner ancho, SweetAlert, overlay a
+> mano) y deformaba la pantalla donde caía. Spec completa (con el detalle caso por caso):
+> `docs/ux/2026-07-22-tratamiento-unico-avisos-bloqueo.md`. Componente: `CartelEmergente.jsx`.
+
+- **Regla de corte — un mensaje va al Cartel emergente cuando cumple las TRES:**
+  1. Lo disparó un **click** del usuario (no está "de entrada" en la pantalla).
+  2. **Frena o condiciona** esa acción: el motor la **rechazó** (bloqueo) o pide **confirmar** una
+     consecuencia antes de seguir (confirmación).
+  3. Es un **texto largo del motor** (una instrucción de varias frases), no un cartelito de dos
+     palabras.
+  - Lo que NO cumple las tres sigue como está: error corto de un campo (pegado al campo), el chip
+    "🔒 {motivo}" al lado de un botón apagado (avisa de entrada, no lo dispara un click), un toast de
+    éxito, o una ficha de trabajo (cargar servicio, cargar cobro) — esas nunca van a ventana, el
+    vendedor está TRABAJANDO ahí y una ventana encima lo interrumpiría.
+- **Un solo componente, dos "trajes" (gravedades):**
+  - **Bloqueo** (el motor rechazó la acción): rojo, ícono ⛔, botones **[Entendido]** (secundario) +
+    el botón para resolver ADENTRO de la ventana si el rechazo trae una salida real (ej. "Emitir
+    factura", "Ir a la cuenta del cliente"); si no hay salida, solo "Entendido".
+  - **Confirmación** (el motor pide confirmar antes de seguir): ámbar, ícono ⚠, botones **[Volver]**
+    (secundario) + **[Sí, confirmar]** (primario).
+  - El título de arriba es genérico por gravedad ("No se puede todavía" / "Confirmá antes de
+    seguir"), nunca cuenta el caso puntual — eso lo dice el mensaje. El mensaje es el **texto del
+    motor tal cual** (respeta saltos de línea), el front nunca lo reescribe ni lo resume.
+- **Comportamiento:** nunca se cierra al tocar el fondo (un click al costado no debe descartar un
+  aviso importante sin querer); Escape y la "✕" cierran igual que el botón secundario; el foco
+  arranca en el botón secundario (el más seguro, un Enter accidental no dispara nada); una sola
+  ventana a la vez, nunca se apila con un cartel de fondo.
+- **La detección de "esto es un rechazo largo" es por CÓDIGO/estructura de la respuesta del motor**
+  (ej. `PAGO_SIN_FACTURA`, `REFUND_CREDIT_ALREADY_USED`), nunca por adivinar comparando texto libre —
+  el motivo real que trae el motor es también el que decide si hay botón de salida y a dónde va.
+- **(2026-07-22, respuesta P1=A de Gastón) El ámbar de "confirmar costo por debajo de lo pagado" al
+  operador (`ServiceInlineCard`) TAMBIÉN va al Cartel emergente.** Esto **modifica** la decisión más
+  vieja de esa misma semana que lo dejaba en línea dentro de la ficha: a partir de acá, "todos
+  tratados igual" le gana a la excepción puntual.
+- **Ya migrados a este patrón:** el candado al bajar el estado de un servicio pagado sin factura
+  (desde la cuenta del operador y desde la ficha), el error al guardar un servicio, el rechazo al
+  anular una reserva, el error al deshacer/corregir un reembolso, y la confirmación de costo menor a
+  lo pagado.
+- **Pendiente de migrar (misma pinta, no tocado todavía):** el "¿Seguro? va a quedar costo $0 como
+  sugerencia para todos" (`CostConfirmCell`) y el "¿Seguro? Sí, anular" con la lista de facturas de la
+  anulación multi-factura (`CancelarReservaInline`) siguen con su propio diálogo a mano (visualmente
+  parecido, pero no es el mismo componente). Quedan para una tanda futura — el de multi-factura además
+  necesita que el Cartel emergente admita contenido más rico que un párrafo (una lista de facturas),
+  no solo texto plano.
+
 ## Navegación
 
 - **(2026-07-08) FIN DE LAS BANDEJAS POR TIPO DE COMPROBANTE — un solo monitor de excepciones fuera

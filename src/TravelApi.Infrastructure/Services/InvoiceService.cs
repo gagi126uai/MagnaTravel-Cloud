@@ -9,6 +9,7 @@ using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
@@ -376,11 +377,25 @@ public class InvoiceService : IInvoiceService
         // se mantiene: las notas SI se permiten sobre reservas canceladas (corrigen/anulan una factura emitida).
         if (!request.IsCreditNote && !request.IsDebitNote)
         {
+            // ADR-043 Fase 1 (2026-08-05, "gate de facturar"): sumamos HasUnacknowledgedChanges al contexto
+            // para que la MISMA politica que apaga el boton en el front (EvaluateInvoiceSale) sea la que
+            // rechaza aca. NO se evalua para NC/ND (estamos dentro del if de arriba): la nota correctiva es
+            // justamente la accion que resuelve un cambio pendiente sobre una reserva ya facturada, asi que
+            // bloquearla trabaria ese flujo (§8.1 del ADR).
             var invoiceCapability = ReservaCapabilityPolicy
-                .For(new ReservaCapabilityContext(reserva.Status, reserva.Balance, false, false, false, false))
+                .For(new ReservaCapabilityContext(
+                    reserva.Status, reserva.Balance, false, false, false, false,
+                    HasUnacknowledgedChanges: reserva.HasUnacknowledgedChanges))
                 .CanInvoiceSale;
             if (!invoiceCapability.Allowed)
             {
+                // Comparamos contra la MISMA constante que arma la politica de dominio (regla T-6: el texto
+                // se fija una unica vez) para elegir la excepcion tipada correcta sin duplicar logica de
+                // decision. Test cruzado C2 (ver ReservaCapabilitiesInvoiceGateTests) garantiza que esta
+                // rama y EvaluateInvoiceSale nunca digan cosas distintas.
+                if (invoiceCapability.Reason == ReservaCapabilityPolicy.ChangesPendingReviewReason)
+                    throw new ReservaChangesPendingReviewException(ReservaCapabilityPolicy.ChangesPendingReviewReason);
+
                 // Fix T5 (2026-07-20, contrato pantalla-motor): antes este mensaje interpolaba el enum crudo
                 // del estado (ej. "estado 'InManagement'"), un nombre tecnico en ingles que llegaba tal cual
                 // a la pantalla. Reusamos la MISMA constante que ya usa la capacidad de dominio (fuente unica

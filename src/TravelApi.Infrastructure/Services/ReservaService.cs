@@ -3544,7 +3544,11 @@ public class ReservaService : IReservaService
             HasAnyPayment: hasAnyLivePayment,
             HasPendingOperatorPenalty: hasPendingOperatorPenalty,
             HasOperatorConfirmedService: hasOperatorConfirmedService,
-            OperatorPenaltyOutcome: operatorPenaltyOutcome);
+            OperatorPenaltyOutcome: operatorPenaltyOutcome,
+            // ADR-043 Fase 1 (2026-08-05): la reserva ya trae la columna cargada (sin query extra). Con esto
+            // el boton "Emitir factura" de la ficha se apaga solo cuando hay cambios del operador sin
+            // revisar, con el motivo puesto por ReservaCapabilityPolicy.EvaluateInvoiceSale.
+            HasUnacknowledgedChanges: file.HasUnacknowledgedChanges);
         dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
 
         // Tanda 6 (contrato pantalla-motor, 2026-07-20): capacidad de editar/eliminar CADA cobro puntual, no

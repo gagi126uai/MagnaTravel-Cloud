@@ -34,8 +34,10 @@ public class ReservaCapabilitiesTests
 
     /// <summary>Contexto con deuda (Balance>0) y sin ataduras fiscales, salvo que el test diga lo contrario.</summary>
     private static ReservaCapabilityContext Ctx(
-        string status, decimal balance = 100m, bool hasLiveCae = false, bool hasAnyPayment = false)
-        => new(status, balance, HasLiveCae: hasLiveCae, HasLiveVoucher: false, HasLiveEditAuth: false, HasAnyPayment: hasAnyPayment);
+        string status, decimal balance = 100m, bool hasLiveCae = false, bool hasAnyPayment = false,
+        bool hasUnacknowledgedChanges = false)
+        => new(status, balance, HasLiveCae: hasLiveCae, HasLiveVoucher: false, HasLiveEditAuth: false,
+            HasAnyPayment: hasAnyPayment, HasUnacknowledgedChanges: hasUnacknowledgedChanges);
 
     // ============= Factura de venta: {Confirmed, Traveling, Closed} (ADR-037, desacople) =============
 
@@ -57,6 +59,37 @@ public class ReservaCapabilitiesTests
         var caps = ReservaCapabilityPolicy.For(Ctx(status));
         Assert.Equal(expected, caps.CanInvoiceSale.Allowed);
         if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanInvoiceSale.Reason));
+    }
+
+    // ===== ADR-043 Fase 1 (2026-08-05, "gate de facturar"): cambios del operador sin revisar =====
+
+    [Theory]
+    [InlineData(EstadoReserva.Confirmed)]
+    [InlineData(EstadoReserva.Traveling)]
+    [InlineData(EstadoReserva.Closed)]
+    public void CanInvoiceSale_ConCambiosSinRevisar_BloqueaEnEstadosFacturables(string status)
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(status, hasUnacknowledgedChanges: true));
+        Assert.False(caps.CanInvoiceSale.Allowed);
+        Assert.Equal(ReservaCapabilityPolicy.ChangesPendingReviewReason, caps.CanInvoiceSale.Reason);
+    }
+
+    [Fact]
+    public void CanInvoiceSale_SinCambiosSinRevisar_SigueFacturable()
+    {
+        // Regresion: la marca en false no debe cambiar el comportamiento de siempre.
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Confirmed, hasUnacknowledgedChanges: false));
+        Assert.True(caps.CanInvoiceSale.Allowed);
+    }
+
+    [Fact]
+    public void CanInvoiceSale_EstadoNoFacturable_ConCambiosSinRevisar_MantieneElMotivoDeEstado()
+    {
+        // El chequeo de estado corre PRIMERO: en pre-venta el motivo sigue siendo "no es facturable en
+        // este estado", no el de cambios sin revisar (aunque la marca este prendida).
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Budget, hasUnacknowledgedChanges: true));
+        Assert.False(caps.CanInvoiceSale.Allowed);
+        Assert.Equal(ReservaCapabilityPolicy.NotInvoiceableStatusReason, caps.CanInvoiceSale.Reason);
     }
 
     // ===================== Cobrar: venta firme (incluye Closed, NO Traveling) con deuda =====================

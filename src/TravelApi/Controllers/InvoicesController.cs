@@ -6,6 +6,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Errors;
 using TravelApi.Infrastructure.Persistence;
 
@@ -68,6 +69,12 @@ public class InvoicesController : ControllerBase
             // expresa "estado actual incompatible con la operacion" y es consistente con
             // RetryInvoice y AnnulInvoice. El mensaje se preserva para la UI (vs el
             // generico anterior que escondia la causa real al operador).
+            //
+            // ADR-043 Fase 1 (2026-08-05): si el rechazo es "reserva con cambios sin revisar", sumamos
+            // `code` al body SIN tocar `message` (envelope aditivo, mismo patron que ya usan
+            // ReservasController/HotelBookingsController con ServiceCancellationRejectedException).
+            if (ex is ReservaChangesPendingReviewException rejected)
+                return Conflict(new { message = ex.Message, code = rejected.Code });
             return Conflict(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))

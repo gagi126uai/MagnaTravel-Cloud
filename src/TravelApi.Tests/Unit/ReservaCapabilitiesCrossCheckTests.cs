@@ -115,6 +115,40 @@ public class ReservaCapabilitiesCrossCheckTests
     }
 
     // =====================================================================================================
+    // ADR-043 Fase 1 (2026-08-05, "gate de facturar") — C2: la politica de capacidades (compuerta de UI)
+    // nunca puede decir Allowed=true para una FACTURA DE VENTA que InvoiceService.CreateAsync rechazaria por
+    // HasUnacknowledgedChanges. El guard real (integracion, con AFIP mockeado) vive en
+    // Adr043InvoiceGateChangesReviewTests; aca fijamos la regla PURA de la que depende ese guard: en
+    // cualquier estado facturable, con la marca prendida la politica SIEMPRE da No con el motivo estable
+    // que InvoiceService compara por igualdad de string para elegir la excepcion tipada (ver
+    // InvoiceService.CreateAsync, rama `invoiceCapability.Reason == ReservaCapabilityPolicy.ChangesPendingReviewReason`).
+    // =====================================================================================================
+
+    [Fact]
+    public void CanInvoiceSale_NuncaPermiteFacturarConCambiosSinRevisar()
+    {
+        foreach (var status in AllStatuses)
+        {
+            var ctxConCambios = new ReservaCapabilityContext(
+                status, Balance: 0m, HasLiveCae: false, HasLiveVoucher: false, HasLiveEditAuth: false,
+                HasAnyPayment: false, HasUnacknowledgedChanges: true);
+            var caps = ReservaCapabilityPolicy.For(ctxConCambios);
+
+            Assert.False(caps.CanInvoiceSale.Allowed,
+                $"La politica no debe permitir facturar en {status} con cambios sin revisar.");
+
+            // Si el estado YA era facturable de por si, el motivo que se muestra tiene que ser el de
+            // "cambios sin revisar" — es el que InvoiceService usa para elegir ReservaChangesPendingReviewException.
+            var eraFacturableSinLaMarca = ReservaCapabilityPolicy.InvoiceableStatuses
+                .Contains(status, StringComparer.OrdinalIgnoreCase);
+            if (eraFacturableSinLaMarca)
+            {
+                Assert.Equal(ReservaCapabilityPolicy.ChangesPendingReviewReason, caps.CanInvoiceSale.Reason);
+            }
+        }
+    }
+
+    // =====================================================================================================
     // CanEditOrDeletePayment  vs  el conjunto de TERMINALES.
     // La politica habilita editar/borrar exactamente cuando el estado NO es terminal
     // {Closed, Cancelled, Lost, PendingOperatorRefund}.

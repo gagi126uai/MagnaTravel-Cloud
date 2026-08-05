@@ -57,6 +57,16 @@ public sealed record Cap(bool Allowed, string? Reason)
 /// MISMA derivacion canonica de <c>BookingCancellationService</c>. Default None: en el listado / callers que no
 /// lo calculan, no hay info de penalidad que mostrar.
 /// </param>
+/// <param name="HasUnacknowledgedChanges">
+/// ADR-043 Fase 1 (2026-08-05, "gate de facturar"): True si la reserva tiene <c>Reserva.HasUnacknowledgedChanges</c>
+/// prendido — el operador avisó un cambio (precio, servicio caído, servicio nuevo) que todavía nadie le dio
+/// "Dar OK". Hoy es el UNICO dato que lee <see cref="ReservaCapabilityPolicy.EvaluateInvoiceSale"/> para
+/// bloquear la FACTURA DE VENTA nueva mientras hay revision pendiente; NO afecta la NC/ND (carril aparte, ver
+/// <see cref="ReservaCapabilityPolicy.EvaluateCreditDebitNote"/>). Lo calcula quien arma el contexto leyendo
+/// directamente la columna de la entidad (sin query extra: ya viene cargada). Default false: en callers que
+/// no facturan (edicion de pagos, documentos, voucher, etc.) esta capacidad no se evalua, asi que el default
+/// no cambia ningun comportamiento existente.
+/// </param>
 public sealed record ReservaCapabilityContext(
     string Status,
     decimal Balance,
@@ -66,7 +76,8 @@ public sealed record ReservaCapabilityContext(
     bool HasAnyPayment,
     bool HasPendingOperatorPenalty = false,
     bool HasOperatorConfirmedService = false,
-    OperatorPenaltyOutcome OperatorPenaltyOutcome = OperatorPenaltyOutcome.None);
+    OperatorPenaltyOutcome OperatorPenaltyOutcome = OperatorPenaltyOutcome.None,
+    bool HasUnacknowledgedChanges = false);
 
 /// <summary>
 /// ADR-035 (2026-06-19): conjunto de capacidades de una reserva, ya resueltas. Es la respuesta de
@@ -130,6 +141,15 @@ public static class ReservaCapabilityPolicy
     public const string NotInvoiceableStatusReason =
         "No se puede facturar en este estado. La factura de venta se emite desde Confirmada en adelante, " +
         "salvo en reservas anuladas.";
+
+    /// <summary>
+    /// ADR-043 Fase 1 (2026-08-05): motivo cuando la reserva tiene cambios del operador sin revisar
+    /// (<see cref="ReservaCapabilityContext.HasUnacknowledgedChanges"/>). Mismo texto EXACTO que usa el guard
+    /// real de escritura (<c>ReservaChangesPendingReviewException</c> en <c>InvoiceService.CreateAsync</c>,
+    /// regla T-6: un solo lugar fija el texto, ambos lo leen de aca).
+    /// </summary>
+    public const string ChangesPendingReviewReason =
+        "El operador avisó cambios en esta reserva que todavía no revisaste. Revisalos y dales el OK antes de facturar.";
 
     /// <summary>
     /// Editar un cobro en una reserva terminal: NO se puede, hay que corregirlo deshaciendolo (queda
@@ -430,11 +450,22 @@ public static class ReservaCapabilityPolicy
     /// <summary>
     /// Factura de venta: en {Confirmed, Traveling, Closed} (ADR-037: desacoplada del estado, se emite en
     /// cualquier estado firme no-anulado). Fuera de la allow-list (pre-venta o anulados) da No.
+    ///
+    /// <para>ADR-043 Fase 1 (2026-08-05, "gate de facturar"): ademas del estado, si la reserva tiene cambios
+    /// del operador sin revisar (<see cref="ReservaCapabilityContext.HasUnacknowledgedChanges"/>) tampoco se
+    /// puede emitir factura de venta nueva — primero hay que revisar los cambios ("Dar OK"). El chequeo de
+    /// estado corre PRIMERO a proposito (motivo mas especifico cuando ambos aplicarian, ej. una reserva en
+    /// pre-venta nunca tiene la marca prendida en la practica, pero si la tuviera, "no es facturable en este
+    /// estado" es el motivo mas util). El guard REAL de escritura vive en <c>InvoiceService.CreateAsync</c>
+    /// (<c>ReservaChangesPendingReviewException</c>) y NUNCA debe divergir de esta politica (test cruzado
+    /// C2, §8.1 del ADR).</para>
     /// </summary>
     private static Cap EvaluateInvoiceSale(ReservaCapabilityContext ctx)
     {
         if (!ContainsStatus(InvoiceableStatuses, ctx.Status))
             return Cap.No(NotInvoiceableStatusReason);
+        if (ctx.HasUnacknowledgedChanges)
+            return Cap.No(ChangesPendingReviewReason);
         return Cap.Yes;
     }
 
