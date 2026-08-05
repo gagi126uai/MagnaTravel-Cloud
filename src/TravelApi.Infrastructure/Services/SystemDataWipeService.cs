@@ -527,6 +527,10 @@ public class SystemDataWipeService : ISystemDataWipeService
         "Invoices", "WhatsAppDeliveries", "MessageDeliveries", "UpcomingStartAlertDismissals", "Notifications",
         "HotelBookings", "TransferBookings", "PackageBookings", "AssistanceBookings", "ReservaMoneyByCurrency",
         "FlightSegments", "Payments", "Passengers", "Reservations", "TravelFiles", "BnaExchangeRateSnapshots",
+        // ADR-011: la libreta de cotizaciones se va con la plata (mismo criterio que BnaExchangeRateSnapshots;
+        // el job diario la repuebla solo). Va en el MISMO grupo que Invoices porque Invoices la referencia
+        // con FK RESTRICT — truncadas juntas, la FK no bloquea.
+        "ExchangeRateQuotes",
         "BusinessSequences", "RefreshTokens", "OutboxMessage", "OutboxState", "InboxState",
         // Decision firmada B3 (ver comentario de la clase): plata del operador ligada a reservas.
         "SupplierInvoicePaymentApplicationReversals", "SupplierInvoicePaymentApplications",
