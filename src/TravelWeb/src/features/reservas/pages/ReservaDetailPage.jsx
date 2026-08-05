@@ -2094,10 +2094,13 @@ export default function ReservaDetailPage() {
         </div>
       ) : null}
 
+      {/* Maqueta sección 6 (aviso GUÍA, índigo — no ámbar: no te pide nada, te orienta).
+          La frase "Los nombres de los pasajeros se cargan después" se BORRÓ: era texto
+          muerto y ahora además MENTÍA — desde la Tanda 3 la solapa Pasajeros existe acá. */}
       {reserva.status === "Budget" ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-200">
           <strong className="font-bold">Presupuesto.</strong>{" "}
-          Cuando el cliente confirme, usá "El cliente aceptó" para pasar a En gestión. Los nombres de los pasajeros se cargan después.
+          Cuando el cliente confirme, usá "El cliente aceptó" para pasar a En gestión.
         </div>
       ) : null}
 
@@ -2217,8 +2220,10 @@ export default function ReservaDetailPage() {
                     // Si todos tienen nombre, muestra la cantidad total normal.
                     const totalDeclaradoPax = (reserva.adultCount || 0) + (reserva.childCount || 0) + (reserva.infantCount || 0);
                     const cargadosPax = (reserva.passengers || []).filter(p => p?.fullName?.trim()).length;
+                    // Maqueta secciones 4/6: el contador de la solapa habla ("0 de 2"),
+                    // no es una fracción de programador ("(0/2)").
                     const labelPax = totalDeclaradoPax > 0 && cargadosPax < totalDeclaradoPax
-                        ? `Pasajeros (${cargadosPax}/${totalDeclaradoPax})`
+                        ? `Pasajeros · ${cargadosPax} de ${totalDeclaradoPax}`
                         : `Pasajeros (${reserva.passengers?.length || 0})`;
                     return { id: "passengers", label: labelPax, icon: Users };
                   })(),

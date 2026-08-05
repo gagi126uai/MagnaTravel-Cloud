@@ -89,15 +89,17 @@ function NumerosMonoMoneda({ reserva, anulada, moneyStatus, admin }) {
         );
     }
 
-    // Reserva viva con todo en $0: ni siquiera el saldo grita — los tres quedan
-    // chicos y grises en una sola línea (regla P10: "si todo está en $0…").
-    const todoEnCero = Math.abs(balance) < EPSILON && Math.abs(collected) < EPSILON && Math.abs(cost) < EPSILON;
-    if (todoEnCero) {
+    // P10 (maqueta sección 6, ajuste 2026-08-05 tras el reclamo de Gaston): el saldo solo
+    // se AGRANDA cuando tiene plata (deuda o a favor). Con saldo en $0 — haya o no
+    // recaudado/inversión — va chico y gris en la misma línea que los otros dos: en un
+    // presupuesto recién armado nada tiene que gritar "$ 0,00" en enorme.
+    const saldoEnCero = Math.abs(balance) < EPSILON;
+    if (saldoEnCero) {
         return (
             <p className="text-sm text-slate-400 dark:text-slate-500">
                 Saldo a cobrar <b className="font-semibold">{formatCurrency(0, currency)}</b>
-                {" · "}Recaudado <b className="font-semibold">{formatCurrency(0, currency)}</b>
-                {admin && <> {" · "}Inversión <b className="font-semibold">{formatCurrency(0, currency)}</b></>}
+                {" · "}Recaudado <b className="font-semibold">{formatCurrency(collected, currency)}</b>
+                {admin && <> {" · "}Inversión <b className="font-semibold">{formatCurrency(cost, currency)}</b></>}
             </p>
         );
     }
@@ -206,6 +208,23 @@ function NumerosMultimoneda({ reserva, anulada, moneyStatus, admin }) {
         return (
             <div className="space-y-2">
                 <BloqueGrandeAnulada reserva={reserva} moneyStatus={moneyStatus} currency={currencyFallback} />
+                <RecaudadoInversionPorMoneda reserva={reserva} admin={admin} />
+            </div>
+        );
+    }
+
+    // P10 (mismo ajuste que en mono-moneda): saldo en $0 en TODAS las monedas → nada se
+    // agranda; línea fina gris con una cifra por moneda (P-3⭐) + Recaudado/Inversión.
+    const saldoEnCeroTodas = reserva.porMoneda.every((pm) => Math.abs(pm.balance ?? 0) < EPSILON);
+    if (saldoEnCeroTodas) {
+        return (
+            <div className="space-y-1.5">
+                <p className="text-sm text-slate-400 dark:text-slate-500">
+                    Saldo a cobrar{" "}
+                    <b className="font-semibold">
+                        {reserva.porMoneda.map((pm) => formatCurrency(0, pm.currency)).join(" · ")}
+                    </b>
+                </p>
                 <RecaudadoInversionPorMoneda reserva={reserva} admin={admin} />
             </div>
         );
