@@ -5,7 +5,8 @@ import { Plus, Search, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useReservas } from "../hooks/useReservas";
 import { tabCountKey, esSolapaApagada, resolverSolapaVisible, debeSaltarATodas } from "../lib/reservaTabsMapping";
 import { Button } from "../../../components/ui/button";
-import CreateReservaModal from "../../../components/CreateReservaModal";
+import { NuevaReservaInline } from "../components/NuevaReservaInline";
+import { api } from "../../../api";
 import { FilesPageSkeleton } from "../../../components/ui/skeleton";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
@@ -66,16 +67,64 @@ const TABS = [
 export default function ReservasPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [initialPayerId, setInitialPayerId] = useState("");
+  // P6 (Tanda 3 del rediseño, 2026-08-03): el alta dejó de ser un modal — es esta
+  // fila inline que se despliega arriba del listado. mostrarFilaAlta la abre/cierra;
+  // clienteInicial precarga el buscador cuando se llega desde la ficha de un cliente
+  // (?create=1&customerPublicId=...) — ver el useEffect de abajo.
+  const [mostrarFilaAlta, setMostrarFilaAlta] = useState(false);
+  const [clienteInicial, setClienteInicial] = useState(null);
+  // Fix bloqueante (review frontend, 2026-08-04): publicId del cliente a precargar,
+  // guardado en SU PROPIO estado (no derivado de location.search). Ver el segundo
+  // useEffect de abajo para el motivo — separarlo del primer efecto es lo que
+  // arregla el bug.
+  const [customerPublicIdAPrecargar, setCustomerPublicIdAPrecargar] = useState(null);
 
+  // Efecto 1 — Camino "?create=1&customerPublicId=...": lo usa CustomerAccountPage
+  // cuando el vendedor aprieta "Nuevo presupuesto" desde la ficha de un cliente.
+  // Este efecto SOLO lee el query param y limpia la URL enseguida (no hace ningún
+  // fetch): si el cliente no vino en la URL, abre la fila directo; si vino, guarda
+  // el publicId en su propio estado para que lo resuelva el Efecto 2.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("create") !== "1") return;
-    setInitialPayerId(params.get("customerPublicId") || "");
-    setIsModalOpen(true);
+    const customerPublicId = params.get("customerPublicId") || null;
     navigate(location.pathname, { replace: true });
+
+    if (!customerPublicId) {
+      setClienteInicial(null);
+      setMostrarFilaAlta(true);
+      return;
+    }
+    setCustomerPublicIdAPrecargar(customerPublicId);
   }, [location.pathname, location.search, navigate]);
+
+  // Efecto 2 — resuelve el NOMBRE del cliente a precargar (el query param solo
+  // trae el publicId). Bug arreglado (review frontend, 2026-08-04): antes este
+  // fetch vivía DENTRO del Efecto 1, que depende de location.search — pero el
+  // propio Efecto 1 LIMPIA la URL con navigate(), lo que dispara su cleanup
+  // (cancelado=true) y cortaba este pedido antes de que resolviera. La fila nunca
+  // llegaba a abrirse. Separado en su propio efecto, la única dependencia es el
+  // publicId guardado en estado — que no vuelve a cambiar solo, así que el
+  // cleanup no se dispara a mitad de camino.
+  useEffect(() => {
+    if (!customerPublicIdAPrecargar) return undefined;
+
+    let cancelado = false;
+    (async () => {
+      try {
+        const cliente = await api.get(`/customers/${customerPublicIdAPrecargar}`);
+        if (!cancelado) setClienteInicial(cliente);
+      } catch {
+        // Si no pudimos traer el nombre, igual abrimos la fila vacía: el vendedor
+        // puede buscarlo a mano en vez de quedar bloqueado.
+        if (!cancelado) setClienteInicial(null);
+      } finally {
+        if (!cancelado) setMostrarFilaAlta(true);
+      }
+    })();
+
+    return () => { cancelado = true; };
+  }, [customerPublicIdAPrecargar]);
 
   // ADR-020: ciclo unico sin flags de ciclo. El array TABS es directo.
   const tabs = TABS;
@@ -130,8 +179,9 @@ export default function ReservasPage() {
     }
   }, [viewFilter, tabCounts, isSearching, setViewFilter, loading, loadError, databaseUnavailable]);
 
-  const handleCreateSuccess = (publicId) => {
-    setIsModalOpen(false);
+  const handleReservaCreada = (publicId) => {
+    setMostrarFilaAlta(false);
+    setClienteInicial(null);
     if (publicId) {
       navigate(`/reservas/${publicId}`);
     } else {
@@ -226,7 +276,11 @@ export default function ReservasPage() {
         title="Reservas"
         subtitle="Administra tus reservas, presupuestos y ventas."
         actions={
-          <Button onClick={() => { setInitialPayerId(""); setIsModalOpen(true); }} className="w-full shadow-sm sm:w-auto">
+          <Button
+            onClick={() => { setClienteInicial(null); setMostrarFilaAlta(true); }}
+            disabled={mostrarFilaAlta}
+            className="w-full shadow-sm sm:w-auto"
+          >
             <Plus className="mr-2 h-4 w-4" /> Nuevo Presupuesto
           </Button>
         }
@@ -242,6 +296,19 @@ export default function ReservasPage() {
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
         <div className="space-y-4 p-4 md:p-5">
           <ReservaKPIs stats={stats} />
+
+          {/* P6 (Tanda 3 del rediseño, 2026-08-03): fila de alta inline, entre los KPIs
+              y las solapas — reemplaza al modal CreateReservaModal para el alta desde
+              este listado. Solo se monta cuando el vendedor la abrió (botón de arriba
+              o llegada con ?create=1 desde la ficha de un cliente), para no cargar el
+              buscador de clientes en cada visita a la pantalla. */}
+          {mostrarFilaAlta && (
+            <NuevaReservaInline
+              clienteInicial={clienteInicial}
+              onCreada={handleReservaCreada}
+              onCancelar={() => { setMostrarFilaAlta(false); setClienteInicial(null); }}
+            />
+          )}
 
           {/* Solapas con línea inferior (maqueta líneas 79-86), NO pastillas: la Tanda 1
               recién deployada usaba un segmented control (pastilla blanca con sombra sobre
@@ -463,13 +530,6 @@ export default function ReservasPage() {
           )}
         </div>
       </div>
-
-      <CreateReservaModal
-        isOpen={isModalOpen}
-        onClose={() => { setIsModalOpen(false); setInitialPayerId(""); }}
-        onSuccess={handleCreateSuccess}
-        initialPayerId={initialPayerId}
-      />
     </div>
   );
 }

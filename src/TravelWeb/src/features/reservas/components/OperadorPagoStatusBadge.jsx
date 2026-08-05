@@ -11,12 +11,15 @@
  *   Los MONTOS (costo, pagado, saldo) solo si amountsVisible === true en el DTO raíz.
  *   El backend ya aplica el enmascarado — acá solo leemos el flag.
  *
- * EXCEPCIÓN "Operador impago" (Tanda 2 del rediseño de fichas, 2026-08-03, regla
- * firmada): esta etiqueta puntual NUNCA muestra el monto entre paréntesis, ni
- * siquiera con amountsVisible=true — así queda igual de simple sin importar el
- * permiso de quien la mira. El costo pendiente sigue disponible al pasar el mouse
- * (title), y en detalle en la solapa Estado de Cuenta / cuenta del proveedor. Las
- * etiquetas "pagado" y "parcial" no cambian: siguen mostrando el monto con permiso.
+ * Fix docblock (review frontend, 2026-08-04): esta nota quedó desactualizada y
+ * contradecía al código de abajo. Texto correcto — regla firmada, Tanda 2 del
+ * rediseño de fichas, 2026-08-03: NINGUNA de las tres etiquetas ("pagado",
+ * "parcial", "impago") muestra el monto al lado del texto, tenga o no
+ * amountsVisible=true — todas quedan igual de simples sin importar el permiso
+ * de quien las mira. En "parcial" e "impago", el monto (con permiso) sigue
+ * disponible al pasar el mouse (title). "Pagado" no lo necesita en el title:
+ * no queda saldo pendiente que mostrar. El detalle completo, en cualquier
+ * caso, vive en la solapa Estado de Cuenta / cuenta del proveedor.
  *
  * Este componente NO tiene acción propia (la guía dice: "es estado, no acción").
  * El registro de pago se hace desde la ficha del proveedor.
@@ -52,12 +55,9 @@ export function OperadorPagoStatusBadge({ servicioStatus, amountsVisible, loadin
                 {/* Checkmark simple sin ícono importado para mantener el componente liviano */}
                 <span className="h-2 w-2 rounded-full bg-emerald-500 flex-shrink-0" aria-hidden="true" />
                 Operador pagado
-                {/* Solo mostramos monto si el usuario tiene permiso de costos (amountsVisible del backend) */}
-                {amountsVisible && netCost > 0 && (
-                    <span className="font-mono opacity-75">
-                        ({formatCurrency(paidToOperator, currency || "ARS")})
-                    </span>
-                )}
+                {/* Sin monto (nota firmada de la maqueta, 2026-08-03): la etiqueta del operador
+                    NUNCA lleva plata al lado, en ninguna variante — el número vive en el title
+                    y en la cuenta del proveedor. */}
             </span>
         );
     }
@@ -75,11 +75,7 @@ export function OperadorPagoStatusBadge({ servicioStatus, amountsVisible, loadin
             >
                 <span className="h-2 w-2 rounded-full bg-amber-400 flex-shrink-0" aria-hidden="true" />
                 Pago parcial al operador
-                {amountsVisible && outstandingToOperator > 0 && (
-                    <span className="font-mono opacity-75">
-                        (resta {formatCurrency(outstandingToOperator, currency || "ARS")})
-                    </span>
-                )}
+                {/* Sin monto: misma regla firmada que "Operador pagado" e "impago". */}
             </span>
         );
     }

@@ -4,18 +4,29 @@ import { getMoneyStatus } from "../moneyStatus";
 /**
  * Chips complementarios de la reserva: tres ejes independientes + corrección opcional.
  *
- * Un rótulo = un solo eje. Regla de Gastón 2026-06-22 (refinamiento por review):
- *   - Eje Pago:    Pagada / Sin movimientos / Debe — no viaja (+ Saldo a favor / Multa, en anuladas)
+ * Fix (2026-08-04, pedido del dueño viendo PROD — maqueta firmada línea 1412 "Pago: … · Factura: …"):
+ * el Eje Pago ahora se muestra SIEMPRE, con el estado que corresponda (Pagada / Sin
+ * movimientos / A favor / Debe / Debe — no viaja / Vencida con deuda / Multa por
+ * anulación pendiente / Saldo a favor, en anuladas). Antes el chip directamente
+ * DESAPARECÍA para varios de esos estados ("un rótulo, un solo eje" — regla de Gastón
+ * 2026-06-22) y el renglón quedaba mostrando solo "Factura:", que es justo lo que el
+ * dueño vio en PROD y no le gustó. La ÚNICA excepción que se mantiene a propósito es
+ * una anulada con plata "Inconsistente"/"MultaEnRevision" (dato roto o sin comprobante
+ * fiscal firme): ahí se sigue sin afirmar un monto o una dirección de plata concreta
+ * — decisión FIRMADA del dueño 2026-07-04 — pero ahora en vez de dejar la fila muda se
+ * muestra un chip neutro "Sin novedades" (ver el último `else` de más abajo).
+ *   - Eje Pago:    ver getMoneyStatus (moneyStatus.js) para la lista completa de kinds.
  *   - Eje Viaje:   Vencida con deuda  ← SOLO este caso; "En viaje" lo dice el badge grande.
+ *                  (se repite también en el Eje Pago desde el fix de arriba, redundancia
+ *                  chica y a propósito para que "Pago:" nunca quede en blanco)
  *   - Eje Factura: Sin facturar / Facturada en parte / Facturada total / Facturada y devuelta (ADR-048 T3)
  *
  * Tanda 6 (2026-07-05): el Eje Pago YA NO decide mirando collectionStatus/balance acá —
  * delega en getMoneyStatus (../moneyStatus.js), la fuente ÚNICA de esta categorización
- * en toda la app (ver ese archivo para la lista completa de reglas, incluida la de
- * reservas ANULADAS: nunca muestran "Debe", solo su saldo a favor o multa con contexto).
+ * en toda la app (ver ese archivo para la lista completa de reglas).
  *
  * "Vencida con deuda" (Eje Viaje) sigue leyendo reserva.hasOverdueDebt directamente:
- * es un eje aparte (no compite con el Eje Pago) y no estaba duplicado en otro lugar.
+ * es un eje aparte y no estaba duplicado en otro lugar antes de este fix.
  * "En viaje" NO se chip-ea — el badge grande "EN VIAJE" ya lo dice, repetirlo agrega ruido.
  *
  * Eje Factura: siempre visible (ADR-037). Lee reserva.invoicingStatus.
@@ -119,6 +130,43 @@ export function ReservaStatusChips({ reserva }) {
             className: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800',
             title: 'La multa por anulación tiene una Nota de Débito viva y todavía no se cobró.',
         };
+    } else if (moneyStatus.kind === 'saldoAFavor') {
+        // Fix (2026-08-04, pedido del dueño viendo PROD): "A favor" (reserva VIVA con saldo
+        // a favor del cliente, collectionStatus=SaldoAFavor) no tenía chip acá — el renglón
+        // "Pago:" desaparecía entero. No confundir con 'saldoAFavorAnulada' de arriba (misma
+        // idea, pero en una reserva anulada): son ejes de negocio distintos, con su propio kind.
+        chipPago = {
+            key: 'saldo-a-favor',
+            label: moneyStatus.label,
+            className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800',
+            title: 'Quedó plata del cliente a favor, para usar en otra reserva o devolver.',
+        };
+    } else if (moneyStatus.kind === 'debe' || moneyStatus.kind === 'vencidaConDeuda') {
+        // Fix (2026-08-04): 'debe' (deuda cobrable genérica) y 'vencidaConDeuda' tampoco
+        // tenían chip de Pago — quedaba en blanco. 'vencidaConDeuda' además se repite en el
+        // eje Viaje (más abajo): es una redundancia chica y a propósito, porque el dueño pidió
+        // que el renglón "Pago:" nunca desaparezca, pase lo que pase con el estado de la plata.
+        chipPago = {
+            key: moneyStatus.kind === 'vencidaConDeuda' ? 'vencida-con-deuda' : 'debe',
+            label: moneyStatus.label,
+            className: 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-800',
+            title: 'El cliente tiene saldo pendiente de pago.',
+        };
+    } else {
+        // Fix (2026-08-04): fallback final para que "Pago:" NUNCA desaparezca — cubre el
+        // kind "none" (anulada con cancelledMoneyContext "Inconsistente"/"MultaEnRevision", o
+        // genuinamente saldada en cero). A propósito NO inventamos un monto ni una dirección
+        // (a favor/debe): esos dos casos son justamente los que el dueño decidió (2026-07-04)
+        // que NUNCA se le muestran al vendedor como si fueran plata real — esa regla sigue de
+        // pie, esto solo evita que la fila quede muda en vez de mostrar un texto neutro.
+        // "Sin movimientos": mismo vocabulario que ya usa el listado (Tanda 1, firmado) para
+        // este caso exacto — anulada con plata en revisión no promete cobro ni devolución.
+        chipPago = {
+            key: 'sin-novedades',
+            label: 'Sin movimientos',
+            className: 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
+            title: 'No hay nada pendiente de cobro ni de devolución para mostrar.',
+        };
     }
 
     // ── Eje VIAJE ─────────────────────────────────────────────────────────────────
@@ -143,7 +191,9 @@ export function ReservaStatusChips({ reserva }) {
     return (
         <span className="inline-flex items-center gap-2 flex-wrap" data-testid="reserva-money-chips">
 
-            {/* Eje Pago: solo cuando hay algo que decir (pagada o debe-no-viaja). */}
+            {/* Eje Pago: SIEMPRE visible (fix 2026-08-04) — chipPago nunca queda null,
+                el último `else` de arriba le pone un texto neutro a cualquier caso que
+                antes no tenía chip propio. El `chipPago &&` queda como red defensiva. */}
             {chipPago && (
                 <span className="inline-flex items-center gap-1.5" data-testid="reserva-payment-chips">
                     <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">

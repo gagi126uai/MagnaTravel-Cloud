@@ -678,13 +678,14 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
   return (
     <div className="space-y-6">
-      {/* HEADER LIMPIO */}
+      {/* P12 (Tanda 3 del rediseño, 2026-08-03): título "Vouchers del viaje" — antes decía
+          "Documentación" acá adentro pero la solapa de afuera decía "Vouchers": la solapa
+          ya no se llama de una forma por fuera y de otra por dentro. También se sacó el
+          subtítulo "Gestiona vouchers generados por el sistema…" (el sistema no es sujeto
+          de nada, regla de textos de la constitución). */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-black text-slate-900 dark:text-white">Documentación</h2>
-          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-            Gestiona vouchers generados por el sistema y archivos cargados externamente.
-          </p>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white">Vouchers del viaje</h2>
         </div>
         {/* "Agregar documento" es escritura: se oculta en solo lectura (estado congelado) */}
         {!soloLectura && (

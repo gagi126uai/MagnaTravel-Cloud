@@ -199,7 +199,7 @@ CANCELADA: desde cualquier etapa (cotiz/presup → Perdido sin proceso de plata;
            en gestión/confirmada → proceso completo de penalidades y reembolsos).
 ```
 
-- **Nacimiento: SIEMPRE como cotización**, sin excepciones. NUNCA se puede crear una reserva directamente Confirmada (bug actual señalado por Gastón). Avanzar es rápido; saltear no se puede.
+- ~~**Nacimiento: SIEMPRE como cotización**, sin excepciones.~~ **DEROGADO (Gastón, 2026-08-03, decisión P1=A del rediseño de Reservas): la reserva nace como PRESUPUESTO, como lo define el modelo de estados ADR-048 (2026-07-17), que es la decisión más nueva. La palabra "Cotización" no se muestra más en la UI.** Sigue vigente lo demás: NUNCA se puede crear una reserva directamente Confirmada; avanzar es rápido, saltear no se puede.
 - **Cotización y presupuesto son DOS pasos distintos**: cotización = números rápidos/borrador (capaz ni se manda); presupuesto = documento armado que el cliente recibe y evalúa.
 - **Presupuesto → En gestión: cuando el cliente dice "sí"** (botón explícito). La plata no define este paso.
 - **CONFIRMADA = todos los servicios RESUELTOS** (definición por tipo, opción B del experto de dominio):

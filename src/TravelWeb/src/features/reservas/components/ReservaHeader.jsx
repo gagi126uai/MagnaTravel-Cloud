@@ -170,6 +170,11 @@ export function ReservaHeader({
     onMarkLost,
     serviciosCancelados = null,
     onCorrectTraveling,
+    // P8 (Tanda 3 del rediseño, 2026-08-03): callback que lleva a la solapa Pasajeros.
+    // Lo usa el enlace "Cargar el titular →" de acá abajo — resuelve el "callejón sin
+    // salida" que tenía el Presupuesto (el motivo del botón apagado no llevaba a ningún
+    // lado porque esa solapa todavía no existía en esa etapa).
+    onIrAPasajeros,
 }) {
     const isArchived = reserva.status === 'Archived';
 
@@ -396,7 +401,8 @@ export function ReservaHeader({
                     onClick={onBack}
                     className="flex items-center text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 mb-2 transition-colors font-medium text-sm"
                 >
-                    <ArrowLeft className="w-4 h-4 mr-1.5" /> Volver a Lista
+                    {/* Texto exacto de la maqueta firmada (línea 688): "← Volver al listado". */}
+                    <ArrowLeft className="w-4 h-4 mr-1.5" /> Volver al listado
                 </button>
                 {/* P7 (Tanda 2 del rediseño, 2026-08-03): el título se queda SOLO con el
                     número de reserva y el chip de estado grande — es lo primero que hay
@@ -619,16 +625,24 @@ export function ReservaHeader({
                                 >
                                     El cliente acepto
                                 </button>
-                                {/* Cartelito informativo: solo cuando falta el titular con nombre.
-                                    Feedback 2026-06-19: este cartelito bajo el BOTÓN PRIMARIO está
-                                    permitido porque explica un requisito previo (no un bloqueo del estado).
-                                    Los carteles de motivo de OTROS botones (Cancelar, Archivar) sí se eliminaron. */}
+                                {/* P8 (Tanda 3 del rediseño, 2026-08-03, maqueta sección 6 — "el callejón sin
+                                    salida, resuelto"): antes este texto explicaba el motivo pero no llevaba a
+                                    ningún lado — la solapa Pasajeros todavía no existía en Presupuesto, así
+                                    que el vendedor se quedaba sin saber DÓNDE cargar el titular. Ahora es un
+                                    enlace que abre esa solapa directo (mismo botón primario "abajo", este
+                                    cartelito sigue permitido por el feedback 2026-06-19: explica un requisito
+                                    previo, no un bloqueo del estado). */}
                                 {faltaTitular && (
-                                    <p
-                                        className="text-xs text-amber-600 dark:text-amber-400 font-medium"
-                                        data-testid="reserva-action-client-accepted-hint"
-                                    >
-                                        Tiene que haber un pasajero titular con nombre
+                                    <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                                        Falta cargar el titular.{" "}
+                                        <button
+                                            type="button"
+                                            onClick={onIrAPasajeros}
+                                            data-testid="reserva-action-client-accepted-hint"
+                                            className="font-bold underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-300"
+                                        >
+                                            Cargar el titular →
+                                        </button>
                                     </p>
                                 )}
                             </>

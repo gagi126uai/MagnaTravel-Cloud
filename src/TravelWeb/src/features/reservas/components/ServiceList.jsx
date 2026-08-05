@@ -571,7 +571,8 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
  *   resolverRechazoAnularServicio. Si el codigo NO es ninguno de los catalogados (backend
  *   viejo sin `code`, u otra carrera fuera de lo esperado), el modal muestra SOLO el mensaje
  *   real del motor — que ya viene curado en criollo — sin ningun boton extra.
- * - onIrAVouchers: () => void — navega a la solapa "Vouchers" (motivo voucher vivo)
+ * - onIrAVouchers: () => void — navega a la solapa "Documentos" (motivo voucher vivo;
+ *   P12 Tanda 3 2026-08-03: "Vouchers" se fusionó ahí, ver ReservaDocumentosTab)
  * - onClose: () => void
  */
 function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAVouchers, onClose }) {
@@ -645,7 +646,8 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAVouchers, onCl
                     </button>
                     {/* Motivo voucher vivo — único botón de camino que le queda a este modal
                         desde la obra "anular sin factura" (2026-07-23): navega a la solapa
-                        correcta (Vouchers, no Estado de Cuenta). */}
+                        correcta (Documentos — bloque "Vouchers del viaje" desde P12, no
+                        Estado de Cuenta). */}
                     {boton === "ver-vouchers" && onIrAVouchers && (
                         <button
                             type="button"
@@ -897,7 +899,8 @@ function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, covera
  *                                     reenvía a la sección "Anular varios" (Tanda 4: misma paridad de ayuda
  *                                     en filas fallidas por bloqueo fiscal).
  *                                     Opcional; si no se pasa, el botón no aparece.
- *   onIrAVouchers                   — callback () => void: navega a la solapa "Vouchers" de la reserva
+ *   onIrAVouchers                   — callback () => void: navega a la solapa "Documentos" de la reserva
+ *                                      (P12 Tanda 3 2026-08-03: ahí vive el bloque "Vouchers del viaje")
  *                                     (Tanda 7). Se usa en el modal de bloqueo 409 cuando el motivo es
  *                                     "voucher emitido vivo". Opcional; si no se pasa, el botón no aparece.
  *   canCancelServices               — bool: si el usuario tiene permiso reservas.cancel (UI-only gate).
@@ -1015,6 +1018,14 @@ export function ServiceList({
     // la entrada "Operadores" en el menú principal (proveedores.view). El nombre del operador NO es
     // un dato de costo (no usa cobranzas.see_cost); solo decide si el chip es un link o texto plano.
     const puedeVerProveedores = hasPermission("proveedores.view");
+
+    // Fix tabla de servicios (2026-08-04, pedido del dueño viendo PROD): en una reserva
+    // Anulada o Perdida no hay NINGUNA acción posible sobre los servicios (todo quedó
+    // congelado) ni avisos operativos que mirar (el viaje no va a pasar) — la maqueta
+    // firmada (sección 11, líneas 1442-1443) directamente NO dibuja esas dos columnas
+    // en vez de dejarlas vacías con guiones. Mismo criterio que ya usa esta pantalla
+    // para el color del badge de estado (línea ~303), no se inventa una regla nueva.
+    const ocultarAvisosYAcciones = reservaStatus === 'Lost' || reservaStatus === 'Cancelled';
 
     const collectionErrorMessages = Object.values(serviceCollectionErrors).filter(Boolean);
 
@@ -1219,21 +1230,34 @@ export function ServiceList({
                 <>
                     {/* Desktop Table View */}
                     <div className="hidden md:block overflow-hidden">
+                        {/* Fix alineación (2026-08-04, pedido del dueño viendo PROD): antes cada
+                            columna tenía su propio padding suelto (algunas sin nada, otras con
+                            pr-4) — por eso se veían "gaps" enormes e irregulares entre columnas.
+                            Ahora TODAS las celdas (th y td) usan el mismo padding horizontal
+                            (px-2.5, ~10px, igual que la maqueta firmada líneas 94-97) y el mismo
+                            vertical-align middle, así el ojo lee la tabla en filas parejas. */}
                         <table className="min-w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-slate-100 dark:border-slate-800">
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Tipo</th>
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Descripción</th>
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Fecha / Estancia</th>
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium">Estado</th>
-                                    {mostrarCosto && <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Costo neto</th>}
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Precio de venta</th>
+                                    <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold">Tipo</th>
+                                    <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold">Descripción</th>
+                                    <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold">Fecha</th>
+                                    <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold">Estado</th>
+                                    {mostrarCosto && <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold text-right">Costo</th>}
+                                    <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold text-right">Venta</th>
                                     {/* Columna Avisos: aparece cuando enableServiceDeadlineAlerts está ON.
-                                        Es independiente del flag de catálogo (decisión del dueño). */}
-                                    {isServiceDeadlineAlertsEnabled && (
-                                        <th className="pb-3 text-xs uppercase text-slate-400 font-medium pr-4">Avisos</th>
+                                        Es independiente del flag de catálogo (decisión del dueño).
+                                        Fix (2026-08-04): tampoco aparece en Anulada/Perdida — la maqueta
+                                        (sección 11) no la dibuja porque un viaje que no va a pasar no
+                                        tiene avisos operativos que mirar. */}
+                                    {isServiceDeadlineAlertsEnabled && !ocultarAvisosYAcciones && (
+                                        <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold">Avisos</th>
                                     )}
-                                    <th className="pb-3 text-xs uppercase text-slate-400 font-medium text-right pr-4">Acciones</th>
+                                    {/* Fix (2026-08-04): en Anulada/Perdida no hay ninguna acción posible
+                                        sobre los servicios — mismo motivo que Avisos, arriba. */}
+                                    {!ocultarAvisosYAcciones && (
+                                        <th className="py-2 px-2.5 text-[10.5px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold text-right">Acciones</th>
+                                    )}
                                 </tr>
                             </thead>
                             <tbody>
@@ -1258,7 +1282,7 @@ export function ServiceList({
                                         {(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId, coverageError) => (
                                         <React.Fragment>
                                         <tr className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
-                                            <td className="py-4 align-middle whitespace-nowrap pr-4">
+                                            <td className="py-3 px-2.5 align-middle whitespace-nowrap">
                                                 <div className="flex items-center">
                                                     <ServiceIcon service={svc} />
                                                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{displayType}</span>
@@ -1269,7 +1293,7 @@ export function ServiceList({
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="py-4 align-middle">
+                                            <td className="py-3 px-2.5 align-middle">
                                                 {/* Nombre tachado cuando el servicio está anulado.
                                                     El badge "Anulado" ya aparece en la columna Estado.
                                                     El tachado + quién/cuándo dan contexto adicional sin ser chillones. */}
@@ -1332,7 +1356,7 @@ export function ServiceList({
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="py-4 align-middle whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
+                                            <td className="py-3 px-2.5 align-middle whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
                                                 {svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ? (
                                                     <div className="flex flex-col">
                                                         <span>{formatDate(svc.date || svc.startDate || svc.checkIn)}</span>
@@ -1354,7 +1378,7 @@ export function ServiceList({
                                                     formatDate(svc.date)
                                                 )}
                                             </td>
-                                            <td className="py-4 align-middle whitespace-nowrap">
+                                            <td className="py-3 px-2.5 align-middle whitespace-nowrap">
                                                 {/* items-start: el badge hugea su texto y no se estira al ancho de la celda */}
                                                 <div className="flex flex-col items-start gap-1.5">
                                                     {/* px-1.5 (en vez de px-2) para que el área de color no se extienda
@@ -1421,7 +1445,7 @@ export function ServiceList({
                                                 // contenido de CostConfirmCell, sin tocar ese componente (que sigue
                                                 // permitiendo confirmar costo sobre un anulado — decisión del dueño
                                                 // documentada en CostConfirmCell.jsx, no se toca en esta tanda).
-                                                <td className={`py-4 align-top text-right pr-4 ${
+                                                <td className={`py-3 px-2.5 align-middle text-right ${
                                                     esServicioAnulado(svc) ? 'line-through text-slate-400 dark:text-slate-500' : ''
                                                 }`}>
                                                     {/* Cartelito de moneda solo cuando la reserva mezcla monedas */}
@@ -1443,7 +1467,7 @@ export function ServiceList({
                                                 // Regla 6 del modelo de estados (2026-07-17): el costo de un servicio
                                                 // anulado se tacha igual que su nombre (mismo patrón visual aprobado,
                                                 // ServiceList.jsx:1261) — es historia de la reserva, no un dato vivo.
-                                                <td className={`py-4 align-middle text-right text-xs font-mono pr-4 ${
+                                                <td className={`py-3 px-2.5 align-middle text-right text-xs font-mono ${
                                                     esServicioAnulado(svc)
                                                         ? 'line-through text-slate-400 dark:text-slate-500'
                                                         : 'text-slate-500'
@@ -1462,7 +1486,7 @@ export function ServiceList({
                                                 anulado. En vivo mantiene el énfasis fuerte (font-bold + texto oscuro)
                                                 que ya tenía; el tachado lo pierde a propósito (deja de ser el
                                                 importe "actual" de la reserva). */}
-                                            <td className={`py-4 align-middle text-right text-xs font-mono pr-4 ${
+                                            <td className={`py-3 px-2.5 align-middle text-right text-xs font-mono ${
                                                 esServicioAnulado(svc)
                                                     ? 'line-through text-slate-400 dark:text-slate-500'
                                                     : 'font-bold text-slate-900 dark:text-white'
@@ -1476,15 +1500,21 @@ export function ServiceList({
                                                 {formatCurrency(svc.salePrice || 0, svc.currency || "ARS")}
                                             </td>
 
-                                            {/* Columna Avisos: solo con flag enableServiceDeadlineAlerts ON.
+                                            {/* Columna Avisos: solo con flag enableServiceDeadlineAlerts ON
+                                                y fuera de Anulada/Perdida (ver ocultarAvisosYAcciones).
                                                 Usa UpcomingStartPill (fecha de inicio del servicio). */}
-                                            {isServiceDeadlineAlertsEnabled && (
-                                                <td className="py-4 align-middle pr-4 whitespace-nowrap">
+                                            {isServiceDeadlineAlertsEnabled && !ocultarAvisosYAcciones && (
+                                                <td className="py-3 px-2.5 align-middle whitespace-nowrap">
                                                     <UpcomingStartPill service={svc} windowDays={windowDays} mostrarGuion={true} />
                                                 </td>
                                             )}
 
-                                            <td className="py-4 align-middle pr-4">
+                                            {/* Fix (2026-08-04): columna Acciones completa oculta en
+                                                Anulada/Perdida — no hay ningún botón posible sobre un
+                                                servicio de una reserva que quedó sin efecto (ver
+                                                ocultarAvisosYAcciones, maqueta sección 11). */}
+                                            {!ocultarAvisosYAcciones && (
+                                            <td className="py-3 px-2.5 align-middle">
                                                 <div className="flex flex-col items-end gap-1.5">
                                                     {/* Botones de resolver: decision 3 de UX (ADR-020).
                                                         Solo aparecen en InManagement Y cuando el servicio todavia no esta resuelto.
@@ -1771,6 +1801,7 @@ export function ServiceList({
                                                     })()}
                                                 </div>
                                             </td>
+                                            )}
                                         </tr>
 
                                         {/* Mini-formulario inline de pasajeros faltantes (ADR-031, pantallas D y E).
@@ -1843,8 +1874,8 @@ export function ServiceList({
                                                     ))}
                                                 </span>
                                             </td>
-                                            {isServiceDeadlineAlertsEnabled && <td />}
-                                            <td />
+                                            {isServiceDeadlineAlertsEnabled && !ocultarAvisosYAcciones && <td />}
+                                            {!ocultarAvisosYAcciones && <td />}
                                         </tr>
                                     );
                                 })()}

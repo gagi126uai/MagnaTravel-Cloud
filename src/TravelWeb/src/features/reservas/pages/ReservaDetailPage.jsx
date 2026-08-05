@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check } from "lucide-react";
 import { api } from "../../../api";
@@ -7,10 +7,11 @@ import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import PassengerFormModal from "../../../components/PassengerFormModal";
-import { ReservaDocumentsTab } from "../../../components/ReservaDocumentsTab";
 import ServiceFormModal from "../../../components/ServiceFormModal";
 import { ServiceInlineCard } from "../inline-service/ServiceInlineCard";
-import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
+// P12 (Tanda 3 del rediseño, 2026-08-03): "Vouchers" y "Documentos" se fusionaron
+// en una única solapa — ver el componente para el detalle de la fusión.
+import { ReservaDocumentosTab } from "../../../components/ReservaDocumentosTab";
 // Nota: DataGrid y sus partes ya no se usan en ReservaDetailPage — fueron
 // migrados a EstadoCuentaExtracto.jsx. Se conserva este comentario para contexto
 // en caso de que alguien agregue una tabla nueva en esta página.
@@ -610,26 +611,84 @@ function UnconfirmedServicesBanner({ reserva, onVer }) {
   );
 }
 
+/**
+ * Casilleros de cantidad de pasajeros (adultos/menores/infantes) de la reserva.
+ * Se usa en Cotización (solapa Servicios) y en Presupuesto (solapa Pasajeros).
+ *
+ * P8c (Tanda 3 del rediseño, 2026-08-03): antes había un botón "Guardar cantidades"
+ * aparte con un toast de "Cantidades actualizadas". Ahora, como el resto del
+ * producto, el dato se guarda solo apenas el vendedor deja de tocar los
+ * casilleros — sin botón, sin acordarse de nada. El feedback es discreto (un
+ * texto chico al lado, no un toast que interrumpe).
+ */
 function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
   const [adultCount, setAdultCount] = useState(initial.adultCount);
   const [childCount, setChildCount] = useState(initial.childCount);
   const [infantCount, setInfantCount] = useState(initial.infantCount);
-  const [saving, setSaving] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [mostrarGuardado, setMostrarGuardado] = useState(false);
+  const ocultarGuardadoTimer = useRef(null);
 
+  // Fix bloqueante (review frontend, 2026-08-04): mientras el vendedor borra un
+  // casillero para retipear (ej: cambiar "1" por "2", primero lo deja vacío), el
+  // valor tiene que poder quedar VACÍO un instante — null, no 0. Antes el onChange
+  // convertía "" directo a 0 (`parseInt('') || 0`), y a los 600ms el auto-guardado
+  // mandaba un PATCH con adultCount:0 transitorio, que rompía el gate de "El
+  // cliente aceptó" (exige un titular con nombre, imposible con 0 pasajeros).
   const total = (adultCount || 0) + (childCount || 0) + (infantCount || 0);
   const overCapacity = expectedCapacity > 0 && total > expectedCapacity;
+  const hayCasilleroVacio = adultCount === null || childCount === null || infantCount === null;
   const dirty =
     adultCount !== initial.adultCount ||
     childCount !== initial.childCount ||
     infantCount !== initial.infantCount;
 
-  const handleSubmit = async () => {
-    setSaving(true);
-    try {
-      await onSave({ adultCount, childCount, infantCount });
-    } finally {
-      setSaving(false);
-    }
+  // Auto-guardado con debounce (P8c): dispara 600ms después del último cambio,
+  // nunca mientras el vendedor sigue tocando los casilleros. Deliberadamente
+  // las deps son SOLO los tres contadores (no dirty/overCapacity/onSave, que
+  // cambian de identidad en cada render del padre) — si los incluyéramos, este
+  // efecto se re-ejecutaría en cada render de ReservaDetailPage y guardaría de
+  // más, aunque el vendedor no haya tocado nada.
+  useEffect(() => {
+    // hayCasilleroVacio: no autoguardar a mitad de un borrado/retipeo (ver arriba).
+    // total === 0: tampoco autoguardar "0 pasajeros" — no es un valor de negocio
+    // válido para una reserva que se está armando, solo puede ser un tránsito.
+    if (!dirty || overCapacity || hayCasilleroVacio || total === 0) return undefined;
+    const timer = setTimeout(async () => {
+      setGuardando(true);
+      try {
+        const huboExito = await onSave({ adultCount, childCount, infantCount }, { silent: true });
+        if (huboExito) {
+          setMostrarGuardado(true);
+          clearTimeout(ocultarGuardadoTimer.current);
+          ocultarGuardadoTimer.current = setTimeout(() => setMostrarGuardado(false), 2000);
+        }
+      } finally {
+        setGuardando(false);
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adultCount, childCount, infantCount]);
+
+  // Limpia el timer del "Guardado ✓" al desmontar, para no tocar estado de un componente muerto.
+  useEffect(() => () => clearTimeout(ocultarGuardadoTimer.current), []);
+
+  // Convierte lo que el vendedor tipeó a un número válido, o null si el casillero
+  // quedó vacío (a mitad de borrar para retipear). null NUNCA se manda al motor
+  // (ver el guard hayCasilleroVacio de arriba) — solo sirve para que el input
+  // pueda mostrarse en blanco un instante sin que eso dispare un auto-guardado.
+  const parseCasillero = (rawValue) => {
+    if (rawValue === "") return null;
+    const parsed = parseInt(rawValue, 10);
+    return Number.isNaN(parsed) ? null : Math.max(0, parsed);
+  };
+
+  // Al perder el foco con el casillero vacío, restauramos el último valor
+  // guardado (initial.X) en vez de dejarlo en blanco — mismo criterio que
+  // pidió el reviewer: nunca dejar un campo numérico "colgado" sin valor.
+  const handleBlurCasillero = (valorActual, setter, valorGuardado) => () => {
+    if (valorActual === null) setter(valorGuardado);
   };
 
   const inputClass = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-center text-lg font-bold text-slate-900 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
@@ -642,15 +701,36 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
       <div className="grid grid-cols-3 gap-4">
         <div>
           <label className="mb-1 block text-xs font-bold uppercase text-slate-500">Adultos</label>
-          <input type="number" min="0" value={adultCount} onChange={(e) => setAdultCount(Math.max(0, parseInt(e.target.value, 10) || 0))} className={inputClass} />
+          <input
+            type="number"
+            min="0"
+            value={adultCount ?? ""}
+            onChange={(e) => setAdultCount(parseCasillero(e.target.value))}
+            onBlur={handleBlurCasillero(adultCount, setAdultCount, initial.adultCount)}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className="mb-1 block text-xs font-bold uppercase text-slate-500">Menores</label>
-          <input type="number" min="0" value={childCount} onChange={(e) => setChildCount(Math.max(0, parseInt(e.target.value, 10) || 0))} className={inputClass} />
+          <input
+            type="number"
+            min="0"
+            value={childCount ?? ""}
+            onChange={(e) => setChildCount(parseCasillero(e.target.value))}
+            onBlur={handleBlurCasillero(childCount, setChildCount, initial.childCount)}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className="mb-1 block text-xs font-bold uppercase text-slate-500">Infantes</label>
-          <input type="number" min="0" value={infantCount} onChange={(e) => setInfantCount(Math.max(0, parseInt(e.target.value, 10) || 0))} className={inputClass} />
+          <input
+            type="number"
+            min="0"
+            value={infantCount ?? ""}
+            onChange={(e) => setInfantCount(parseCasillero(e.target.value))}
+            onBlur={handleBlurCasillero(infantCount, setInfantCount, initial.infantCount)}
+            className={inputClass}
+          />
         </div>
       </div>
       <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/50">
@@ -664,14 +744,11 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
             <div className="text-xs text-slate-400 italic">Cargá servicios para chequear la capacidad</div>
           )}
         </div>
-        <button
-          type="button"
-          disabled={!dirty || saving || overCapacity}
-          onClick={handleSubmit}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {saving ? "Guardando..." : "Guardar cantidades"}
-        </button>
+        {/* Feedback discreto de guardado (P8c): reemplaza al botón + toast de antes. */}
+        <div className="text-xs font-semibold" data-testid="pax-counts-autosave-feedback">
+          {guardando && <span className="text-slate-400">Guardando…</span>}
+          {!guardando && mostrarGuardado && <span className="text-emerald-600 dark:text-emerald-400">Guardado ✓</span>}
+        </div>
       </div>
     </div>
   );
@@ -1033,13 +1110,21 @@ export default function ReservaDetailPage() {
     }
   };
 
-  const handleSavePassengerCounts = async (counts) => {
+  // silent=true: lo usa PassengerCountsWidget en su auto-guardado (P8c) — ahí el
+  // feedback es el texto discreto "Guardado ✓" del propio widget, un toast por cada
+  // pausa al tipear sería ruido. La franja "Usar sugerencia" de Pieza C (ADR-031 v2.1)
+  // sigue mostrando el toast: ahí es una acción explícita del vendedor (tocó [Usar]).
+  // Devuelve true/false en vez de relanzar el error: así el widget puede distinguir
+  // "guardado bien" de "falló" sin duplicar el manejo del error (showError ya corrió acá).
+  const handleSavePassengerCounts = async (counts, { silent = false } = {}) => {
     try {
       await api.patch(`/reservas/${publicId}/passenger-counts`, counts);
-      showSuccess("Cantidades actualizadas");
+      if (!silent) showSuccess("Cantidades actualizadas");
       await fetchReserva({ showLoading: false, preserveOnError: true });
+      return true;
     } catch (error) {
       showError(getApiErrorMessage(error, "No se pudieron actualizar las cantidades."));
+      return false;
     }
   };
 
@@ -1195,10 +1280,17 @@ export default function ReservaDetailPage() {
     }
   };
 
-  // ADR-020: en Cotizacion y Presupuesto se ocultan las tabs avanzadas (pasajeros,
-  // cuenta, vouchers, documentos) porque la reserva todavia no es operativa.
+  // ADR-020: en Cotizacion y Presupuesto se ocultan las tabs de venta ya en marcha
+  // (cuenta, documentos) porque la reserva todavia no es operativa.
   // "isEarlyStage" reemplaza al antiguo "isBudget" que solo chequeaba Budget.
   const isEarlyStage = reserva?.status === "Quotation" || reserva?.status === "Budget";
+
+  // P8 (Tanda 3 del rediseño, 2026-08-03): la solapa Pasajeros ahora existe DESDE el
+  // Presupuesto (antes esperaba a En gestión, lo que dejaba al vendedor sin ningún
+  // lugar para cargar el titular — el "callejón sin salida" que resuelve la maqueta
+  // sección 6). Solo se sigue ocultando en Cotización, cuya ficha ("Borrador") no se
+  // construye en esta tanda (P1 = A, ADR-048: la reserva nace Presupuesto, no Borrador).
+  const esCotizacion = reserva?.status === "Quotation";
 
   // "congelado": controla vouchers y documentos. Se ocultan las acciones de escritura
   // (emitir, anular voucher, subir documento) en estados terminales o FullyInvoiced.
@@ -1223,14 +1315,18 @@ export default function ReservaDetailPage() {
     [allServices]
   );
 
-  // Si el usuario esta en una tab que no se muestra en estado early-stage (por ej:
-  // la reserva regresa de InManagement a Budget), redirigir a "services" para evitar
-  // una pantalla en blanco.
+  // Si el usuario esta en una tab que no se muestra en el estado actual (por ej: la
+  // reserva regresa de InManagement a Budget, o el DTO todavía trae Cotización),
+  // redirigir a "services" para evitar una pantalla en blanco.
+  // P12 (Tanda 3): "voucher"/"attachments" se fusionaron en una sola tab "documents".
   useEffect(() => {
-    if (isEarlyStage && (activeTab === "voucher" || activeTab === "attachments" || activeTab === "account" || activeTab === "passengers")) {
+    const enTabInvalidaSegunEstado =
+      (esCotizacion && activeTab === "passengers") ||
+      (isEarlyStage && (activeTab === "documents" || activeTab === "account"));
+    if (enTabInvalidaSegunEstado) {
       setActiveTab("services");
     }
-  }, [isEarlyStage, activeTab]);
+  }, [esCotizacion, isEarlyStage, activeTab]);
 
   if (loading) {
     return <div className="animate-pulse p-8 text-center text-slate-500">Cargando reserva...</div>;
@@ -1291,6 +1387,7 @@ export default function ReservaDetailPage() {
         onCorrectTraveling={() => setShowCorrectTravelingModal(true)}
         onReschedule={() => setShowRescheduleModal(true)}
         serviciosCancelados={serviciosCancelados}
+        onIrAPasajeros={() => setActiveTab("passengers")}
       />
 
       {/* Tanda P4 "circuito proveedor" (2026-07-22): aviso fijo (no un toast que
@@ -2108,10 +2205,12 @@ export default function ReservaDetailPage() {
           <nav className="scrollbar-hide flex gap-8 overflow-x-auto">
             {[
               { id: "services", label: "Servicios", icon: FileText },
-              // En Cotizacion y Presupuesto (isEarlyStage) no mostramos tabs operativas:
-              // los pasajeros nominales, pagos, vouchers y documentos solo tienen sentido
-              // cuando la reserva paso a En gestion (el cliente confirmo).
-              isEarlyStage
+              // P8a (Tanda 3 del rediseño, 2026-08-03): la solapa Pasajeros existe desde
+              // Presupuesto — solo se oculta en Cotización (esCotizacion), cuya ficha
+              // "Borrador" no se construye en esta tanda. Antes esperaba a isEarlyStage
+              // completo (Cotización Y Presupuesto), lo que dejaba al Presupuesto sin
+              // ningún lugar para cargar el nombre del titular.
+              esCotizacion
                 ? null
                 : (() => {
                     // ADR-031: el tab muestra "X de N" cuando hay nombres faltantes (P10).
@@ -2125,8 +2224,10 @@ export default function ReservaDetailPage() {
                   })(),
               { id: "history", label: "Historial", icon: Clock },
               isEarlyStage ? null : { id: "account", label: "Estado de Cuenta", icon: CreditCard },
-              isEarlyStage ? null : { id: "voucher", label: "Vouchers", icon: FileText },
-              isEarlyStage ? null : { id: "attachments", label: "Documentos", icon: Paperclip },
+              // P12 (Tanda 3, maqueta sección 10): "Vouchers" y "Documentos" se fusionan
+              // en una única solapa "Documentos" con dos bloques adentro (ver
+              // ReservaDocumentosTab). La ficha pasa de 6 solapas a 5.
+              isEarlyStage ? null : { id: "documents", label: "Documentos", icon: Paperclip },
             ].filter(Boolean).map((tab) => (
               <button
                 key={tab.id}
@@ -2148,11 +2249,13 @@ export default function ReservaDetailPage() {
         <div className="p-4 sm:p-6 lg:p-8">
           {activeTab === "services" ? (
             <div className="space-y-6">
-              {/* ADR-031: en Cotizacion/Presupuesto se carga la CANTIDAD de pasajeros aca
-                  (los nombres van despues, por servicio). Sin esto el total queda en 0 y el
-                  boton "El cliente aceptó" no se habilita. La solapa Pasajeros se redirige a
-                  Servicios en etapa temprana, asi que este es el lugar para cargar la cantidad. */}
-              {isEarlyStage && (
+              {/* ADR-031: en Cotización se carga la CANTIDAD de pasajeros acá (los nombres
+                  van después, por servicio). Sin esto el total queda en 0 y el botón
+                  "El cliente aceptó" no se habilita. Desde Presupuesto (P8a) la solapa
+                  Pasajeros ya existe y es ahí donde vive este mismo casillero — ver más
+                  abajo, `activeTab === "passengers"` — así que acá solo se muestra en
+                  Cotización, la única etapa donde esa solapa sigue oculta. */}
+              {esCotizacion && (
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     Pasajeros del viaje
@@ -2231,7 +2334,8 @@ export default function ReservaDetailPage() {
                 // bloqueo 409 al anular UN servicio, único motivo que le queda desde la obra
                 // "anular sin factura" (2026-07-23: el freno por pago al operador sin factura
                 // se eliminó, así que "Emitir factura" ya no aplica acá).
-                onIrAVouchers={() => setActiveTab("voucher")}
+                // P12 (Tanda 3): "voucher" se fusionó en la solapa única "documents".
+                onIrAVouchers={() => setActiveTab("documents")}
                 // ADR-025: "Cancelar varios" en línea.
                 // canCancelServices: gate UI-only; el server siempre re-valida.
                 canCancelServices={canCancelReserva}
@@ -2282,69 +2386,88 @@ export default function ReservaDetailPage() {
             </div>
           ) : null}
 
-          {activeTab === "passengers" && !isEarlyStage ? (
-            <PassengerList
-              reserva={reserva}
-              reservaId={publicId}
-              // ADR-035 feedback 2026-06-19: en estados terminales (Lost/Cancelled/Closed)
-              // los botones de pasajeros se ocultan. La capability viene del backend.
-              // Degradación elegante: si no hay capabilities, se permite editar (comportamiento previo).
-              canEditPassengers={reserva?.capabilities?.canEditPassengers?.allowed ?? true}
-              onPasajeroGuardado={() => {
-                // Recargar la reserva para actualizar el snapshot de pasajeros
-                // y que el contador y los hints queden al día.
-                fetchReserva({ showLoading: false, preserveOnError: true });
-              }}
-              onAddPassenger={() => {
-                setEditingPassenger(null);
-                setShowPassengerForm(true);
-              }}
-              onEditPassenger={(passenger) => {
-                setEditingPassenger(passenger);
-                setShowPassengerForm(true);
-              }}
-              // ADR-031 v2.1 — Pieza C: sugerencia de composición desde los servicios.
-              // sugerenciaComposicion es null cuando ya coincide con lo actual (franja no aparece).
-              sugerenciaComposicion={sugerenciaComposicion}
-              onUsarSugerencia={(counts) => {
-                // El vendedor apretó [Usar]: actualizamos los casilleros con la sugerencia.
-                // Usamos el mismo handler que el widget de cantidades de ReservaHeader.
-                handleSavePassengerCounts(counts);
-              }}
-              onDeletePassenger={(passengerId) =>
-                askConfirmation({
-                  title: "¿Sacar al pasajero?",
-                  message: "¿Seguro que querés sacar a este pasajero de la reserva?",
-                  type: "danger",
-                  onConfirm: () => handleDeletePassenger(passengerId),
-                })
-              }
-              // Candado C1 (spec 2026-07-22): mismo modal de destrabar que ya usa la
-              // franja ámbar y la cabecera.
-              onRequestEdit={() => setShowEditAuthModal(true)}
-            />
+          {activeTab === "passengers" && !esCotizacion ? (
+            <div className="space-y-6">
+              {/* P8a/P8c (Tanda 3 del rediseño, 2026-08-03, maqueta sección 6): en
+                  Presupuesto este es el ÚNICO lugar donde se cargan las cantidades — antes
+                  vivía en la solapa Servicios, pero ahí la solapa Pasajeros todavía no
+                  existía, así que el vendedor cargaba la cantidad y no tenía forma de
+                  ponerle nombre al titular en el mismo lugar. Desde En gestión en
+                  adelante, la cantidad ya no se toca en la ficha (mismo comportamiento
+                  de siempre — solo cambia DÓNDE se ve en Presupuesto). */}
+              {reserva.status === "Budget" && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Cantidad de pasajeros
+                  </h3>
+                  <PassengerCountsWidget
+                    key={`pax-counts-tab-${reserva?.publicId}`}
+                    initial={{
+                      adultCount: reserva?.adultCount || 0,
+                      childCount: reserva?.childCount || 0,
+                      infantCount: reserva?.infantCount || 0,
+                    }}
+                    onSave={handleSavePassengerCounts}
+                  />
+                </div>
+              )}
+              <PassengerList
+                reserva={reserva}
+                reservaId={publicId}
+                // ADR-035 feedback 2026-06-19: en estados terminales (Lost/Cancelled/Closed)
+                // los botones de pasajeros se ocultan. La capability viene del backend.
+                // Degradación elegante: si no hay capabilities, se permite editar (comportamiento previo).
+                canEditPassengers={reserva?.capabilities?.canEditPassengers?.allowed ?? true}
+                onPasajeroGuardado={() => {
+                  // Recargar la reserva para actualizar el snapshot de pasajeros
+                  // y que el contador y los hints queden al día.
+                  fetchReserva({ showLoading: false, preserveOnError: true });
+                }}
+                onAddPassenger={() => {
+                  setEditingPassenger(null);
+                  setShowPassengerForm(true);
+                }}
+                onEditPassenger={(passenger) => {
+                  setEditingPassenger(passenger);
+                  setShowPassengerForm(true);
+                }}
+                // ADR-031 v2.1 — Pieza C: sugerencia de composición desde los servicios.
+                // sugerenciaComposicion es null cuando ya coincide con lo actual (franja no aparece).
+                sugerenciaComposicion={sugerenciaComposicion}
+                onUsarSugerencia={(counts) => {
+                  // El vendedor apretó [Usar]: actualizamos los casilleros con la sugerencia.
+                  // Usamos el mismo handler que el widget de cantidades de ReservaHeader.
+                  handleSavePassengerCounts(counts);
+                }}
+                onDeletePassenger={(passengerId) =>
+                  askConfirmation({
+                    title: "¿Sacar al pasajero?",
+                    message: "¿Seguro que querés sacar a este pasajero de la reserva?",
+                    type: "danger",
+                    onConfirm: () => handleDeletePassenger(passengerId),
+                  })
+                }
+                // Candado C1 (spec 2026-07-22): mismo modal de destrabar que ya usa la
+                // franja ámbar y la cabecera.
+                onRequestEdit={() => setShowEditAuthModal(true)}
+              />
+            </div>
           ) : null}
 
           {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}
-          {/* canUploadDocument: capability del backend (B3, 2026-06-24).
-              En estados terminales (Finalizada/Anulada/Perdida/Esperando reembolso) = false.
-              La zona de carga y los botones Renombrar/Eliminar se ocultan.
-              Ver y descargar documentos ya cargados sigue disponible. */}
-          {activeTab === "attachments" ? (
-            <ReservaDocumentsTab
-              reservaId={publicId}
-              canUploadDocument={reserva?.capabilities?.canUploadDocument ?? null}
-            />
-          ) : null}
-          {/* soloLectura: en estados congelados no se puede emitir ni anular vouchers.
-              canEmitVoucher: capability del backend (G6, 2026-06-24).
-              En Finalizada (Closed) = false: el viaje terminó, no se emiten vouchers nuevos. */}
-          {activeTab === "voucher" ? (
-            <ReservaVoucherTab
+
+          {/* P12 (Tanda 3 del rediseño, 2026-08-03, maqueta sección 10): "Vouchers" y
+              "Documentos" eran dos solapas para lo mismo — el vendedor no piensa "esto lo
+              emitió el sistema, esto lo subí yo", piensa "los papeles de esta reserva".
+              ReservaDocumentosTab junta los dos bloques de siempre (contenido y lógica
+              intactos) bajo una sola solapa "Documentos". */}
+          {activeTab === "documents" ? (
+            <ReservaDocumentosTab
               reservaId={publicId}
               reserva={reserva}
               soloLectura={congelado}
               canEmitVoucher={reserva?.capabilities?.canEmitVoucher ?? null}
+              canUploadDocument={reserva?.capabilities?.canUploadDocument ?? null}
             />
           ) : null}
 
