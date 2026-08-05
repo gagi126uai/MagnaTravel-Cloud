@@ -1,5 +1,6 @@
 #pragma warning disable CS8601, CS8602, CS8604, CS8618
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
@@ -93,21 +94,55 @@ public class SuppliersController : ControllerBase
         }
     }
 
+    // PenaltyBehavior (enum sin nullable) y TreasuryFxAssumedByOverride (enum? nullable) tienen los dos un valor
+    // "vacio" (Unknown / null) que es TAMBIEN una eleccion de negocio legitima: la ficha del operador deja volver
+    // "a como estaba antes de configurar" (docs config-multas-por-proveedor-decisiones, ADR-044 T4). Por eso este
+    // endpoint NO puede recibir el body ya tipado: si mirara solo el valor deserializado, un PUT que directamente
+    // OMITE el campo (un cliente HTTP viejo o mal armado) seria indistinguible de un PUT que a proposito quiere
+    // resetear la config — y pisaria en silencio lo que el vendedor ya cargo. Por eso se recibe el JSON crudo y se
+    // mira si la propiedad esta PRESENTE antes de decidir si hay que preservar el valor actual.
     [HttpPut("{publicIdOrLegacyId}")]
     [RequirePermission(Permissions.ProveedoresEdit)]
-    public async Task<ActionResult<Supplier>> UpdateSupplier(string publicIdOrLegacyId, SupplierUpsertRequest supplier, CancellationToken cancellationToken)
+    // Bindear a JsonElement materializa el body entero en memoria: se acota el tamaño (la ficha de un
+    // proveedor real pesa un punado de KB; 64 KB deja margen de sobra). Mismo patron que WebhooksController.
+    [RequestSizeLimit(64 * 1024)]
+    public async Task<ActionResult<Supplier>> UpdateSupplier(string publicIdOrLegacyId, [FromBody] JsonElement rawBody, CancellationToken cancellationToken)
     {
+        SupplierUpsertRequest supplier;
+        try
+        {
+            supplier = DeserializeSupplierUpsertRequest(rawBody);
+        }
+        catch (JsonException)
+        {
+            // Nunca se devuelve el mensaje crudo de System.Text.Json (puede mencionar nombres de propiedad o
+            // tipos internos del backend). Se reusa el MISMO texto saneado que arma el input formatter cuando
+            // rechaza un body roto, para que el usuario lea siempre la misma frase (sin jerga de "request body").
+            return BadRequest(new { message = Errors.ApiValidationErrorResponseFactory.BindingErrorMessage });
+        }
+
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             var mapped = MapSupplier(supplier);
-            // Clientes previos a este contrato no mandan InvoicingMode. Preservar el valor real evita convertir
-            // silenciosamente un intermediario en compra/reventa al editar telefono, estado u otro dato.
-            if (!supplier.InvoicingMode.HasValue)
+
+            // Tres campos con el mismo riesgo de "PUT que omite y pisa": InvoicingMode (ya cubierto antes de este
+            // fix con el campo nullable del DTO), PenaltyBehavior y TreasuryFxAssumedByOverride (cubiertos ahora
+            // mirando presencia en el JSON crudo). Se pide el valor actual UNA sola vez si hace falta.
+            var faltaInvoicingMode = !supplier.InvoicingMode.HasValue;
+            var faltaPenaltyBehavior = !JsonTieneCampo(rawBody, "penaltyBehavior");
+            var faltaTreasuryFxOverride = !JsonTieneCampo(rawBody, "treasuryFxAssumedByOverride");
+            if (faltaInvoicingMode || faltaPenaltyBehavior || faltaTreasuryFxOverride)
             {
                 var current = await _supplierService.GetSupplierAsync(id, cancellationToken);
-                mapped.InvoicingMode = current.InvoicingMode;
+                // Clientes previos a este contrato no mandan InvoicingMode. Preservar el valor real evita
+                // convertir silenciosamente un intermediario en compra/reventa al editar telefono, estado u otro
+                // dato.
+                if (faltaInvoicingMode) mapped.InvoicingMode = current.InvoicingMode;
+                if (faltaPenaltyBehavior) mapped.PenaltyBehavior = current.PenaltyBehavior;
+                if (faltaTreasuryFxOverride) mapped.TreasuryFxAssumedByOverride = current.TreasuryFxAssumedByOverride;
             }
+
             var result = await _supplierService.UpdateSupplierAsync(id, mapped, cancellationToken);
             return Ok(ToSupplierResponse(result));
         }
@@ -127,6 +162,36 @@ public class SuppliersController : ControllerBase
             // Ambos casos reflejan "estado actual incompatible con la operacion" → 409.
             return Conflict(new { message = ex.Message });
         }
+    }
+
+    // Fix T-8 (review 2026-08-05): JsonSerializerDefaults.Web es EL MISMO preset que usa el binder automatico
+    // de ASP.NET Core para [FromBody] (incluye PropertyNameCaseInsensitive=true + AllowReadingFromString, que
+    // deja pasar numeros mandados como string JSON, ej. {"defaultPaymentTermDays":"30"}). Armar las opciones a
+    // mano con un solo flag suelto las dejaba MAS estrictas que el binder viejo: un cliente que hoy manda un
+    // numero como string dejaba de andar en silencio al pasar por este parseo manual.
+    private static readonly JsonSerializerOptions SupplierUpsertRequestJsonOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// Convierte el JSON crudo del PUT al DTO tipado de siempre. Se hace a mano (en vez de dejar que el binder
+    /// automatico de ASP.NET Core lo resuelva) porque este endpoint necesita ADEMAS el JsonElement original para
+    /// distinguir "campo ausente" de "campo presente con el valor default" (ver JsonTieneCampo).
+    /// </summary>
+    private static SupplierUpsertRequest DeserializeSupplierUpsertRequest(JsonElement rawBody) =>
+        rawBody.Deserialize<SupplierUpsertRequest>(SupplierUpsertRequestJsonOptions)
+        ?? throw new JsonException("El cuerpo de la solicitud esta vacio.");
+
+    /// <summary>
+    /// True si <paramref name="propertyName"/> vino en el JSON del request, sin importar mayusculas/minusculas.
+    /// Distinto de "el valor no es null": una propiedad puede estar presente Y valer null/0/Unknown a proposito.
+    /// </summary>
+    private static bool JsonTieneCampo(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        foreach (var propiedad in root.EnumerateObject())
+        {
+            if (string.Equals(propiedad.Name, propertyName, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]
@@ -652,6 +717,10 @@ public class SuppliersController : ControllerBase
     };
 }
 
+// ⚠️ OJO al agregar DataAnnotations ([Required], [Range], etc.) a este record: el PUT de proveedores
+// deserializa a mano desde JsonElement (para distinguir campo ausente de reset explicito), asi que la
+// validacion de ModelState de MVC NO corre en el PUT — solo en el POST. Toda regla nueva tiene que
+// validarse tambien en SupplierService (como ya hace el guard de Name vacio), o el PUT la saltea en silencio.
 public record SupplierUpsertRequest(
     string Name,
     string? ContactName,

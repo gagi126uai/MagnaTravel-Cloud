@@ -10539,23 +10539,103 @@ public class BookingCancellationService
             autoTargetInvoiceId = chosenInvoice.Id;
         }
 
-        decimal allocatedSoFar = 0m;
+        // Reparto en TRES PASADAS para que la suma de los renglones cuadre SIEMPRE, centavo a centavo, contra
+        // penaltyToApply (fix redondeo con tope, 2026-08-05; fix F-12 sobreasignacion con caps empatados,
+        // agregado en el review de la misma fecha).
+        //
+        // PASE 1: reparto proporcional al cap de cada linea (como antes), con el ULTIMO renglon absorbiendo el
+        // residuo de redondeo de los anteriores. Esto por si solo puede fallar en DOS direcciones distintas:
+        //   (a) Le puede faltar a algun renglon: si el redondeo de los renglones intermedios le dejaba al
+        //       ultimo un residuo mas grande que SU PROPIO cap, el clamp de abajo lo recortaba y esa plata se
+        //       perdia en silencio — tipico cuando la multa se come TODO lo pagado (penaltyToApply ==
+        //       totalCapBeforePenalty) y los renglones tienen caps muy dispares. Lo resuelve el PASE 3.
+        //   (b) Le puede sobrar: con caps EMPATADOS y una multa chica, cada renglon (salvo el ultimo) redondea
+        //       su porcion de forma INDEPENDIENTE, y AwayFromZero redondea siempre "para afuera" en los
+        //       empates — la SUMA de esos redondeos independientes puede superar penaltyToApply (ejemplo del
+        //       review: 4 renglones con cap $0.01 c/u y multa $0.02 -> los primeros 3 redondean cada uno a
+        //       $0.01 = $0.03, mas que la multa entera). Lo resuelve el PASE 2.
+        //
+        // PASE 2 (TRIM del sobrante): si el pase 1 sumo DE MAS, se recorta el excedente arrancando por el
+        // ULTIMO renglon hacia atras — orden inverso al pase 1 (que le da el residuo al ultimo), asi el
+        // renglon que mas probablemente cargo con el redondeo "de sobra" es el primero en devolverlo.
+        //
+        // PASE 3 (relleno del faltante): si TODAVIA queda un resto sin asignar (el caso (a) de arriba, el pase
+        // 2 no se activa en este escenario porque no hubo sobrante), se reparte entre los renglones que
+        // todavia tengan cap libre. Esto siempre alcanza a cubrir el resto completo: penaltyToApply nunca
+        // supera totalCapBeforePenalty (linea `Math.Min` de mas arriba), asi que la suma de "cap libre" de
+        // TODOS los renglones despues de los pases 1 y 2 nunca es menor al resto pendiente.
+        //
+        // Con estas tres pasadas, `suma(shares) == penaltyToApply` es una invariante real (no una promesa
+        // aspiracional): el pase 2 achica lo que sobra, el pase 3 completa lo que falta, y ninguno de los dos
+        // puede dejar un resto porque los recortes/rellenos son exactos (Math.Min contra el excedente/faltante
+        // real en cada paso).
+        var shares = new decimal[candidateLines.Count];
+        decimal allocatedInFirstPass = 0m;
         for (int i = 0; i < candidateLines.Count; i++)
         {
             var line = candidateLines[i];
             bool isLastLine = i == candidateLines.Count - 1;
 
-            // Reparto proporcional al cap de cada linea. La ultima linea absorbe el residuo de redondeo para que
-            // la suma de las porciones == penaltyToApply exacto.
-            decimal share = isLastLine
-                ? penaltyToApply - allocatedSoFar
+            decimal rawShare = isLastLine
+                ? penaltyToApply - allocatedInFirstPass
                 : Math.Round(
                     penaltyToApply * (line.RefundCap / totalCapBeforePenalty), 2, MidpointRounding.AwayFromZero);
 
-            // Defensa dura: la porcion nunca supera el cap de la linea (preserva RefundCap + PenaltyAmount ==
-            // capBeforePenalty) ni baja de cero.
-            if (share > line.RefundCap) share = line.RefundCap;
-            if (share < 0m) share = 0m;
+            // La porcion nunca supera el cap de la linea (preserva RefundCap + PenaltyAmount == capBeforePenalty)
+            // ni baja de cero. Si el clamp recorta el ultimo renglon, el sobrante lo resuelve el PASE 3 de abajo.
+            if (rawShare > line.RefundCap) rawShare = line.RefundCap;
+            if (rawShare < 0m) rawShare = 0m;
+
+            shares[i] = rawShare;
+            allocatedInFirstPass += rawShare;
+        }
+
+        // PASE 2: recorta el sobrante (caso (b) de arriba) ANTES del pase 3, para que este ultimo trabaje
+        // siempre sobre un `allocatedInFirstPass` que nunca supera penaltyToApply.
+        decimal excedenteTrasPase1 = allocatedInFirstPass - penaltyToApply;
+        if (excedenteTrasPase1 > 0m)
+        {
+            for (int i = candidateLines.Count - 1; i >= 0 && excedenteTrasPase1 > 0m; i--)
+            {
+                var recorte = Math.Min(excedenteTrasPase1, shares[i]);
+                shares[i] -= recorte;
+                allocatedInFirstPass -= recorte;
+                excedenteTrasPase1 -= recorte;
+            }
+        }
+
+        // PASE 3: rellena lo que haya quedado sin asignar (caso (a) de arriba). Nunca coexiste con el pase 2
+        // (uno u otro se activan segun si el pase 1 sumo de mas o de menos, nunca ambas cosas a la vez).
+        decimal sinAsignarTrasPases1y2 = penaltyToApply - allocatedInFirstPass;
+        if (sinAsignarTrasPases1y2 > 0m)
+        {
+            for (int i = 0; i < candidateLines.Count && sinAsignarTrasPases1y2 > 0m; i++)
+            {
+                var capLibreDeLaLinea = candidateLines[i].RefundCap - shares[i];
+                if (capLibreDeLaLinea <= 0m) continue;
+
+                var extra = Math.Min(sinAsignarTrasPases1y2, capLibreDeLaLinea);
+                shares[i] += extra;
+                sinAsignarTrasPases1y2 -= extra;
+            }
+
+            if (sinAsignarTrasPases1y2 > 0m)
+            {
+                // No deberia poder pasar nunca (ver comentario de arriba: el resto SIEMPRE cabe en el cap libre
+                // combinado de los renglones). Se deja logueado para poder investigar en vez de fallar en
+                // silencio si algun caso raro lo dispara.
+                _logger.LogWarning(
+                    "FASE0/redondeo: BC {BcPublicId} quedo con {SinAsignar} de la multa del operador sin poder " +
+                    "asignarse a ningun renglon tras el reparto (no deberia pasar: la multa aplicada nunca supera " +
+                    "el total de cap disponible). metric:operator_refund_penalty_allocation_residue_unassigned",
+                    bc.PublicId, sinAsignarTrasPases1y2);
+            }
+        }
+
+        for (int i = 0; i < candidateLines.Count; i++)
+        {
+            var line = candidateLines[i];
+            decimal share = shares[i];
 
             line.PenaltyAmount = share;
             line.RefundCap = line.RefundCap - share;
@@ -10590,8 +10670,6 @@ public class BookingCancellationService
             // reembolso (PendingOperatorRefund, seteado al nacer el circuito en AssignRefundCapsAsync).
             if (line.RefundCap <= 0m)
                 line.RefundStatus = BookingCancellationLineRefundStatus.None;
-
-            allocatedSoFar += share;
         }
     }
 

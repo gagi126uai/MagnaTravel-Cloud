@@ -282,6 +282,15 @@ public class SupplierService : ISupplierService
             throw new KeyNotFoundException("Proveedor no encontrado");
         }
 
+        // Fix T-1 (review 2026-08-05): mismo guard que CreateSupplierAsync. Sin este chequeo, un PUT sin
+        // "name" (o con espacios en blanco) dejaba pasar el Name vacio hasta el SaveChanges, donde la columna
+        // NOT NULL de la base explotaba con un DbUpdateException sin traducir -> 500 crudo en vez de un 400
+        // con mensaje de negocio.
+        if (string.IsNullOrWhiteSpace(supplier.Name))
+        {
+            throw new ArgumentException("El nombre del proveedor es requerido.");
+        }
+
         // ADR-041 TANDA 5: validar el plazo de pago antes de tocar la entidad (si viene, >= 0).
         ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
 
