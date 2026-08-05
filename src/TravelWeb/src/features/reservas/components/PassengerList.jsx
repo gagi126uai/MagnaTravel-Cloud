@@ -111,6 +111,25 @@ function FranjaSugerenciaComposicion({ sugerencia, onUsarSugerencia }) {
 }
 
 /**
+ * Un casillero de solo lectura con la cantidad de una categoría de pasajero
+ * (Adultos/Menores/Infantes) — maqueta sección 7, líneas 976-981. A diferencia
+ * del widget de Presupuesto (Tanda 3), este NO se edita acá: la cantidad ya
+ * está fija una vez que la reserva avanzó a En gestión.
+ */
+function ResumenCantidad({ etiqueta, valor }) {
+    return (
+        <div>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                {etiqueta}
+            </div>
+            <div className="mt-0.5 flex h-9 w-16 items-center justify-center rounded-lg border border-slate-200 text-sm font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                {valor}
+            </div>
+        </div>
+    );
+}
+
+/**
  * Construye la lista de slots (uno por pasajero declarado) fusionando
  * cantidad declarada con los pasajeros ya cargados.
  *
@@ -181,8 +200,24 @@ export function PassengerList({
 
     const slots = buildSlots(adultCount, childCount, infantCount, passengers);
 
+    // Tanda 4 (2026-08-04, maqueta sección 7): resumen de cantidades arriba de la lista.
+    // En Presupuesto ese mismo dato ya se ve — y se EDITA — en el casillero con auto-save
+    // que ReservaDetailPage dibuja arriba de este componente (Tanda 3, P8c). Mostrarlo
+    // OTRA VEZ acá adentro para Presupuesto duplicaría el mismo número dos veces en la
+    // misma pantalla; por eso este resumen (de solo lectura, sin auto-save) aparece recién
+    // desde En gestión en adelante, cuando la cantidad ya no se toca desde la ficha.
+    const mostrarResumenCantidades = reserva?.status !== "Budget" && totalDeclarado > 0;
+
     return (
         <div>
+            {mostrarResumenCantidades && (
+                <div className="mb-4 flex flex-wrap gap-6" data-testid="resumen-cantidades-pasajeros">
+                    <ResumenCantidad etiqueta="Adultos" valor={adultCount} />
+                    <ResumenCantidad etiqueta="Menores" valor={childCount} />
+                    <ResumenCantidad etiqueta="Infantes" valor={infantCount} />
+                </div>
+            )}
+
             {/* Encabezado con título, contador y botón de agregar */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <div>
@@ -337,22 +372,29 @@ export function PassengerList({
                                                 // autorización viva, los dos quedan gris + candadito y
                                                 // abren la ventana de destrabar en vez de editar/borrar directo.
                                                 candadoDeEdicionActivo ? (
+                                                    // Tanda 4 (2026-08-04, maqueta sección 7): "cada iconito con su
+                                                    // palabra" — antes estos dos candaditos eran mudos (sin texto
+                                                    // visible al lado), y con la reserva confirmada el vendedor no
+                                                    // podía saber qué tapaban sin pasar el mouse. Ahora dicen
+                                                    // "Editar"/"Borrar" igual que el resto de la app, solo que grises.
                                                     <>
                                                         <button
                                                             type="button"
                                                             onClick={onRequestEdit}
                                                             aria-label="Editar pasajero — bloqueado, pedí autorización"
-                                                            className="p-2 text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                                            className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
                                                         >
                                                             <Lock className="w-4 h-4" aria-hidden="true" />
+                                                            Editar
                                                         </button>
                                                         <button
                                                             type="button"
                                                             onClick={onRequestEdit}
-                                                            aria-label="Eliminar pasajero — bloqueado, pedí autorización"
-                                                            className="p-2 text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                                            aria-label="Borrar pasajero — bloqueado, pedí autorización"
+                                                            className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
                                                         >
                                                             <Lock className="w-4 h-4" aria-hidden="true" />
+                                                            Borrar
                                                         </button>
                                                     </>
                                                 ) : (
@@ -361,19 +403,19 @@ export function PassengerList({
                                                         type="button"
                                                         onClick={() => onEditPassenger(slot.pasajero)}
                                                         aria-label="Editar pasajero"
-                                                        className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-lg transition-colors"
-                                                        title="Editar"
+                                                        className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-indigo-600 transition-colors hover:bg-indigo-50 dark:hover:bg-indigo-900/40"
                                                     >
                                                         <Edit2 className="w-4 h-4" />
+                                                        Editar
                                                     </button>
                                                     <button
                                                         type="button"
                                                         onClick={() => onDeletePassenger(getPublicId(slot.pasajero))}
-                                                        aria-label="Eliminar pasajero"
-                                                        className="p-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40 rounded-lg transition-colors"
-                                                        title="Eliminar"
+                                                        aria-label="Borrar pasajero"
+                                                        className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50 dark:hover:bg-rose-900/40"
                                                     >
                                                         <Trash2 className="w-4 h-4" />
+                                                        Borrar
                                                     </button>
                                                 </>
                                                 )

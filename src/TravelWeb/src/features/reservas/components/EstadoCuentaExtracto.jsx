@@ -3,7 +3,7 @@ import { RefreshCw, Loader2, BookOpen } from "lucide-react";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { esAnioRealista, formatCurrency, formatDate, formatDateTime } from "../../../lib/utils";
+import { esAnioRealista, formatCurrency, formatDate, formatDateTime, hoyArgentina } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import {
   DataGrid,
@@ -15,13 +15,16 @@ import {
   DataGridHeaderRow,
   DataGridRow,
 } from "../../../components/ui/DataGrid";
+import { construirFraseResumenSaldos } from "../lib/accountStatementText.js";
 
 /**
  * Extracto contable de la reserva: una línea cronológica por factura, cobro y NC.
  *
- * Estilo libro mayor / extracto bancario:
- *   - Factura / Nota de Débito → columna CARGO (suma deuda).
- *   - Cobro / Nota de Crédito → columna ABONO (resta deuda).
+ * Estilo libro mayor / extracto bancario (Tanda 4, 2026-08-04, maqueta sección 9
+ * "como un extracto del banco" — mismos rótulos "Debe"/"Haber" que la cuenta
+ * corriente del cliente, antes acá decían "Cargo"/"Abono"):
+ *   - Factura / Nota de Débito → columna DEBE (suma deuda).
+ *   - Cobro / Nota de Crédito → columna HABER (resta deuda).
  *   - Cada línea muestra el saldo corriente acumulado.
  *
  * Un bloque por moneda (apilados). Decisión UX 2026-06-22: nunca mezcla monedas.
@@ -130,6 +133,18 @@ export function EstadoCuentaExtracto({
         />
       ))}
 
+      {/* Tanda 4 (2026-08-04, maqueta sección 9): frase de cierre por moneda, ej.
+          "Este cliente debe US$ 300,00 y no debe nada en pesos." Se arma con los
+          MISMOS saldos de cierre que ya se ven en la cabecera de cada bloque —
+          ningún dato nuevo, solo se lee en criollo en vez de obligar a sumar
+          bloques con la cabeza. Solo aparece con más de una moneda: con una
+          sola, el bloque de arriba ya lo dice todo. */}
+      {bloques.length > 1 && (
+        <p className="text-[12.5px] text-slate-500 dark:text-slate-400">
+          {construirFraseResumenSaldos(bloques)}
+        </p>
+      )}
+
       {/*
         Aclaración honesta (decisión UX 2026-06-22): el saldo del extracto refleja lo FACTURADO.
         Si todavía hay servicios confirmados sin facturar, el "Saldo a cobrar" de arriba
@@ -158,8 +173,12 @@ function BloqueMoneda({ bloque, reserva, congelado, renderAccionesFactura, rende
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Tanda 4 (2026-08-04, maqueta sección 9): "Saldo al DD/MM/AAAA" en vez de
+              "Saldo" pelado — deja explícito que es un corte al día de hoy, como
+              cualquier extracto bancario. hoyArgentina() ancla la fecha a Argentina,
+              nunca al reloj del navegador de quien mira la pantalla. */}
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-            Saldo
+            Saldo al {formatDate(hoyArgentina())}:
           </span>
           <span
             className={`text-sm font-extrabold ${
@@ -175,15 +194,26 @@ function BloqueMoneda({ bloque, reserva, congelado, renderAccionesFactura, rende
         </div>
       </div>
 
-      {/* Tabla del extracto */}
-      <DataGrid density="compact" minWidth="860px">
+      {/* Tabla del extracto. Tanda 4 (2026-08-04, maqueta sección 9): "Fecha · Concepto ·
+          Debe · Haber · Saldo" — mismos rótulos que ya usa la cuenta corriente del
+          cliente (EstadoCuentaClienteTab.jsx), tal como pide la maqueta ("el que mira
+          una entiende la otra sin aprender nada nuevo"). Antes acá decía "Cargo"/"Abono",
+          un vocabulario distinto para el mismo concepto en dos pantallas de la app.
+          El número de comprobante (antes su propia columna "Comprobante") ahora va
+          DENTRO del Concepto, igual que lo escribe la maqueta ("Factura B
+          0003-00001234" como una sola frase). La columna Acciones se conserva a
+          propósito (Ver factura, enviar por WhatsApp, emitir/anular recibo) — son
+          capacidades reales que hoy solo se alcanzan desde acá; la maqueta las
+          dibuja como "solo para mirar" pero sacarlas sería una pérdida de
+          funcionalidad, no un cambio de presentación (reportado en el resumen de
+          la tanda). */}
+      <DataGrid density="compact" minWidth="760px">
         <DataGridHeader>
           <DataGridHeaderRow>
             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
             <DataGridHeaderCell>Concepto</DataGridHeaderCell>
-            <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
-            <DataGridHeaderCell align="right">Cargo</DataGridHeaderCell>
-            <DataGridHeaderCell align="right">Abono</DataGridHeaderCell>
+            <DataGridHeaderCell align="right">Debe</DataGridHeaderCell>
+            <DataGridHeaderCell align="right">Haber</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
             <DataGridHeaderCell>Acciones</DataGridHeaderCell>
           </DataGridHeaderRow>
@@ -201,9 +231,34 @@ function BloqueMoneda({ bloque, reserva, congelado, renderAccionesFactura, rende
               />
             ))
           ) : (
-            <DataGridEmptyState colSpan={7} title="Sin movimientos en esta moneda." />
+            <DataGridEmptyState colSpan={6} title="Sin movimientos en esta moneda." />
           )}
         </DataGridBody>
+        {/* Tanda 4 (maqueta sección 9, .moneda-bloque tfoot): fila de total al pie —
+            mismo saldo de cierre que ya se ve en la cabecera del bloque, repetido acá
+            porque así lo dibuja la maqueta (un extracto real siempre cierra con su
+            total al pie de la tabla). */}
+        {bloque.lines?.length > 0 && (
+          <tfoot>
+            <tr className="border-t border-slate-200 bg-slate-50/60 font-bold dark:border-slate-800 dark:bg-slate-800/30">
+              <td colSpan={4} className="px-4 py-2.5 text-right text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Saldo en {bloque.currency === "USD" ? "dólares" : "pesos"}
+              </td>
+              <td
+                className={`px-4 py-2.5 text-right ${
+                  (bloque.closingBalance ?? 0) > 0
+                    ? "text-rose-600 dark:text-rose-500"
+                    : (bloque.closingBalance ?? 0) < 0
+                    ? "text-emerald-600 dark:text-emerald-500"
+                    : "text-slate-500 dark:text-slate-400"
+                }`}
+              >
+                {formatCurrency(bloque.closingBalance ?? 0, bloque.currency)}
+              </td>
+              <td />
+            </tr>
+          </tfoot>
+        )}
       </DataGrid>
     </div>
   );
@@ -266,13 +321,19 @@ function FilaExtracto({ linea, reserva, congelado, renderAccionesFactura, render
           </div>
         )}
       </DataGridCell>
+      {/* Concepto: descripción + comprobante en la MISMA celda (Tanda 4, maqueta sección
+          9 — "Factura B 0003-00001234" es una sola frase, no dos columnas separadas
+          para el mismo movimiento). documentRef va como línea chica mono debajo,
+          solo cuando el backend lo trae. */}
       <DataGridCell>
         <span className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}>
           {linea.description || "—"}
         </span>
-      </DataGridCell>
-      <DataGridCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
-        {linea.documentRef || "—"}
+        {linea.documentRef && (
+          <div className="mt-0.5 font-mono text-[11px] text-slate-400 dark:text-slate-500">
+            {linea.documentRef}
+          </div>
+        )}
       </DataGridCell>
 
       {/* Cargo: solo si suma deuda (factura / ND); la columna de abono queda vacía */}

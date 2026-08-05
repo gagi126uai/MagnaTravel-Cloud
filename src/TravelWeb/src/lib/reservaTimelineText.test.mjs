@@ -13,7 +13,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { traducirMetodoEnLineaHistorial, resumenAltaDePagoHistorial } from "./reservaTimelineText.js";
+import {
+  traducirMetodoEnLineaHistorial,
+  resumenAltaDePagoHistorial,
+  describirEventoHistorial,
+  agruparEventosPorDia,
+  horaDeEvento,
+} from "./reservaTimelineText.js";
 import { formatCurrency } from "./utils.js";
 
 // Intl.NumberFormat("es-AR", { style: "currency" }) pone un espacio NO separable
@@ -206,4 +212,224 @@ test("evento de Modificación de un Pago (no Alta) → devuelve null aunque trai
 test("event null/undefined → devuelve null, no revienta", () => {
   assert.equal(resumenAltaDePagoHistorial(null), null);
   assert.equal(resumenAltaDePagoHistorial(undefined), null);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * describirEventoHistorial — Tanda 4 (rediseño de fichas, 2026-08-04)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+test("describirEventoHistorial: Alta de Pago con actor humano → cobró, punto verde, monto en detalle armado aparte", () => {
+  const event = {
+    eventType: "Create",
+    relatedEntityType: "Payment",
+    actor: "Maite",
+    amount: 50000,
+    currency: "ARS",
+    paymentMethod: "Cash",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.colorPunto, "verde");
+  assert.equal(d.actor, "Maite");
+  assert.equal(d.esCobro, true);
+  assert.equal(d.montoTexto, formatCurrency(50000, "ARS"));
+  assert.equal(d.frase, null);
+  assert.equal(d.detalle, "Forma de pago: Efectivo");
+});
+
+test("describirEventoHistorial: Pago con monto NEGATIVO (reversa de NC / multa deshecha) → NO es cobro: punto rojo, frase 'Se descontó' y monto en POSITIVO (bloqueante review 2026-08-04)", () => {
+  const event = {
+    eventType: "Create",
+    relatedEntityType: "Payment",
+    actor: "Sistema",
+    amount: -140000,
+    currency: "ARS",
+    paymentMethod: "Transfer",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.esCobro, false, "un monto que sale jamás se presenta como cobro");
+  assert.equal(d.colorPunto, "rojo");
+  assert.equal(d.frase, `Se descontó un cobro de ${formatCurrency(140000, "ARS")}.`);
+  assert.equal(d.frase.includes("-"), false, "la plata que sale va con su palabra, no con un signo");
+  assert.equal(d.detalle, "Forma de pago: Transferencia");
+});
+
+test("describirEventoHistorial: Alta de Pago con actor 'Sistema' → actor null (frase impersonal la arma el componente)", () => {
+  const event = {
+    eventType: "Create",
+    relatedEntityType: "Payment",
+    actor: "Sistema",
+    amount: 1000,
+    currency: "ARS",
+    paymentMethod: "Cash",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.actor, null);
+  assert.equal(d.esCobro, true);
+});
+
+test("describirEventoHistorial: cambio de Estado de la Reserva → frase natural con los dos labels traducidos", () => {
+  const event = {
+    eventType: "Update",
+    relatedEntityType: "Reserva",
+    actor: "Maite",
+    details: "• Estado: de *InManagement* a **Confirmed**",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de En gestión a Confirmada.");
+  assert.equal(d.actor, null, "el actor no va al principio de esta frase especial");
+  assert.equal(d.detalle, "La hizo Maite.");
+});
+
+test("describirEventoHistorial: cambio de Estado sin actor humano → sin línea 'La hizo'", () => {
+  const event = {
+    eventType: "Update",
+    relatedEntityType: "Reserva",
+    actor: "Sistema",
+    details: "• Estado: de *Quotation* a **Budget**",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de Cotización a Presupuesto.");
+  assert.equal(d.detalle, null);
+});
+
+test("describirEventoHistorial: anulación (SoftDelete) de un traslado, con actor → frase + punto rojo", () => {
+  const event = {
+    eventType: "SoftDelete",
+    relatedEntityType: "TransferBooking",
+    actor: "Maite",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.colorPunto, "rojo");
+  assert.equal(d.actor, "Maite");
+  assert.equal(d.frase, "anuló el traslado.");
+});
+
+test("describirEventoHistorial: anulación sin actor humano → frase impersonal 'Se anuló...'", () => {
+  const event = { eventType: "SoftDelete", relatedEntityType: "TransferBooking", actor: null };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.actor, null);
+  assert.equal(d.frase, "Se anuló el traslado.");
+});
+
+test("describirEventoHistorial: alta genérica de la reserva → 'creó la reserva.'", () => {
+  const event = { eventType: "Create", relatedEntityType: "Reserva", actor: "Maite" };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "creó la reserva.");
+  assert.equal(d.colorPunto, "neutro");
+});
+
+test("describirEventoHistorial: Update sobre Invoice → punto índigo", () => {
+  const event = { eventType: "Update", relatedEntityType: "Invoice", actor: "Maite", details: "• Notas: de *N/A* a **algo**" };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.colorPunto, "indigo");
+  assert.equal(d.frase, "modificó la factura.");
+});
+
+test("describirEventoHistorial: diff con N° de confirmación (Alta) → detalle 'N° de confirmación: X'", () => {
+  const event = {
+    eventType: "Create",
+    relatedEntityType: "HotelBooking",
+    actor: "Maite",
+    details: "• **Confirmación**: CONF-123",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.detalle, "N° de confirmación: CONF-123");
+});
+
+test("describirEventoHistorial: diff con N° de confirmación (Modificación) → detalle con el valor NUEVO", () => {
+  const event = {
+    eventType: "Update",
+    relatedEntityType: "HotelBooking",
+    actor: "Maite",
+    details: "• Confirmación: de *N/A* a **CONF-123**",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.detalle, "N° de confirmación: CONF-123");
+});
+
+test("describirEventoHistorial: entidad desconocida (DTO nuevo que el front no mapeó) → 'un registro de la reserva', nunca el nombre técnico", () => {
+  const event = { eventType: "Update", relatedEntityType: "AlgoNuevoDelBackend", actor: "Maite" };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "modificó un registro de la reserva.");
+  assert.ok(!d.frase.includes("AlgoNuevoDelBackend"), "nunca el nombre técnico crudo en la frase");
+});
+
+test("describirEventoHistorial: eventType desconocido → cae al verbo genérico 'modificó', no revienta", () => {
+  const event = { eventType: "Restore", relatedEntityType: "Payment", actor: "Maite" };
+  const d = describirEventoHistorial(event);
+  // No es un Create de Payment (es "Restore"), así que no entra por la rama de cobro.
+  assert.equal(d.esCobro, false);
+  assert.equal(d.frase, "modificó el pago.");
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * agruparEventosPorDia / horaDeEvento — Tanda 4
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+// "Ahora" fijo para que los tests de Hoy/Ayer no dependan del reloj real:
+// 2026-08-04T15:00:00Z = 04/08/2026 12:00 en Argentina (UTC-3).
+const AHORA_FIJO = "2026-08-04T15:00:00Z";
+
+test("agruparEventosPorDia: eventos del mismo día de hoy → un solo grupo 'Hoy — dd/mm/aaaa'", () => {
+  const eventos = [
+    { timestamp: "2026-08-04T17:32:00Z" }, // 14:32 ART, mismo día que AHORA_FIJO
+    { timestamp: "2026-08-04T13:05:00Z" }, // 10:05 ART, mismo día
+  ];
+  const grupos = agruparEventosPorDia(eventos, new Date(AHORA_FIJO));
+  assert.equal(grupos.length, 1);
+  assert.equal(grupos[0].etiqueta, "Hoy — 04/08/2026");
+  assert.equal(grupos[0].eventos.length, 2);
+});
+
+test("agruparEventosPorDia: un evento de ayer → grupo 'Ayer — dd/mm/aaaa'", () => {
+  const eventos = [{ timestamp: "2026-08-03T14:05:00Z" }]; // 11:05 ART del 03/08
+  const grupos = agruparEventosPorDia(eventos, new Date(AHORA_FIJO));
+  assert.equal(grupos.length, 1);
+  assert.equal(grupos[0].etiqueta, "Ayer — 03/08/2026");
+});
+
+test("agruparEventosPorDia: un evento de hace varios días → etiqueta con el nombre del día", () => {
+  const eventos = [{ timestamp: "2026-07-25T05:07:00Z" }]; // 02:07 ART del 25/07 (sábado real de 2026)
+  const grupos = agruparEventosPorDia(eventos, new Date(AHORA_FIJO));
+  assert.equal(grupos.length, 1);
+  assert.equal(grupos[0].etiqueta, "Sábado 25/07/2026");
+});
+
+test("agruparEventosPorDia: eventos de tres días distintos (ya ordenados del más nuevo al más viejo) → tres grupos en ese orden", () => {
+  const eventos = [
+    { timestamp: "2026-08-04T17:32:00Z" }, // Hoy
+    { timestamp: "2026-08-03T14:05:00Z" }, // Ayer
+    { timestamp: "2026-07-25T05:07:00Z" }, // Sábado 25/07/2026
+  ];
+  const grupos = agruparEventosPorDia(eventos, new Date(AHORA_FIJO));
+  assert.deepEqual(
+    grupos.map((g) => g.etiqueta),
+    ["Hoy — 04/08/2026", "Ayer — 03/08/2026", "Sábado 25/07/2026"]
+  );
+  grupos.forEach((g) => assert.equal(g.eventos.length, 1));
+});
+
+test("agruparEventosPorDia: no reordena — dos eventos del mismo día quedan en el orden en que llegaron", () => {
+  const primero = { timestamp: "2026-08-04T17:32:00Z", title: "más nuevo" };
+  const segundo = { timestamp: "2026-08-04T13:05:00Z", title: "más viejo" };
+  const grupos = agruparEventosPorDia([primero, segundo], new Date(AHORA_FIJO));
+  assert.equal(grupos[0].eventos[0].title, "más nuevo");
+  assert.equal(grupos[0].eventos[1].title, "más viejo");
+});
+
+test("agruparEventosPorDia: lista vacía → devuelve array vacío", () => {
+  assert.deepEqual(agruparEventosPorDia([], new Date(AHORA_FIJO)), []);
+});
+
+test("agruparEventosPorDia: sin eventos (undefined) → devuelve array vacío, no revienta", () => {
+  assert.deepEqual(agruparEventosPorDia(undefined, new Date(AHORA_FIJO)), []);
+});
+
+test("horaDeEvento: convierte el timestamp UTC a HH:mm de Argentina", () => {
+  assert.equal(horaDeEvento("2026-08-04T17:32:00Z"), "14:32");
+});
+
+test("horaDeEvento: rellena con cero a la izquierda (hora y minuto de un solo dígito)", () => {
+  // 2026-08-04T04:05:00Z → 01:05 ART
+  assert.equal(horaDeEvento("2026-08-04T04:05:00Z"), "01:05");
 });

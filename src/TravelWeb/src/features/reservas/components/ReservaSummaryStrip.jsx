@@ -102,13 +102,24 @@ function NumerosMonoMoneda({ reserva, anulada, moneyStatus, admin }) {
         );
     }
 
+    // Bloqueante de review (2026-08-04, repone el fix IMP-4 del 2026-06-24): una reserva
+    // VIVA con sobrepago tiene balance NEGATIVO — mostrar "Saldo a Cobrar -$ 5.000" es
+    // mentirle al vendedor con un signo. El número grande pasa a decir lo que ES: saldo
+    // a favor del cliente, en verde y en positivo (mismo lenguaje que la ficha Anulada).
+    const saldoAFavorVivo = (balance ?? 0) < 0;
+
     return (
         <div className="space-y-2">
             <NumeroGrande
-                label="Saldo a Cobrar"
-                value={formatCurrency(balance, currency)}
-                colorClass={moneyStatus.tone === 'danger' ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700'}
-                leyenda={reserva.totalSale > 0 ? `de ${formatCurrency(reserva.totalSale, currency)} presupuestado` : null}
+                label={saldoAFavorVivo ? "Saldo a favor del cliente" : "Saldo a Cobrar"}
+                value={formatCurrency(Math.abs(balance ?? 0), currency)}
+                colorClass={saldoAFavorVivo
+                    ? 'text-emerald-600 dark:text-emerald-500'
+                    : (moneyStatus.tone === 'danger' ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700')}
+                leyenda={saldoAFavorVivo
+                    ? 'se puede usar en esta reserva o devolver'
+                    : (reserva.totalSale > 0 ? `de ${formatCurrency(reserva.totalSale, currency)} presupuestado` : null)}
+                testId={saldoAFavorVivo ? 'viva-saldo-a-favor' : undefined}
             />
             <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
                 <NumeroChico label="Recaudado" value={formatCurrency(collected, currency)} />
@@ -207,12 +218,24 @@ function NumerosMultimoneda({ reserva, anulada, moneyStatus, admin }) {
                 <div className="space-y-0.5">
                     {reserva.porMoneda.map((pm) => {
                         const hayDeuda = pm.balance > EPSILON;
+                        // Fix re-review (2026-08-04): sobrepago en UNA moneda de una reserva
+                        // viva — el balance negativo jamás se muestra con signo "-": va en
+                        // positivo, en verde y con su palabra ("a favor"). Cada moneda se
+                        // evalúa sola (P-3⭐), las otras líneas no cambian.
+                        const aFavor = pm.balance < -EPSILON;
                         return (
-                            <div key={pm.currency} className="flex items-center gap-1.5">
+                            <div key={pm.currency} className="flex items-center gap-1.5" data-testid={aFavor ? 'viva-saldo-a-favor-moneda' : undefined}>
                                 <CurrencyBadge currency={pm.currency} size="sm" />
-                                <span className={`text-2xl font-extrabold leading-none ${hayDeuda ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700'}`}>
-                                    {formatCurrency(pm.balance, pm.currency)}
+                                <span className={`text-2xl font-extrabold leading-none ${
+                                    aFavor
+                                        ? 'text-emerald-600 dark:text-emerald-500'
+                                        : (hayDeuda ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700')
+                                }`}>
+                                    {formatCurrency(Math.abs(pm.balance), pm.currency)}
                                 </span>
+                                {aFavor && (
+                                    <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-500">a favor</span>
+                                )}
                             </div>
                         );
                     })}

@@ -7,18 +7,26 @@ import { isAdmin, hasPermission } from "../../../auth";
 import { formatearFaltaFacturar } from "../lib/invoicingSummaryLogic";
 
 /**
- * Franja de 3 ejes del Estado de Cuenta de una reserva.
- *
- * Muestra separados y sin mezclar:
+ * Franja de la solapa Estado de Cuenta con los ejes de plata que NO se ven en
+ * ningún otro lado de la ficha:
  *   1) Venta / Facturación: vendido firme, facturado, falta facturar + chip de estado.
- *   2) Cobranza: cobrado, saldo a cobrar, saldo a favor.
- *   3) Costo / Margen: SOLO para admins o usuarios con permiso cobranzas.see_cost.
+ *   2) Costo / Margen: SOLO para admins o usuarios con permiso cobranzas.see_cost.
+ *
+ * Fix (Tanda 4 del rediseño de fichas, 2026-08-04, maqueta sección 9, nota "Sin
+ * repetir la plata de arriba"): el eje "Cobranza" (Cobrado / Saldo a cobrar / A
+ * favor) se sacó de acá — esos mismos tres números YA están en el encabezado de
+ * la ficha (los "números grandes": Saldo a cobrar, Recaudado, Inversión), y
+ * mostrarlos de nuevo acá era repetir la misma plata dos veces en la misma
+ * pantalla. "Costo y margen" se conserva porque el Margen es un dato que NO
+ * está en ningún otro lado (Inversión sí se repite del encabezado, pero va de
+ * la mano del Margen — separarlos hubiese sido más confuso que mostrar un
+ * numerito de más).
  *
  * En multimoneda repite cada bloque numérico por moneda (nunca suma ARS + USD).
  * El saldo del cliente (cuenta corriente) y el link van en este componente como
- * tercer bloque de info, separado de la cobranza de la reserva.
+ * bloque de info aparte, separado de la venta/facturación de la reserva.
  *
- * Decisión UX 2026-06-22: tres ejes separados, sin mezclarlos.
+ * Decisión UX 2026-06-22: ejes de plata separados, sin mezclarlos.
  *
  * Props:
  *   - reserva: el DTO completo de la reserva (ya cargado en la página).
@@ -107,71 +115,6 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
           </div>
         </div>
 
-      </div>
-
-      {/* ── Eje 2: Cobranza ────────────────────────────────────────────────── */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Cobranza
-          </h4>
-        </div>
-        <div className="flex flex-wrap gap-6 px-6 py-4">
-          {esMultimoneda ? (
-            <>
-              <ColumnaNumericaMulti
-                label="Cobrado"
-                porMoneda={reserva.porMoneda}
-                campo="totalPaid"
-                colorClass="text-emerald-700 dark:text-emerald-500"
-              />
-              {/*
-                BUG IMP-4 fix 2026-06-24: en vez de mostrar "Saldo a cobrar" con color rojo
-                fijo para todas las monedas, usamos ColumnaBalanceMulti que distingue:
-                  - balance > 0: "Saldo a cobrar" en rojo (cliente debe plata).
-                  - balance < 0: "A favor" en verde (cliente pagó de más en esa moneda).
-                  - balance = 0: gris neutro.
-                No mezclamos monedas: cada moneda tiene su propio signo.
-              */}
-              <ColumnaBalanceMulti porMoneda={reserva.porMoneda} />
-            </>
-          ) : (
-            <>
-              {/* Fix "Recaudado": usamos TotalPaid del backend directamente.
-                  No recalculamos sumando reserva.payments en el front (puede incluir
-                  pagos puente AffectsCash=false y divergir del backend). */}
-              <EjeNumero
-                label="Cobrado"
-                valor={reserva.totalPaid}
-                moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
-                colorClass="text-emerald-700 dark:text-emerald-500"
-              />
-              {/*
-                BUG IMP-4 fix 2026-06-24: cuando balance < 0 el cliente pagó de más →
-                mostrar "A favor" en verde con el monto en positivo, no "Saldo a cobrar: -$X" en rojo.
-                  - balance > 0: "Saldo a cobrar" rojo.
-                  - balance < 0: "A favor" verde, mostramos Math.abs(balance).
-                  - balance = 0: "Saldo a cobrar: $0" en gris neutro.
-              */}
-              <EjeBalanceMono
-                balance={reserva.balance}
-                moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
-              />
-            </>
-          )}
-
-          {/* Saldo a favor de ESTA reserva (collectionStatus del backend) */}
-          {reserva.collectionStatus === "SaldoAFavor" && (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                Estado
-              </span>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black uppercase text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-                A favor
-              </span>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* ── Eje 3: Costo / Margen (solo si el usuario puede ver costos) ────── */}
@@ -372,101 +315,6 @@ function ColumnaNumericaMulti({ label, porMoneda, campo, colorClass, nullLabel }
                 {valor == null
                   ? (nullLabel ?? formatCurrency(0, pm.currency))
                   : formatCurrency(valor, pm.currency)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Muestra el balance en modo mono-moneda con semántica de saldo a favor / saldo a cobrar.
- *
- * BUG IMP-4 fix 2026-06-24:
- *  - balance > 0: "Saldo a cobrar" en rojo (cliente debe plata).
- *  - balance < 0: "A favor" en verde, mostrando el monto en positivo (Math.abs).
- *  - balance = 0: "Saldo a cobrar: $0" en gris neutro.
- *
- * Regla de negocio: balance negativo = el cliente pagó de más en esta reserva.
- * Mostrarlo como deuda roja confunde al vendedor; debe verse como crédito verde.
- */
-function EjeBalanceMono({ balance, moneda }) {
-  const valor = balance ?? 0;
-
-  if (valor < 0) {
-    return (
-      <div className="flex flex-col gap-0.5">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-          A favor
-        </span>
-        <span className="text-xl font-extrabold leading-none text-emerald-600 dark:text-emerald-500">
-          {formatCurrency(Math.abs(valor), moneda)}
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-        Saldo a cobrar
-      </span>
-      <span className={`text-xl font-extrabold leading-none ${
-        valor > 0
-          ? "text-rose-600 dark:text-rose-500"
-          : "text-slate-400 dark:text-slate-600"
-      }`}>
-        {formatCurrency(valor, moneda)}
-      </span>
-    </div>
-  );
-}
-
-/**
- * Columna de balance en modo multimoneda. Por cada moneda en porMoneda[],
- * si el balance es negativo muestra "A favor" en verde; si es positivo o cero,
- * "Saldo a cobrar" en rojo/gris.
- *
- * BUG IMP-4 fix 2026-06-24: antes se pasaba colorClass="text-rose-600" fijo
- * a ColumnaNumericaMulti, ignorando el signo del balance por moneda.
- */
-function ColumnaBalanceMulti({ porMoneda }) {
-  return (
-    <div className="flex flex-col gap-1">
-      {/* La etiqueta de cabecera es dinámica: si TODAS las monedas son a favor
-          mostramos "A favor"; si hay mezcla o todas son deuda, "Saldo a cobrar". */}
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-        Saldo
-      </span>
-      <div className="flex flex-col gap-2">
-        {porMoneda.map((pm) => {
-          const valor = pm.balance ?? 0;
-          const esAFavor = valor < 0;
-          return (
-            <div key={pm.currency} className="flex flex-col gap-0.5">
-              <div className="flex items-center gap-1.5">
-                <CurrencyBadge currency={pm.currency} size="sm" />
-                <span className={`text-lg font-extrabold leading-none ${
-                  esAFavor
-                    ? "text-emerald-600 dark:text-emerald-500"
-                    : valor > 0
-                    ? "text-rose-600 dark:text-rose-500"
-                    : "text-slate-400 dark:text-slate-600"
-                }`}>
-                  {formatCurrency(esAFavor ? Math.abs(valor) : valor, pm.currency)}
-                </span>
-              </div>
-              {/* Sub-etiqueta por moneda para que quede claro si es deuda o crédito */}
-              <span className={`text-[9px] font-semibold uppercase tracking-wider ${
-                esAFavor
-                  ? "text-emerald-500 dark:text-emerald-600"
-                  : valor > 0
-                  ? "text-rose-400 dark:text-rose-600"
-                  : "text-slate-300 dark:text-slate-700"
-              }`}>
-                {esAFavor ? "a favor" : valor > 0 ? "a cobrar" : "saldado"}
               </span>
             </div>
           );
