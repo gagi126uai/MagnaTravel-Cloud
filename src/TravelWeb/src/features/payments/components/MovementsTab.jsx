@@ -605,7 +605,7 @@ export function MovementsTab({
                   <div className={`text-sm font-black inline-flex items-center gap-1 ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                     {isIncome ? "+" : "-"}
                     <CurrencyBadge currency={movement.currency || "ARS"} />
-                    {formatCurrency(movement.amount, movement.currency || "ARS")}
+                    {formatCurrency(movement.amount, movement.currency || "ARS", { withSymbol: false })}
                   </div>
                 }
                 footerActions={

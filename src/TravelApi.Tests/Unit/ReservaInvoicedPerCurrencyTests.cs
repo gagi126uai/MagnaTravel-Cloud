@@ -32,7 +32,9 @@ namespace TravelApi.Tests.Unit;
 /// queda facturado 0 / falta = venta; una NC resta solo en su moneda.</para>
 ///
 /// <para>El calculo puro vive en <c>ReservaInvoicingCuadreCalculatorTests</c>; aca probamos la
-/// INTEGRACION (mapeo MonId->ISO, agrupacion por linea de PorMoneda, criterio TotalSale para la falta).</para>
+/// INTEGRACION (mapeo MonId-&gt;ISO, agrupacion por linea de PorMoneda, criterio ConfirmedSale — venta
+/// FIRME, no TotalSale — para la falta. Fix 2026-08-05, ver los tests de la region "BUG FALTA FACTURAR
+/// FANTASMA" mas abajo).</para>
 /// </summary>
 public class ReservaInvoicedPerCurrencyTests
 {
@@ -96,7 +98,8 @@ public class ReservaInvoicedPerCurrencyTests
             null!, null!, null!, null!);
     }
 
-    /// <summary>Servicio generico RESUELTO ("Confirmado") que aporta venta a la moneda dada.</summary>
+    /// <summary>Servicio generico RESUELTO ("Confirmado") que aporta venta a la moneda dada. Cuenta para
+    /// TotalSale (cotizada) Y ConfirmedSale (firme): en este estado, ambas coinciden.</summary>
     private static ServicioReserva ConfirmedService(int id, int reservaId, string currency, decimal salePrice)
         => new()
         {
@@ -106,6 +109,29 @@ public class ReservaInvoicedPerCurrencyTests
             ProductType = "Excursion",
             Description = "Servicio test",
             Status = "Confirmado",
+            Currency = currency,
+            DepartureDate = DateTime.UtcNow.AddDays(10),
+            SalePrice = salePrice,
+            NetCost = 0m,
+            CreatedAt = DateTime.UtcNow
+        };
+
+    /// <summary>
+    /// Servicio generico COTIZADO pero NUNCA confirmado por el operador ("Solicitado"): cuenta para
+    /// TotalSale (venta cotizada) pero NO para ConfirmedSale (venta firme, se queda en 0 para este
+    /// servicio). Es el servicio que reproduce el bug "Falta facturar" fantasma (2026-08-05): una reserva
+    /// Perdida con SOLO servicios asi tiene TotalSale &gt; 0 pero ConfirmedSale = 0 — nunca hubo nada
+    /// firme que facturar.
+    /// </summary>
+    private static ServicioReserva QuotedButUnconfirmedService(int id, int reservaId, string currency, decimal salePrice)
+        => new()
+        {
+            Id = id,
+            ReservaId = reservaId,
+            ServiceType = "Excursion",
+            ProductType = "Excursion",
+            Description = "Servicio test (cotizado, sin confirmar)",
+            Status = "Solicitado",
             Currency = currency,
             DepartureDate = DateTime.UtcNow.AddDays(10),
             SalePrice = salePrice,
@@ -136,10 +162,16 @@ public class ReservaInvoicedPerCurrencyTests
     public async Task MonoMoneda_FacturadoPorMoneda_CoincideConElEscalar()
     {
         await using var context = CreateContext();
-        // El escalar DisponibleParaFacturar usa Reserva.TotalSale (columna persistida, que el flujo real
-        // mantiene en sincronia con los servicios). Lo seteamos a la misma venta para que el invariante
-        // mono-moneda (escalar == linea) sea honesto: la linea usa la venta CALCULADA de la moneda.
-        var reserva = new Reserva { Id = 1, NumeroReserva = "R-1", Name = "R1", Status = EstadoReserva.Confirmed, TotalSale = 100_000m };
+        // El escalar DisponibleParaFacturar usa Reserva.ConfirmedSale (columna persistida, que el flujo
+        // real mantiene en sincronia con los servicios via ReservaMoneyPersister). La linea por moneda usa
+        // el ConfirmedSale CALCULADO en vivo desde los servicios cargados (moneySummary). Seteamos AMBOS
+        // (columna y servicio) al mismo valor, como los mantendria el persister real, para que el
+        // invariante mono-moneda (escalar == linea) sea honesto.
+        var reserva = new Reserva
+        {
+            Id = 1, NumeroReserva = "R-1", Name = "R1", Status = EstadoReserva.Confirmed,
+            TotalSale = 100_000m, ConfirmedSale = 100_000m,
+        };
         context.Reservas.Add(reserva);
         context.Servicios.Add(ConfirmedService(10, reserva.Id, "ARS", salePrice: 100_000m));
         // Factura 80k en pesos (MonId "PES").
@@ -150,7 +182,8 @@ public class ReservaInvoicedPerCurrencyTests
 
         var ars = LineOf(dto, "ARS");
         Assert.Equal(80_000m, ars.FacturadoNeto);
-        // Falta facturar por moneda = TotalSale de la moneda - facturado (mismo criterio que el escalar).
+        // Falta facturar por moneda = ConfirmedSale (venta FIRME) de la moneda - facturado (mismo criterio
+        // que el escalar, fix 2026-08-05).
         Assert.Equal(100_000m - 80_000m, ars.DisponibleParaFacturar);
         // Invariante mono-moneda: la unica linea coincide con el escalar.
         Assert.Equal(dto.FacturadoNeto, ars.FacturadoNeto);
@@ -296,5 +329,94 @@ public class ReservaInvoicedPerCurrencyTests
         var ars = LineOf(dto, "ARS");
         Assert.Equal(70_000m, ars.FacturadoNeto);
         Assert.Equal(30_000m, ars.DisponibleParaFacturar);
+    }
+
+    // ============================================================================================
+    // BUG "FALTA FACTURAR" FANTASMA (2026-08-05, F-9): DisponibleParaFacturar/InvoicingStatus tienen que
+    // seguir a la venta FIRME (ConfirmedSale), no a la venta cotizada (TotalSale). Visto en PROD: la
+    // reserva Perdida F-2026-1028 mostraba "Falta facturar $700 / US$7.470" al lado de "Vendido firme $0"
+    // — una reserva perdida no tiene NADA firme que facturar.
+    // ============================================================================================
+
+    /// <summary>
+    /// EL CASO EXACTO DEL BUG: reserva Perdida con servicios cotizados (ARS y USD) que NUNCA llegaron a
+    /// confirmarse por el operador, sin ninguna factura. Antes del fix, DisponibleParaFacturar mostraba la
+    /// venta COTIZADA (TotalSale) en cada moneda — una mentira, porque nada de eso es firme. Con el fix,
+    /// como no hay nada firme (ConfirmedSale = 0) ni nada facturado, "falta facturar" da 0 en las DOS
+    /// monedas.
+    /// </summary>
+    [Fact]
+    public async Task ReservaPerdidaConServiciosCotizadosSinConfirmar_FaltaFacturarCero_EnAmbasMonedas()
+    {
+        await using var context = CreateContext();
+        var reserva = new Reserva { Id = 1, NumeroReserva = "R-PERDIDA", Name = "Reserva perdida", Status = EstadoReserva.Lost };
+        context.Reservas.Add(reserva);
+        context.Servicios.AddRange(
+            QuotedButUnconfirmedService(10, reserva.Id, "ARS", salePrice: 700m),
+            QuotedButUnconfirmedService(11, reserva.Id, "USD", salePrice: 7_470m));
+        await context.SaveChangesAsync();
+
+        var dto = await CreateService(context).GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+
+        var ars = LineOf(dto, "ARS");
+        Assert.Equal(700m, ars.TotalSale); // la venta COTIZADA sigue mostrandose (para referencia)
+        Assert.Equal(0m, ars.ConfirmedSale); // pero nada de eso es firme
+        Assert.Equal(0m, ars.FacturadoNeto);
+        Assert.Equal(0m, ars.DisponibleParaFacturar); // NO 700 — el bug mostraba el cotizado aca
+
+        var usd = LineOf(dto, "USD");
+        Assert.Equal(7_470m, usd.TotalSale);
+        Assert.Equal(0m, usd.ConfirmedSale);
+        Assert.Equal(0m, usd.FacturadoNeto);
+        Assert.Equal(0m, usd.DisponibleParaFacturar); // NO 7.470
+    }
+
+    /// <summary>
+    /// BORDE (a): reserva Presupuesto (pre-venta) con ConfirmedSale = 0 y SIN ninguna factura. El estado de
+    /// facturacion tiene que quedar coherente ("Sin facturar" — nunca se le facturo nada, no hay nada raro
+    /// que reportar), NUNCA "excedido"/"Facturada total" (que implicaria que se factura de mas algo que
+    /// nunca existio).
+    /// </summary>
+    [Fact]
+    public async Task ReservaPresupuestoSinConfirmarNiFacturar_InvoicingStatusNotInvoiced_NuncaExcedido()
+    {
+        await using var context = CreateContext();
+        var reserva = new Reserva { Id = 1, NumeroReserva = "R-PRESUP", Name = "Presupuesto", Status = EstadoReserva.Budget };
+        context.Reservas.Add(reserva);
+        context.Servicios.Add(QuotedButUnconfirmedService(10, reserva.Id, "ARS", salePrice: 50_000m));
+        await context.SaveChangesAsync();
+
+        var dto = await CreateService(context).GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+
+        var ars = LineOf(dto, "ARS");
+        Assert.Equal(0m, ars.DisponibleParaFacturar);
+        Assert.Equal(ReservaInvoicingStatus.NotInvoiced, dto.InvoicingStatus);
+    }
+
+    /// <summary>
+    /// BORDE (b): hay una factura VIVA en una moneda cuya venta quedo SIN nada firme (ConfirmedSale = 0 —
+    /// ej. el servicio nunca lo confirmo el operador, o la reserva se cayo despues de facturar). La cuenta
+    /// tiene que dar NEGATIVA ("facturaste de mas") y el estado de facturacion "FullyInvoiced" (la senal
+    /// correcta: hace falta una Nota de Credito), nunca "PartiallyInvoiced" (que sugeriria que todavia se
+    /// puede facturar mas de esa moneda).
+    /// </summary>
+    [Fact]
+    public async Task FacturaVivaSinVentaFirmeDetras_QuedaExcedido_FullyInvoiced()
+    {
+        await using var context = CreateContext();
+        var reserva = new Reserva { Id = 1, NumeroReserva = "R-EXCESO", Name = "Facturada sin firmeza", Status = EstadoReserva.Confirmed };
+        context.Reservas.Add(reserva);
+        // El servicio esta COTIZADO pero nunca lo confirmo el operador: ConfirmedSale de la moneda = 0.
+        context.Servicios.Add(QuotedButUnconfirmedService(10, reserva.Id, "ARS", salePrice: 40_000m));
+        // Aun asi se le emitio una factura de 40k (caso real: se factura antes de que el operador confirme).
+        context.Invoices.Add(LiveInvoice(reserva.Id, tipoComprobante: 11, importe: 40_000m, monIdArca: "PES", numero: 1));
+        await context.SaveChangesAsync();
+
+        var dto = await CreateService(context).GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+
+        var ars = LineOf(dto, "ARS");
+        Assert.Equal(40_000m, ars.FacturadoNeto);
+        Assert.Equal(-40_000m, ars.DisponibleParaFacturar); // "facturaste $40.000 de mas"
+        Assert.Equal(ReservaInvoicingStatus.FullyInvoiced, dto.InvoicingStatus);
     }
 }

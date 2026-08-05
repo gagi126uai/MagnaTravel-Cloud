@@ -167,8 +167,13 @@ function DialogoCostoCero({ onVolver, onConfirmar }) {
  *                    entrar al modo edición. Default false: comportamiento sin cambios.
  *   onRequestEdit  — callback () => void que abre la ventana de destrabar (EditAuthorizationModal).
  *                    Solo se usa cuando candadoActivo=true.
+ *   mostrarSimbolo — bool (fix símbolo duplicado, review 2026-08-05): cuando el caller ya
+ *                    pinta un <CurrencyBadge> pegado arriba de esta celda (reserva
+ *                    multimoneda), el "$"/"US$" de formatCurrency se repetía ("US$ US$5.800,00").
+ *                    Default true: mismo comportamiento de siempre en reservas mono-moneda,
+ *                    donde NO hay badge y el símbolo acá es la única fuente.
  */
-export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActivo = false, onRequestEdit }) {
+export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActivo = false, onRequestEdit, mostrarSimbolo = true }) {
     const [modoEdicion, setModoEdicion] = useState(false);
     const [valorCosto, setValorCosto] = useState("");
     const [valorImpuesto, setValorImpuesto] = useState("");
@@ -388,7 +393,9 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
     return (
         <>
             {/* Monto del costo */}
-            <div className="text-xs text-slate-500 font-mono">{formatCurrency(service.netCost, moneda)}</div>
+            <div className="text-xs text-slate-500 font-mono">
+                {formatCurrency(service.netCost, moneda, { withSymbol: mostrarSimbolo })}
+            </div>
 
             {/* Pill "A confirmar" + botón "Confirmar costo" (solo si costToConfirm) */}
             {service.costToConfirm && (

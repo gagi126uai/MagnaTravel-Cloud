@@ -575,6 +575,10 @@ public class InvoiceServiceFilteringAndAnnulmentTests
             Name = "Reserva en proceso",
             Status = EstadoReserva.Confirmed,
             TotalSale = 1500m,
+            // ConfirmedSale = TotalSale: esta reserva esta confirmada de verdad (no es el escenario del fix
+            // "Falta facturar" fantasma, ver FinanceReadModelTests para ese caso) — sin esto,
+            // PendingFiscalAmount daria 0 (ConfirmedSale=0 por default) y la fila desaparecia de la bandeja.
+            ConfirmedSale = 1500m,
             Balance = 0m, // settled => seria Ready si no fuera por el PENDING en curso
             StartDate = DateTime.UtcNow.Date
         });

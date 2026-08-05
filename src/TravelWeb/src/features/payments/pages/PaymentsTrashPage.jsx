@@ -79,7 +79,7 @@ export default function PaymentsTrashPage() {
                     Papelera de Pagos
                 </h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Pagos eliminados que pueden ser restaurados. Los datos se conservan para auditoría.
+                    Pagos deshechos que pueden ser restaurados. Los datos se conservan para auditoría.
                 </p>
             </div>
 
@@ -114,7 +114,7 @@ export default function PaymentsTrashPage() {
                                         <span className="text-xs">Pago: {formatDate(payment.paidAt)}</span>
                                     </>
                                 }
-                                footer={<span className="text-xs text-slate-500 dark:text-slate-400">Eliminado: {formatDate(payment.deletedAt)}</span>}
+                                footer={<span className="text-xs text-slate-500 dark:text-slate-400">Deshecho: {formatDate(payment.deletedAt)}</span>}
                                 footerActions={
                                     <Button
                                         size="sm"
@@ -140,7 +140,7 @@ export default function PaymentsTrashPage() {
                                     <th className="px-6 py-3 font-medium text-slate-500">Reserva</th>
                                     <th className="px-6 py-3 font-medium text-slate-500">Cliente</th>
                                     <th className="px-6 py-3 font-medium text-slate-500">Fecha Pago</th>
-                                    <th className="px-6 py-3 font-medium text-slate-500">Eliminado</th>
+                                    <th className="px-6 py-3 font-medium text-slate-500">Deshecho</th>
                                     <th className="px-6 py-3 font-medium text-slate-500 w-[100px]"></th>
                                 </tr>
                             </thead>
@@ -211,7 +211,7 @@ export default function PaymentsTrashPage() {
                         <Trash2 className="h-7 w-7 text-emerald-400" />
                     </div>
                     <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-300">Papelera vacía</h3>
-                    <p className="text-sm text-muted-foreground mt-1">No hay pagos eliminados. ¡Todo limpio!</p>
+                    <p className="text-sm text-muted-foreground mt-1">No hay pagos deshechos. ¡Todo limpio!</p>
                 </div>
             )}
 

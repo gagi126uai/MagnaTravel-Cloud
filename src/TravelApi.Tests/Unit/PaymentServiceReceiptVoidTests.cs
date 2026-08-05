@@ -115,7 +115,9 @@ public class PaymentServiceReceiptVoidTests
         // InvalidOperationException, pero xUnit exige tipo EXACTO en Assert.ThrowsAsync<T>).
         var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.IssueReceiptAsync(paymentId: 201, CancellationToken.None));
-        Assert.Contains("anulado o eliminado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Vocabulario (2026-08-05): "eliminado" prohibido en textos de plata -> "deshecho". Literal EXACTO
+        // (T-6/PR-6, hallazgo B1 del review): un Contains genérico no hubiera agarrado la deriva de texto.
+        Assert.Equal("No se puede emitir el comprobante porque el pago esta anulado o deshecho.", ex.Message);
 
         // No se persistio ningun recibo.
         Assert.Equal(0, await context.PaymentReceipts.CountAsync(r => r.PaymentId == 201));
@@ -133,7 +135,7 @@ public class PaymentServiceReceiptVoidTests
 
         var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.IssueReceiptAsync(paymentId: 202, CancellationToken.None));
-        Assert.Contains("anulado o eliminado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("No se puede emitir el comprobante porque el pago esta anulado o deshecho.", ex.Message);
         Assert.Equal(0, await context.PaymentReceipts.CountAsync(r => r.PaymentId == 202));
     }
 

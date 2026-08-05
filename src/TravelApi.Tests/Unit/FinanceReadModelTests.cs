@@ -367,7 +367,11 @@ public class FinanceReadModelTests
                 Name = "Reserva lista",
                 Status = EstadoReserva.Confirmed,
                 PayerId = 20,
+                // ConfirmedSale = TotalSale a proposito: esta reserva esta 100% confirmada por el operador
+                // (todo lo cotizado es firme), asi que ambos criterios coinciden — este caso NO diferencia
+                // TotalSale de ConfirmedSale, ver el tercer caso mas abajo para el que si lo hace.
                 TotalSale = 1200m,
+                ConfirmedSale = 1200m,
                 TotalPaid = 1200m,
                 Balance = 0m
             },
@@ -379,8 +383,27 @@ public class FinanceReadModelTests
                 Status = EstadoReserva.Confirmed,
                 PayerId = 20,
                 TotalSale = 900m,
+                ConfirmedSale = 900m,
                 TotalPaid = 300m,
                 Balance = 600m
+            },
+            // Fix bug "Falta facturar" fantasma (2026-08-05, F-9): reserva con servicios COTIZADOS pero
+            // NUNCA confirmados por el operador (TotalSale > 0, ConfirmedSale = 0, sin deuda porque nada es
+            // exigible todavia). Antes del fix, "falta facturar" se calculaba contra TotalSale y esta
+            // reserva aparecia en la bandeja con $3.000 pendientes de facturar — una venta que jamas fue
+            // firme. Con el fix, PendingFiscalAmount da 0 (ConfirmedSale - AlreadyInvoiced = 0 - 0) y la
+            // fila queda AFUERA del worklist (el filtro exige PendingFiscalAmount > 0).
+            new Reserva
+            {
+                Id = 3,
+                NumeroReserva = "F-2026-2003",
+                Name = "Reserva sin nada firme",
+                Status = EstadoReserva.Confirmed,
+                PayerId = 20,
+                TotalSale = 3000m,
+                ConfirmedSale = 0m,
+                TotalPaid = 0m,
+                Balance = 0m
             });
         await context.SaveChangesAsync();
 
@@ -405,6 +428,9 @@ public class FinanceReadModelTests
 
         var worklist = await service.GetInvoicingWorklistAsync(new TravelApi.Application.DTOs.InvoicingWorklistQuery { Status = "all" }, CancellationToken.None);
 
+        // Assert.Collection exige que la cantidad de items coincida EXACTO con la cantidad de inspectores:
+        // si "F-2026-2003" (sin nada firme) apareciera de vuelta en la bandeja, esto solo ya fallaria por
+        // tener 3 elementos en vez de 2. El Assert.DoesNotContain de abajo lo deja explicito para el lector.
         Assert.Collection(
             worklist.Items,
             ready =>
@@ -418,6 +444,74 @@ public class FinanceReadModelTests
                 Assert.Equal("override", blocked.FiscalStatus);
                 Assert.True(blocked.RequiresOverride);
             });
+
+        Assert.DoesNotContain(worklist.Items, item => item.NumeroReserva == "F-2026-2003");
+    }
+
+    /// <summary>
+    /// Fix bug "Falta facturar" fantasma (2026-08-05, F-9): el KPI "Listo para facturar" del summary
+    /// (<c>ReadyAmount</c>/<c>ReadyCount</c>) tiene que sumar solo la venta FIRME (ConfirmedSale), no la
+    /// cotizada (TotalSale). Reserva A esta confirmada de verdad (ConfirmedSale = TotalSale); Reserva B
+    /// tiene un servicio cotizado que NUNCA confirmo el operador (TotalSale = 5.000, ConfirmedSale = 0):
+    /// antes del fix esos 5.000 se sumaban igual al "listo para facturar"; con el fix, Reserva B queda
+    /// afuera del todo (PendingFiscalAmount = 0).
+    /// </summary>
+    [Fact]
+    public async Task GetInvoicingSummaryAsync_ReadyAmount_UsaVentaFirmeNoLaCotizada()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        context.Customers.Add(new Customer { Id = 30, FullName = "Diana Fiscal" });
+        context.Reservas.AddRange(
+            new Reserva
+            {
+                Id = 1,
+                NumeroReserva = "F-2026-3001",
+                Name = "Reserva firme lista",
+                Status = EstadoReserva.Confirmed,
+                PayerId = 30,
+                TotalSale = 1000m,
+                ConfirmedSale = 1000m,
+                TotalPaid = 1000m,
+                Balance = 0m
+            },
+            new Reserva
+            {
+                Id = 2,
+                NumeroReserva = "F-2026-3002",
+                Name = "Reserva sin nada firme",
+                Status = EstadoReserva.Confirmed,
+                PayerId = 30,
+                TotalSale = 5000m,
+                ConfirmedSale = 0m,
+                TotalPaid = 0m,
+                Balance = 0m
+            });
+        await context.SaveChangesAsync();
+
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        settingsMock
+            .Setup(x => x.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings
+            {
+                AfipInvoiceControlMode = AfipInvoiceControlModes.AllowAgentOverrideWithReason
+            });
+
+        var service = new InvoiceService(
+            context,
+            null!, // EntityReferenceResolver
+            Mock.Of<IAfipService>(),
+            Mock.Of<IInvoicePdfService>(),
+            Mock.Of<IMapper>(),
+            Mock.Of<IBackgroundJobClient>(),
+            Mock.Of<ILogger<InvoiceService>>(),
+            settingsMock.Object,
+            BuildUserManager());
+
+        var summary = await service.GetInvoicingSummaryAsync(CancellationToken.None);
+
+        // NO 6.000 (1.000 + 5.000 de la reserva sin nada firme, el bug viejo).
+        Assert.Equal(1000m, summary.ReadyAmount);
+        Assert.Equal(1, summary.ReadyCount);
     }
 
     private static UserManager<ApplicationUser> BuildUserManager()

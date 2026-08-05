@@ -4,7 +4,7 @@ import { ExternalLink, TrendingUp } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { isAdmin, hasPermission } from "../../../auth";
-import { formatearFaltaFacturar } from "../lib/invoicingSummaryLogic";
+import { formatearFaltaFacturar, formatearMargen } from "../lib/invoicingSummaryLogic";
 
 /**
  * Franja de la solapa Estado de Cuenta con los ejes de plata que NO se ven en
@@ -137,12 +137,7 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
                   campo="totalCost"
                   colorClass="text-slate-600 dark:text-slate-400"
                 />
-                <ColumnaNumericaMulti
-                  label={<span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />Margen</span>}
-                  porMoneda={reserva.porMoneda}
-                  campo="margin"
-                  colorClass="text-violet-700 dark:text-violet-400"
-                />
+                <ColumnaMargenMulti porMoneda={reserva.porMoneda} />
               </>
             ) : (
               <>
@@ -152,15 +147,9 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
                   moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
                   colorClass="text-slate-600 dark:text-slate-400"
                 />
-                <EjeNumero
-                  label={<span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />Margen</span>}
+                <EjeMargen
                   valor={reserva.totalMargin}
                   moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
-                  colorClass={
-                    (reserva.totalMargin ?? 0) >= 0
-                      ? "text-violet-700 dark:text-violet-400"
-                      : "text-rose-600 dark:text-rose-500"
-                  }
                 />
               </>
             )}
@@ -226,6 +215,30 @@ function EjeNumero({ label, valor, moneda, colorClass }) {
 }
 
 /**
+ * "Margen" en modo mono-moneda (FIX 2026-08-05, prueba integral: un margen negativo
+ * se pintaba violeta —igual que una ganancia— y mostraba el signo "-" pelado). Sin
+ * CurrencyBadge acá (mono-moneda), así que `formatearMargen` sigue mostrando el
+ * símbolo "$"/"US$" como siempre.
+ */
+function EjeMargen({ valor, moneda }) {
+  const { texto, esPerdida } = formatearMargen(valor, moneda);
+  const colorClass = esPerdida
+    ? "text-rose-600 dark:text-rose-500"
+    : "text-violet-700 dark:text-violet-400";
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-1">
+        <TrendingUp className="h-3 w-3" />Margen
+      </span>
+      <span className={`text-xl font-extrabold leading-none ${colorClass}`}>
+        {texto}
+      </span>
+    </div>
+  );
+}
+
+/**
  * "Falta facturar" en modo mono-moneda (hallazgo #23 del barrido de PROD 2026-07-24):
  * si `disponibleParaFacturar` da negativo (se facturó más de lo vendido firme), en vez
  * del número pelado con signo se muestra la frase explicativa que arma
@@ -269,7 +282,9 @@ function ColumnaNumericaMultiCondicional({ label, porMoneda, campo, rowTestIdPre
       <div className="flex flex-col gap-1">
         {porMoneda.map((pm) => {
           const valor = pm[campo] ?? 0;
-          const { texto, esExceso } = formatearFaltaFacturar(valor, pm.currency);
+          // withSymbol:false: el CurrencyBadge de al lado ya muestra el "$"/"US$" — repetirlo
+          // acá era el bug "US$ US$5.800,00" (fix símbolo duplicado, prueba integral 2026-08-05).
+          const { texto, esExceso } = formatearFaltaFacturar(valor, pm.currency, { withSymbol: false });
           // Ámbar si queda algo pendiente, violeta si se facturó de más (llama la atención
           // sin ser un color de error), gris si es cero.
           const colorClass = esExceso
@@ -298,6 +313,10 @@ function ColumnaNumericaMultiCondicional({ label, porMoneda, campo, rowTestIdPre
 /**
  * Una columna numérica en modo multimoneda: apila una línea por moneda.
  * Si el valor del campo es null para una moneda, muestra nullLabel ("—").
+ *
+ * withSymbol:false en el formatCurrency de acá adentro: el CurrencyBadge de cada fila
+ * ya muestra el "$"/"US$", así que el número no lo repite (fix símbolo duplicado,
+ * prueba integral 2026-08-05 — antes se leía "US$ US$5.800,00").
  */
 function ColumnaNumericaMulti({ label, porMoneda, campo, colorClass, nullLabel }) {
   return (
@@ -313,8 +332,42 @@ function ColumnaNumericaMulti({ label, porMoneda, campo, colorClass, nullLabel }
               <CurrencyBadge currency={pm.currency} size="sm" />
               <span className={`text-lg font-extrabold leading-none ${colorClass}`}>
                 {valor == null
-                  ? (nullLabel ?? formatCurrency(0, pm.currency))
-                  : formatCurrency(valor, pm.currency)}
+                  ? (nullLabel ?? formatCurrency(0, pm.currency, { withSymbol: false }))
+                  : formatCurrency(valor, pm.currency, { withSymbol: false })}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Margen" en modo multimoneda (FIX 2026-08-05, prueba integral): cada moneda evalúa
+ * su propio signo (regla P-3⭐ — puede haber ganancia en ARS y pérdida en USD a la
+ * vez), rojo + "Pérdida de $X" cuando da negativo, en vez de violeta con el signo
+ * pelado. No usa el `ColumnaNumericaMulti` genérico porque el color y el texto
+ * dependen del signo de CADA fila, no de un `colorClass` fijo para toda la columna.
+ */
+function ColumnaMargenMulti({ porMoneda }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-1">
+        <TrendingUp className="h-3 w-3" />Margen
+      </span>
+      <div className="flex flex-col gap-1">
+        {porMoneda.map((pm) => {
+          // withSymbol:false: el CurrencyBadge de al lado ya muestra el "$"/"US$".
+          const { texto, esPerdida } = formatearMargen(pm.margin, pm.currency, { withSymbol: false });
+          const colorClass = esPerdida
+            ? "text-rose-600 dark:text-rose-500"
+            : "text-violet-700 dark:text-violet-400";
+          return (
+            <div key={pm.currency} className="flex items-center gap-1.5">
+              <CurrencyBadge currency={pm.currency} size="sm" />
+              <span className={`text-lg font-extrabold leading-none ${colorClass}`}>
+                {texto}
               </span>
             </div>
           );

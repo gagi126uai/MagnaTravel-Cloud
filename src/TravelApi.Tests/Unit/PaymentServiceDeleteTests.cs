@@ -412,4 +412,95 @@ public class PaymentServiceDeleteTests
         var conflict = Assert.IsType<ConflictObjectResult>(result);
         Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
     }
+
+    // ===== Vocabulario "deshacer" (2026-08-05, review backend, EXTRA T-6): literal EXACTO de los 4 =====
+    // ===== textos nuevos del camino de borrado/restauracion que faltaban cubrir.                    =====
+
+    [Fact]
+    public async Task RestorePaymentAsync_WhenPaymentIsNotDeleted_ThrowsWithDeshechoLiteralExacto()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaWithServiceAsync(context);
+        // Pago VIVO (IsDeleted=false): RestorePaymentAsync solo encuentra pagos soft-deleted
+        // (Where(p => p.Id == id && p.IsDeleted)), asi que este Id no matchea -> 404 de negocio.
+        await SeedPaymentAsync(context, id: 301, amount: 50m);
+        await context.SaveChangesAsync();
+
+        var service = BuildPaymentService(context);
+
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => service.RestorePaymentAsync(id: 301, CancellationToken.None));
+        Assert.Equal("Pago deshecho no encontrado.", ex.Message);
+    }
+
+    [Fact]
+    public async Task PaymentsController_DeletePayment_Success_ReturnsDeshechoMessage()
+    {
+        var paymentService = new Mock<IPaymentService>();
+        paymentService
+            .Setup(s => s.DeletePaymentAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var controller = new PaymentsController(paymentService.Object);
+
+        var result = await controller.DeletePayment("payment-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal("Cobro deshecho correctamente.", GetMessage(ok.Value));
+    }
+
+    [Fact]
+    public async Task ReservasController_DeletePayment_ArgumentException_ReturnsDeshacerFallbackMessage()
+    {
+        var reservaService = new Mock<IReservaService>();
+        reservaService
+            .Setup(s => s.DeletePaymentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ArgumentException("dato invalido interno"));
+
+        var controller = new ReservasController(
+            reservaService.Object,
+            Mock.Of<IVoucherService>(),
+            Mock.Of<ITimelineService>(),
+            Mock.Of<ISupplierService>(),
+            Mock.Of<IEntityReferenceResolver>(),
+            Mock.Of<IBookingService>(),
+            NullLogger<ReservasController>.Instance);
+
+        var result = await controller.DeletePayment("reserva-1", "payment-1", CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("No se pudo deshacer el cobro.", GetMessage(badRequest.Value));
+    }
+
+    [Fact]
+    public async Task ReservasController_DeletePayment_UnexpectedException_ReturnsDeshacerFallbackTitle()
+    {
+        var reservaService = new Mock<IReservaService>();
+        reservaService
+            .Setup(s => s.DeletePaymentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("boom generico, no es de base de datos"));
+
+        var controller = new ReservasController(
+            reservaService.Object,
+            Mock.Of<IVoucherService>(),
+            Mock.Of<ITimelineService>(),
+            Mock.Of<ISupplierService>(),
+            Mock.Of<IEntityReferenceResolver>(),
+            Mock.Of<IBookingService>(),
+            NullLogger<ReservasController>.Instance);
+
+        var result = await controller.DeletePayment("reserva-1", "payment-1", CancellationToken.None);
+
+        var problemResult = Assert.IsType<ObjectResult>(result);
+        var problem = Assert.IsType<Microsoft.AspNetCore.Mvc.ProblemDetails>(problemResult.Value);
+        Assert.Equal("No se pudo deshacer el cobro.", problem.Title);
+    }
+
+    /// <summary>Extrae el campo "message" del objeto anonimo que devuelven los controllers de este archivo.</summary>
+    private static string GetMessage(object? body)
+    {
+        var property = body!.GetType().GetProperty("message");
+        Assert.NotNull(property);
+        return (string)property!.GetValue(body)!;
+    }
 }

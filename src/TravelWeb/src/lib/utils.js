@@ -16,18 +16,37 @@ export function cn(...inputs) {
  * Regla del contador (2026-06-09): pesos y dólares siempre separados, nunca sumados.
  * El símbolo "US$" (no "$") distingue a ojo el dólar del peso en la pantalla.
  *
+ * Fix símbolo duplicado (hallazgo prueba integral 2026-08-05): cuando el monto ya va
+ * pegado a un <CurrencyBadge> (el cartelito "$"/"US$" de components/ui/CurrencyBadge.jsx),
+ * mostrar el símbolo DOS veces ("US$ US$5.800,00") es ruido. La UNICA fuente del símbolo
+ * en esos casos pasa a ser el badge — acá se pide el número pelado con
+ * `{ withSymbol: false }`. Todos los call sites que NO pasan esta opción (la inmensa
+ * mayoría) siguen viendo exactamente el mismo string que antes.
+ *
  * @param {number|string|null|undefined} amount
  * @param {"ARS"|"USD"|undefined} currency - Default: comportamiento legacy USD/en-US
+ * @param {{ withSymbol?: boolean }} [opciones] - withSymbol=false devuelve solo el
+ *   número formateado (es-AR, 2 decimales), sin "$" ni "US$". Se usa junto a un
+ *   CurrencyBadge que ya muestra el símbolo, para no repetirlo.
  */
-export function formatCurrency(amount, currency) {
+export function formatCurrency(amount, currency, { withSymbol = true } = {}) {
     if (amount === undefined || amount === null) {
         // Default legacy: misma cadena que HEAD para null/undefined sin currency
+        if (!withSymbol) return "0,00";
         if (!currency) return "$0.00";
         return currency === "USD" ? "US$0.00" : "$0,00";
     }
     const number = Number(amount);
 
     if (currency === "ARS") {
+        if (!withSymbol) {
+            // Mismo locale/decimales que el formato con símbolo, pero sin el "$" —
+            // el CurrencyBadge de al lado ya lo muestra.
+            return new Intl.NumberFormat("es-AR", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+            }).format(number);
+        }
         // ARS explícito: peso argentino, formato es-AR
         return new Intl.NumberFormat("es-AR", {
             style: "currency",
@@ -37,14 +56,22 @@ export function formatCurrency(amount, currency) {
     }
 
     if (currency === "USD") {
-        // USD explícito: usamos "US$" para distinguirlo del peso en pantalla.
-        return "US$" + new Intl.NumberFormat("es-AR", {
+        const numeroFormateado = new Intl.NumberFormat("es-AR", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(number);
+        // USD explícito: usamos "US$" para distinguirlo del peso en pantalla
+        // (salvo que el CurrencyBadge de al lado ya lo esté mostrando).
+        return withSymbol ? "US$" + numeroFormateado : numeroFormateado;
+    }
+
+    // Sin currency (o currency desconocido): comportamiento legacy idéntico a HEAD (USD/en-US)
+    if (!withSymbol) {
+        return new Intl.NumberFormat("en-US", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         }).format(number);
     }
-
-    // Sin currency (o currency desconocido): comportamiento legacy idéntico a HEAD (USD/en-US)
     return new Intl.NumberFormat("en-US", {
         style: "currency",
         currency: "USD",

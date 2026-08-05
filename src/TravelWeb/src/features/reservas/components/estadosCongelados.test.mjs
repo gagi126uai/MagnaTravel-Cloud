@@ -8,9 +8,19 @@
  *   En Traveling y Closed el vendedor ya tiene el cartel de solo-lectura;
  *   el banner ámbar no aporta nada.
  *
- * BUG IMP-3 fix 2026-06-24 — Editar/Eliminar cobro se gobiernan por la capacidad
+ * BUG IMP-3 fix 2026-06-24 — Editar cobro se gobierna por la capacidad
  *   `canEditOrDeletePayment` del backend, no por el helper `congelado`.
  *   En Closed el backend pone esa capacidad en false aunque congelado=false.
+ *
+ * BUG 2 fix 2026-08-05 (saneo 2026-08-05, PR-7 "no se deja deuda de tests engañosos") —
+ *   "Deshacer" (antes "Eliminar") YA NO se gobierna por `canEditOrDeletePayment`: el motor
+ *   tiene un camino con rastro en CUALQUIER estado (DELETE en estados vivos, POST /annul en
+ *   los 4 terminales — ver `undoPaymentFlow.js`), así que Deshacer SIEMPRE se ofrece. Lo
+ *   único que puede apagarlo es el candado FISCAL por-pago (recibo emitido / factura viva),
+ *   que es independiente del estado de la reserva — ver `resolverBloqueoFilaCobro` en
+ *   `paymentRowGuard.js`, importada más abajo (lógica REAL, no una copia a mano).
+ *   Los tests de este archivo que antes decían "Editar y Eliminar quedan OCULTOS juntos en
+ *   terminal" estaban afirmando algo que ya no es cierto para Deshacer — corregidos abajo.
  *
  * BUG IMP-4 fix 2026-06-24 — esCongeladoParaRecibos NO incluye FullyInvoiced.
  *   Facturación y cobranza son ejes separados (ADR-037).
@@ -21,6 +31,13 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+// Lógica REAL (no replicada) del candado fiscal por-pago que gobierna "Deshacer": se
+// importa acá para que los tests de este archivo prueben el comportamiento verdadero,
+// no una copia que puede quedar desactualizada (lección "falso verde" del 2026-08-03).
+import { resolverBloqueoFilaCobro } from "../lib/paymentRowGuard.js";
+// Lógica REAL del set de estados terminales (los únicos donde Deshacer pega /annul en
+// vez de DELETE) — se usa para no hardcodear "Closed" a mano en los tests de abajo.
+import { requiereAnularConRastro } from "../lib/undoPaymentFlow.js";
 
 // ─── Réplica del helper esEstadoCongelado (para vouchers y documentos) ────────
 
@@ -166,19 +183,24 @@ test("recibos: null → false (degradación elegante)", () => {
 // ─── Réplica: lógica de PaymentReceiptActions con prop congelado ───────────────
 
 /**
- * Réplica de la lógica de visibilidad dentro de PaymentReceiptActions.
+ * Réplica de la lógica de visibilidad dentro de PaymentReceiptActions
+ * (ReservaDetailPage.jsx). No se puede importar el componente real acá: es JSX
+ * inline dentro de una página, no un módulo exportado, así que `node --test`
+ * no puede montarlo sin bundler — este es el caso "no se puede ejercitar sin
+ * replicar" (se deja el mínimo indispensable, con este comentario explicando por qué).
+ *
  * `congelado` aquí es el resultado de esCongeladoParaRecibos (sin FullyInvoiced).
  * `canEditarEliminar` viene de la capacidad `canEditOrDeletePayment.allowed` del backend.
  *
- * BUG IMP-3 fix 2026-06-24: Editar/Eliminar ya no dependen de `congelado` sino de
+ * BUG IMP-3 fix 2026-06-24: Editar ya no depende de `congelado` sino de
  * `canEditarEliminar` (la capacidad real del backend).
  *
- * P4-1 fix 2026-07-22 (spec docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md, P1=A):
- * `cobroEditable` (si se OFRECE SIQUIERA el bloque Editar/Eliminar) ya NO resta el guard
- * local de recibo anulado — antes escondía los DOS botones aunque el motor permitiera
- * Eliminar. Ahora `cobroEditable` depende solo de `canEditarEliminar` (nivel reserva); el
- * candado POR BOTÓN con recibo anulado (Editar gris, Eliminar normal si el motor lo permite)
- * lo resuelve el motor por cobro — ver paymentRowGuard.test.mjs, que ya cubre ese caso.
+ * BUG 2 fix 2026-08-05: "Deshacer" (antes "Eliminar") YA NO depende de
+ * `canEditarEliminar` — se ofrece SIEMPRE (`puedeDeshacer` es una constante `true`,
+ * no una variable que dependa de props, porque en el componente real tampoco depende
+ * de ninguna capacidad de reserva: alcanza con que el caller pase el callback). Lo que
+ * decide si el botón queda gris es el candado FISCAL por-pago — eso NO se replica acá,
+ * se ejercita con la función real `resolverBloqueoFilaCobro` en los tests de más abajo.
  */
 function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar }) {
   const tieneRecibo = Boolean(receipt);
@@ -187,9 +209,8 @@ function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar
     (payment?.entryType === "Payment") &&
     Number(payment?.amount || 0) > 0;
 
-  // Se rige solo por la capacidad de RESERVA del backend (P4-1: sin guard local de recibo
-  // anulado). El candado por-cobro se testea aparte en paymentRowGuard.test.mjs.
-  const cobroEditable = Boolean(canEditarEliminar);
+  const puedeEditar = Boolean(canEditarEliminar);
+  const puedeDeshacer = true; // BUG 2: siempre se ofrece, ver JSDoc de arriba.
 
   if (tieneRecibo) {
     return {
@@ -199,9 +220,8 @@ function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar
       verPdfVisible: !estaAnulado,
       // Anular comprobante: solo si no anulado Y no congelado (para recibos).
       anularVisible: !estaAnulado && !congelado,
-      // Editar/Eliminar cobro: dependen de canEditarEliminar + guard de recibo anulado.
-      editarVisible: cobroEditable,
-      eliminarVisible: cobroEditable,
+      editarVisible: puedeEditar,
+      deshacerVisible: puedeDeshacer,
       // Emitir: no aplica (ya tiene recibo).
       emitirVisible: false,
       // "Sin comprobante": no aplica.
@@ -209,14 +229,15 @@ function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar
     };
   }
 
-  // Sin recibo y congelado para recibos: nada se muestra (ni "Sin comprobante").
+  // Sin recibo y congelado para recibos: no se ofrece emitir ni "Sin comprobante",
+  // pero Editar/Deshacer siguen su propia regla (no dependen de este `congelado`).
   if (congelado) {
     return {
       chipVisible: false,
       verPdfVisible: false,
       anularVisible: false,
-      editarVisible: cobroEditable,
-      eliminarVisible: cobroEditable,
+      editarVisible: puedeEditar,
+      deshacerVisible: puedeDeshacer,
       emitirVisible: false,
       sinComprobanteVisible: false,
     };
@@ -227,8 +248,8 @@ function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar
     chipVisible: false,
     verPdfVisible: false,
     anularVisible: false,
-    editarVisible: cobroEditable,
-    eliminarVisible: cobroEditable,
+    editarVisible: puedeEditar,
+    deshacerVisible: puedeDeshacer,
     emitirVisible: puedeEmitir,
     sinComprobanteVisible: !puedeEmitir,
   };
@@ -236,7 +257,7 @@ function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar
 
 // ── Con recibo vigente ─────────────────────────────────────────────────────────
 
-test("recibo: con recibo vigente en normal + canEditarEliminar=true → chip + Ver PDF + Anular + Editar + Eliminar visibles", () => {
+test("recibo: con recibo vigente en normal + canEditarEliminar=true → chip + Ver PDF + Anular + Editar + Deshacer visibles", () => {
   const result = resolverAccionesRecibo({
     receipt: { status: "Issued", receiptNumber: "R-001" },
     payment: { entryType: "Payment", amount: 1000 },
@@ -247,13 +268,13 @@ test("recibo: con recibo vigente en normal + canEditarEliminar=true → chip + V
   assert.equal(result.verPdfVisible, true);
   assert.equal(result.anularVisible, true);
   assert.equal(result.editarVisible, true);
-  assert.equal(result.eliminarVisible, true);
+  assert.equal(result.deshacerVisible, true);
   assert.equal(result.emitirVisible, false);
 });
 
-test("recibo: con recibo vigente en CONGELADO (para recibos) → chip + Ver PDF + Editar (si permitido), Anular OCULTO", () => {
+test("recibo: con recibo vigente en CONGELADO (para recibos) → chip + Ver PDF + Editar (si permitido) + Deshacer, Anular OCULTO", () => {
   // Decisión UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "anular" no.
-  // BUG IMP-3: Editar/Eliminar ahora dependen de canEditarEliminar, no de congelado.
+  // BUG IMP-3: Editar depende de canEditarEliminar, no de congelado.
   const result = resolverAccionesRecibo({
     receipt: { status: "Issued", receiptNumber: "R-001" },
     payment: { entryType: "Payment", amount: 1000 },
@@ -264,12 +285,18 @@ test("recibo: con recibo vigente en CONGELADO (para recibos) → chip + Ver PDF 
   assert.equal(result.verPdfVisible, true);
   assert.equal(result.anularVisible, false, "Anular debe ocultarse cuando congelado para recibos");
   assert.equal(result.editarVisible, true, "Editar depende de canEditarEliminar, no de congelado");
+  assert.equal(result.deshacerVisible, true, "Deshacer se ofrece siempre (BUG 2)");
   assert.equal(result.emitirVisible, false);
 });
 
-test("recibo: con recibo vigente + canEditarEliminar=false (Closed) → Editar y Eliminar OCULTOS", () => {
-  // BUG IMP-3 fix: en Closed el backend devuelve canEditOrDeletePayment=false.
-  // Antes del fix: congelado=false en Closed → aparecían los botones aunque el backend los rechazara.
+test("recibo: con recibo vigente + canEditarEliminar=false (Closed) → Editar OCULTO, pero Deshacer SIGUE OFRECIDO (BUG 2)", () => {
+  // BUG IMP-3 fix: en Closed el backend devuelve canEditOrDeletePayment=false → Editar
+  // se oculta (no tiene alternativa en terminal). BUG 2 (2026-08-05): antes este mismo
+  // `false` también escondía "Eliminar" — afirmación que este test corregía a mano y que
+  // ya NO es cierta: "Deshacer" tiene un camino con rastro en CUALQUIER estado (POST
+  // /annul en terminal), así que se sigue ofreciendo. Si el motor la rechaza (recibo/
+  // factura), es el candado FISCAL por-pago quien la apaga — ver el test con
+  // resolverBloqueoFilaCobro más abajo, que ejercita la función REAL.
   const result = resolverAccionesRecibo({
     receipt: { status: "Issued", receiptNumber: "R-001" },
     payment: { entryType: "Payment", amount: 1000 },
@@ -277,15 +304,15 @@ test("recibo: con recibo vigente + canEditarEliminar=false (Closed) → Editar y
     canEditarEliminar: false,
   });
   assert.equal(result.editarVisible, false, "Editar oculto cuando backend dice canEditOrDeletePayment=false");
-  assert.equal(result.eliminarVisible, false, "Eliminar oculto cuando backend dice canEditOrDeletePayment=false");
+  assert.equal(result.deshacerVisible, true, "Deshacer NO se oculta: siempre tiene un camino con rastro (BUG 2)");
   assert.equal(result.chipVisible, true, "El chip de número sigue visible");
   assert.equal(result.verPdfVisible, true, "Ver PDF sigue visible");
   assert.equal(result.anularVisible, true, "Anular sigue disponible si no congelado");
 });
 
-test("recibo: comprobante ya anulado en CONGELADO + canEditarEliminar=false → solo chip visible (sin Ver PDF ni Anular ni Editar)", () => {
-  // Acá Editar/Eliminar quedan ocultos por canEditarEliminar=false (reserva congelada),
-  // no por el recibo anulado — ver el test P4-1 de abajo para el caso donde SÍ están disponibles.
+test("recibo: comprobante ya anulado en CONGELADO + canEditarEliminar=false → chip + Deshacer visibles, sin Ver PDF ni Anular ni Editar", () => {
+  // Editar queda oculto por canEditarEliminar=false (nivel reserva); Deshacer NO usa esa
+  // prop (BUG 2) — si el motor lo bloquea, es por el candado fiscal por-pago, no por esto.
   const result = resolverAccionesRecibo({
     receipt: { status: "Voided", receiptNumber: "R-002" },
     payment: { entryType: "Payment", amount: 1000 },
@@ -296,13 +323,14 @@ test("recibo: comprobante ya anulado en CONGELADO + canEditarEliminar=false → 
   assert.equal(result.verPdfVisible, false);
   assert.equal(result.anularVisible, false);
   assert.equal(result.editarVisible, false, "Editar oculto por canEditarEliminar=false (nivel reserva)");
+  assert.equal(result.deshacerVisible, true, "Deshacer se sigue ofreciendo (BUG 2)");
 });
 
-test("P4-1: comprobante anulado + canEditarEliminar=true → Editar/Eliminar YA NO se ocultan (antes: bug, se escondían los dos)", () => {
+test("P4-1: comprobante anulado + canEditarEliminar=true → Editar y Deshacer NO se ocultan", () => {
   // Antes de P4-1, un guard local `!reciboAnulado` escondía ambos botones sin importar
-  // lo que dijera el backend, aunque el motor permitiera Eliminar. Ahora se OFRECEN
-  // (cobroEditable solo mira canEditarEliminar); cuál queda gris y cuál habilitado lo
-  // decide el motor por botón (payment.canEdit/canDelete) — cubierto en paymentRowGuard.test.mjs.
+  // lo que dijera el backend. Ahora se OFRECEN: Editar mira canEditarEliminar (true acá),
+  // Deshacer se ofrece siempre (BUG 2). Cuál queda gris lo decide el motor por botón
+  // (payment.canEdit/canDelete) — cubierto en paymentRowGuard.test.mjs.
   const result = resolverAccionesRecibo({
     receipt: { status: "Voided", receiptNumber: "R-002" },
     payment: { entryType: "Payment", amount: 1000 },
@@ -310,12 +338,12 @@ test("P4-1: comprobante anulado + canEditarEliminar=true → Editar/Eliminar YA 
     canEditarEliminar: true,
   });
   assert.equal(result.editarVisible, true, "Se ofrece Editar (puede quedar gris según el motor, pero ya no se esconde)");
-  assert.equal(result.eliminarVisible, true, "Se ofrece Eliminar; el motor permite eliminar cobros con recibo anulado");
+  assert.equal(result.deshacerVisible, true, "Se ofrece Deshacer; el motor permite deshacer cobros con recibo anulado");
 });
 
 // ── Sin recibo ─────────────────────────────────────────────────────────────────
 
-test("sin recibo: cobro emitible en normal + canEditarEliminar=true → Emitir + Editar + Eliminar visibles", () => {
+test("sin recibo: cobro emitible en normal + canEditarEliminar=true → Emitir + Editar + Deshacer visibles", () => {
   const result = resolverAccionesRecibo({
     receipt: null,
     payment: { entryType: "Payment", amount: 500 },
@@ -324,14 +352,15 @@ test("sin recibo: cobro emitible en normal + canEditarEliminar=true → Emitir +
   });
   assert.equal(result.emitirVisible, true);
   assert.equal(result.editarVisible, true);
-  assert.equal(result.eliminarVisible, true);
+  assert.equal(result.deshacerVisible, true);
   assert.equal(result.sinComprobanteVisible, false);
   assert.equal(result.chipVisible, false);
 });
 
-test("sin recibo: cobro emitible en CONGELADO (para recibos) → Emitir y 'Sin comprobante' ocultos; Editar según capability", () => {
-  // Regla de UX: en congelado para recibos no se ofrece emitir ni se muestra el texto informativo.
-  // Editar/Eliminar siguen dependiendo de canEditarEliminar (pueden ser accesibles si el backend lo permite).
+test("sin recibo: cobro emitible en CONGELADO (para recibos) + canEditarEliminar=false → Emitir/'Sin comprobante'/Editar ocultos, Deshacer visible", () => {
+  // Regla de UX: en congelado para recibos no se ofrece emitir ni se muestra el texto
+  // informativo. Editar sigue dependiendo de canEditarEliminar (acá false → oculto).
+  // Deshacer (BUG 2) ya no depende de ninguno de los dos: sigue ofrecido.
   const result = resolverAccionesRecibo({
     receipt: null,
     payment: { entryType: "Payment", amount: 500 },
@@ -344,10 +373,10 @@ test("sin recibo: cobro emitible en CONGELADO (para recibos) → Emitir y 'Sin c
   assert.equal(result.verPdfVisible, false);
   assert.equal(result.anularVisible, false);
   assert.equal(result.editarVisible, false);
-  assert.equal(result.eliminarVisible, false);
+  assert.equal(result.deshacerVisible, true, "Deshacer se ofrece siempre (BUG 2)");
 });
 
-test("sin recibo: cobro no emitible (ajuste/crédito) en normal + canEditarEliminar=false → 'Sin comprobante' visible, sin Editar", () => {
+test("sin recibo: cobro no emitible (ajuste/crédito) en normal + canEditarEliminar=false → 'Sin comprobante' visible, sin Editar, con Deshacer", () => {
   // Un cobro de tipo "Adjustment" no genera recibo aunque sea no-congelado.
   const result = resolverAccionesRecibo({
     receipt: null,
@@ -358,35 +387,89 @@ test("sin recibo: cobro no emitible (ajuste/crédito) en normal + canEditarElimi
   assert.equal(result.emitirVisible, false);
   assert.equal(result.sinComprobanteVisible, true);
   assert.equal(result.editarVisible, false);
-  assert.equal(result.eliminarVisible, false);
+  assert.equal(result.deshacerVisible, true, "Deshacer se ofrece siempre (BUG 2)");
 });
 
-// ─── Réplica: visibilidad de Editar/Eliminar cobro (ahora vía canEditarEliminar) ──
+// ─── Editar cobro: SOLO gobernado por canEditarEliminar (nivel reserva) ────────
 
 /**
- * BUG IMP-3 fix: Editar y Eliminar cobro se gobiernan por la capacidad del backend.
- * Ya no dependen de !congelado; el backend decide según el estado de la reserva.
- *
- * P4-1 fix (2026-07-22): ya NO recibe `reciboAnulado` — ese guard local se sacó porque
- * escondía los botones aunque el motor permitiera Eliminar (ver spec P1=A). El único
- * criterio para OFRECER el bloque es la capacidad de reserva.
+ * BUG IMP-3 fix: Editar cobro se gobierna por la capacidad del backend, no por
+ * `!congelado`. BUG 2 (2026-08-05): esta función YA NO representa "Editar y Deshacer
+ * juntos" — solo Editar. Deshacer se prueba aparte, con la lógica real, más abajo.
  */
-function muestraAccionesCobro({ canEditarEliminar }) {
+function muestraEditarCobro({ canEditarEliminar }) {
   return Boolean(canEditarEliminar);
 }
 
-test("acciones cobro: canEditarEliminar=true → Editar y Eliminar se OFRECEN (visibles)", () => {
-  assert.equal(muestraAccionesCobro({ canEditarEliminar: true }), true);
+test("editar cobro: canEditarEliminar=true → se OFRECE (visible)", () => {
+  assert.equal(muestraEditarCobro({ canEditarEliminar: true }), true);
 });
 
-test("acciones cobro: canEditarEliminar=false (Closed/terminal) → Editar y Eliminar OCULTOS", () => {
-  assert.equal(muestraAccionesCobro({ canEditarEliminar: false }), false);
+test("editar cobro: canEditarEliminar=false (Closed/terminal) → OCULTO (no tiene alternativa en terminal)", () => {
+  assert.equal(muestraEditarCobro({ canEditarEliminar: false }), false);
 });
 
-test("P4-1: acciones cobro: canEditarEliminar=true CON recibo anulado → se siguen OFRECIENDO (ya no se esconden por completo)", () => {
-  // El caso puntual "recibo anulado" ya no es parámetro de esta función: el candado por-cobro
-  // vive en paymentRowGuard.js (payment.canEdit/canDelete), no acá.
-  assert.equal(muestraAccionesCobro({ canEditarEliminar: true }), true);
+// NOTA (sin test, a propósito — no hay ninguna función real que consuma este string hoy):
+// el backend actualizó el texto de `canEditOrDeletePayment.reason` en terminal a "En este
+// estado el cobro no se puede editar. Para corregirlo, deshacelo: queda registrado."
+// (ReservaCapabilities.PaymentEditOnTerminalReason, 2026-08-05 — antes decía "borrar"). HOY el front no lo muestra como motivo: Editar simplemente se OCULTA en este
+// caso (decisión ya existente, "no aplica" ≠ "candado fiscal fila-por-fila" — ver JSDoc de
+// EditarEliminarCobro en ReservaDetailPage.jsx). Escribir un test contra un string que
+// ningún código real lee sería otro "falso verde" — se documenta acá en vez de fingir cobertura.
+
+// ─── Deshacer cobro: SIEMPRE ofrecido, en TODOS los estados — con lógica REAL ──
+
+/**
+ * BUG 2 (2026-08-05): a diferencia de Editar, "Deshacer" no tiene un flag "se ofrece
+ * sí/no" — el componente real lo renderiza siempre que el caller le pase el callback
+ * (`typeof onDeshacerCobro === "function"`), en los TRES estados de PaymentReceiptActions
+ * y sin importar `canEditarEliminar`. Estos tests prueban eso con requiereAnularConRastro
+ * (real, importada arriba): para los 4 estados terminales Y para los estados vivos, no hay
+ * ningún status que deje a Deshacer sin un endpoint válido — por eso nunca se oculta por
+ * estado, solo por el candado fiscal por-pago (ver el bloque siguiente).
+ */
+test("Deshacer: los 4 estados terminales tienen endpoint válido (/annul) — no hay motivo para ocultar el botón por estado", () => {
+  for (const status of ["Closed", "Cancelled", "Lost", "PendingOperatorRefund"]) {
+    assert.equal(requiereAnularConRastro(status), true, `status=${status} debe resolver a /annul`);
+  }
+});
+
+test("Deshacer: los estados vivos tienen endpoint válido (DELETE) — tampoco hay motivo para ocultar el botón", () => {
+  for (const status of ["Quotation", "Budget", "InManagement", "Confirmed", "Traveling"]) {
+    assert.equal(requiereAnularConRastro(status), false, `status=${status} debe resolver a DELETE`);
+  }
+});
+
+/**
+ * Lo único que puede apagar "Deshacer" es el candado FISCAL por-pago (recibo emitido,
+ * factura vinculada) — independiente del estado de la reserva. Se ejercita acá la función
+ * REAL `resolverBloqueoFilaCobro` (paymentRowGuard.js), no una copia: si esa función
+ * cambia, este test se entera solo. La cobertura exhaustiva de motivos/textos vive en
+ * paymentRowGuard.test.mjs; acá solo se prueba la afirmación central de este archivo:
+ * "Deshacer en un cobro SIN candado fiscal, en una reserva TERMINAL, no está bloqueado".
+ */
+test("Deshacer: cobro sin recibo ni factura, en reserva terminal (ej. Closed) → NO bloqueado por el candado fiscal", () => {
+  const resultado = resolverBloqueoFilaCobro({
+    canEdit: { allowed: true, reason: null },
+    canDelete: { allowed: true, reason: null },
+  });
+  assert.equal(resultado.eliminarBloqueado, false, "Sin recibo/factura, el candado fiscal deja pasar Deshacer");
+  assert.equal(resultado.motivo, null);
+});
+
+test("Deshacer: cobro vinculado a una factura (Editar permitido, Deshacer bloqueado) → motivo real del backend, tal cual (P-13)", () => {
+  // Caso real donde SOLO Deshacer está bloqueado (Editar sigue permitido): el motivo que
+  // se muestra es el de Deshacer, no uno inventado. Texto real vigente del backend
+  // (PaymentCapabilityPolicy.DeleteBlockedByLiveInvoiceReason, actualizado 2026-08-05
+  // para decir "deshacer" en vez de "eliminar").
+  const motivoRealDeshacer =
+    "Este cobro no se puede deshacer porque está vinculado a una factura. Generá una nota de crédito si corresponde.";
+  const resultado = resolverBloqueoFilaCobro({
+    canEdit: { allowed: true, reason: null },
+    canDelete: { allowed: false, reason: motivoRealDeshacer },
+  });
+  assert.equal(resultado.eliminarBloqueado, true, "Vinculado a una factura, el candado fiscal SÍ bloquea Deshacer");
+  assert.equal(resultado.motivo, motivoRealDeshacer, "El motivo se muestra tal cual lo manda el backend (P-13)");
 });
 
 // ─── Réplica: botones de escritura en vouchers (Zona C) ───────────────────────

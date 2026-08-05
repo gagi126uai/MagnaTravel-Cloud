@@ -116,6 +116,14 @@ public class InvoicingWorkItemDto
     public string NumeroReserva { get; set; } = string.Empty;
     public string CustomerName { get; set; } = string.Empty;
     public DateTime? StartDate { get; set; }
+
+    /// <summary>
+    /// Fix bug "Falta facturar" fantasma (2026-08-05, F-9): pese al nombre (se preserva por
+    /// compatibilidad de contrato con el front, que ya consume este campo), el VALOR sale de
+    /// <c>Reserva.ConfirmedSale</c> (venta FIRME, servicios resueltos), NO de <c>Reserva.TotalSale</c>
+    /// (venta cotizada). Esta fila es la bandeja de "que falta facturar", y facturable sigue a lo firme,
+    /// no a lo cotizado (misma regla que el detalle de la reserva). Ver <c>BuildInvoicingWorkItemsQuery</c>.
+    /// </summary>
     public decimal TotalSale { get; set; }
     public decimal AlreadyInvoiced { get; set; }
     public decimal PendingFiscalAmount { get; set; }

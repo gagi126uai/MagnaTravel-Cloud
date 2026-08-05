@@ -556,7 +556,7 @@ export default function ReportsPage() {
                           {/* Cartelito de moneda pegado al monto — la moneda es una dimensión de la fila */}
                           <span className="font-mono font-bold text-purple-600 dark:text-purple-400 text-sm inline-flex items-center gap-1">
                             <CurrencyBadge currency={monedaDebtor} />
-                            {formatCurrency(debtor.currentBalance, monedaDebtor)}
+                            {formatCurrency(debtor.currentBalance, monedaDebtor, { withSymbol: false })}
                           </span>
                         </div>
                       );
@@ -576,7 +576,7 @@ export default function ReportsPage() {
                             {monedas.map((m, idx) => (
                               <span key={m} className="inline-flex items-center gap-1">
                                 <CurrencyBadge currency={m} />
-                                {formatCurrency(totalesPorMoneda[m], m)}
+                                {formatCurrency(totalesPorMoneda[m], m, { withSymbol: false })}
                                 {idx < monedas.length - 1 && <span className="text-slate-400 mx-1">·</span>}
                               </span>
                             ))}
@@ -620,7 +620,7 @@ export default function ReportsPage() {
                           {/* Cartelito de moneda pegado al monto — la moneda es una dimensión de la fila */}
                           <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-sm inline-flex items-center gap-1">
                             <CurrencyBadge currency={monedaSupplier} />
-                            {formatCurrency(sup.currentBalance, monedaSupplier)}
+                            {formatCurrency(sup.currentBalance, monedaSupplier, { withSymbol: false })}
                           </span>
                         </div>
                       );
@@ -640,7 +640,7 @@ export default function ReportsPage() {
                             {monedas.map((m, idx) => (
                               <span key={m} className="inline-flex items-center gap-1">
                                 <CurrencyBadge currency={m} />
-                                {formatCurrency(totalesPorMoneda[m], m)}
+                                {formatCurrency(totalesPorMoneda[m], m, { withSymbol: false })}
                                 {idx < monedas.length - 1 && <span className="text-slate-400 mx-1">·</span>}
                               </span>
                             ))}
@@ -697,7 +697,7 @@ function KpiCard({ title, value, subtitle, icon: Icon, color }) {
                 <div key={pm.currency} className="flex items-center gap-1.5">
                   <CurrencyBadge currency={pm.currency} size="sm" />
                   <span className={`text-xl font-bold ${c.text}`}>
-                    {formatCurrency(pm.value, pm.currency)}
+                    {formatCurrency(pm.value, pm.currency, { withSymbol: false })}
                   </span>
                 </div>
               ))}

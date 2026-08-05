@@ -397,7 +397,7 @@ function KpiCard({ title, lineasPorMoneda, valorSinMoneda, icon: Icon, color, bg
                                 <div className="flex items-center gap-1.5">
                                     <CurrencyBadge currency={linea.currency} size="sm" />
                                     <span className={`text-2xl font-bold ${color}`}>
-                                        {formatCurrency(linea.monto, linea.currency)}
+                                        {formatCurrency(linea.monto, linea.currency, { withSymbol: false })}
                                     </span>
                                 </div>
                                 {/* BL-3 (revisión 2026-07-27): la leyenda va POR LÍNEA, no una sola

@@ -1003,14 +1003,15 @@ public class PaymentService : IPaymentService
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
 
-        // B1.15 (2026-05-11): no emitir comprobantes sobre pagos eliminados o
+        // B1.15 (2026-05-11): no emitir comprobantes sobre pagos deshechos o
         // cancelados. ARCA + Contable: un recibo correlativo solo puede emitirse
         // sobre un movimiento vivo. Si el pago esta soft-deleted o Cancelled,
         // emitir un recibo dejaria numero correlativo huerfano y trazabilidad rota.
+        // Vocabulario (2026-08-05): "eliminado" prohibido en textos de plata -> "deshecho".
         if (payment.IsDeleted || string.Equals(payment.Status, "Cancelled", StringComparison.OrdinalIgnoreCase))
         {
             throw new PaymentValidationException(
-                "No se puede emitir el comprobante porque el pago esta anulado o eliminado.");
+                "No se puede emitir el comprobante porque el pago esta anulado o deshecho.");
         }
 
         var entryType = string.IsNullOrWhiteSpace(payment.EntryType)
@@ -1365,7 +1366,8 @@ public class PaymentService : IPaymentService
             .FirstOrDefaultAsync(p => p.Id == id && p.IsDeleted, cancellationToken);
 
         if (payment == null)
-            throw new KeyNotFoundException("Pago eliminado no encontrado.");
+            // Vocabulario (2026-08-05): "eliminado" prohibido en textos de plata -> "deshecho".
+            throw new KeyNotFoundException("Pago deshecho no encontrado.");
 
         payment.IsDeleted = false;
         payment.DeletedAt = null;

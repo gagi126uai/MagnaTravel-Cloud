@@ -175,7 +175,7 @@ function RecaudadoInversionPorMoneda({ reserva, admin }) {
                     <div key={pm.currency} className="flex items-center gap-1.5">
                         <CurrencyBadge currency={pm.currency} size="sm" />
                         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                            {formatCurrency(pm.totalPaid, pm.currency)}
+                            {formatCurrency(pm.totalPaid, pm.currency, { withSymbol: false })}
                         </span>
                     </div>
                 ))}
@@ -187,7 +187,7 @@ function RecaudadoInversionPorMoneda({ reserva, admin }) {
                         <div key={pm.currency} className="flex items-center gap-1.5">
                             <CurrencyBadge currency={pm.currency} size="sm" />
                             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                                {formatCurrency(pm.totalCost, pm.currency)}
+                                {formatCurrency(pm.totalCost, pm.currency, { withSymbol: false })}
                             </span>
                         </div>
                     ))}
@@ -250,7 +250,7 @@ function NumerosMultimoneda({ reserva, anulada, moneyStatus, admin }) {
                                         ? 'text-emerald-600 dark:text-emerald-500'
                                         : (hayDeuda ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700')
                                 }`}>
-                                    {formatCurrency(Math.abs(pm.balance), pm.currency)}
+                                    {formatCurrency(Math.abs(pm.balance), pm.currency, { withSymbol: false })}
                                 </span>
                                 {aFavor && (
                                     <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-500">a favor</span>

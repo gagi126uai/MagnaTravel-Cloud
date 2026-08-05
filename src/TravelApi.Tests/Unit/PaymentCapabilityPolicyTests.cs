@@ -44,6 +44,11 @@ public class PaymentCapabilityPolicyTests
 
         Assert.False(caps.CanDelete.Allowed);
         Assert.Equal(PaymentCapabilityPolicy.DeleteBlockedByIssuedReceiptReason, caps.CanDelete.Reason);
+        // Literal EXACTO (review 2026-08-05, EXTRA T-6): comparar solo contra la constante es tautológico
+        // (la constante y el Reason son el MISMO valor por construcción) — esto agarra una deriva de texto.
+        Assert.Equal(
+            "Este cobro no se puede deshacer porque tiene un comprobante vigente. Anulá primero el comprobante.",
+            caps.CanDelete.Reason);
     }
 
     [Fact]
@@ -78,6 +83,10 @@ public class PaymentCapabilityPolicyTests
 
         Assert.False(caps.CanDelete.Allowed);
         Assert.Equal(PaymentCapabilityPolicy.DeleteBlockedByLiveInvoiceReason, caps.CanDelete.Reason);
+        // Literal EXACTO (review 2026-08-05, EXTRA T-6).
+        Assert.Equal(
+            "Este cobro no se puede deshacer porque está vinculado a una factura. Generá una nota de crédito si corresponde.",
+            caps.CanDelete.Reason);
     }
 
     [Fact]

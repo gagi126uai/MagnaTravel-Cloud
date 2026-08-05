@@ -38,8 +38,9 @@ public sealed record PaymentCapabilityContext(
     bool IsLinkedToAnyInvoice);
 
 /// <summary>
-/// Tanda 6: las dos capacidades de UN pago puntual, ya resueltas. El front apaga "Editar"/"Eliminar" con el
-/// motivo (<see cref="Cap.Reason"/>) cuando <see cref="Cap.Allowed"/> es false, ANTES de que el usuario abra
+/// Tanda 6: las dos capacidades de UN pago puntual, ya resueltas. El front apaga "Editar"/"Deshacer" (boton
+/// renombrado 2026-08-05, antes decia "Eliminar" — nada se borra de verdad) con el motivo
+/// (<see cref="Cap.Reason"/>) cuando <see cref="Cap.Allowed"/> es false, ANTES de que el usuario abra
 /// el formulario — en vez de dejarlo completar todo y recien ahi enterarse del rechazo.
 /// </summary>
 public sealed record PaymentCapabilities(Cap CanEdit, Cap CanDelete);
@@ -80,12 +81,17 @@ public static class PaymentCapabilityPolicy
     /// el texto original decia "No se puede ANULAR el pago... ANULA primero el comprobante" (verbo cambiado
     /// por error + falta la tilde). Al exponer este motivo por fila en la ficha se corrige al verbo que
     /// corresponde a la accion real que el usuario esta intentando ("eliminar") y se agrega la tilde faltante.
+    ///
+    /// <para>Vocabulario (2026-08-05, regla firmada del dueño): "eliminar"/"borrar" quedan PROHIBIDOS en
+    /// textos de plata — nada se borra de verdad, todo queda con rastro. El front ya renombro el boton de
+    /// esta accion a "Deshacer" (era "Eliminar"); este mensaje pasa a decir "deshacer" para que el rechazo
+    /// hable el mismo idioma que el boton que el usuario acaba de tocar.</para>
     /// </summary>
     public const string DeleteBlockedByIssuedReceiptReason =
-        "No se puede eliminar el pago porque tiene un comprobante vigente. Anulá primero el comprobante.";
+        "Este cobro no se puede deshacer porque tiene un comprobante vigente. Anulá primero el comprobante.";
 
     public const string DeleteBlockedByLiveInvoiceReason =
-        "No se puede eliminar el pago porque está vinculado a una factura. Generá una nota de crédito si corresponde.";
+        "Este cobro no se puede deshacer porque está vinculado a una factura. Generá una nota de crédito si corresponde.";
 
     /// <summary>Evalua las dos capacidades del pago a partir de su contexto minimo. Pura: no toca la base.</summary>
     public static PaymentCapabilities For(PaymentCapabilityContext ctx) => new(

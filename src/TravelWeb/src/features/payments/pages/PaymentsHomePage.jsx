@@ -53,7 +53,7 @@ function HomeCard({ title, description, icon: Icon, accentClass, metrics, ctaTo,
                     <div key={pm.currency} className="flex items-center gap-1.5">
                       <CurrencyBadge currency={pm.currency} size="sm" />
                       <span className="text-xl font-light text-slate-900 dark:text-white">
-                        {formatCurrency(pm.value, pm.currency)}
+                        {formatCurrency(pm.value, pm.currency, { withSymbol: false })}
                       </span>
                     </div>
                   ))}

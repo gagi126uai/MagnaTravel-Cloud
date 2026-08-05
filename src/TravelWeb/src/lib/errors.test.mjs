@@ -223,6 +223,47 @@ test("getApiErrorMessage — ProblemDetails 409 INV-ADR044-OPERATOR-NOT-FOUND �
     );
 });
 
+// ─── ProblemDetails 500 tipado {title, detail, code, reference} — F6(a) review 2026-08-05 ──
+// Los 500 "tipados" que arma el backend (ver ProblemDetailsFactory/ExceptionMiddleware)
+// traen un `reference` (id interno de correlación de logs, para soporte/dev) que NUNCA
+// debe llegar a la pantalla del usuario — es jerga técnica/interna (gate de exposición
+// de datos, "nada de IDs internos en la UI de un ERP para no-programadores").
+
+test("getApiErrorMessage — 500 tipado {title, detail, code, reference} → muestra el detail en español, JAMÁS el reference", () => {
+    const error = {
+        status: 500,
+        payload: {
+            title: "Ocurrió un error inesperado.",
+            detail: "No se pudo completar la operación. Intentá de nuevo en unos minutos.",
+            code: "unexpected_error",
+            reference: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        },
+    };
+    const mensaje = getApiErrorMessage(error, "Fallback");
+
+    assert.strictEqual(mensaje, "No se pudo completar la operación. Intentá de nuevo en unos minutos.");
+    assert.doesNotMatch(mensaje, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, "el GUID de reference nunca debe aparecer en el mensaje mostrado");
+    assert.doesNotMatch(mensaje, /reference/i, "la palabra 'reference' (jerga técnica) tampoco debe aparecer");
+});
+
+test("getApiErrorMessage — 500 tipado SIN detail (solo title/code/reference) → cae al title, nunca al reference", () => {
+    // Caso borde: si el backend algún día no manda `detail`, normalizeMessage cae a
+    // `title` (el próximo campo en su orden de prioridad) — nunca debe alcanzar
+    // `reference`, que ni siquiera está en su lista de campos leídos.
+    const error = {
+        status: 500,
+        payload: {
+            title: "Ocurrió un error inesperado. Intentá de nuevo.",
+            code: "unexpected_error",
+            reference: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        },
+    };
+    const mensaje = getApiErrorMessage(error, "Fallback");
+
+    assert.strictEqual(mensaje, "Ocurrió un error inesperado. Intentá de nuevo.");
+    assert.doesNotMatch(mensaje, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+});
+
 // ─── normalizeMessage — integración ──────────────────────────────────────────
 
 test("normalizeMessage — string 'Failed to fetch' → genérico español", () => {

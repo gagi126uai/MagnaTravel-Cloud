@@ -1460,6 +1460,9 @@ export function ServiceList({
                                                         onConfirmado={crearCallbackConfirmado(svc.recordKind)}
                                                         candadoActivo={candadoDeEdicionActivo}
                                                         onRequestEdit={onRequestEdit}
+                                                        // Fix símbolo duplicado (review 2026-08-05): con badge arriba
+                                                        // (esMultimoneda), la celda no repite el "$"/"US$".
+                                                        mostrarSimbolo={!(esMultimoneda && svc.currency)}
                                                     />
                                                 </td>
                                             ) : mostrarCosto ? (
@@ -1478,7 +1481,10 @@ export function ServiceList({
                                                             <CurrencyBadge currency={svc.currency} />
                                                         </span>
                                                     )}
-                                                    {formatCurrency(netCost, svc.currency || "ARS")}
+                                                    {/* withSymbol: false SOLO cuando el badge de arriba está visible (mismo
+                                                        chequeo esMultimoneda && svc.currency) — si no hay badge, el número
+                                                        necesita su símbolo de siempre. */}
+                                                    {formatCurrency(netCost, svc.currency || "ARS", { withSymbol: !(esMultimoneda && svc.currency) })}
                                                 </td>
                                             ) : null}
 
@@ -1497,7 +1503,8 @@ export function ServiceList({
                                                         <CurrencyBadge currency={svc.currency} />
                                                     </span>
                                                 )}
-                                                {formatCurrency(svc.salePrice || 0, svc.currency || "ARS")}
+                                                {/* withSymbol: false SOLO cuando el badge de arriba está visible. */}
+                                                {formatCurrency(svc.salePrice || 0, svc.currency || "ARS", { withSymbol: !(esMultimoneda && svc.currency) })}
                                             </td>
 
                                             {/* Columna Avisos: solo con flag enableServiceDeadlineAlerts ON
@@ -1866,7 +1873,7 @@ export function ServiceList({
                                                     {monedas.map((moneda, idx) => (
                                                         <span key={moneda} className="inline-flex items-center gap-1.5 text-xs font-black text-slate-900 dark:text-white font-mono">
                                                             <CurrencyBadge currency={moneda} />
-                                                            {formatCurrency(totalesPorMoneda[moneda], moneda)}
+                                                            {formatCurrency(totalesPorMoneda[moneda], moneda, { withSymbol: false })}
                                                             {idx < monedas.length - 1 && (
                                                                 <span className="text-slate-400 mx-0.5">·</span>
                                                             )}
@@ -2016,7 +2023,7 @@ export function ServiceList({
                                                     {esMultimoneda && svc.currency && (
                                                         <CurrencyBadge currency={svc.currency} />
                                                     )}
-                                                    {formatCurrency(svc.salePrice || 0, svc.currency || "ARS")}
+                                                    {formatCurrency(svc.salePrice || 0, svc.currency || "ARS", { withSymbol: !(esMultimoneda && svc.currency) })}
                                                 </span>
                                                 {/* Costo en mobile: gateado igual que en desktop */}
                                                 {mostrarCosto && (
@@ -2047,7 +2054,7 @@ export function ServiceList({
                                                             {esMultimoneda && svc.currency && (
                                                                 <CurrencyBadge currency={svc.currency} />
                                                             )}
-                                                            {formatCurrency(netCost, svc.currency || "ARS")}
+                                                            {formatCurrency(netCost, svc.currency || "ARS", { withSymbol: !(esMultimoneda && svc.currency) })}
                                                         </span>
                                                     )
                                                 )}

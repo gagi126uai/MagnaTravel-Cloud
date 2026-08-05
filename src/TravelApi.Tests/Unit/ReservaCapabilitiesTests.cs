@@ -117,6 +117,23 @@ public class ReservaCapabilitiesTests
         if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanEditOrDeletePayment.Reason));
     }
 
+    /// <summary>
+    /// Vocabulario (2026-08-05): "borrar" prohibido en textos de plata -> "deshacer". Literal EXACTO (no
+    /// contra la constante: <c>PaymentCapabilityPolicyTests</c> del review señaló que comparar contra la
+    /// misma constante es tautológico — esto agarra una deriva de texto de verdad).
+    /// </summary>
+    [Fact]
+    public void CanEditOrDeletePayment_OnTerminalState_UsaTextoDeshacerLiteralExacto()
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Closed));
+
+        // Ronda 2 (2026-08-05): "anulalo" salio del texto porque contradecia al boton — en estados
+        // terminales el cobro SI se puede deshacer (es lo unico que NO se puede es editarlo).
+        Assert.Equal(
+            "En este estado el cobro no se puede editar. Para corregirlo, deshacelo: queda registrado.",
+            caps.CanEditOrDeletePayment.Reason);
+    }
+
     // ===================== Voucher: SOLO {Confirmed, Traveling} (B3 2026-06-24 saco Closed) =====================
 
     [Theory]

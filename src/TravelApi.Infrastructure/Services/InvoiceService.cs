@@ -270,6 +270,13 @@ public class InvoiceService : IInvoiceService
             reservasBase = reservasBase.Where(reserva => reserva.ResponsibleUserId == ownerScope);
         }
 
+        // Fix bug "Falta facturar" fantasma (2026-08-05, F-9): "lo vendido" contra el que se compara el
+        // facturado tiene que ser la venta FIRME (ConfirmedSale, servicios resueltos por el operador), NO
+        // la venta cotizada (TotalSale). Antes de este fix, una reserva con servicios cotizados pero nunca
+        // confirmados aportaba un "pendiente de facturar" que en realidad nunca fue exigible — la misma
+        // regla ya corregida en el detalle/listado de la reserva (ReservaService) y en el backfill
+        // (Adr048T5BackfillSql). La bandeja de Facturacion es "falta facturar de lo firme", no de lo
+        // cotizado (misma base que usa el cobro, ADR-033/H1b).
         var pendingFiscalQuery = reservasBase
             .GroupJoin(
                 invoiceTotalsByReserva,
@@ -278,7 +285,7 @@ public class InvoiceService : IInvoiceService
                 (reserva, totals) => new
                 {
                     Balance = Math.Round(reserva.Balance, 2),
-                    TotalSale = Math.Round(reserva.TotalSale, 2),
+                    ConfirmedSale = Math.Round(reserva.ConfirmedSale, 2),
                     AlreadyInvoiced = Math.Round(
                         totals.Select(total => (decimal?)total.AlreadyInvoiced).FirstOrDefault() ?? 0m,
                         2)
@@ -286,8 +293,8 @@ public class InvoiceService : IInvoiceService
             .Select(item => new
             {
                 item.Balance,
-                PendingFiscalAmount = item.TotalSale > item.AlreadyInvoiced
-                    ? Math.Round(item.TotalSale - item.AlreadyInvoiced, 2)
+                PendingFiscalAmount = item.ConfirmedSale > item.AlreadyInvoiced
+                    ? Math.Round(item.ConfirmedSale - item.AlreadyInvoiced, 2)
                     : 0m
             })
             .Where(item => item.PendingFiscalAmount > 0m);
@@ -3543,6 +3550,10 @@ public class InvoiceService : IInvoiceService
             reservasBase = reservasBase.Where(reserva => reserva.ResponsibleUserId == ownerScope);
         }
 
+        // Fix bug "Falta facturar" fantasma (2026-08-05, F-9): el campo se sigue llamando "TotalSale" en
+        // el DTO (compatibilidad de contrato con el front), pero el VALOR sale de reserva.ConfirmedSale
+        // (venta FIRME), no de reserva.TotalSale (venta cotizada) — ver el XML-doc de
+        // InvoicingWorkItemDto.TotalSale para el detalle completo.
         return reservasBase
             .Select(reserva => new
             {
@@ -3551,7 +3562,7 @@ public class InvoiceService : IInvoiceService
                 reserva.NumeroReserva,
                 CustomerName = reserva.Payer != null ? reserva.Payer.FullName : "Consumidor Final",
                 reserva.StartDate,
-                TotalSale = Math.Round(reserva.TotalSale, 2),
+                TotalSale = Math.Round(reserva.ConfirmedSale, 2),
                 Balance = Math.Round(reserva.Balance, 2),
                 AlreadyInvoiced = Math.Round(_context.Invoices
                     .AsNoTracking()

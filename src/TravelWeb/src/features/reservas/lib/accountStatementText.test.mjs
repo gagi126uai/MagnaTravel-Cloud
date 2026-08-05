@@ -14,7 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { construirFraseResumenSaldos } from "./accountStatementText.js";
+import { construirFraseResumenSaldos, formatSaldoDelExtracto } from "./accountStatementText.js";
 import { formatCurrency } from "../../../lib/utils.js";
 
 test("un bloque en pesos con deuda → 'Este cliente debe $X.'", () => {
@@ -70,4 +70,32 @@ test("lista vacía → devuelve cadena vacía, no revienta", () => {
 
 test("bloques undefined → devuelve cadena vacía, no revienta (degradación elegante)", () => {
   assert.equal(construirFraseResumenSaldos(undefined), "");
+});
+
+// ============================================================================
+// formatSaldoDelExtracto (FIX saldo negativo pelado, prueba integral 2026-08-05)
+// ============================================================================
+
+test("saldo positivo (debe) → monto formateado tal cual, sin palabra extra", () => {
+  assert.equal(formatSaldoDelExtracto(5000, "ARS"), formatCurrency(5000, "ARS"));
+});
+
+test("saldo negativo (a favor) → monto en positivo + 'a favor', SIN el signo pelado", () => {
+  const texto = formatSaldoDelExtracto(-5000, "ARS");
+  assert.equal(texto, `${formatCurrency(5000, "ARS")} a favor`);
+  assert.equal(texto.startsWith("-"), false);
+});
+
+test("saldo negativo en dólares → usa US$ y 'a favor'", () => {
+  const texto = formatSaldoDelExtracto(-300, "USD");
+  assert.equal(texto, `${formatCurrency(300, "USD")} a favor`);
+});
+
+test("saldo en cero → monto formateado tal cual, sin 'a favor'", () => {
+  assert.equal(formatSaldoDelExtracto(0, "ARS"), formatCurrency(0, "ARS"));
+});
+
+test("saldo null/undefined → tratado como 0, no revienta", () => {
+  assert.equal(formatSaldoDelExtracto(null, "ARS"), formatCurrency(0, "ARS"));
+  assert.equal(formatSaldoDelExtracto(undefined, "ARS"), formatCurrency(0, "ARS"));
 });

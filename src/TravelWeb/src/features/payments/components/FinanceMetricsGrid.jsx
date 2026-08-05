@@ -45,7 +45,7 @@ export function FinanceMetricsGrid({ items, columns = "md:grid-cols-3" }) {
                 <div key={pm.currency} className="flex items-center gap-1.5">
                   <CurrencyBadge currency={pm.currency} size="sm" />
                   <span className="text-xl font-light text-slate-900 dark:text-white">
-                    {formatCurrency(pm.value, pm.currency)}
+                    {formatCurrency(pm.value, pm.currency, { withSymbol: false })}
                   </span>
                 </div>
               ))}

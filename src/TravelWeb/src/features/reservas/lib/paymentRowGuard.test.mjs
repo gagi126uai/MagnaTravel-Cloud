@@ -12,12 +12,16 @@ import { resolverBloqueoFilaCobro } from "./paymentRowGuard.js";
 
 const TEXTO_RECIBO_EMITIDO_EDITAR =
   "No se puede editar el pago porque tiene un recibo emitido. Anulá el recibo y registrá un nuevo pago.";
+// Vocabulario (2026-08-05, regla firmada del dueño, BUG 2 "Deshacer cobro"): "eliminar"/
+// "borrar" quedan PROHIBIDOS en textos de plata — el motor actualizó estos dos mensajes
+// (PaymentCapabilityPolicy.DeleteBlockedBy*Reason) para decir "deshacer", mismo verbo que
+// el botón que el usuario tocó. El de EDITAR no cambió: editar sigue siendo "editar".
 const TEXTO_RECIBO_VIGENTE_ELIMINAR =
-  "No se puede eliminar el pago porque tiene un comprobante vigente. Anulá primero el comprobante.";
+  "Este cobro no se puede deshacer porque tiene un comprobante vigente. Anulá primero el comprobante.";
 const TEXTO_FACTURA_CAE_EDITAR =
   "No se puede editar el pago porque está vinculado a una factura emitida (CAE). Generá una nota de crédito si corresponde.";
 const TEXTO_FACTURA_CAE_ELIMINAR =
-  "No se puede eliminar el pago porque está vinculado a una factura. Generá una nota de crédito si corresponde.";
+  "Este cobro no se puede deshacer porque está vinculado a una factura. Generá una nota de crédito si corresponde.";
 const TEXTO_RECIBO_ANULADO_EDITAR =
   "No se puede editar el pago porque tiene un recibo anulado que debe preservarse para auditoría.";
 
@@ -93,6 +97,70 @@ test("solo Eliminar bloqueado (Editar permitido) → motivo = el de Eliminar", (
   assert.equal(resultado.editarBloqueado, false);
   assert.equal(resultado.eliminarBloqueado, true);
   assert.equal(resultado.motivo, TEXTO_RECIBO_VIGENTE_ELIMINAR);
+});
+
+// ─── FIX BLOQUEANTE (review 2026-08-05): editarVisible=false (Editar oculto en los 4
+//     terminales) — el motivo mostrado debe hablar SIEMPRE del botón que se ve
+//     realmente en pantalla (Deshacer), nunca de Editar, que ni siquiera está ────────
+
+test("terminal + recibo emitido (Editar oculto) → el motivo es el de Deshacer, NO el de Editar (antes: bug, hablaba de 'editar el pago')", () => {
+  // Caso F1(a) del reviewer: en un estado terminal, Editar está oculto (editarVisible=
+  // false) porque no tiene ningún camino válido ahí. El backend igual manda canEdit
+  // bloqueado (recibo emitido bloquea los dos) — pero como Editar no se renderiza, ese
+  // motivo no debe aparecer: el candado 🔒 tiene que explicar por qué "Deshacer" (el
+  // único botón visible) está gris.
+  const resultado = resolverBloqueoFilaCobro(
+    {
+      canEdit: { allowed: false, reason: TEXTO_RECIBO_EMITIDO_EDITAR },
+      canDelete: { allowed: false, reason: TEXTO_RECIBO_VIGENTE_ELIMINAR },
+    },
+    { editarVisible: false }
+  );
+
+  assert.equal(resultado.eliminarBloqueado, true);
+  assert.equal(
+    resultado.motivo,
+    TEXTO_RECIBO_VIGENTE_ELIMINAR,
+    "el motivo debe ser el de Deshacer (canDelete), porque Editar no está en pantalla"
+  );
+  assert.notEqual(resultado.motivo, TEXTO_RECIBO_EMITIDO_EDITAR, "nunca debe colarse el motivo de un botón oculto");
+});
+
+test("terminal + recibo solo-anulado (Editar oculto, Deshacer habilitado) → SIN motivo (no se pinta un candado huérfano)", () => {
+  // Caso F1(b) del reviewer: un recibo SOLO anulado bloquea Editar (canEdit.allowed=
+  // false) pero NO bloquea Deshacer (canDelete.allowed=true, regla C28). Con Editar
+  // oculto, no queda ningún botón bloqueado que justifique el renglón 🔒 — antes se
+  // mostraba igual, hablando de un botón que ni se ve. Ahora no se pinta nada.
+  const resultado = resolverBloqueoFilaCobro(
+    {
+      canEdit: { allowed: false, reason: TEXTO_RECIBO_ANULADO_EDITAR },
+      canDelete: { allowed: true, reason: null },
+    },
+    { editarVisible: false }
+  );
+
+  assert.equal(resultado.eliminarBloqueado, false);
+  assert.equal(resultado.motivo, null, "Deshacer está habilitado y Editar está oculto: no hay nada que explicar");
+});
+
+test("terminal + ningún candado fiscal (canEdit/canDelete allowed=true) → sin motivo, igual que siempre", () => {
+  const resultado = resolverBloqueoFilaCobro(
+    { canEdit: { allowed: true, reason: null }, canDelete: { allowed: true, reason: null } },
+    { editarVisible: false }
+  );
+
+  assert.equal(resultado.motivo, null);
+});
+
+test("editarVisible por defecto (sin pasar la opción) → se comporta exactamente igual que antes del fix", () => {
+  // Mismo fixture que el primer test de "recibo emitido" de arriba, pero sin pasar
+  // opciones — confirma que los call sites viejos (si quedara alguno) no cambian.
+  const resultado = resolverBloqueoFilaCobro({
+    canEdit: { allowed: false, reason: TEXTO_RECIBO_EMITIDO_EDITAR },
+    canDelete: { allowed: false, reason: TEXTO_RECIBO_VIGENTE_ELIMINAR },
+  });
+
+  assert.equal(resultado.motivo, TEXTO_RECIBO_EMITIDO_EDITAR);
 });
 
 // ─── Degradación parcial: solo uno de los dos campos viene en el DTO ─────────

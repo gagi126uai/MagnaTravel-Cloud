@@ -88,6 +88,17 @@ internal static class Adr048T5BackfillSql
     /// <c>InvoiceComprobanteHelpers.Categorize -> Unknown</c>. Factura: 1(A)/6(B)/11(C)/51(M) suma; Nota de
     /// Débito: 2(A)/7(B)/12(C)/52(M) suma; Nota de Crédito: 3(A)/8(B)/13(C)/53(M) resta el neto y NO
     /// participa del bruto; cualquier otro tipo aporta 0 en ambos.</para>
+    ///
+    /// <para><b>Fix bug "Falta facturar" fantasma (2026-08-05, F-9)</b>: el "vendido" contra el que se
+    /// compara <c>facturado_neto</c> es <c>tf."ConfirmedSale"</c> (venta FIRME, servicios RESUELTOS por el
+    /// operador), NO <c>tf."TotalSale"</c> (venta COTIZADA, servicios no cancelados). Antes de este fix, una
+    /// reserva con servicios cotizados pero NUNCA confirmados quedaba comparada contra una venta que jamás
+    /// fue firme — el mismo bug que <c>ReservaInvoicingStatus.Derive</c>/<c>ReservaDerivedAxesProjector</c>
+    /// ya corrigieron para el escritor go-forward (ver <c>ReservaMoneyPersister.PersistAsync</c>). Este
+    /// backfill SOLO se ejecuta una vez por deploy normal (marcador en <c>__EFMigrationsHistory</c>), pero
+    /// SE REPITE en un restore/ambiente nuevo desde base vacía (paridad de migraciones desde cero es un
+    /// pendiente conocido del proyecto) — sin este fix, ese camino reproduciría el bug viejo para las
+    /// reservas que nunca volvieron a tener actividad de plata desde que corrió esta migración.</para>
     /// </summary>
     public const string InvoicingAxisWithInvoices = @"
         WITH invoice_agg AS (
@@ -109,7 +120,7 @@ internal static class Adr048T5BackfillSql
         SET ""DerivedInvoicingStatus"" = CASE
             WHEN ia.facturado_neto <= 0.005 THEN
                 CASE WHEN ia.bruto_emitido > 0.005 THEN 'FullyReturned' ELSE 'NotInvoiced' END
-            WHEN ia.facturado_neto >= tf.""TotalSale"" - 0.005 THEN 'FullyInvoiced'
+            WHEN ia.facturado_neto >= tf.""ConfirmedSale"" - 0.005 THEN 'FullyInvoiced'
             ELSE 'PartiallyInvoiced'
         END
         FROM invoice_agg ia

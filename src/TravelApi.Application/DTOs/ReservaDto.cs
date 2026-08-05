@@ -77,9 +77,16 @@ public class ReservaMoneyLineDto
 
     /// <summary>
     /// ADR-037 / cuadre de facturacion POR MONEDA (2026-06-22): cuanto QUEDA por facturar en ESTA moneda
-    /// respecto de lo vendido = <see cref="TotalSale"/> de esta moneda - <see cref="FacturadoNeto"/> de
-    /// esta moneda. Mismo criterio que el escalar <c>ReservaDto.DisponibleParaFacturar</c> (usa TotalSale,
-    /// no ConfirmedSale), para no divergir. Puede ser negativo si en esta moneda se facturo de mas.
+    /// respecto de lo vendido FIRME = <see cref="ConfirmedSale"/> de esta moneda - <see cref="FacturadoNeto"/>
+    /// de esta moneda. Mismo criterio que el escalar <c>ReservaDto.DisponibleParaFacturar</c>, para no
+    /// divergir. Puede ser negativo si en esta moneda se facturo de mas (ej. la reserva se anulo/perdio
+    /// DESPUES de tener una factura viva: es la senal correcta de "hace falta una Nota de Credito").
+    ///
+    /// <para>Fix bug "Falta facturar" fantasma (2026-08-05, F-9): antes usaba <see cref="TotalSale"/> (venta
+    /// COTIZADA, servicios no cancelados) en vez de <see cref="ConfirmedSale"/> (venta FIRME, servicios
+    /// RESUELTOS por el operador). Una reserva Perdida con servicios cotizados pero NUNCA confirmados tiene
+    /// TotalSale &gt; 0 y ConfirmedSale = 0 — el criterio viejo mostraba "falta facturar" sobre una venta
+    /// que jamas se concreto.</para>
     /// </summary>
     public decimal DisponibleParaFacturar { get; set; }
 
@@ -411,8 +418,10 @@ public class ReservaDto
 
     // P3 (cuadre de facturacion): cuanto se le facturo NETO al cliente por esta reserva
     // (facturas + ND - NC, solo comprobantes con CAE vivo) y cuanto QUEDA por facturar
-    // respecto de lo vendido (TotalSale). La UI los usa para avisar si se factura de mas.
-    // Se calculan en el backend (fuente unica) para no duplicar la regla en el frontend.
+    // respecto de lo vendido FIRME (ConfirmedSale, fix 2026-08-05 — antes usaba TotalSale, la venta
+    // cotizada, y mostraba "falta facturar" en reservas Perdidas que nunca llegaron a confirmarse).
+    // La UI los usa para avisar si se factura de mas. Se calculan en el backend (fuente unica) para
+    // no duplicar la regla en el frontend.
     public decimal FacturadoNeto { get; set; }
     public decimal DisponibleParaFacturar { get; set; }
 
@@ -474,8 +483,9 @@ public class ReservaDto
     /// (facturada en parte), "FullyInvoiced" (facturada total o de mas), "FullyReturned" (SE facturo y una
     /// Nota de Credito lo devolvio entero — distinto de "NotInvoiced": esta reserva SI tiene rastro fiscal).
     /// Por MONTO (decision H1): "total" = facturadoNeto &gt;= vendido. Escalar v1 (decision H4): deriva de
-    /// <see cref="FacturadoNeto"/>/<see cref="TotalSale"/> escalares. Lo calcula
-    /// <c>ReservaInvoicingStatus.Derive</c> en el backend (fuente unica).
+    /// <see cref="FacturadoNeto"/>/<see cref="ConfirmedSale"/> escalares (venta FIRME, no
+    /// <see cref="TotalSale"/> — fix 2026-08-05, F-9). Lo calcula <c>ReservaInvoicingStatus.Derive</c> en
+    /// el backend (fuente unica).
     /// </summary>
     public string InvoicingStatus { get; set; } = ReservaInvoicingStatus.NotInvoiced;
 

@@ -31,7 +31,10 @@ namespace TravelApi.Infrastructure.Persistence.Migrations.App
     ///   (<c>Resultado='A'</c>, misma regla que <c>ReservaInvoicingCuadreCalculator.CountsInNetBilled</c>)
     ///   menos las Notas de Credito (tipos 3/8/13/53) para el FACTURADO NETO, y SOLO Facturas+ND (sin
     ///   restar NC) para el BRUTO EMITIDO. "NotInvoiced" si ambos ~0; "FullyReturned" si el neto ~0 pero el
-    ///   bruto &gt; 0; "FullyInvoiced" si el neto cubre <c>TotalSale</c>; si no, "PartiallyInvoiced".</item>
+    ///   bruto &gt; 0; "FullyInvoiced" si el neto cubre <c>ConfirmedSale</c> (venta FIRME — fix 2026-08-05,
+    ///   F-9, bug "Falta facturar" fantasma; ANTES comparaba contra <c>TotalSale</c>, la venta cotizada);
+    ///   si no, "PartiallyInvoiced". El texto de las 4 sentencias vive en <c>Adr048T5BackfillSql</c> (ver su
+    ///   XML-doc para el detalle completo del fix), no se edita este comentario para que quede vigente.</item>
     /// </list>
     ///
     /// <para><b>OJO nombres REALES en Postgres</b> (ver leccion "db naming travelfiles"): la reserva es

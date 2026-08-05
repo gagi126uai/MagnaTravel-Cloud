@@ -424,23 +424,24 @@ const textosCapturados = [];
     putC.status === 200, `status=${putC.status} body=${putC.text}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CHECK (4): eliminar con recibo anulado. El seed D ya tiene el cobro con recibo
-  // Voided (armado arriba). En "Estado de Cuenta" el botón Eliminar tiene que estar
-  // HABILITADO (la regla de negocio nunca bloqueó eliminar por recibo anulado — solo
-  // por recibo VIGENTE o factura vinculada) y Editar gris con el motivo de auditoría.
+  // CHECK (4): deshacer con recibo anulado. El seed D ya tiene el cobro con recibo
+  // Voided (armado arriba). En "Estado de Cuenta" el botón Deshacer (BUG 2, 2026-08-05:
+  // antes se llamaba "Eliminar") tiene que estar HABILITADO (la regla de negocio nunca
+  // bloqueó deshacer por recibo anulado — solo por recibo VIGENTE o factura vinculada)
+  // y Editar gris con el motivo de auditoría.
   // ═══════════════════════════════════════════════════════════════════════════
   await page.goto(`${FRONT}/reservas/${seed.ridD}`);
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: /Estado de Cuenta/i }).first().click();
   await page.waitForTimeout(800);
 
-  const btnEliminarCobro = page.locator('[data-testid="btn-eliminar-cobro"]').first();
+  const btnDeshacerCobro = page.locator('[data-testid="btn-deshacer-cobro"]').first();
   const btnEditarCobro = page.locator('[data-testid="btn-editar-cobro"]').first();
-  await btnEliminarCobro.waitFor({ timeout: 15000 });
+  await btnDeshacerCobro.waitFor({ timeout: 15000 });
   await page.screenshot({ path: SHOTS + "/4-cobro-recibo-anulado.png", fullPage: true });
 
-  check("(4) 'Eliminar cobro' está HABILITADO con recibo anulado (regla real: solo bloquea recibo vigente)",
-    await btnEliminarCobro.isEnabled(), "");
+  check("(4) 'Deshacer cobro' está HABILITADO con recibo anulado (regla real: solo bloquea recibo vigente)",
+    await btnDeshacerCobro.isEnabled(), "");
   check("(4) 'Editar cobro' está DESHABILITADO (gris) con recibo anulado",
     await btnEditarCobro.isDisabled(), "");
   const motivoVisible = (await page.locator('body').innerText());

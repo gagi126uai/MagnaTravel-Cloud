@@ -1077,7 +1077,9 @@ public class ReservasController : ControllerBase
         }
         catch (ArgumentException)
         {
-            return BadRequest(new { message = "No se pudo eliminar el pago." });
+            // Vocabulario (2026-08-05): "eliminar"/"borrar" prohibidos en textos de plata — se dice
+            // "deshacer" (mismo verbo que el boton del front, antes "Eliminar").
+            return BadRequest(new { message = "No se pudo deshacer el cobro." });
         }
         catch (InvalidOperationException ex)
         {
@@ -1092,7 +1094,7 @@ public class ReservasController : ControllerBase
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
             }
 
-            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo eliminar el pago.");
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo deshacer el cobro.");
         }
     }
 

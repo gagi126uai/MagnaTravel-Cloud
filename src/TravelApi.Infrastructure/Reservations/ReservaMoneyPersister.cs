@@ -99,7 +99,11 @@ internal static class ReservaMoneyPersister
         //    caso especial para el par {Cancelled, PendingOperatorRefund} (B3, ver el XML-doc del
         //    proyector). "reserva.Invoices" ya viene cargado por el Include de arriba.
         reserva.DerivedCollectionStatus = ReservaDerivedAxesProjector.ProjectCollectionStatus(summary);
-        reserva.DerivedInvoicingStatus = ReservaDerivedAxesProjector.ProjectInvoicingStatus(summary.TotalSale, reserva.Invoices);
+        // Fix bug "Falta facturar" fantasma (2026-08-05, F-9): se le pasa ConfirmedSale (venta FIRME), NO
+        // TotalSale (venta COTIZADA) — el eje materializado tiene que coincidir SIEMPRE con el detalle EN
+        // VIVO (ReservaService.GetReservaByIdAsync, mismo fix), sino el chip del listado y el de la ficha
+        // podrian divergir para la MISMA reserva (viola F-1: una sola regla por entidad).
+        reserva.DerivedInvoicingStatus = ReservaDerivedAxesProjector.ProjectInvoicingStatus(summary.ConfirmedSale, reserva.Invoices);
 
         // 2-bis) ADR-048 (2026-07-17, modelo de estados derivados, via atomica B2): si la reserva "tuvo
         //    servicios y los tiene todos anulados" (INV-048-01), esto la lleva al terminal del par
@@ -139,9 +143,9 @@ internal static class ReservaMoneyPersister
     /// "Facturada total". Ver <c>docs/architecture/2026-07-17-t5-review-backend.md</c> §B1.</para>
     ///
     /// <para><b>Por que NO recalcular todo (por que no llamar <see cref="PersistAsync"/> aca en su
-    /// lugar)</b>: emitir/anular un comprobante NO cambia <c>TotalSale</c> (que sale de los SERVICIOS, no
-    /// de los comprobantes) ni el saldo del cliente en el circuito normal (eso lo mueve un Payment, no una
-    /// Invoice) — por eso el proyector puede usar el <c>TotalSale</c> YA PERSISTIDO tal cual, sin
+    /// lugar)</b>: emitir/anular un comprobante NO cambia <c>ConfirmedSale</c> (que sale de los SERVICIOS,
+    /// no de los comprobantes) ni el saldo del cliente en el circuito normal (eso lo mueve un Payment, no
+    /// una Invoice) — por eso el proyector puede usar el <c>ConfirmedSale</c> YA PERSISTIDO tal cual, sin
     /// recorrer de nuevo las 6 colecciones de servicios ni los pagos. Recalcular todo en CADA emision de
     /// factura (el camino MAS FRECUENTE de mutacion de comprobantes) seria carga de escritura innecesaria
     /// en el camino caliente. Si algun dia una emision SI llegara a mover plata (hoy no pasa en ningun
@@ -150,6 +154,11 @@ internal static class ReservaMoneyPersister
     /// <para><b>Para Notas de Credito seguí usando <see cref="PersistAsync"/> completo</b> (via
     /// <c>AfipService.ApplyCreditNoteEconomicReversalAsync</c>): una NC SI mueve plata (genera la reversion
     /// economica del pago), asi que necesita el recalculo completo de cobro + facturacion, no este atajo.</para>
+    ///
+    /// <para><b>Fix bug "Falta facturar" fantasma (2026-08-05, F-9)</b>: se le pasa
+    /// <c>reserva.ConfirmedSale</c> (venta FIRME), NO <c>reserva.TotalSale</c> (venta COTIZADA) — mismo
+    /// criterio que <see cref="PersistAsync"/> arriba, para que este atajo nunca deje la columna en un
+    /// valor distinto al que hubiera calculado el recalculo completo.</para>
     /// </summary>
     public static async Task RefreshInvoicingAxisOnlyAsync(AppDbContext db, int reservaId, CancellationToken ct = default)
     {
@@ -159,7 +168,7 @@ internal static class ReservaMoneyPersister
 
         if (reserva == null) return;
 
-        reserva.DerivedInvoicingStatus = ReservaDerivedAxesProjector.ProjectInvoicingStatus(reserva.TotalSale, reserva.Invoices);
+        reserva.DerivedInvoicingStatus = ReservaDerivedAxesProjector.ProjectInvoicingStatus(reserva.ConfirmedSale, reserva.Invoices);
 
         await db.SaveChangesAsync(ct);
     }

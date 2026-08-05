@@ -329,7 +329,10 @@ public class PaymentsController : ControllerBase
         try
         {
             await _paymentService.DeletePaymentAsync(publicIdOrLegacyId, cancellationToken);
-            return Ok(new { message = "Pago eliminado correctamente." });
+            // Vocabulario (2026-08-05): "eliminado"/"borrado" prohibidos en textos de plata — nada se borra
+            // de verdad, queda con rastro (soft-delete). Se dice "deshecho", mismo verbo que el boton del
+            // front (antes "Eliminar").
+            return Ok(new { message = "Cobro deshecho correctamente." });
         }
         catch (KeyNotFoundException)
         {

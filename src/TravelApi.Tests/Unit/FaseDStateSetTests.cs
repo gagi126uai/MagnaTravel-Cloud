@@ -72,6 +72,10 @@ public class FaseDStateSetTests
         Status = status,
         Balance = 0m,
         TotalSale = 1000m,
+        // ConfirmedSale = TotalSale: el nombre del helper es "ReadyToInvoice" — la venta esta FIRME
+        // (fix 2026-08-05, F-9: la bandeja de facturacion sigue a ConfirmedSale, no a TotalSale). Sin esto
+        // PendingFiscalAmount daria 0 y la reserva desaparecia de la bandeja pase lo que pase con el estado.
+        ConfirmedSale = 1000m,
         StartDate = DateTime.UtcNow.Date.AddDays(5)
     };
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Undo2, Users, Plus, RefreshCw, Check } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess, showWarning } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -46,6 +46,10 @@ import { isReservaAnulada } from "../moneyStatus";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 import { resolverAccionAlFallarComprobante, armarEtiquetaComprobante } from "../lib/receiptApprovalFlow";
 import { resolverBloqueoFilaCobro } from "../lib/paymentRowGuard";
+// BUG 2 (prueba integral 2026-08-05, constitución P-1/P-14/F-6): "Deshacer cobro" ya no
+// se dice "Eliminar" — el motor nunca borra, siempre deja rastro. Estos helpers deciden
+// el texto del diálogo y a qué endpoint pegarle según el estado de la reserva en pantalla.
+import { resolverRutaDeshacerCobro, construirConfirmacionDeshacerCobro, resolverMensajeErrorDeshacerCobro } from "../lib/undoPaymentFlow";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
@@ -102,10 +106,12 @@ import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
  * Se usa en la Zona C (vouchers) y en la Zona de documentos.
  * La Zona B (PDF de factura AFIP) siempre queda visible.
  *
- * IMPORTANTE: NO se usa para controlar Editar/Eliminar cobro.
- * Esas acciones se gobiernan por la capacidad `canEditOrDeletePayment` del DTO
- * (ver PaymentReceiptActions). Razón: cobro y facturación son ejes separados (ADR-037);
- * una reserva FullyInvoiced puede seguir teniendo cobros pendientes de ajuste.
+ * IMPORTANTE: NO se usa para controlar Editar/Deshacer cobro.
+ * "Editar" se gobierna por la capacidad `canEditOrDeletePayment` del DTO (ver
+ * PaymentReceiptActions); "Deshacer" ya no depende de ninguna capacidad de reserva
+ * (BUG 2, 2026-08-05 — ver undoPaymentFlow.js). Razón de fondo: cobro y facturación
+ * son ejes separados (ADR-037); una reserva FullyInvoiced puede seguir teniendo
+ * cobros pendientes de ajuste.
  */
 function esEstadoCongelado(reserva) {
   if (!reserva) return false;
@@ -129,8 +135,9 @@ function esEstadoCongelado(reserva) {
  *  - Esperando reembolso (PendingOperatorRefund): anulada, en solo lectura.
  *
  * Closed (Finalizada) NO está aquí: en Closed todavía se puede emitir recibo
- * de un cobro reciente. El control de Editar/Eliminar cobro se delega al
- * capability `canEditOrDeletePayment` del DTO del backend.
+ * de un cobro reciente. El control de "Editar" cobro se delega al capability
+ * `canEditOrDeletePayment` del DTO; "Deshacer" ya no (BUG 2, 2026-08-05):
+ * en Closed sigue disponible, solo cambia a POST /annul (undoPaymentFlow.js).
  */
 function esCongeladoParaRecibos(reserva) {
   if (!reserva) return false;
@@ -377,21 +384,37 @@ function canIssuePaymentReceipt(payment) {
 }
 
 /**
- * Botones Editar/Eliminar de UN cobro puntual, con el candado por-pago de la Tanda 6
+ * Botones Editar/Deshacer de UN cobro puntual, con el candado por-pago de la Tanda 6
  * (spec docs/ux/2026-07-20-t5-a-t9-contrato-pantalla-motor.md): si ESTE pago tiene un
  * recibo emitido, un recibo anulado o está atado a una factura con CAE vivo, los botones
  * quedan grises (visibles, NO clickeables) con el motivo real del backend debajo — nunca
  * se ocultan, porque esto es un candado fiscal, no una acción ya cumplida (regla 2026-06-26).
  *
+ * "Deshacer" (BUG 2, prueba integral 2026-08-05): antes decía "Eliminar", pero el motor
+ * NUNCA borra un cobro — hace soft-delete + contra-asiento de caja, siempre con rastro
+ * (constitución P-1/P-14/F-6, "nada se dice Eliminar"). Se cambió la palabra, el ícono
+ * (de tacho de basura a flecha de deshacer) y el color (ya no rojo "peligro", sino el
+ * mismo tono neutro que Editar) — nada de la lógica de bloqueo cambió.
+ *
  * Se usa en los tres estados posibles de PaymentReceiptActions (con recibo, por emitir,
  * sin comprobante) para no repetir la misma lógica tres veces.
+ *
+ * `puedeEditar` (nivel RESERVA, BUG 2 2026-08-05): gobierna SOLO el botón Editar — en
+ * Closed/terminal se OCULTA (no hay ningún camino válido para editar ahí, a diferencia de
+ * deshacer). "Deshacer" nunca mira esta prop: siempre se ofrece, y el candado fiscal
+ * por-pago de abajo (`motivo`) es quien decide si queda gris.
  */
-function EditarEliminarCobro({ payment, onEditarCobro, onEliminarCobro }) {
-  const { editarBloqueado, eliminarBloqueado, motivo } = resolverBloqueoFilaCobro(payment);
+function EditarEliminarCobro({ payment, puedeEditar = true, onEditarCobro, onDeshacerCobro }) {
+  // FIX BLOQUEANTE (review 2026-08-05): se pasa puedeEditar como editarVisible para que
+  // el motivo elegido hable SIEMPRE del botón que esta fila realmente muestra — ver el
+  // comentario extenso en resolverBloqueoFilaCobro (paymentRowGuard.js).
+  const { editarBloqueado, eliminarBloqueado, motivo } = resolverBloqueoFilaCobro(payment, {
+    editarVisible: puedeEditar,
+  });
 
   return (
     <>
-      {typeof onEditarCobro === "function" && (
+      {puedeEditar && typeof onEditarCobro === "function" && (
         <button
           type="button"
           onClick={editarBloqueado ? undefined : () => onEditarCobro(payment)}
@@ -409,22 +432,22 @@ function EditarEliminarCobro({ payment, onEditarCobro, onEliminarCobro }) {
           Editar
         </button>
       )}
-      {typeof onEliminarCobro === "function" && (
+      {typeof onDeshacerCobro === "function" && (
         <button
           type="button"
-          onClick={eliminarBloqueado ? undefined : () => onEliminarCobro(payment)}
+          onClick={eliminarBloqueado ? undefined : () => onDeshacerCobro(payment)}
           disabled={eliminarBloqueado}
           className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-bold transition-colors ${
             eliminarBloqueado
               ? "cursor-not-allowed border-slate-100 text-slate-300 dark:border-slate-800 dark:text-slate-600"
-              : "border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
+              : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           }`}
-          title={eliminarBloqueado ? motivo : "Eliminar cobro"}
-          aria-label="Eliminar cobro"
-          data-testid="btn-eliminar-cobro"
+          title={eliminarBloqueado ? motivo : "Deshacer cobro"}
+          aria-label="Deshacer cobro"
+          data-testid="btn-deshacer-cobro"
         >
-          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-          Eliminar
+          <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
+          Deshacer
         </button>
       )}
       {/* Renglón con candado, SIEMPRE a la vista (nada de tooltip, regla 2026-06-08).
@@ -441,7 +464,7 @@ function EditarEliminarCobro({ payment, onEditarCobro, onEliminarCobro }) {
 /**
  * Acciones del comprobante de pago (recibo) de un cobro individual.
  *
- * Incluye también Editar cobro y Eliminar cobro.
+ * Incluye también Editar cobro y Deshacer cobro.
  * Hay TRES criterios distintos de bloqueo (ADR-037 + BUG IMP-3 fix 2026-06-24 + Tanda 6 2026-07-20):
  *
  *   - `congelado`: controla emitir/anular el RECIBO del cobro.
@@ -449,40 +472,50 @@ function EditarEliminarCobro({ payment, onEditarCobro, onEliminarCobro }) {
  *     Usa esCongeladoParaRecibos(), que NO incluye FullyInvoiced (facturación y cobranza son
  *     ejes separados en ADR-037).
  *
- *   - `canEditarEliminar`: controla si Editar/Eliminar se ofrecen SIQUIERA para este cobro
- *     a nivel RESERVA. Viene de la capacidad `canEditOrDeletePayment.allowed` del DTO del
- *     backend. El backend ya considera el estado de la reserva (Closed/terminal → false).
- *     Si el backend no la envía, se asume false por seguridad. Cuando es false, los botones
- *     directamente NO aparecen (estado "no aplicable todavía / ya no aplicable", no candado).
+ *   - `canEditarEliminar`: controla si EDITAR se ofrece siquiera para este cobro a nivel
+ *     RESERVA. Viene de la capacidad `canEditOrDeletePayment.allowed` del DTO del backend,
+ *     que es false en Closed/terminal — ahí editar NO tiene ningún camino válido (a
+ *     diferencia de deshacer, que sí lo tiene: ver el punto siguiente). Si el backend no la
+ *     envía, se asume false por seguridad.
  *
- *   - Candado por PAGO puntual (Tanda 6, nuevo): aunque `canEditarEliminar` sea true, ESTE
- *     cobro individual puede tener su propio candado (recibo emitido, recibo anulado, factura
- *     con CAE vivo) — lo resuelve `EditarEliminarCobro` leyendo `payment.canEdit`/`canDelete`.
- *     Acá los botones SÍ se muestran, pero grises con el motivo al lado (candado fiscal).
+ *   - "Deshacer cobro" (BUG 2, prueba integral 2026-08-05): a propósito YA NO depende de
+ *     `canEditarEliminar`. El motor tiene DOS caminos con rastro — DELETE en estados vivos,
+ *     POST /annul en los 4 terminales (Closed/Cancelled/Lost/PendingOperatorRefund) — así
+ *     que "deshacer" SIEMPRE tiene una salida válida, solo cambia el endpoint
+ *     (`resolverRutaDeshacerCobro`, ver `undoPaymentFlow.js`). Lo único que puede bloquearlo
+ *     es el candado FISCAL por-pago de abajo (recibo emitido / factura viva) — ese sí sigue
+ *     aplicando en cualquier estado, porque anular con rastro también lo respeta server-side.
+ *
+ *   - Candado por PAGO puntual (Tanda 6): recibo emitido, recibo anulado o factura con CAE
+ *     vivo — lo resuelve `EditarEliminarCobro` leyendo `payment.canEdit`/`canDelete`. Acá los
+ *     botones SÍ se muestran, pero grises con el motivo al lado (candado fiscal, P-9/P-11:
+ *     nunca desaparecen sin explicación).
  *
  * Decisión de UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "crear/anular/editar" no.
  *
  * Props:
- *  - congelado: boolean — solo afecta emitir/anular el RECIBO (no editar/eliminar el cobro).
- *  - canEditarEliminar: boolean — si el backend permite editar o eliminar cobros en esta reserva.
+ *  - congelado: boolean — solo afecta emitir/anular el RECIBO (no editar/deshacer el cobro).
+ *  - canEditarEliminar: boolean — si el backend permite EDITAR cobros en esta reserva (Deshacer
+ *    no usa esta prop, ver arriba).
  *  - onEditarCobro: callback(payment) — abre RegistrarCobroInline en modo edición.
- *  - onEliminarCobro: callback(payment) — pide confirmación y elimina el cobro.
+ *  - onDeshacerCobro: callback(payment) — pide confirmación y deshace el cobro (DELETE o /annul
+ *    según el estado de la reserva).
  */
-function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, canEditarEliminar, onEditarCobro, onEliminarCobro }) {
+function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, canEditarEliminar, onEditarCobro, onDeshacerCobro }) {
   const receipt = getPaymentReceipt(payment);
 
   // Solo trazabilidad del documento (para el chip gris "Comprobante anulado").
   // Retoque P4-1 (2026-07-22): este flag YA NO decide si se muestran los botones — eso
   // ahora lo manda el motor por cobro (payment.canEdit/canDelete, resuelto adentro de
-  // EditarEliminarCobro). Antes acá se escondían Editar Y Eliminar a mano con recibo
-  // anulado, aunque el motor permitiera Eliminar: la pantalla mentía. Ver spec
+  // EditarEliminarCobro). Antes acá se escondían Editar Y Deshacer a mano con recibo
+  // anulado, aunque el motor permitiera deshacer: la pantalla mentía. Ver spec
   // docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md (P1=A).
   const reciboAnulado = receipt?.status === "Voided";
 
-  // Gobernado solo por la capacidad de la RESERVA (Closed/terminal → false). El candado
-  // por-cobro (recibo anulado, recibo emitido, factura con CAE) ya no se resuelve acá:
-  // lo hace EditarEliminarCobro con el motivo real del backend, botón por botón.
-  const cobroEsEditable = Boolean(canEditarEliminar);
+  // Gobierna SOLO si se ofrece "Editar" (capacidad de la RESERVA, Closed/terminal → false:
+  // editar no tiene camino alternativo ahí). "Deshacer" ya no usa esta bandera — ver el
+  // JSDoc de arriba y EditarEliminarCobro.
+  const puedeEditar = Boolean(canEditarEliminar);
 
   if (receipt) {
     return (
@@ -520,12 +553,16 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
           </>
         ) : null}
 
-        {/* B1: Editar / Eliminar cobro — se ofrecen si la reserva lo permite, incluso con
-            recibo anulado (Eliminar puede seguir habilitado; el candado por-pago de la
-            Tanda 6, adentro de EditarEliminarCobro, es quien decide botón por botón). */}
-        {cobroEsEditable && (
-          <EditarEliminarCobro payment={payment} onEditarCobro={onEditarCobro} onEliminarCobro={onEliminarCobro} />
-        )}
+        {/* B1 + BUG 2 (2026-08-05): Editar se ofrece si la reserva lo permite (puedeEditar);
+            Deshacer se ofrece SIEMPRE (incluso con recibo anulado o reserva terminal) — el
+            candado por-pago de la Tanda 6, adentro de EditarEliminarCobro, es quien decide
+            botón por botón con el motivo fiscal real. */}
+        <EditarEliminarCobro
+          payment={payment}
+          puedeEditar={puedeEditar}
+          onEditarCobro={onEditarCobro}
+          onDeshacerCobro={onDeshacerCobro}
+        />
       </div>
     );
   }
@@ -544,9 +581,14 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
           <Receipt className="h-3.5 w-3.5" aria-hidden="true" />
           Emitir comprobante
         </button>
-        {/* B1: también disponible Editar / Eliminar cuando aún no hay recibo.
+        {/* B1: también disponible Editar / Deshacer cuando aún no hay recibo.
             Mismo candado por-pago de la Tanda 6 aplicado adentro de EditarEliminarCobro. */}
-        <EditarEliminarCobro payment={payment} onEditarCobro={onEditarCobro} onEliminarCobro={onEliminarCobro} />
+        <EditarEliminarCobro
+          payment={payment}
+          puedeEditar={puedeEditar}
+          onEditarCobro={onEditarCobro}
+          onDeshacerCobro={onDeshacerCobro}
+        />
       </div>
     );
   }
@@ -554,9 +596,14 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-slate-400">Sin comprobante</span>
-      {/* B1: Editar / Eliminar disponibles aunque no haya comprobante (entryType puente, etc.).
+      {/* B1: Editar / Deshacer disponibles aunque no haya comprobante (entryType puente, etc.).
           Mismo candado por-pago de la Tanda 6 aplicado adentro de EditarEliminarCobro. */}
-      <EditarEliminarCobro payment={payment} onEditarCobro={onEditarCobro} onEliminarCobro={onEliminarCobro} />
+      <EditarEliminarCobro
+        payment={payment}
+        puedeEditar={puedeEditar}
+        onEditarCobro={onEditarCobro}
+        onDeshacerCobro={onDeshacerCobro}
+      />
     </div>
   );
 }
@@ -907,6 +954,12 @@ export default function ReservaDetailPage() {
       title: config.title || "Confirmar",
       message: config.message || "¿Seguro que querés seguir?",
       type: config.type || "warning",
+      // confirmText/cancelText son opcionales: si el caller no los pasa, ConfirmModal
+      // usa sus propios defaults ("Confirmar"/"Cancelar"). Se agregan acá para que
+      // diálogos como "Deshacer cobro" puedan pedir botones con texto propio sin
+      // duplicar todo el mecanismo de confirmación (P-14: explicar en criollo).
+      confirmText: config.confirmText,
+      cancelText: config.cancelText,
       isLoading: false,
       onConfirm: async () => {
         // Mostramos spinner en el boton "Confirmar" para bloquear doble clic.
@@ -1035,14 +1088,29 @@ export default function ReservaDetailPage() {
     // Así la cuenta corriente refleja el estado real sin refrescar la página.
   }, [activeTab, reserva?.customerPublicId, accountRefreshKey]);
 
-  const handleDeletePayment = async (payment) => {
+  /**
+   * BUG 2 (prueba integral 2026-08-05, constitución P-1/P-14/F-6): "Deshacer cobro".
+   * El motor tiene DOS caminos con rastro (nunca borra de verdad): DELETE en estados
+   * vivos, POST /annul en los 4 terminales. `resolverRutaDeshacerCobro` elige cuál pegar
+   * mirando `reserva.status` que esta pantalla YA tiene cargado (T-3: el guard real vive
+   * en el motor, esto solo refleja esa regla para no golpear el endpoint equivocado).
+   */
+  const handleDeshacerCobro = async (payment) => {
+    const { metodo, ruta } = resolverRutaDeshacerCobro(getPublicId(payment), reserva?.status);
     try {
-      await api.delete(`/payments/${getPublicId(payment)}`);
-      showSuccess("Pago eliminado correctamente");
+      await api[metodo](ruta);
+      showSuccess("Cobro deshecho correctamente.");
       refrescarExtracto();
       fetchReserva();
     } catch (error) {
-      showError(getApiErrorMessage(error, "Error al eliminar pago"));
+      // F5 (review 2026-08-05): 403 (no-admin) y 404 (cobro ya no existe) vienen SIN
+      // cuerpo en estos dos endpoints — el mapeo global los mostraría como error de RED
+      // ("No se pudo conectar..."), una mentira. Se resuelven ACÁ, local a esta acción
+      // (ver resolverMensajeErrorDeshacerCobro), antes de caer al mensaje del motor.
+      // P-13: cualquier otro rechazo (ej. recibo emitido o factura viva) se muestra TAL
+      // CUAL lo manda el motor, nunca reescrito.
+      const mensajeLocal = resolverMensajeErrorDeshacerCobro(error?.status);
+      showError(mensajeLocal || getApiErrorMessage(error, "No se pudo deshacer el cobro."));
     }
   };
 
@@ -1302,10 +1370,10 @@ export default function ReservaDetailPage() {
   // BUG IMP-3 fix 2026-06-24: Closed ya no hereda el bloqueo de vouchers.
   const congeladoParaRecibos = esCongeladoParaRecibos(reserva);
 
-  // Capacidad del backend para editar o eliminar cobros.
+  // Capacidad del backend para EDITAR cobros (BUG 2, 2026-08-05: ya no gobierna "Deshacer",
+  // que ahora siempre tiene un camino válido — ver undoPaymentFlow.js).
   // El backend la pone en false en Closed/terminal. Si no viene en el DTO, asumimos false
-  // por seguridad (no mostramos botones que el server va a rechazar).
-  // BUG IMP-3 fix 2026-06-24: reemplaza al congelado local para gobernar Editar/Eliminar.
+  // por seguridad (no mostramos el botón Editar si el server lo va a rechazar).
   const puedeEditarEliminarCobro = reserva?.capabilities?.canEditOrDeletePayment?.allowed === true;
 
   // Contador "N de M servicios cancelados" para el ReservaHeader (ADR-025).
@@ -2688,8 +2756,9 @@ export default function ReservaDetailPage() {
                         // congelado controla SOLO emitir/anular el recibo de comprobante.
                         // BUG IMP-3 fix 2026-06-24: ya no incluye FullyInvoiced (ADR-037).
                         congelado={estaCongeladoParaRecibo}
-                        // canEditarEliminar gobierna los botones Editar y Eliminar del cobro.
-                        // Viene de la capacidad real del backend: false en Closed y otros estados terminales.
+                        // canEditarEliminar gobierna SOLO el botón Editar del cobro (nivel
+                        // reserva: false en Closed y otros terminales, donde editar no tiene
+                        // camino alternativo). "Deshacer" ya no usa esta prop — ver BUG 2.
                         canEditarEliminar={puedeEditarEliminarCobro}
                         onEditarCobro={(pago) => {
                           // Abre RegistrarCobroInline en modo edición con este pago cargado.
@@ -2697,14 +2766,13 @@ export default function ReservaDetailPage() {
                           setCobroAEditar(pago);
                           setShowCobroInline(true);
                         }}
-                        onEliminarCobro={(pago) => {
-                          // Pedimos confirmación antes de eliminar (la acción es irreversible).
-                          // Tras eliminar: refrescamos el extracto Y la reserva (igual que handleDeletePayment).
+                        onDeshacerCobro={(pago) => {
+                          // BUG 2 (2026-08-05): confirmación en criollo con el monto real
+                          // (construirConfirmacionDeshacerCobro) — ya no dice "Eliminar" ni
+                          // "irreversible" (el motor deja rastro y el saldo se recalcula).
                           askConfirmation({
-                            title: "Eliminar cobro",
-                            message: "Esta acción es irreversible. El pago quedará eliminado de la reserva.",
-                            type: "danger",
-                            onConfirm: () => handleDeletePayment(pago),
+                            ...construirConfirmacionDeshacerCobro(pago),
+                            onConfirm: () => handleDeshacerCobro(pago),
                           });
                         }}
                       />
@@ -2744,6 +2812,8 @@ export default function ReservaDetailPage() {
         title={confirmConfig.title}
         message={confirmConfig.message}
         type={confirmConfig.type}
+        confirmText={confirmConfig.confirmText}
+        cancelText={confirmConfig.cancelText}
         onConfirm={confirmConfig.onConfirm}
         isLoading={confirmConfig.isLoading}
         onClose={() => {

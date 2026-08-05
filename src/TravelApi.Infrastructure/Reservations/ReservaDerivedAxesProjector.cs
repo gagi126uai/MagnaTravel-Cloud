@@ -52,10 +52,11 @@ internal static class ReservaDerivedAxesProjector
     /// <summary>
     /// Calcula el eje de FACTURACION a partir de los comprobantes YA CARGADOS de la reserva
     /// (<paramref name="invoices"/>, responsabilidad del caller incluirlos — ver el Include agregado en
-    /// <see cref="ReservaMoneyPersister"/>) y de la venta total (<paramref name="totalSale"/>, el mismo
-    /// escalar que el persister acaba de recalcular).
+    /// <see cref="ReservaMoneyPersister"/>) y de la venta FIRME (<paramref name="vendido"/>, el escalar
+    /// <c>ConfirmedSale</c> que el persister acaba de recalcular — NO <c>TotalSale</c>, que es la venta
+    /// cotizada sin confirmar por el operador: fix 2026-08-05, F-9, ver el XML-doc de la clase).
     /// </summary>
-    public static string ProjectInvoicingStatus(decimal totalSale, IEnumerable<Invoice> invoices)
+    public static string ProjectInvoicingStatus(decimal vendido, IEnumerable<Invoice> invoices)
     {
         var cuadreLines = invoices.Select(invoice => new CuadreInvoiceLine(
             invoice.TipoComprobante,
@@ -64,8 +65,8 @@ internal static class ReservaDerivedAxesProjector
             // (ver el XML-doc de ReservaInvoicingCuadreCalculator.CountsInNetBilled).
             IsLive: ReservaInvoicingCuadreCalculator.CountsInNetBilled(invoice.Resultado)));
 
-        var cuadre = ReservaInvoicingCuadreCalculator.Calculate(totalSale, cuadreLines);
+        var cuadre = ReservaInvoicingCuadreCalculator.Calculate(vendido, cuadreLines);
 
-        return ReservaInvoicingStatus.Derive(totalSale, cuadre.FacturadoNeto, cuadre.BrutoEmitido);
+        return ReservaInvoicingStatus.Derive(vendido, cuadre.FacturadoNeto, cuadre.BrutoEmitido);
     }
 }

@@ -149,7 +149,7 @@ function KpiCard({ title, value, lineasPorMoneda, icon: Icon, color, bg, isCurre
                             <div key={linea.currency} className="flex items-center gap-1.5">
                                 <CurrencyBadge currency={linea.currency} size="sm" />
                                 <span className={`text-2xl font-bold ${color}`}>
-                                    {formatCurrency(linea.monto, linea.currency)}
+                                    {formatCurrency(linea.monto, linea.currency, { withSymbol: false })}
                                 </span>
                             </div>
                         ))}

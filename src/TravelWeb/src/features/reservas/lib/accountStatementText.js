@@ -48,3 +48,25 @@ export function construirFraseResumenSaldos(bloques) {
 
   return `Este cliente ${texto}.`;
 }
+
+/**
+ * Formatea un saldo del extracto (cabecera, pie o columna "Saldo" de una fila) —
+ * FIX 2026-08-05 (prueba integral): un saldo negativo (a favor del cliente) se
+ * mostraba pelado con el signo, ej. "-$ 5.000,00", que confunde con un error de
+ * cuenta. La plata siempre se dice con palabra, nunca con el signo "-": mismo
+ * criterio que ya usa la frase "Saldo a favor del cliente" del resumen por moneda
+ * (EstadoCuentaResumen.jsx) — acá se aplica a CADA número del extracto (cabecera,
+ * fila y pie), no solo a la frase de cierre.
+ *
+ * @param {number|string|null|undefined} saldo - positivo = el cliente debe,
+ *   negativo = el cliente tiene a favor.
+ * @param {string} currency - "ARS" | "USD".
+ * @returns {string} - ej. "$ 5.000,00" (debe) o "$ 5.000,00 a favor" (a favor).
+ */
+export function formatSaldoDelExtracto(saldo, currency) {
+  const valor = Number(saldo ?? 0);
+  if (valor < 0) {
+    return `${formatCurrency(Math.abs(valor), currency)} a favor`;
+  }
+  return formatCurrency(valor, currency);
+}

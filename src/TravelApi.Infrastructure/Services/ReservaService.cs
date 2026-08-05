@@ -299,23 +299,32 @@ public class ReservaService : IReservaService
     /// ADR-037 / cuadre POR MONEDA (2026-06-22): carga <c>FacturadoNeto</c> y <c>DisponibleParaFacturar</c>
     /// en cada linea de <paramref name="porMoneda"/>. El facturado neto de cada moneda sale del calculator
     /// (facturas + ND - NC vivas, agrupadas por la moneda ISO del comprobante); el "falta facturar" se arma
-    /// con la VENTA de esa misma moneda (TotalSale), mismo criterio que el escalar.
+    /// con la VENTA FIRME de esa misma moneda (<c>ConfirmedSale</c>), mismo criterio que el escalar.
     ///
-    /// <para>Bordes: una moneda con venta y sin facturas queda en FacturadoNeto 0 y DisponibleParaFacturar =
-    /// su venta. Una factura en una moneda que NO tiene venta vendida en la reserva (cruce/sobrefacturacion
-    /// raro) no tiene linea en PorMoneda — su facturado quedaria invisible. Para no esconderlo, esos casos se
-    /// loggean como advertencia operativa (sin montos sensibles): es un dato que el contador querria ver.</para>
+    /// <para><b>Fix bug "Falta facturar" fantasma (2026-08-05)</b>: antes esta cuenta usaba
+    /// <c>TotalSale</c> (venta COTIZADA, servicios no cancelados) en vez de <c>ConfirmedSale</c> (venta
+    /// FIRME/exigible, servicios RESUELTOS). Una reserva Perdida con servicios cotizados pero nunca
+    /// confirmados (ej. F-2026-1028) tiene <c>TotalSale &gt; 0</c> y <c>ConfirmedSale = 0</c> — con el
+    /// criterio viejo mostraba "Falta facturar $700" al lado de "Vendido firme $0", una mentira: no hay
+    /// nada firme que facturar. Usar <c>ConfirmedSale</c> alinea esta cuenta con F-9 (facturable sigue a
+    /// la venta firme) y con el <c>Balance</c> del cliente, que ya usa <c>ConfirmedSale</c> desde H1b.</para>
+    ///
+    /// <para>Bordes: una moneda con venta firme y sin facturas queda en FacturadoNeto 0 y
+    /// DisponibleParaFacturar = su venta firme (0 si nada esta confirmado todavia). Una factura en una
+    /// moneda que NO tiene venta vendida en la reserva (cruce/sobrefacturacion raro) no tiene linea en
+    /// PorMoneda — su facturado quedaria invisible. Para no esconderlo, esos casos se loggean como
+    /// advertencia operativa (sin montos sensibles): es un dato que el contador querria ver.</para>
     /// </summary>
     private void PopulateFacturadoPorMoneda(Reserva file, List<ReservaMoneyLineDto> porMoneda)
     {
         if (file.Invoices == null || file.Invoices.Count == 0)
         {
-            // Sin comprobantes: cada moneda queda facturado 0 y falta = su venta. El default del DTO ya es 0,
-            // pero seteamos explicito el DisponibleParaFacturar para que coincida con la venta de la moneda.
+            // Sin comprobantes: cada moneda queda facturado 0 y falta = su venta FIRME. El default del DTO
+            // ya es 0, pero seteamos explicito el DisponibleParaFacturar para que coincida con lo confirmado.
             foreach (var line in porMoneda)
             {
                 line.FacturadoNeto = 0m;
-                line.DisponibleParaFacturar = line.TotalSale;
+                line.DisponibleParaFacturar = line.ConfirmedSale;
             }
             return;
         }
@@ -331,12 +340,15 @@ public class ReservaService : IReservaService
 
         var facturadoPorMoneda = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(invoiceLines);
 
-        // Cada moneda con venta toma su facturado (0 si no hay facturas en esa moneda) y calcula su falta.
+        // Cada moneda con venta FIRME toma su facturado (0 si no hay facturas en esa moneda) y calcula su
+        // falta. Si ConfirmedSale quedo por debajo de lo facturado (ej. la reserva se perdio DESPUES de
+        // facturar), el resultado da negativo a proposito: es la senal correcta de "facturaste de mas,
+        // hace falta una NC" (ver Excedido en ReservaInvoicingCuadreCalculator).
         foreach (var line in porMoneda)
         {
             decimal facturado = facturadoPorMoneda.TryGetValue(line.Currency, out var neto) ? neto : 0m;
             line.FacturadoNeto = facturado;
-            line.DisponibleParaFacturar = line.TotalSale - facturado;
+            line.DisponibleParaFacturar = line.ConfirmedSale - facturado;
         }
 
         // Borde raro: una moneda que SOLO aparece en facturas (sin venta vendida en esa moneda) no tiene
@@ -3043,8 +3055,15 @@ public class ReservaService : IReservaService
     /// (Facturas + ND, SIN restar la NC) — necesario para que <see cref="ReservaInvoicingStatus.Derive"/>
     /// distinga "esta reserva nunca tuvo un comprobante" de "tuvo un comprobante y la NC lo devolvio
     /// entero". Las reservas sin comprobantes vivos no aparecen en el agregado: quedan en "NotInvoiced" (el
-    /// default del DTO, bruto 0), que sigue siendo correcto. El <c>vendido</c> sale del escalar
-    /// <c>TotalSale</c> que cada fila ya trae (consistente con la limitacion escalar v1 del carril).</para>
+    /// default del DTO, bruto 0), que sigue siendo correcto.</para>
+    ///
+    /// <para><b>Fix bug "Falta facturar" fantasma (2026-08-05, F-9)</b>: el <c>vendido</c> sale de
+    /// <c>Reserva.ConfirmedSale</c> (venta FIRME, columna persistida), NO de <c>ReservaListDto.TotalSale</c>
+    /// (venta COTIZADA, calculada aparte por AutoMapper sumando todos los servicios). Se trae con un JOIN
+    /// contra el escalar de la cabecera en la MISMA query (no hace falta agregar un campo nuevo al DTO del
+    /// listado) para que este camino de respaldo nunca diverja del criterio go-forward (detalle,
+    /// materializado y este fallback comparten la MISMA base). Mismo criterio escalar v1 del carril (mezcla
+    /// ARS+USD si la reserva es multimoneda).</para>
     ///
     /// <para>ADR-048 T5 (2026-07-17, hardening): las filas cuyo eje YA esta MATERIALIZADO
     /// (<paramref name="materializedAxes"/>, columna de la cabecera) se resuelven directo, SIN entrar a
@@ -3093,10 +3112,14 @@ public class ReservaService : IReservaService
                   // cuenta el CAE aprobado AUNQUE este anulado (Succeeded). NO se excluye Succeeded: la factura
                   // anulada sigue sumando y su Nota de Credito resta -> la anulacion se cuenta UNA sola vez.
                   && invoice.Resultado == "A"
-            group invoice by reservaPadre.PublicId into byReserva
+            // Se agrupa por PublicId + ConfirmedSale (y no solo PublicId): ConfirmedSale es funcionalmente
+            // dependiente de la reserva, asi que agregarlo a la clave no cambia los grupos, pero permite
+            // traer el "vendido FIRME" de la cabecera en la MISMA query sin una segunda ida a la base.
+            group invoice by new { reservaPadre.PublicId, reservaPadre.ConfirmedSale } into byReserva
             select new
             {
-                ReservaPublicId = byReserva.Key,
+                ReservaPublicId = byReserva.Key.PublicId,
+                Vendido = byReserva.Key.ConfirmedSale,
                 // ADR-048 T5 (2026-07-17, review backend, item N1/#4): ALINEADO con el criterio del
                 // escritor go-forward (ReservaDerivedAxesProjector -> ReservaInvoicingCuadreCalculator ->
                 // InvoiceComprobanteHelpers.Categorize). Antes esta query trataba "cualquier tipo que no
@@ -3124,14 +3147,17 @@ public class ReservaService : IReservaService
             }).ToListAsync(cancellationToken);
 
         var cuadreByReserva = facturadoByReserva
-            .ToDictionary(row => row.ReservaPublicId, row => (row.FacturadoNeto, row.BrutoEmitido));
+            .ToDictionary(row => row.ReservaPublicId, row => (row.Vendido, row.FacturadoNeto, row.BrutoEmitido));
 
         foreach (var item in itemsNeedingLiveCompute)
         {
-            var (facturadoNeto, brutoEmitido) = cuadreByReserva.TryGetValue(item.PublicId, out var cuadre)
+            // Reserva sin ningun comprobante vivo: no aparece en el agregado de arriba. El vendido no
+            // importa en ese caso (facturadoNeto y brutoEmitido en 0 siempre caen en "NotInvoiced" sin
+            // importar el vendido), asi que 0m es un default seguro.
+            var (vendido, facturadoNeto, brutoEmitido) = cuadreByReserva.TryGetValue(item.PublicId, out var cuadre)
                 ? cuadre
-                : (0m, 0m);
-            item.InvoicingStatus = ReservaInvoicingStatus.Derive(item.TotalSale, facturadoNeto, brutoEmitido);
+                : (0m, 0m, 0m);
+            item.InvoicingStatus = ReservaInvoicingStatus.Derive(vendido, facturadoNeto, brutoEmitido);
         }
     }
 
@@ -3265,10 +3291,17 @@ public class ReservaService : IReservaService
 
         // P3 (cuadre de facturacion): cuanto se facturo NETO al cliente (facturas + ND - NC,
         // solo comprobantes con CAE vivo y no anulados) y cuanto queda disponible respecto de
-        // lo vendido (TotalSale, la fuente unica). La UI usa estos numeros para avisar si se
+        // lo vendido FIRME (ConfirmedSale). La UI usa estos numeros para avisar si se
         // factura de mas. La cuenta vive en ReservaInvoicingCuadreCalculator (probada, un solo lugar).
+        //
+        // Fix bug "Falta facturar" fantasma (2026-08-05, F-9): antes se usaba TotalSale (venta COTIZADA,
+        // servicios no cancelados) — una reserva Perdida con servicios cotizados pero NUNCA confirmados
+        // por el operador (ej. F-2026-1028) tiene TotalSale > 0 aunque nunca hubo nada firme que facturar,
+        // y el cuadre mostraba "Falta facturar" sobre una venta que jamas se concreto. ConfirmedSale (venta
+        // FIRME/exigible) es la MISMA base que ya usa el Balance del cliente (H1b): facturable sigue a lo
+        // firme, igual que cobrable.
         var cuadre = ReservaInvoicingCuadreCalculator.Calculate(
-            file.TotalSale,
+            file.ConfirmedSale,
             file.Invoices.Select(i => new CuadreInvoiceLine(
                 i.TipoComprobante,
                 i.ImporteTotal,
@@ -3278,13 +3311,18 @@ public class ReservaService : IReservaService
         dto.DisponibleParaFacturar = cuadre.Disponible;
 
         // ADR-037 (carril de facturacion DERIVADO): estado de facturacion calculado del cuadre escalar
-        // (vendido vs facturado neto). Eje independiente del cobro y del estado operativo. Fuente unica:
-        // ReservaInvoicingStatus.Derive (probado, un solo lugar), espejo de CollectionStatus.
+        // (vendido FIRME vs facturado neto). Eje independiente del cobro y del estado operativo. Fuente
+        // unica: ReservaInvoicingStatus.Derive (probado, un solo lugar), espejo de CollectionStatus.
         //
         // ADR-048 T3 (2026-07-17, regla 5): se le pasa tambien el bruto emitido (cuadre.BrutoEmitido, ya
         // calculado arriba con las mismas Invoices), para que una reserva con NC total ("factura y se
         // devolvio") no vuelva a caer en "Sin facturar" como si nunca se le hubiera facturado nada.
-        dto.InvoicingStatus = ReservaInvoicingStatus.Derive(file.TotalSale, cuadre.FacturadoNeto, cuadre.BrutoEmitido);
+        //
+        // Borde (2026-08-05): si la reserva se PERDIO/CANCELO DESPUES de tener una factura viva
+        // (ConfirmedSale cae a 0 con facturadoNeto > 0), esto cae en "FullyInvoiced" con Excedido=true en
+        // el cuadre — la senal correcta es "se facturo de mas, hace falta una Nota de Credito", NO
+        // "Sin facturar" (ver Adr048T3.../ReservaInvoicedPerCurrencyTests para el caso probado).
+        dto.InvoicingStatus = ReservaInvoicingStatus.Derive(file.ConfirmedSale, cuadre.FacturadoNeto, cuadre.BrutoEmitido);
 
         // (2026-06-24): hay una factura EN PROCESO (encolada, esperando CAE). El cuadre de arriba NO la cuenta
         // (solo suma Resultado="A"), asi que sin este flag el front mostraria "Sin facturar" y volveria a
@@ -3301,8 +3339,8 @@ public class ReservaService : IReservaService
         // ADR-037 / cuadre POR MONEDA (2026-06-22): el escalar FacturadoNeto/DisponibleParaFacturar mezcla
         // monedas en multimoneda. Aca calculamos el facturado neto de CADA moneda por separado (facturas + ND
         // - NC vivas, agrupadas por la moneda ISO del comprobante) y lo cargamos en su linea de PorMoneda,
-        // con "falta facturar" = TotalSale de esa moneda - facturado de esa moneda (MISMO criterio que el
-        // escalar, que usa TotalSale y no ConfirmedSale). La cuenta vive en el calculator (fuente unica).
+        // con "falta facturar" = ConfirmedSale (venta FIRME) de esa moneda - facturado de esa moneda (MISMO
+        // criterio que el escalar de arriba, fix 2026-08-05). La cuenta vive en el calculator (fuente unica).
         PopulateFacturadoPorMoneda(file, dto.PorMoneda);
 
         // ADR-037 (flag del aviso "Debe — no viaja", ADR-036): hay deuda del cliente y la salida cae en la

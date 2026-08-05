@@ -257,6 +257,87 @@ public sealed class Adr048T5BackfillSqlIntegrationTests
         Assert.Equal(ReservaInvoicingStatus.FullyReturned, backfilled.DerivedInvoicingStatus);
     }
 
+    /// <summary>
+    /// Fix bug "Falta facturar" fantasma (2026-08-05, F-9): el backfill tiene que comparar el facturado
+    /// neto contra la venta FIRME (<c>ConfirmedSale</c>), NO contra la venta cotizada (<c>TotalSale</c>).
+    /// Escenario que DIFERENCIA los dos criterios (los otros tests de esta clase no lo hacen: caen en la
+    /// rama "neto ~ 0", donde el vendido no importa): un servicio cotizado pero NUNCA confirmado por el
+    /// operador (TotalSale = 100.000, ConfirmedSale = 0) con una factura viva de 40.000.
+    ///
+    /// <para>Con el criterio VIEJO (vendido = TotalSale = 100.000): 40.000 &lt; 100.000 -&gt;
+    /// "PartiallyInvoiced" (mentira: sugiere que falta facturar 60.000 de algo que nunca fue firme).
+    /// Con el criterio NUEVO (vendido = ConfirmedSale = 0): 40.000 &gt;= 0 -&gt; "FullyInvoiced" (la señal
+    /// correcta: se facturó de más respecto de lo firme, hace falta una Nota de Crédito).</para>
+    /// </summary>
+    [Fact]
+    public async Task Backfill_EjeDeFacturacionConComprobantes_UsaVentaFirmeNoLaCotizada_CoincideConLaDerivacionEnVivo()
+    {
+        int reservaId;
+        await using (var seedCtx = _fixture.CreateDbContext())
+        {
+            var customer = new Customer { FullName = "Cliente MT1-3b", TaxCondition = "Consumidor Final", IsActive = true };
+            seedCtx.Customers.Add(customer);
+            await seedCtx.SaveChangesAsync();
+
+            var reserva = new Reserva
+            {
+                NumeroReserva = "F-MT1-3B", Name = "Facturacion sin venta firme detras — excedido",
+                Status = EstadoReserva.Confirmed, PayerId = customer.Id,
+            };
+            seedCtx.Reservas.Add(reserva);
+            await seedCtx.SaveChangesAsync();
+            reservaId = reserva.Id;
+
+            // Servicio COTIZADO pero jamas confirmado por el operador ("Solicitado"): aporta a TotalSale
+            // pero NO a ConfirmedSale.
+            seedCtx.Servicios.Add(new ServicioReserva
+            {
+                ReservaId = reserva.Id, ServiceType = "Excursion", ProductType = "Excursion",
+                Description = "Servicio sin confirmar", Status = "Solicitado", Currency = "ARS",
+                DepartureDate = DateTime.UtcNow.AddDays(10), SalePrice = 100_000m, NetCost = 0m,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await seedCtx.SaveChangesAsync();
+
+            // Se le emitio una factura de 40k igual (caso real: se factura antes de que el operador confirme).
+            seedCtx.Invoices.Add(new Invoice
+            {
+                ReservaId = reserva.Id, TipoComprobante = 1, ImporteTotal = 40_000m, Resultado = "A",
+            });
+            await seedCtx.SaveChangesAsync();
+        }
+
+        // ORACULO: el persister real recalcula TotalSale/ConfirmedSale desde los servicios y corre la
+        // MISMA cuenta que el detalle en vivo.
+        string liveInvoicingStatus;
+        await using (var persistCtx = _fixture.CreateDbContext())
+        {
+            await ReservaMoneyPersister.PersistAsync(persistCtx, reservaId, CancellationToken.None);
+        }
+        await using (var readCtx = _fixture.CreateDbContext())
+        {
+            liveInvoicingStatus = (await readCtx.Reservas.AsNoTracking().SingleAsync(r => r.Id == reservaId))
+                .DerivedInvoicingStatus!;
+        }
+
+        await using (var nullCtx = _fixture.CreateDbContext())
+        {
+            await nullCtx.Database.ExecuteSqlRawAsync(
+                @"UPDATE ""TravelFiles"" SET ""DerivedInvoicingStatus"" = NULL WHERE ""Id"" = {0}", reservaId);
+        }
+
+        await using (var backfillCtx = _fixture.CreateDbContext())
+        {
+            await backfillCtx.Database.ExecuteSqlRawAsync(Adr048T5BackfillSql.InvoicingAxisWithInvoices);
+        }
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        var backfilled = await verifyCtx.Reservas.AsNoTracking().SingleAsync(r => r.Id == reservaId);
+
+        Assert.Equal(liveInvoicingStatus, backfilled.DerivedInvoicingStatus);
+        Assert.Equal(ReservaInvoicingStatus.FullyInvoiced, backfilled.DerivedInvoicingStatus);
+    }
+
     // ================================================================================================
     // RAMA 4 — eje de FACTURACION, SIN comprobantes con CAE aprobado (backfill 4/4).
     // ================================================================================================

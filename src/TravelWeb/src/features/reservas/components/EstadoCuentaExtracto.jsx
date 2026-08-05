@@ -15,7 +15,7 @@ import {
   DataGridHeaderRow,
   DataGridRow,
 } from "../../../components/ui/DataGrid";
-import { construirFraseResumenSaldos } from "../lib/accountStatementText.js";
+import { construirFraseResumenSaldos, formatSaldoDelExtracto } from "../lib/accountStatementText.js";
 
 /**
  * Extracto contable de la reserva: una línea cronológica por factura, cobro y NC.
@@ -189,7 +189,7 @@ function BloqueMoneda({ bloque, reserva, congelado, renderAccionesFactura, rende
                 : "text-slate-400 dark:text-slate-600"
             }`}
           >
-            {formatCurrency(bloque.closingBalance ?? 0, bloque.currency)}
+            {formatSaldoDelExtracto(bloque.closingBalance ?? 0, bloque.currency)}
           </span>
         </div>
       </div>
@@ -253,7 +253,7 @@ function BloqueMoneda({ bloque, reserva, congelado, renderAccionesFactura, rende
                     : "text-slate-500 dark:text-slate-400"
                 }`}
               >
-                {formatCurrency(bloque.closingBalance ?? 0, bloque.currency)}
+                {formatSaldoDelExtracto(bloque.closingBalance ?? 0, bloque.currency)}
               </td>
               <td />
             </tr>
@@ -369,7 +369,7 @@ function FilaExtracto({ linea, reserva, congelado, renderAccionesFactura, render
               : "text-slate-400 dark:text-slate-600"
           }`}
         >
-          {formatCurrency(linea.runningBalance ?? 0, linea.currency)}
+          {formatSaldoDelExtracto(linea.runningBalance ?? 0, linea.currency)}
         </span>
       </DataGridCell>
 

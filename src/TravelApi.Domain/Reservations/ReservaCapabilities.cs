@@ -131,9 +131,15 @@ public static class ReservaCapabilityPolicy
         "No se puede facturar en este estado. La factura de venta se emite desde Confirmada en adelante, " +
         "salvo en reservas anuladas.";
 
-    /// <summary>Editar/borrar un cobro en una reserva terminal: hay que anularlo (queda registrado).</summary>
+    /// <summary>
+    /// Editar un cobro en una reserva terminal: NO se puede, hay que corregirlo deshaciendolo (queda
+    /// registrado — por dentro es una anulacion con rastro, pero para el usuario esa accion se llama
+    /// "Deshacer", el boton que tiene adelante). Vocabulario (2026-08-05, regla firmada del dueño):
+    /// "borrar"/"anular" quedan afuera de este mensaje para no contradecir al boton — en estados
+    /// terminales SI se puede deshacer el cobro, lo que NO se puede es editarlo.
+    /// </summary>
     public const string PaymentEditOnTerminalReason =
-        "Para corregir este cobro, anulalo (queda registrado). En este estado no se puede editar ni borrar.";
+        "En este estado el cobro no se puede editar. Para corregirlo, deshacelo: queda registrado.";
 
     /// <summary>El voucher solo se emite desde Confirmada en adelante (Decision 3 del dueño).</summary>
     public const string VoucherBeforeConfirmedReason =
