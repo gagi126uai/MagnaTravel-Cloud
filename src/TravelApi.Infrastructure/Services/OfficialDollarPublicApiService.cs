@@ -34,6 +34,11 @@ namespace TravelApi.Infrastructure.Services;
 ///   <c>oficial.value_sell</c> es un PROMEDIO de mercado (no el BNA puntual) — se usa solo como
 ///   ULTIMO respaldo, ver <see cref="IOfficialDollarPublicApiService.GetTodayRateFromBluelyticsAsync"/>.</item>
 /// </list>
+///
+/// <para><b>Euro y real (ampliacion 2026-08-06)</b>: el detalle completo de que URL y que campo usa
+/// cada proveedor para estas dos monedas, y CUALES proveedores NO las cubren (criptoya ninguna de
+/// las dos, bluelytics solo real), vive en el doc de clase de <see cref="IOfficialDollarPublicApiService"/>
+/// — no se repite aca para no tener el mismo detalle desactualizable en dos lugares.</para>
 /// </summary>
 public class OfficialDollarPublicApiService : IOfficialDollarPublicApiService
 {
@@ -41,6 +46,15 @@ public class OfficialDollarPublicApiService : IOfficialDollarPublicApiService
     private static readonly Uri MonedApiBnaUri = new("https://monedapi.ar/api/v2/usd/bna");
     private static readonly Uri CriptoYaBancosUri = new("https://criptoya.com/api/bancostodos");
     private static readonly Uri BluelyticsLatestUri = new("https://api.bluelytics.com.ar/v2/latest");
+
+    // Ampliacion 2026-08-06 (euro/real): dolarapi.com y monedapi.ar exponen la MISMA forma de
+    // respuesta para cualquier moneda, solo cambia el codigo en la URL — a diferencia de
+    // argentinadatos.com, cuya ruta por-fecha de dolar (con "/oficial") es DISTINTA de la de
+    // euro/real (sin "/oficial"), ver el doc de clase de la interfaz para el detalle verificado con curl.
+    private static readonly Uri DolarApiEurTodayUri = new("https://dolarapi.com/v1/cotizaciones/eur");
+    private static readonly Uri DolarApiBrlTodayUri = new("https://dolarapi.com/v1/cotizaciones/brl");
+    private static readonly Uri MonedApiEurUri = new("https://monedapi.ar/api/v2/eur/bna");
+    private static readonly Uri MonedApiBrlUri = new("https://monedapi.ar/api/v2/brl/bna");
 
     private const string DolarApiProviderName = "dolarapi";
     private const string MonedApiProviderName = "monedapi";
@@ -85,6 +99,45 @@ public class OfficialDollarPublicApiService : IOfficialDollarPublicApiService
 
     public Task<PublicDollarRateReading?> GetTodayRateFromBluelyticsAsync(CancellationToken cancellationToken) =>
         FetchAsync(BluelyticsLatestUri, BluelyticsProviderName, ExtractBluelyticsOficialVentaField, cancellationToken);
+
+    // ============================================================
+    // EURO (ampliacion 2026-08-06). Sin criptoya: verificado con curl que /api/bancostodos no tiene
+    // variante de euro (devuelve {"error":"Invalid pair"}).
+    // ============================================================
+
+    public Task<PublicDollarRateReading?> GetTodayRateForEurAsync(CancellationToken cancellationToken) =>
+        FetchAsync(DolarApiEurTodayUri, DolarApiProviderName, ExtractVentaField, cancellationToken);
+
+    public Task<PublicDollarRateReading?> GetTodayRateForEurFromMonedApiAsync(CancellationToken cancellationToken) =>
+        FetchAsync(MonedApiEurUri, MonedApiProviderName, ExtractMonedApiSellField, cancellationToken);
+
+    public Task<PublicDollarRateReading?> GetEurRateForDateAsync(DateOnly date, CancellationToken cancellationToken)
+    {
+        var datePath = date.ToString("yyyy'/'MM'/'dd", CultureInfo.InvariantCulture);
+        var uri = new Uri($"https://api.argentinadatos.com/v1/cotizaciones/eur/{datePath}");
+        return FetchAsync(uri, ArgentinaDatosProviderName, ExtractVentaField, cancellationToken);
+    }
+
+    public Task<PublicDollarRateReading?> GetTodayRateForEurFromBluelyticsAsync(CancellationToken cancellationToken) =>
+        FetchAsync(BluelyticsLatestUri, BluelyticsProviderName, ExtractBluelyticsOficialEuroVentaField, cancellationToken);
+
+    // ============================================================
+    // REAL (ampliacion 2026-08-06). Sin criptoya (mismo motivo que euro) NI bluelytics: verificado
+    // con curl que /v2/latest no trae NINGUNA clave de real (ni "oficial_real" ni parecido).
+    // ============================================================
+
+    public Task<PublicDollarRateReading?> GetTodayRateForBrlAsync(CancellationToken cancellationToken) =>
+        FetchAsync(DolarApiBrlTodayUri, DolarApiProviderName, ExtractVentaField, cancellationToken);
+
+    public Task<PublicDollarRateReading?> GetTodayRateForBrlFromMonedApiAsync(CancellationToken cancellationToken) =>
+        FetchAsync(MonedApiBrlUri, MonedApiProviderName, ExtractMonedApiSellField, cancellationToken);
+
+    public Task<PublicDollarRateReading?> GetBrlRateForDateAsync(DateOnly date, CancellationToken cancellationToken)
+    {
+        var datePath = date.ToString("yyyy'/'MM'/'dd", CultureInfo.InvariantCulture);
+        var uri = new Uri($"https://api.argentinadatos.com/v1/cotizaciones/brl/{datePath}");
+        return FetchAsync(uri, ArgentinaDatosProviderName, ExtractVentaField, cancellationToken);
+    }
 
     /// <summary>
     /// Pide el JSON y le aplica <paramref name="extractRate"/> (uno distinto por proveedor, cada uno
@@ -181,13 +234,26 @@ public class OfficialDollarPublicApiService : IOfficialDollarPublicApiService
     /// <c>value_sell</c>. Recordar (ver doc de clase): este numero es un PROMEDIO de mercado, no el
     /// BNA puntual.
     /// </summary>
-    internal static decimal? ExtractBluelyticsOficialVentaField(JsonDocument document)
+    internal static decimal? ExtractBluelyticsOficialVentaField(JsonDocument document) =>
+        ExtractBluelyticsValueSellField(document, "oficial");
+
+    /// <summary>
+    /// bluelytics.com.ar para EURO (ampliacion 2026-08-06): la clave raiz es <c>"oficial_euro"</c> en
+    /// vez de <c>"oficial"</c>, pero el resto de la forma es identica (<c>value_sell</c> adentro).
+    /// Reusa <see cref="ExtractBluelyticsValueSellField"/> en vez de repetir el mismo
+    /// <c>TryGetProperty</c> dos veces — la UNICA diferencia real entre dolar y euro en este
+    /// proveedor es el nombre de la clave.
+    /// </summary>
+    internal static decimal? ExtractBluelyticsOficialEuroVentaField(JsonDocument document) =>
+        ExtractBluelyticsValueSellField(document, "oficial_euro");
+
+    private static decimal? ExtractBluelyticsValueSellField(JsonDocument document, string rootPropertyName)
     {
-        if (!document.RootElement.TryGetProperty("oficial", out var oficialElement))
+        if (!document.RootElement.TryGetProperty(rootPropertyName, out var element))
         {
             return null;
         }
-        return TryGetDecimalProperty(oficialElement, "value_sell");
+        return TryGetDecimalProperty(element, "value_sell");
     }
 
     /// <summary>

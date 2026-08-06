@@ -719,4 +719,260 @@ public class ExchangeRateSyncJobTests
 
         Assert.Contains(capturingLogger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("diferencia"));
     }
+
+    // ============================================================
+    // Ampliacion 2026-08-06 ("el euro y el real tampoco tienen que faltar"): una sola corrida de
+    // RunAsync sincroniza USD/EUR/BRL. EUR/BRL SIN ARCA (no la cotiza) y SIN scraper BNA (ese dato se
+    // compara despues, en ReportService) — solo la escalera de APIs publicas.
+    // ============================================================
+
+    [Fact]
+    public async Task RunAsync_SincronizaLasTresMonedas_ConUnaSolaCorrida()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string monId, DateOnly fecha, CancellationToken _) => new ArcaExchangeRate(monId, 1520m, fecha));
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateForEurAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1731.60m, ProviderName: "dolarapi"));
+        publicApiMock.Setup(s => s.GetTodayRateForBrlAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 291.20m, ProviderName: "dolarapi"));
+        // El backfill de EUR/BRL (7 dias) tambien pega contra estos metodos: se les da respuesta para
+        // que el test no dependa de que fechas puntuales el mock deje sin configurar.
+        publicApiMock.Setup(s => s.GetEurRateForDateAsync(It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1700m, ProviderName: "argentinadatos"));
+        publicApiMock.Setup(s => s.GetBrlRateForDateAsync(It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 285m, ProviderName: "argentinadatos"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaUsdDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today);
+        var filaEurDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "EUR" && q.QuoteDate == Today);
+        var filaBrlDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "BRL" && q.QuoteDate == Today);
+
+        Assert.NotNull(filaUsdDeHoy);
+        Assert.Equal(ExchangeRateSource.AfipOficial, filaUsdDeHoy!.Source);
+
+        Assert.NotNull(filaEurDeHoy);
+        Assert.Equal(ExchangeRateSource.OficialPorApi, filaEurDeHoy!.Source);
+        Assert.Equal("dolarapi", filaEurDeHoy.ProviderName);
+        Assert.Equal(1731.60m, filaEurDeHoy.Rate);
+        Assert.True(filaEurDeHoy.IsProductionSource);
+
+        Assert.NotNull(filaBrlDeHoy);
+        Assert.Equal(ExchangeRateSource.OficialPorApi, filaBrlDeHoy!.Source);
+        Assert.Equal("dolarapi", filaBrlDeHoy.ProviderName);
+        Assert.Equal(291.20m, filaBrlDeHoy.Rate);
+
+        // ARCA nunca se le pregunta por EUR/BRL: ese proveedor solo cotiza dolar (MonId="DOL").
+        afipMock.Verify(s => s.GetOfficialExchangeRateAsync("DOL", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    /// <summary>Escalera de EUR: sin criptoya (no existe metodo para eso). dolarapi cae, monedapi
+    /// contesta -> persiste con ese proveedor.</summary>
+    [Fact]
+    public async Task RunAsync_EscaleraDeEuro_DolarApiCae_MonedApiContesta_PersisteConEseProvider()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string monId, DateOnly fecha, CancellationToken _) => new ArcaExchangeRate(monId, 1520m, fecha));
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateForEurAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateForEurFromMonedApiAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1764.68m, ProviderName: "monedapi"));
+        publicApiMock.Setup(s => s.GetTodayRateForBrlAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 291.20m, ProviderName: "dolarapi"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaEurDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "EUR" && q.QuoteDate == Today);
+        Assert.NotNull(filaEurDeHoy);
+        Assert.Equal("monedapi", filaEurDeHoy!.ProviderName);
+        Assert.Equal(1764.68m, filaEurDeHoy.Rate);
+
+        // criptoya NO tiene metodo equivalente para euro/real: no hay nada que verificar "Never" aca
+        // (la interfaz simplemente no lo expone), el punto lo cubre la compilacion misma.
+        publicApiMock.Verify(s => s.GetTodayRateForEurFromBluelyticsAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>Escalera de REAL: sin criptoya NI bluelytics. dolarapi y monedapi caen, argentinadatos
+    /// (variante de hoy) contesta.</summary>
+    [Fact]
+    public async Task RunAsync_EscaleraDeReal_DolarApiYMonedApiCaen_ArgentinaDatosContesta()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string monId, DateOnly fecha, CancellationToken _) => new ArcaExchangeRate(monId, 1520m, fecha));
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateForEurAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1731.60m, ProviderName: "dolarapi"));
+        publicApiMock.Setup(s => s.GetTodayRateForBrlAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateForBrlFromMonedApiAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetBrlRateForDateAsync(Today, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 291.20m, ProviderName: "argentinadatos"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaBrlDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "BRL" && q.QuoteDate == Today);
+        Assert.NotNull(filaBrlDeHoy);
+        Assert.Equal("argentinadatos", filaBrlDeHoy!.ProviderName);
+        Assert.Equal(291.20m, filaBrlDeHoy.Rate);
+    }
+
+    /// <summary>
+    /// Guard de cadencia extendido (§7.2, "corta por moneda"): EUR ya tiene fila OficialPorApi de hoy
+    /// -> ni se llama a ningun proveedor de EUR. BRL sigue sin cubrir -> SI se llama a sus proveedores.
+    /// Cada moneda corta de forma INDEPENDIENTE, no todo-o-nada.
+    /// </summary>
+    [Fact]
+    public async Task GuardDeCadencia_CortaPorMoneda_EurYaCubiertoNoLlamaANadie_BrlSinCubrirSiLlama()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: false);
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "EUR",
+            QuoteDate = Today,
+            Source = ExchangeRateSource.OficialPorApi,
+            Rate = 1731.60m,
+            ProviderName = "dolarapi",
+            FetchedAt = DateTime.UtcNow,
+            IsProductionSource = true,
+        });
+        // USD tambien cubierto, para que el test aisle el comportamiento de EUR/BRL sin ruido de ARCA.
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD",
+            QuoteDate = Today,
+            Source = ExchangeRateSource.OficialPorApi,
+            Rate = 1520m,
+            ProviderName = "dolarapi",
+            FetchedAt = DateTime.UtcNow,
+            IsProductionSource = true,
+        });
+        await ctx.SaveChangesAsync();
+
+        var afipMock = new Mock<IAfipService>();
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateForBrlAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 291.20m, ProviderName: "dolarapi"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        publicApiMock.Verify(s => s.GetTodayRateForEurAsync(It.IsAny<CancellationToken>()), Times.Never);
+        publicApiMock.Verify(s => s.GetTodayRateForEurFromMonedApiAsync(It.IsAny<CancellationToken>()), Times.Never);
+
+        publicApiMock.Verify(s => s.GetTodayRateForBrlAsync(It.IsAny<CancellationToken>()), Times.Once);
+        var filaBrlDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "BRL" && q.QuoteDate == Today);
+        Assert.NotNull(filaBrlDeHoy);
+    }
+
+    /// <summary>
+    /// Subclase de test (revision post-review 2026-08-06): sobreescribe SOLO <c>RunUsdSyncAsync</c>
+    /// (<c>internal virtual</c> a proposito, ver su doc de clase) para simular una excepcion CRUDA e
+    /// IMPREVISTA que se escape de todos los try/catch internos del camino de USD — algo que ningun
+    /// mock de <c>IAfipService</c>/<c>IBnaExchangeRateService</c> puede lograr por si solo, porque esos
+    /// caminos YA atrapan sus propias fallas esperadas (ver el doc de clase de
+    /// <see cref="ExchangeRateSyncJob.RunAsync"/>).
+    /// </summary>
+    private sealed class UsdSyncThrowsUnexpectedlyJob : ExchangeRateSyncJob
+    {
+        public UsdSyncThrowsUnexpectedlyJob(
+            AppDbContext context, IAfipService afipService, IBnaExchangeRateService bnaExchangeRateService,
+            IMemoryCache cache, ILogger<ExchangeRateSyncJob> logger, IOfficialDollarPublicApiService? officialDollarPublicApiService)
+            : base(context, afipService, bnaExchangeRateService, cache, logger, officialDollarPublicApiService)
+        {
+        }
+
+        internal override Task RunUsdSyncAsync(DateOnly today, CancellationToken ct) =>
+            throw new InvalidOperationException("Fallo IMPREVISTO simulado en el camino de USD (ej. Postgres cayendo a mitad de una lectura).");
+    }
+
+    /// <summary>
+    /// Hallazgo de review (2026-08-06): antes de este fix, una excepcion cruda en el camino de USD
+    /// tumbaba TODA la corrida y EUR/BRL se quedaban sin sincronizar esa hora — el guard de cadencia
+    /// por moneda no protege contra esto, una excepcion salta el guard directo. Ahora cada moneda va
+    /// en su propio try/catch (<see cref="ExchangeRateSyncJob.RunCurrencySyncSafelyAsync"/>): USD
+    /// revienta, pero EUR y BRL igual se sincronizan en la MISMA corrida.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SiUsdTiraExcepcionImprevista_EurYBrlIgualSeSincronizan()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateForEurAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1731.60m, ProviderName: "dolarapi"));
+        publicApiMock.Setup(s => s.GetTodayRateForBrlAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 291.20m, ProviderName: "dolarapi"));
+
+        var job = new UsdSyncThrowsUnexpectedlyJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            publicApiMock.Object);
+
+        var exception = await Record.ExceptionAsync(() => job.RunAsync(CancellationToken.None));
+
+        Assert.Null(exception); // RunAsync en si nunca tira, aunque una moneda interna reviente.
+        Assert.False(await ctx.ExchangeRateQuotes.AnyAsync(q => q.Currency == "USD" && q.QuoteDate == Today)); // USD reventó, sin fila.
+
+        var filaEurDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "EUR" && q.QuoteDate == Today);
+        var filaBrlDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "BRL" && q.QuoteDate == Today);
+        Assert.NotNull(filaEurDeHoy);
+        Assert.NotNull(filaBrlDeHoy);
+    }
+
+    [Fact]
+    public async Task SinServicioDeApiPublicaInyectado_EurYBrl_NoIntentanNadaYNoDejanFilas()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+        bnaMock.Setup(s => s.GetUsdSellerRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync((BnaUsdSellerRateDto?)null);
+
+        // Sin officialDollarPublicApiService inyectado (ctor de 5 args, igual que los tests viejos).
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance);
+        var exception = await Record.ExceptionAsync(() => job.RunAsync(CancellationToken.None));
+
+        Assert.Null(exception);
+        Assert.False(await ctx.ExchangeRateQuotes.AnyAsync(q => q.Currency == "EUR"));
+        Assert.False(await ctx.ExchangeRateQuotes.AnyAsync(q => q.Currency == "BRL"));
+    }
 }

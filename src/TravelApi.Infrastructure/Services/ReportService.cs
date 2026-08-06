@@ -434,8 +434,112 @@ public class ReportService : IReportService
         // A partir de aca "bnaRate" (si existe) es VIEJO: un snapshot persistido, que puede tener
         // semanas si el scraper esta roto. Comparamos su fecha contra la fila mas nueva de la libreta
         // y mostramos la que sea mas reciente de las dos (ver el FIX documentado arriba).
-        var libretaSuggestion = await TryLoadOfficialFallbackSuggestionAsync(cancellationToken);
-        return PickNewestDollarSource(bnaRate, libretaSuggestion);
+        var libretaSuggestion = await TryLoadOfficialFallbackSuggestionAsync("USD", cancellationToken);
+        var dollarWinner = PickNewestDollarSource(bnaRate, libretaSuggestion);
+        if (dollarWinner is null)
+        {
+            // Sin ningun dato de dolar (ni snapshot ni libreta): no tiene sentido resolver euro/real
+            // solos, la tira ni se dibuja en este caso (P4=C, "otras monedas" cuelga del dolar).
+            return null;
+        }
+
+        return await AttachFreshAuxiliaryCurrenciesAsync(dollarWinner, bnaRate, cancellationToken);
+    }
+
+    /// <summary>
+    /// Ampliacion 2026-08-06 ("el euro y el real tampoco tienen que faltar", extiende ADR-011):
+    /// completa <c>EuroValue</c>/<c>RealValue</c> del DTO ganador de dolar aplicando, INDEPENDIENTE
+    /// para cada moneda, la MISMA regla "el dato mas nuevo gana" que ya usa <see cref="PickNewestDollarSource"/>
+    /// para el dolar — comparando el snapshot scrapeado del BNA (que ya trae euro/real de la MISMA
+    /// pagina que trae el dolar, ver <see cref="BnaExchangeRateService"/>) contra las filas EUR/BRL
+    /// que <c>ExchangeRateSyncJob</c> deja en la libreta.
+    ///
+    /// <para><b>Regla de frescura elegida (fijada, no solo documentada)</b>: la tira del dashboard
+    /// muestra UNA sola fecha para toda la fila (la del dolar, "al DD/MM" — guia UX P6=A). Euro y
+    /// real NO tienen su propio campo de fecha en el DTO ni en la pantalla, asi que la UNICA forma
+    /// honesta de mostrarlos es exigir que el dato mas fresco de esa moneda sea AL MENOS tan nuevo
+    /// como la fecha del dolar que se esta mostrando al lado. Si es MAS VIEJO, se prefiere
+    /// OCULTARLO (queda <c>null</c>) antes que mostrar un numero desactualizado sin forma de
+    /// avisarlo — el front ya sabe hacer esto SIN cambios: el desplegable "otras monedas" no se
+    /// dibuja si no hay valor (P4=C, ya firmado, ver <c>hayOtrasMonedasParaMostrar</c> en
+    /// <c>dolarTiraDashboardLogic.js</c>). Es la unica manera de cumplir "jamas un euro de hace un
+    /// mes al lado de un dolar de hoy sin que se note": la AUSENCIA es el aviso.</para>
+    /// </summary>
+    private async Task<BnaUsdSellerRateDto> AttachFreshAuxiliaryCurrenciesAsync(
+        BnaUsdSellerRateDto dollarWinner, BnaUsdSellerRateDto? bnaSnapshot, CancellationToken cancellationToken)
+    {
+        var dollarShownDate = TryParseSnapshotPublishedDate(dollarWinner.PublishedDate);
+        var bnaSnapshotDate = TryParseSnapshotPublishedDate(bnaSnapshot?.PublishedDate);
+
+        var euroValue = await ResolveFreshAuxiliaryCurrencyValueAsync(
+            "EUR", bnaSnapshot?.EuroValue, bnaSnapshotDate, dollarShownDate, cancellationToken);
+        var realValue = await ResolveFreshAuxiliaryCurrencyValueAsync(
+            "BRL", bnaSnapshot?.RealValue, bnaSnapshotDate, dollarShownDate, cancellationToken);
+
+        return dollarWinner with { EuroValue = euroValue, RealValue = realValue };
+    }
+
+    /// <summary>
+    /// Resuelve el valor mas fresco de UNA moneda auxiliar (euro o real), comparando el snapshot del
+    /// BNA contra la libreta, y aplicando el gate de frescura contra el dolar mostrado (ver
+    /// <see cref="AttachFreshAuxiliaryCurrenciesAsync"/> para el porque de esa regla).
+    /// </summary>
+    private async Task<decimal?> ResolveFreshAuxiliaryCurrencyValueAsync(
+        string currency,
+        decimal? bnaSnapshotValue,
+        DateOnly? bnaSnapshotDate,
+        DateOnly? dollarShownDate,
+        CancellationToken cancellationToken)
+    {
+        // Candidato 1: el mismo snapshot HTML del BNA que ya trajo el dolar (misma pagina, misma
+        // corrida de scraping) — valor invalido (0/negativo, ej. columnas que la tabla del BNA nunca
+        // completo) o sin fecha parseable no cuentan como candidato.
+        (decimal Rate, DateOnly Date)? snapshotCandidate =
+            bnaSnapshotValue is > 0m && bnaSnapshotDate is not null
+                ? (bnaSnapshotValue.Value, bnaSnapshotDate.Value)
+                : null;
+
+        // Candidato 2: la libreta (ExchangeRateQuotes), misma fuente y mismo modo "solo datos reales"
+        // (excludePracticeOfficialData: true, dentro de TryLoadOfficialFallbackSuggestionAsync) que ya
+        // usa el dolar de esta tarjeta.
+        var libretaSuggestion = await TryLoadOfficialFallbackSuggestionAsync(currency, cancellationToken);
+        (decimal Rate, DateOnly Date)? libretaCandidate =
+            libretaSuggestion is not null ? (libretaSuggestion.Rate, libretaSuggestion.RateDate) : null;
+
+        var winner = PickNewestAuxiliaryCandidate(snapshotCandidate, libretaCandidate);
+        if (winner is null)
+        {
+            return null;
+        }
+
+        // Gate de frescura (regla fijada arriba): si el dato mas nuevo de esta moneda es MAS VIEJO
+        // que la fecha del dolar mostrado, se oculta en vez de mostrarse desactualizado sin aviso.
+        if (dollarShownDate is null || winner.Value.Date < dollarShownDate.Value)
+        {
+            return null;
+        }
+
+        return winner.Value.Rate;
+    }
+
+    /// <summary>
+    /// Mismo criterio de desempate que <see cref="PickNewestDollarSource"/> (a igualdad de fecha,
+    /// gana el snapshot — el orden de siempre), pero operando sobre un par (valor, fecha) generico en
+    /// vez de armar un <see cref="BnaUsdSellerRateDto"/> completo: euro y real no necesitan el resto
+    /// de los campos del DTO (fuente, hora publicada, etc.), solo el numero y su fecha.
+    /// </summary>
+    private static (decimal Rate, DateOnly Date)? PickNewestAuxiliaryCandidate(
+        (decimal Rate, DateOnly Date)? snapshotCandidate, (decimal Rate, DateOnly Date)? libretaCandidate)
+    {
+        if (snapshotCandidate is null)
+        {
+            return libretaCandidate;
+        }
+        if (libretaCandidate is null)
+        {
+            return snapshotCandidate;
+        }
+        return libretaCandidate.Value.Date > snapshotCandidate.Value.Date ? libretaCandidate : snapshotCandidate;
     }
 
     /// <summary>
@@ -511,16 +615,21 @@ public class ReportService : IReportService
     }
 
     /// <summary>
-    /// ADR-011 (enmienda 2026-08-05, decision firmada del dueño): fallback al resolver de la libreta
-    /// de cotizaciones cuando el BNA no trajo un dato fresco (ni en vivo ni el ultimo snapshot). SOLO
-    /// lectura local (el resolver nunca le pega a ARCA en el camino interactivo, ver
-    /// <see cref="IExchangeRateResolver"/>), asi que no hace falta otra ventana de timeout — ya
-    /// estamos en el camino "degradado" del dashboard.
+    /// ADR-011 (enmienda 2026-08-05, decision firmada del dueño; generalizada a <paramref name="currency"/>
+    /// EUR/BRL en la ampliacion 2026-08-06): fallback al resolver de la libreta de cotizaciones cuando
+    /// el BNA no trajo un dato fresco (ni en vivo ni el ultimo snapshot) — para dolar. Para euro/real
+    /// (<see cref="ResolveFreshAuxiliaryCurrencyValueAsync"/>) es UNA de las dos fuentes que se
+    /// comparan siempre, no solo cuando el scraper fallo (el scraper no tiene forma de avisar "esta
+    /// corrida no me llego el euro" por separado del dolar). SOLO lectura local (el resolver nunca le
+    /// pega a ARCA en el camino interactivo, ver <see cref="IExchangeRateResolver"/>), asi que no hace
+    /// falta otra ventana de timeout.
     ///
     /// <para><b>Pide <c>excludePracticeOfficialData: true</c> a proposito</b>: esta es la tarjeta
     /// "solo datos reales" (tarjeta 1). Un <c>AfipOficial</c> de homologacion (numero de práctica) NO
     /// es una referencia valida para cotizarle al cliente — para eso esta la tarjeta 2
-    /// (<see cref="GetDolarParaFacturarAsync"/>), que si lo muestra con su aviso correspondiente.</para>
+    /// (<see cref="GetDolarParaFacturarAsync"/>), que si lo muestra con su aviso correspondiente. Para
+    /// euro/real este flag no cambia nada en la practica (ARCA no cotiza esas monedas, nunca hay una
+    /// fila <c>AfipOficial</c> que filtrar), pero se pasa igual para no bifurcar el metodo por moneda.</para>
     ///
     /// <para>Devuelve la sugerencia CRUDA (con <c>RateDate</c> como <see cref="DateOnly"/>) en vez del
     /// DTO ya armado: <see cref="PickNewestDollarSource"/> necesita comparar esa fecha contra la del
@@ -530,7 +639,7 @@ public class ReportService : IReportService
     /// teniamos. Si no hay resolver inyectado (unit tests con el ctor corto) o la libreta no tiene
     /// dato REAL para HOY, devuelve null.</para>
     /// </summary>
-    private async Task<ExchangeRateSuggestion?> TryLoadOfficialFallbackSuggestionAsync(CancellationToken cancellationToken)
+    private async Task<ExchangeRateSuggestion?> TryLoadOfficialFallbackSuggestionAsync(string currency, CancellationToken cancellationToken)
     {
         if (_exchangeRateResolver is null)
         {
@@ -541,7 +650,7 @@ public class ReportService : IReportService
         {
             var hoyArgentina = DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday());
             return await _exchangeRateResolver.GetSuggestionAsync(
-                "USD", hoyArgentina, cancellationToken, excludePracticeOfficialData: true);
+                currency, hoyArgentina, cancellationToken, excludePracticeOfficialData: true);
         }
         catch (Exception)
         {
@@ -558,8 +667,10 @@ public class ReportService : IReportService
     /// </summary>
     private static BnaUsdSellerRateDto BuildDtoFromLibretaSuggestion(ExchangeRateSuggestion suggestion) => new(
         Value: suggestion.Rate,
-        // La API publica de respaldo solo trae USD: nunca inventamos euro/real (T-5, "el
-        // sistema no inventa datos"). El front oculta esos tiles cuando vienen null.
+        // Este "esqueleto" arranca con Euro/Real en null: la sugerencia de dolar que arma esta
+        // funcion solo trae USD. Quien llama a esto (GetDashboardBnaRateAsync, via
+        // AttachFreshAuxiliaryCurrenciesAsync, ampliacion 2026-08-06) los completa DESPUES con su
+        // propia regla de frescura independiente por moneda — no se inventan valores ACA.
         EuroValue: null,
         RealValue: null,
         PublishedDate: suggestion.RateDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),

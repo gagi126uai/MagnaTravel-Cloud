@@ -51,6 +51,18 @@
 > Detalle tecnico completo en el comentario de clase de `ExchangeRateSyncJob`,
 > `ExchangeRateResolver` e `IOfficialDollarPublicApiService`.
 
+> ## ⚠️ ADENDA EURO Y REAL (2026-08-06 madrugada, pedida en vivo por el dueño)
+> El euro y el real del desplegable "otras monedas" (P4=C firmada) solo salian del scraper
+> BNA (roto desde el 8/7). Ampliacion: el job sincroniza tambien EUR y BRL por las APIs
+> publicas (curl verificado 2026-08-06): EUR = dolarapi → monedapi → argentinadatos →
+> bluelytics (criptoya no lo tiene); BRL = dolarapi → monedapi → argentinadatos (bluelytics
+> tampoco lo tiene). Filas en la MISMA libreta (Currency EUR/BRL, OficialPorApi=7,
+> IsProductionSource=true; sin ARCA ni scraper para estas dos — la factura sigue solo-USD).
+> Guard de cadencia corta POR MONEDA. Dashboard: euro/real con "el dato mas nuevo gana" +
+> GATE DE FRESCURA: si el dato de esa moneda es mas viejo que la fecha del dolar mostrado,
+> se OCULTA (null) — la tira tiene una sola fecha y la ausencia es el unico aviso honesto.
+> Fijado con tests. refresh/on-demand cubren las tres monedas sin cambios.
+
 ---
 
 ## Estado de implementación (actualizado 2026-08-05, por `backend-dotnet-senior`)

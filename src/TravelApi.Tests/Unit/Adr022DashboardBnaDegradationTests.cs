@@ -351,4 +351,224 @@ public class Adr022DashboardBnaDegradationTests
         Assert.Equal(1500m, dashboard.BnaUsdSellerRate!.Value);
         Assert.Equal("05/08/2026", dashboard.BnaUsdSellerRate.PublishedDate);
     }
+
+    // ============================================================
+    // Ampliacion 2026-08-06 ("el euro y el real tampoco tienen que faltar"): EuroValue/RealValue del
+    // DTO se resuelven con la MISMA regla "el dato mas nuevo gana", pero por moneda, y con un gate
+    // extra: si el dato mas fresco de esa moneda es MAS VIEJO que la fecha del dolar que se esta
+    // mostrando, se OCULTA en vez de mostrarse desactualizado (la tira solo tiene una fecha, la del
+    // dolar — ver AttachFreshAuxiliaryCurrenciesAsync).
+    // ============================================================
+
+    /// <summary>
+    /// El snapshot persistido es de AYER (dolar Y euro comparten la misma fecha de scrapeo — el DTO
+    /// tiene UNA sola <c>PublishedDate</c> para toda la foto); la libreta tiene un dolar de HOY (gana
+    /// para dolar, igual que <see cref="Dashboard_WhenPersistedSnapshotIsOld_AndLibretaHasNewerRow_UsesLibreta"/>)
+    /// Y TAMBIEN un euro de HOY -> el euro de la libreta gana, porque es tan fresco como el dolar que
+    /// se esta mostrando; el euro viejo del snapshot de ayer queda descartado.
+    /// </summary>
+    [Fact]
+    public async Task Dashboard_WhenLibretaHasFreshEuroForTheSameDateAsTheDollarShown_ShowsTheLibretaEuro()
+    {
+        await using var context = CreateContext();
+
+        var bna = new Mock<IBnaExchangeRateService>();
+        bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("BNA caido"));
+        // Snapshot persistido de AYER (dolar Y euro comparten esa fecha, es UNA sola foto).
+        bna.Setup(b => b.GetPersistedUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PersistedSnapshot() with
+            {
+                Value = 1490m,
+                PublishedDate = "04/08/2026",
+                EuroValue = 1400m,
+            });
+
+        var resolver = new Mock<IExchangeRateResolver>();
+        resolver
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1520m,
+                RateDate: new DateOnly(2026, 08, 05), // MAS NUEVO que el snapshot de ayer -> gana la libreta para dolar.
+                Source: ExchangeRateSource.OficialPorApi,
+                ProviderName: "dolarapi",
+                ArcaFchCotiz: null,
+                IsStale: false,
+                QuoteId: 50,
+                FetchedAt: DateTime.UtcNow,
+                IsProductionSource: true));
+        resolver
+            .Setup(r => r.GetSuggestionAsync("EUR", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1731.60m,
+                RateDate: new DateOnly(2026, 08, 05), // MISMA fecha que el dolar ganador (la libreta, no el snapshot).
+                Source: ExchangeRateSource.OficialPorApi,
+                ProviderName: "dolarapi",
+                ArcaFchCotiz: null,
+                IsStale: false,
+                QuoteId: 51,
+                FetchedAt: DateTime.UtcNow,
+                IsProductionSource: true));
+        resolver
+            .Setup(r => r.GetSuggestionAsync("BRL", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync((ExchangeRateSuggestion?)null);
+
+        var service = new ReportService(context, bna.Object, exchangeRateResolver: resolver.Object);
+
+        var dashboard = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.NotNull(dashboard.BnaUsdSellerRate);
+        Assert.Equal(1520m, dashboard.BnaUsdSellerRate!.Value); // gano la libreta para dolar (mas nueva que el snapshot).
+        // Gana la libreta para EURO tambien: es tan fresca como el dolar mostrado (05/08), el euro
+        // viejo del snapshot (04/08) queda descartado.
+        Assert.Equal(1731.60m, dashboard.BnaUsdSellerRate.EuroValue);
+        Assert.Null(dashboard.BnaUsdSellerRate.RealValue);
+    }
+
+    /// <summary>
+    /// Regla de frescura fijada (2026-08-06): el UNICO dato de euro disponible (ni el snapshot ni la
+    /// libreta lo tienen fresco) es de HACE UN MES. El dolar que se esta mostrando es de HOY. En vez
+    /// de mostrar un euro viejo sin ninguna forma de avisarlo (la tira solo tiene una fecha), se
+    /// OCULTA — jamas un euro de hace un mes al lado de un dolar de hoy sin que se note.
+    /// </summary>
+    [Fact]
+    public async Task Dashboard_WhenTheOnlyEuroDataIsOlderThanTheDollarShown_HidesTheEuro()
+    {
+        await using var context = CreateContext();
+
+        var bna = new Mock<IBnaExchangeRateService>();
+        bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("BNA caido"));
+        // Sin snapshot persistido en absoluto: la UNICA fuente posible de euro es la libreta.
+        bna.Setup(b => b.GetPersistedUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BnaUsdSellerRateDto?)null);
+
+        var resolver = new Mock<IExchangeRateResolver>();
+        resolver
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1520m,
+                RateDate: new DateOnly(2026, 08, 05), // dolar de HOY.
+                Source: ExchangeRateSource.OficialPorApi,
+                ProviderName: "dolarapi",
+                ArcaFchCotiz: null,
+                IsStale: false,
+                QuoteId: 60,
+                FetchedAt: DateTime.UtcNow,
+                IsProductionSource: true));
+        resolver
+            .Setup(r => r.GetSuggestionAsync("EUR", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1600m,
+                RateDate: new DateOnly(2026, 07, 05), // un mes atras.
+                Source: ExchangeRateSource.OficialPorApi,
+                ProviderName: "dolarapi",
+                ArcaFchCotiz: null,
+                IsStale: true,
+                QuoteId: 61,
+                FetchedAt: DateTime.UtcNow.AddDays(-31),
+                IsProductionSource: true));
+        resolver
+            .Setup(r => r.GetSuggestionAsync("BRL", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync((ExchangeRateSuggestion?)null);
+
+        var service = new ReportService(context, bna.Object, exchangeRateResolver: resolver.Object);
+
+        var dashboard = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.NotNull(dashboard.BnaUsdSellerRate);
+        Assert.Equal(1520m, dashboard.BnaUsdSellerRate!.Value);
+        // El euro de hace un mes NO se muestra al lado del dolar de hoy: se oculta, no se avisa con
+        // texto (el DTO no tiene donde poner una segunda fecha) — la ausencia ES el aviso.
+        Assert.Null(dashboard.BnaUsdSellerRate.EuroValue);
+        Assert.Null(dashboard.BnaUsdSellerRate.RealValue);
+    }
+
+    /// <summary>
+    /// Tercer borde del gate de frescura (hallazgo de review 2026-08-06, fija el caso que faltaba: ya
+    /// estaban cubiertos el empate — <see cref="Dashboard_WhenPersistedSnapshotAndLibretaHaveTheExactSameDate_UsesPersistedSnapshot"/>
+    /// vía dólar — y el más-viejo — <see cref="Dashboard_WhenTheOnlyEuroDataIsOlderThanTheDollarShown_HidesTheEuro"/>).
+    /// Acá el euro de la libreta es MÁS NUEVO que la fecha del dólar que se está mostrando (el dólar
+    /// quedó viejo, pero el euro sí se actualizó hoy) -> el euro SÍ se muestra: la regla es "al menos
+    /// tan fresco como el dólar", nunca "exactamente la misma fecha".
+    /// </summary>
+    [Fact]
+    public async Task Dashboard_WhenEuroIsNewerThanTheDollarShown_ShowsTheEuro()
+    {
+        await using var context = CreateContext();
+
+        var bna = new Mock<IBnaExchangeRateService>();
+        bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("BNA caido"));
+        // Sin snapshot persistido: el dolar sale de la libreta, con una fecha VIEJA (ayer).
+        bna.Setup(b => b.GetPersistedUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BnaUsdSellerRateDto?)null);
+
+        var resolver = new Mock<IExchangeRateResolver>();
+        resolver
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1490m,
+                RateDate: new DateOnly(2026, 08, 04), // dolar VIEJO: el job todavia no trajo el de hoy.
+                Source: ExchangeRateSource.OficialPorApi,
+                ProviderName: "dolarapi",
+                ArcaFchCotiz: null,
+                IsStale: true,
+                QuoteId: 70,
+                FetchedAt: DateTime.UtcNow.AddDays(-1),
+                IsProductionSource: true));
+        resolver
+            .Setup(r => r.GetSuggestionAsync("EUR", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1731.60m,
+                RateDate: new DateOnly(2026, 08, 05), // euro MAS NUEVO que el dolar mostrado (04/08).
+                Source: ExchangeRateSource.OficialPorApi,
+                ProviderName: "dolarapi",
+                ArcaFchCotiz: null,
+                IsStale: false,
+                QuoteId: 71,
+                FetchedAt: DateTime.UtcNow,
+                IsProductionSource: true));
+        resolver
+            .Setup(r => r.GetSuggestionAsync("BRL", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync((ExchangeRateSuggestion?)null);
+
+        var service = new ReportService(context, bna.Object, exchangeRateResolver: resolver.Object);
+
+        var dashboard = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.NotNull(dashboard.BnaUsdSellerRate);
+        Assert.Equal(1490m, dashboard.BnaUsdSellerRate!.Value); // dolar viejo (unico dato disponible).
+        // El euro, aunque el dolar de al lado sea viejo, ES mas nuevo que esa fecha -> se muestra.
+        Assert.Equal(1731.60m, dashboard.BnaUsdSellerRate.EuroValue);
+        Assert.Null(dashboard.BnaUsdSellerRate.RealValue);
+    }
+
+    /// <summary>
+    /// Camino feliz mas comun: el fetch en vivo del BNA funciona (IsStale=false) y ya trae euro/real
+    /// de la MISMA pagina que el dolar — el dashboard los muestra TAL CUAL, sin consultar la libreta
+    /// para nada (son, por definicion, tan frescos como el dolar que viene en el mismo objeto).
+    /// </summary>
+    [Fact]
+    public async Task Dashboard_WhenLiveBnaFetchSucceeds_ShowsItsOwnEuroAndReal_WithoutConsultingTheResolver()
+    {
+        await using var context = CreateContext();
+
+        var live = PersistedSnapshot() with { Value = 1515m, EuroValue = 1660m, RealValue = 268m, IsStale = false };
+
+        var bna = new Mock<IBnaExchangeRateService>();
+        bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync(live);
+
+        var resolver = new Mock<IExchangeRateResolver>(MockBehavior.Strict);
+
+        var service = new ReportService(context, bna.Object, exchangeRateResolver: resolver.Object);
+
+        var dashboard = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.NotNull(dashboard.BnaUsdSellerRate);
+        Assert.Equal(1660m, dashboard.BnaUsdSellerRate!.EuroValue);
+        Assert.Equal(268m, dashboard.BnaUsdSellerRate.RealValue);
+        // MockBehavior.Strict + cero Setup en el resolver: si el codigo llegara a llamarlo, el test
+        // fallaria por una excepcion de "llamada no configurada" en vez de silenciosamente pasar.
+    }
 }

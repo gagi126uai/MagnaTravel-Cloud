@@ -201,7 +201,8 @@ public class ExchangeRateResolver : IExchangeRateResolver
 
     /// <summary>Solo el ENCOLADO en si (sin loguear: cada caller loguea su propio mensaje, porque
     /// cada uno tiene contexto distinto que contar — "no habia fila de hoy" vs "lo pidio el
-    /// botón"). El job en si solo sincroniza USD hoy (MVP): no hace falta pasarle la moneda.</summary>
+    /// botón"). El job en si sincroniza USD+EUR+BRL en una sola corrida (ampliacion 2026-08-06,
+    /// "el euro y el real tampoco tienen que faltar"): no hace falta pasarle la moneda.</summary>
     private void EnqueueSyncJob()
     {
         _backgroundJobClient!.Enqueue<ExchangeRateSyncJob>(job => job.RunAsync(CancellationToken.None));

@@ -78,9 +78,15 @@ public record StatusDistributionDto(int Budgets, int Reserved, int Operational, 
 /// dato de práctica de ARCA: para eso esta la tarjeta 2 (<see cref="DolarParaFacturarDto"/>).
 /// </summary>
 /// <param name="Value">Dolar vendedor (billetes BNA, o su equivalente real via la API publica de respaldo).</param>
-/// <param name="EuroValue">Euro vendedor BNA. Null cuando el dato viene del respaldo de API publica
-/// (ADR-011): esa fuente solo tiene USD, nunca inventamos un valor de euro que no existe.</param>
-/// <param name="RealValue">Real vendedor BNA. Misma regla que <paramref name="EuroValue"/>.</param>
+/// <param name="EuroValue">Euro vendedor BNA, o su equivalente via la API publica de respaldo
+/// (ampliacion 2026-08-06: la libreta ahora TAMBIEN sincroniza EUR, ver <c>ExchangeRateSyncJob</c>).
+/// <c>Null</c> cuando NINGUNA de las dos fuentes tiene un dato al menos tan fresco como
+/// <see cref="Value"/> (nunca se muestra un euro mas viejo que el dolar de al lado sin poder
+/// avisarlo — ver <c>ReportService.AttachFreshAuxiliaryCurrenciesAsync</c>). Nunca un numero
+/// inventado.</param>
+/// <param name="RealValue">Real vendedor BNA. Misma regla que <paramref name="EuroValue"/> (la
+/// libreta sincroniza BRL con una escalera de proveedores mas chica, ver el doc de clase de
+/// <c>IOfficialDollarPublicApiService</c>).</param>
 public record BnaUsdSellerRateDto(
     decimal Value,
     decimal? EuroValue,

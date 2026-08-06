@@ -5,11 +5,12 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): tests de PARSEO puro para cada uno de los
-/// 5 proveedores de <see cref="OfficialDollarPublicApiService"/>. Los fixtures de JSON de abajo son
-/// COPIA LITERAL de lo que devolvio cada API real via <c>curl</c> el 2026-08-05 (ver el comentario de
-/// clase de <see cref="OfficialDollarPublicApiService"/> para el detalle de cada contrato) — no se
-/// inventa ninguna forma de respuesta.
+/// ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"; ampliada 2026-08-06 a EUR/BRL): tests de
+/// PARSEO puro para cada uno de los proveedores de <see cref="OfficialDollarPublicApiService"/>. Los
+/// fixtures de JSON de abajo son COPIA LITERAL de lo que devolvio cada API real via <c>curl</c> el
+/// 2026-08-05 (dolar) y el 2026-08-06 (euro/real) — ver el comentario de clase de
+/// <see cref="IOfficialDollarPublicApiService"/> para el detalle de cada contrato — no se inventa
+/// ninguna forma de respuesta.
 ///
 /// <para>Los metodos <c>internal static</c> de extraccion se llaman DIRECTO (el assembly de
 /// Infrastructure tiene <c>InternalsVisibleTo("TravelApi.Tests")</c>): no hace falta mockear
@@ -148,6 +149,126 @@ public class OfficialDollarPublicApiServiceParsingTests
         const string json = """{"casa":"oficial","venta":"no-disponible"}""";
 
         var rate = OfficialDollarPublicApiService.ExtractVentaField(Parse(json));
+
+        Assert.Null(rate);
+    }
+
+    // ============================================================
+    // Ampliacion 2026-08-06 ("el euro y el real tampoco tienen que faltar"): fixtures COPIA LITERAL
+    // de lo que devolvio cada API real via curl el 2026-08-06 (ver el doc de clase de
+    // IOfficialDollarPublicApiService para el detalle completo de cobertura por moneda). Los
+    // extractores de dolarapi/monedapi/argentinadatos son los MISMOS que ya usa USD (misma forma de
+    // respuesta, solo cambia el codigo de moneda en la URL) — estos tests fijan que efectivamente
+    // parsean EUR/BRL igual de bien. bluelytics.euro tiene un extractor nuevo (clave "oficial_euro"
+    // en vez de "oficial").
+    // ============================================================
+
+    [Fact]
+    public void ExtractVentaField_ConRespuestaRealDeDolarApiParaEuro_SacaElCampoVenta()
+    {
+        const string json = """
+            {"moneda":"EUR","casa":"oficial","nombre":"Euro","compra":1717.4675,"venta":1731.6002,"fechaActualizacion":"2026-08-05T16:57:00.000Z"}
+            """;
+
+        var rate = OfficialDollarPublicApiService.ExtractVentaField(Parse(json));
+
+        Assert.Equal(1731.6002m, rate);
+    }
+
+    [Fact]
+    public void ExtractVentaField_ConRespuestaRealDeDolarApiParaReal_SacaElCampoVenta()
+    {
+        const string json = """
+            {"moneda":"BRL","casa":"oficial","nombre":"Real Brasileño","compra":291.0318,"venta":291.1998,"fechaActualizacion":"2026-08-05T17:30:00.000Z"}
+            """;
+
+        var rate = OfficialDollarPublicApiService.ExtractVentaField(Parse(json));
+
+        Assert.Equal(291.1998m, rate);
+    }
+
+    [Fact]
+    public void ExtractMonedApiSellField_ConRespuestaRealDeMonedApiParaEuro_SacaElCampoSell()
+    {
+        const string json = """
+            {"currency":"EUR","name":"Euro Banco Nación","origin":"BNA","buy":1668.6,"sell":1764.68,"updatedAt":"2026-08-05T15:56:01.484-03:00","lastScrapedAt":"2026-08-05T15:56:01.484-03:00","valueType":"money"}
+            """;
+
+        var rate = OfficialDollarPublicApiService.ExtractMonedApiSellField(Parse(json));
+
+        Assert.Equal(1764.68m, rate);
+    }
+
+    /// <summary>
+    /// Fixture REAL verificado con curl el 2026-08-06: monedapi.ar contesto 200 para real con un
+    /// <c>updatedAt</c> de casi un MES atras (documentado en el doc de clase de la interfaz). El
+    /// extractor de todos modos saca el numero correctamente — la validacion de "es de hoy o no" NO
+    /// es responsabilidad de este metodo (ningun otro extractor de la escalera la hace tampoco), la
+    /// hace la defensa de coherencia del job (5%, WarnIfRateDivergesFromSameDayAsync).
+    /// </summary>
+    [Fact]
+    public void ExtractMonedApiSellField_ConRespuestaRealDeMonedApiParaReal_SacaElCampoSellAunqueSeaViejo()
+    {
+        const string json = """
+            {"currency":"BRL","name":"Real Banco Nación","origin":"BNA","buy":285,"sell":300,"updatedAt":"2026-07-06T15:04:02.325-03:00","lastScrapedAt":"2026-07-06T15:04:02.325-03:00","valueType":"money"}
+            """;
+
+        var rate = OfficialDollarPublicApiService.ExtractMonedApiSellField(Parse(json));
+
+        Assert.Equal(300m, rate);
+    }
+
+    [Fact]
+    public void ExtractVentaField_ConRespuestaRealDeArgentinaDatosParaEuroPorFecha_SacaElCampoVenta()
+    {
+        // Ruta real verificada: /v1/cotizaciones/eur/{yyyy}/{MM}/{dd} (SIN el segmento "/oficial" que
+        // si lleva la ruta de dolar) -> misma forma de respuesta que la variante de dolar.
+        const string json = """
+            {"moneda":"EUR","casa":"oficial","compra":1717.4675,"venta":1731.6002,"fecha":"2026-08-05"}
+            """;
+
+        var rate = OfficialDollarPublicApiService.ExtractVentaField(Parse(json));
+
+        Assert.Equal(1731.6002m, rate);
+    }
+
+    [Fact]
+    public void ExtractVentaField_ConRespuestaRealDeArgentinaDatosParaRealPorFecha_SacaElCampoVenta()
+    {
+        const string json = """
+            {"moneda":"BRL","casa":"oficial","compra":291.0318,"venta":291.1998,"fecha":"2026-08-05"}
+            """;
+
+        var rate = OfficialDollarPublicApiService.ExtractVentaField(Parse(json));
+
+        Assert.Equal(291.1998m, rate);
+    }
+
+    // ============================================================
+    // bluelytics.com.ar para EURO — clave raiz "oficial_euro" (verificado con curl que NO hay
+    // ninguna clave de real en esta respuesta: bluelytics solo cubre dolar+euro).
+    // ============================================================
+
+    [Fact]
+    public void ExtractBluelyticsOficialEuroVentaField_ConRespuestaRealDeBluelytics_EntraAOficialEuroYSacaValueSell()
+    {
+        const string json = """
+            {"oficial":{"value_avg":1494.50,"value_sell":1520.00,"value_buy":1469.00},"blue":{"value_avg":1523.50,"value_sell":1540.00,"value_buy":1507.00},"oficial_euro":{"value_avg":1624.00,"value_sell":1652.00,"value_buy":1596.00},"blue_euro":{"value_avg":1656.00,"value_sell":1674.00,"value_buy":1638.00},"last_update":"2026-08-05T19:45:53.751063-03:00"}
+            """;
+
+        var rate = OfficialDollarPublicApiService.ExtractBluelyticsOficialEuroVentaField(Parse(json));
+
+        Assert.Equal(1652.00m, rate);
+    }
+
+    [Fact]
+    public void ExtractBluelyticsOficialEuroVentaField_SinLaClaveOficialEuro_DevuelveNull()
+    {
+        // Fixture SIN "oficial_euro": es exactamente lo que bluelytics devolveria si algun dia dejara
+        // de publicar euro (o el escenario de real, que HOY no publica en absoluto).
+        const string json = """{"oficial":{"value_sell":1520.00},"blue":{"value_sell":1540.00}}""";
+
+        var rate = OfficialDollarPublicApiService.ExtractBluelyticsOficialEuroVentaField(Parse(json));
 
         Assert.Null(rate);
     }
