@@ -4,7 +4,6 @@ import { Briefcase, Calendar, FileText, TrendingUp } from "lucide-react";
 import { api } from "../api";
 import { useAuthState } from "../auth";
 import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
-import { DolarParaFacturarCard } from "../components/DolarParaFacturarCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
@@ -64,12 +63,10 @@ export default function AgentDashboard() {
                 </div>
             </div>
 
-            {/* ADR-011 (enmienda 2026-08-05, decision firmada del dueño): dos tarjetas hermanas, mismo
-                molde visual — ver AdminDashboard.jsx para el detalle de por que son dos y no una. */}
-            <div className="grid gap-4 md:grid-cols-2">
-                <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
-                <DolarParaFacturarCard dolar={dashboard.dolarParaFacturar} />
-            </div>
+            {/* Dolar de referencia (solo datos reales). La tarjeta "Dolar para facturar" quedó
+                DESMONTADA por decisión del dueño (2026-08-05 noche) hasta maqueta firmada —
+                ver el comentario en AdminDashboard.jsx. */}
+            <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {/* B3 (revisión 2026-07-27): "Ventas personales" separa ARS/USD igual que el
