@@ -83,6 +83,25 @@ public class ExchangeRatesController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// TRABAJO 2 (boton "actualizar" de la tira del dolar, 2026-08-05, orden textual del dueño
+    /// mirando el dashboard EN VIVO: "yo pondría un botón para actualizar"). Encola una
+    /// sincronizacion on-demand del dolar (fire-and-forget, via <see cref="IExchangeRateResolver.RequestManualSyncAsync"/>)
+    /// y responde SIEMPRE 202 sin esperar a que el job termine — nunca se le hace saber al usuario
+    /// si el pedido estaba debounced (detalle tecnico) o si realmente encolo de nuevo: para el, el
+    /// dolar "ya se esta buscando" en cualquiera de los dos casos.
+    /// </summary>
+    [HttpPost("refresh")]
+    [RequirePermission(Permissions.ReservasView)]
+    public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
+    {
+        // MVP: el job de sincronizacion solo trae dolar (ver ExchangeRateSyncJob). El boton de la
+        // tira tampoco pide moneda: refresca "el dolar", que es lo unico que la tira muestra.
+        await _resolver.RequestManualSyncAsync("USD", cancellationToken);
+
+        return Accepted(new { message = "Buscando el dólar de hoy. En unos segundos se actualiza." });
+    }
+
     private static bool IsSupportedCurrency(string? currency) =>
         !string.IsNullOrWhiteSpace(currency)
         && (string.Equals(currency, "USD", StringComparison.OrdinalIgnoreCase)

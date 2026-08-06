@@ -7,9 +7,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  ESTADO_ACTUALIZAR_DOLAR,
+  botonActualizarDolarDeshabilitado,
   faltaDatoDelDolar,
   formatearFechaDolarTira,
   hayOtrasMonedasParaMostrar,
+  textoBotonActualizarDolar,
 } from "./dolarTiraDashboardLogic.js";
 
 // ─── formatearFechaDolarTira ───────────────────────────────────────────────────
@@ -70,4 +73,22 @@ test("rate presente pero value null/undefined → falta el dato", () => {
 test("rate con value numérico (incluido 0) → NO falta el dato", () => {
   assert.equal(faltaDatoDelDolar({ value: 1515 }), false);
   assert.equal(faltaDatoDelDolar({ value: 0 }), false);
+});
+
+// ─── Botón "actualizar" (TRABAJO 3, 2026-08-05) ────────────────────────────────
+
+test("textoBotonActualizarDolar: quieto → 'actualizar'", () => {
+  assert.equal(textoBotonActualizarDolar(ESTADO_ACTUALIZAR_DOLAR.QUIETO), "actualizar");
+});
+
+test("textoBotonActualizarDolar: buscando → 'buscando…'", () => {
+  assert.equal(textoBotonActualizarDolar(ESTADO_ACTUALIZAR_DOLAR.BUSCANDO), "buscando…");
+});
+
+test("botonActualizarDolarDeshabilitado: quieto → habilitado (false)", () => {
+  assert.equal(botonActualizarDolarDeshabilitado(ESTADO_ACTUALIZAR_DOLAR.QUIETO), false);
+});
+
+test("botonActualizarDolarDeshabilitado: buscando → deshabilitado (true)", () => {
+  assert.equal(botonActualizarDolarDeshabilitado(ESTADO_ACTUALIZAR_DOLAR.BUSCANDO), true);
 });

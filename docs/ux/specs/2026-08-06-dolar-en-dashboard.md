@@ -120,7 +120,12 @@ ahí sí la tira entera no se dibuja (un renglón que solo dice "no sé nada" es
   "scraper", "snapshot", "fuente" (T-5, P-17).
 - **NO** hora ni "Última consulta: 05/08/2026 14:22" (era información de mantenimiento del
   sistema, no del negocio). Alcanza con la fecha del dato.
-- **NO** botón de refrescar ni link.
+- ~~**NO** botón de refrescar ni link.~~ **ADENDA (2026-08-05 tarde, orden verbal de Gaston
+  mirando el dashboard EN VIVO — pisa esta línea)**: SÍ hay un botón "actualizar" al final del
+  renglón, fantasma gris con ícono chico y la palabra al lado (P-10), sin color (P11=A: no pide
+  decisión). Motivo: el lector del BNA estuvo roto un mes en silencio y el dueño quiere poder
+  pedir el dato en el momento. Al tocarlo dice "buscando…" y la tira se refresca sola; si la
+  búsqueda falla, la tira queda como estaba (sin cartel rojo).
 - **NO** verde para "actualizado": no hay nada que festejar; el color se reserva para lo que pide
   acción (P11=A).
 - Formato argentino de plata y fecha (**P-2**); si alguna hora se mostrara, hora argentina (**T-14**).

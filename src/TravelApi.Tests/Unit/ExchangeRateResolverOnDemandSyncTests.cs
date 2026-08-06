@@ -138,4 +138,87 @@ public class ExchangeRateResolverOnDemandSyncTests
             c => c.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<Hangfire.States.IState>()),
             Times.Never);
     }
+
+    // ─── TRABAJO 2 (boton "actualizar" de la tira del dolar, 2026-08-05) ──────────────────────────
+
+    [Fact]
+    public async Task RequestManualSyncAsync_ConClienteDeHangfireInyectado_EncolaYDevuelveTrue()
+    {
+        await using var ctx = NewContext();
+
+        var jobClientMock = new Mock<IBackgroundJobClient>();
+        var resolver = new ExchangeRateResolver(
+            ctx, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateResolver>.Instance, jobClientMock.Object);
+
+        var encolo = await resolver.RequestManualSyncAsync("USD", CancellationToken.None);
+
+        Assert.True(encolo);
+        jobClientMock.Verify(
+            c => c.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<Hangfire.States.IState>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestManualSyncAsync_SinClienteDeHangfireInyectado_NoTiraExcepcion_YDevuelveFalse()
+    {
+        await using var ctx = NewContext();
+
+        // Ctor "corto" (sin IBackgroundJobClient), mismo criterio que el resto de esta clase.
+        var resolver = new ExchangeRateResolver(ctx, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateResolver>.Instance);
+
+        var encolo = await resolver.RequestManualSyncAsync("USD", CancellationToken.None);
+
+        Assert.False(encolo);
+    }
+
+    [Fact]
+    public async Task RequestManualSyncAsync_LlamadoDosVecesSeguidas_SoloEncolaLaPrimera_PorElDebounce()
+    {
+        await using var ctx = NewContext();
+
+        var jobClientMock = new Mock<IBackgroundJobClient>();
+        var sharedCache = new MemoryCache(new MemoryCacheOptions());
+        var resolver = new ExchangeRateResolver(
+            ctx, sharedCache, NullLogger<ExchangeRateResolver>.Instance, jobClientMock.Object);
+
+        var primerClick = await resolver.RequestManualSyncAsync("USD", CancellationToken.None);
+        var segundoClick = await resolver.RequestManualSyncAsync("USD", CancellationToken.None);
+
+        Assert.True(primerClick);
+        Assert.False(segundoClick);
+        jobClientMock.Verify(
+            c => c.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<Hangfire.States.IState>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// TRABAJO 2 exige, con todas las letras, que el boton "reuse el MISMO debounce de 5' del
+    /// resolver": el disparo AUTOMATICO de <see cref="ExchangeRateResolver.GetSuggestionAsync"/> y el
+    /// disparo MANUAL de <see cref="ExchangeRateResolver.RequestManualSyncAsync"/> comparten la MISMA
+    /// clave de cache — si uno ya abrio la ventana de 5 minutos, el otro no puede encolar de nuevo
+    /// hasta que pase el TTL.
+    /// </summary>
+    [Fact]
+    public async Task RequestManualSyncAsync_CompartenElDebounceConElDisparoAutomatico_DeGetSuggestionAsync()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var jobClientMock = new Mock<IBackgroundJobClient>();
+        var sharedCache = new MemoryCache(new MemoryCacheOptions());
+        var resolver = new ExchangeRateResolver(
+            ctx, sharedCache, NullLogger<ExchangeRateResolver>.Instance, jobClientMock.Object);
+
+        // El disparo AUTOMATICO (una consulta normal, sin fila de hoy) ya abre la ventana de debounce.
+        await resolver.GetSuggestionAsync("USD", Today, CancellationToken.None);
+
+        // El usuario aprieta el boton "actualizar" justo despues: como comparten la misma clave, NO
+        // deberia encolar una segunda vez.
+        var encoloElBoton = await resolver.RequestManualSyncAsync("USD", CancellationToken.None);
+
+        Assert.False(encoloElBoton);
+        jobClientMock.Verify(
+            c => c.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<Hangfire.States.IState>()),
+            Times.Once);
+    }
 }

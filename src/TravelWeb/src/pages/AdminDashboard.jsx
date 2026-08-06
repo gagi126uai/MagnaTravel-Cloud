@@ -134,7 +134,9 @@ export default function DashboardPage() {
                 desaprobó por completo ("es feo"). Un solo dólar: el "para facturar" no se pinta
                 acá (ya vive precargado en las pantallas de facturar); el dato sigue viajando en
                 el DTO del dashboard sin usarse en esta tira. */}
-            <DolarBnaTira rate={dashboard.bnaUsdSellerRate} />
+            {/* onRefrescar=loadDashboard: el botón "actualizar" (2026-08-05) pide de nuevo el
+                dashboard completo despues de encolar la sincronizacion, no solo el dólar. */}
+            <DolarBnaTira rate={dashboard.bnaUsdSellerRate} onRefrescar={loadDashboard} />
 
             {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

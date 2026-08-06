@@ -155,4 +155,52 @@ public class ExchangeRatesControllerTests
         var hoyArgentina = DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday());
         Assert.Equal(hoyArgentina, fechaRecibidaPorElResolver);
     }
+
+    // ─── TRABAJO 2: POST /api/exchange-rates/refresh (boton "actualizar" de la tira, 2026-08-05) ──
+
+    /// <summary>
+    /// Texto FIJADO literal (T-5/T-6, mismo criterio que <see cref="ConSugerenciaDePractica_LaLeyendaAvisaQueNoEsElDolarReal"/>):
+    /// si alguien cambia el mensaje sin querer, este test lo detecta. Nunca 200: 202 porque es
+    /// fire-and-forget, el job todavia no corrio cuando el controller ya respondio.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_EncolaLaSincronizacion_YDevuelve202ConMensajeEnCriollo()
+    {
+        var resolverMock = new Mock<IExchangeRateResolver>();
+        resolverMock
+            .Setup(r => r.RequestManualSyncAsync("USD", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var controller = BuildController(resolverMock);
+
+        var result = await controller.Refresh(CancellationToken.None);
+
+        var accepted = Assert.IsType<AcceptedResult>(result);
+        var body = accepted.Value;
+        Assert.NotNull(body);
+
+        var messageProperty = body!.GetType().GetProperty("message");
+        Assert.NotNull(messageProperty);
+        Assert.Equal("Buscando el dólar de hoy. En unos segundos se actualiza.", messageProperty!.GetValue(body));
+    }
+
+    /// <summary>
+    /// Idempotencia (P-21, "el sistema no le hace saber al usuario un detalle tecnico"): aunque el
+    /// resolver diga que NO encolo de nuevo (estaba debounced), el controller responde 202 exactamente
+    /// IGUAL — para el usuario, el pedido "ya esta en camino" en los dos casos.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_AunqueElResolverDigaQueEstabaDebounced_Devuelve202Igual()
+    {
+        var resolverMock = new Mock<IExchangeRateResolver>();
+        resolverMock
+            .Setup(r => r.RequestManualSyncAsync("USD", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var controller = BuildController(resolverMock);
+
+        var result = await controller.Refresh(CancellationToken.None);
+
+        Assert.IsType<AcceptedResult>(result);
+    }
 }

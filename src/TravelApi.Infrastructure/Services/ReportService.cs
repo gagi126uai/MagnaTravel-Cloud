@@ -389,6 +389,18 @@ public class ReportService : IReportService
     /// libreta de <c>ExchangeRateQuotes</c> (fuente ARCA) para HOY. Si tiene dato, el widget lo muestra
     /// etiquetado con honestidad como "oficial" en vez de mentir que es "BNA billetes".</para>
     ///
+    /// <para><b>FIX (bug real reportado en vivo por el dueño, 2026-08-05, "el dato mas nuevo gana")</b>:
+    /// el scraper del BNA viene roto desde el 8/7. Antes, en cuanto el fetch en vivo fallaba, esta funcion
+    /// caia al snapshot persistido (que puede ser de HACE UN MES) y devolvia ese dato sin mas — la libreta
+    /// de <c>ExchangeRateQuotes</c> (que el job de sincronizacion llena todas las horas, via ARCA o alguna
+    /// de las cinco APIs de respaldo) nunca se llegaba a mostrar aunque tuviera una fila de HOY, porque el
+    /// snapshot viejo "ganaba" solo por no ser null. Ahora, cuando el fetch en vivo NO trajo un dato
+    /// realmente fresco (<c>IsStale=true</c>, sea porque vino del catch o del snapshot persistido), se
+    /// compara la FECHA del snapshot contra la FECHA de la fila mas reciente de la libreta y gana la mas
+    /// nueva de las dos (ver <see cref="PickNewestDollarSource"/>). El dato del dia que trajo el scraper EN
+    /// VIVO (<c>IsStale=false</c>) sigue ganando siempre, sin comparar nada: es el dato de hoy, no hay nada
+    /// mas nuevo que eso.</para>
+    ///
     /// <para>El CancellationTokenSource se linkea al token del request para que, si el usuario abandona la
     /// pantalla, tambien se corte el intento en vivo.</para>
     /// </summary>
@@ -412,13 +424,74 @@ public class ReportService : IReportService
             bnaRate = await TryLoadPersistedBnaRateAsync(cancellationToken);
         }
 
-        if (bnaRate is not null)
+        // El scraper trajo un dato FRESCO en esta misma corrida (fetch en vivo exitoso, IsStale=false):
+        // es el dato de hoy, gana siempre, sin comparar nada contra la libreta.
+        if (bnaRate is not null && !bnaRate.IsStale)
         {
             return bnaRate;
         }
 
-        // Cadena BNA agotada sin dato util: unica parada nueva de esta obra.
-        return await TryLoadOfficialFallbackRateAsync(cancellationToken);
+        // A partir de aca "bnaRate" (si existe) es VIEJO: un snapshot persistido, que puede tener
+        // semanas si el scraper esta roto. Comparamos su fecha contra la fila mas nueva de la libreta
+        // y mostramos la que sea mas reciente de las dos (ver el FIX documentado arriba).
+        var libretaSuggestion = await TryLoadOfficialFallbackSuggestionAsync(cancellationToken);
+        return PickNewestDollarSource(bnaRate, libretaSuggestion);
+    }
+
+    /// <summary>
+    /// TRABAJO 1 (bug real 2026-08-05, "el dato mas nuevo gana"): decide cual de las dos fuentes
+    /// mostrar cuando el fetch en vivo del BNA no trajo nada fresco. Compara la FECHA REAL de cada
+    /// fuente (nunca el texto tal cual) y gana la mas reciente; a igualdad de fecha, gana
+    /// <paramref name="snapshot"/> — el mismo orden que ya tenia la pantalla, para no cambiar nada en
+    /// el caso mas comun (las dos fuentes son de hoy).
+    /// </summary>
+    private static BnaUsdSellerRateDto? PickNewestDollarSource(
+        BnaUsdSellerRateDto? snapshot, ExchangeRateSuggestion? libretaSuggestion)
+    {
+        if (libretaSuggestion is null)
+        {
+            // Sin dato en la libreta: se muestra el snapshot tal cual (aunque sea viejo, con su
+            // "(sin actualizar)" de siempre), o null si tampoco hay snapshot.
+            return snapshot;
+        }
+
+        if (snapshot is null)
+        {
+            return BuildDtoFromLibretaSuggestion(libretaSuggestion);
+        }
+
+        // El snapshot guarda la fecha como TEXTO scrapeado del sitio del BNA ("D/M/YYYY", sin ceros a
+        // la izquierda). Si no se puede interpretar como fecha, no hay forma honesta de decir que es
+        // "mas nuevo" que la libreta (que SI tiene una columna DATE confiable): preferimos la libreta.
+        var snapshotDate = TryParseSnapshotPublishedDate(snapshot.PublishedDate);
+        if (snapshotDate is null)
+        {
+            return BuildDtoFromLibretaSuggestion(libretaSuggestion);
+        }
+
+        return libretaSuggestion.RateDate > snapshotDate.Value
+            ? BuildDtoFromLibretaSuggestion(libretaSuggestion)
+            : snapshot;
+    }
+
+    /// <summary>Mismos formatos que usa <c>BnaExchangeRateService</c> para parsear su propio
+    /// <c>PublishedDate</c> (el scraper del sitio del BNA no siempre trae el dia/mes con cero a la
+    /// izquierda). Se duplica el arreglo a proposito: es un detalle interno de esa clase (privado), y
+    /// cuatro literales no ameritan romper el encapsulamiento por una dependencia compartida.</summary>
+    private static readonly string[] SnapshotPublishedDateFormats =
+        { "d/M/yyyy", "dd/MM/yyyy", "d/MM/yyyy", "dd/M/yyyy" };
+
+    private static DateOnly? TryParseSnapshotPublishedDate(string? publishedDate)
+    {
+        if (string.IsNullOrWhiteSpace(publishedDate))
+        {
+            return null;
+        }
+
+        return DateOnly.TryParseExact(
+            publishedDate, SnapshotPublishedDateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            ? parsed
+            : null;
     }
 
     /// <summary>
@@ -439,8 +512,8 @@ public class ReportService : IReportService
 
     /// <summary>
     /// ADR-011 (enmienda 2026-08-05, decision firmada del dueño): fallback al resolver de la libreta
-    /// de cotizaciones cuando el BNA no trajo nada (ni en vivo ni el ultimo snapshot). SOLO lectura
-    /// local (el resolver nunca le pega a ARCA en el camino interactivo, ver
+    /// de cotizaciones cuando el BNA no trajo un dato fresco (ni en vivo ni el ultimo snapshot). SOLO
+    /// lectura local (el resolver nunca le pega a ARCA en el camino interactivo, ver
     /// <see cref="IExchangeRateResolver"/>), asi que no hace falta otra ventana de timeout — ya
     /// estamos en el camino "degradado" del dashboard.
     ///
@@ -449,11 +522,15 @@ public class ReportService : IReportService
     /// es una referencia valida para cotizarle al cliente — para eso esta la tarjeta 2
     /// (<see cref="GetDolarParaFacturarAsync"/>), que si lo muestra con su aviso correspondiente.</para>
     ///
-    /// <para>Si no hay resolver inyectado (unit tests con el ctor corto) o la libreta no tiene dato
-    /// REAL para HOY, devuelve null: el widget queda igual que antes de esta obra (nunca inventa un
-    /// numero).</para>
+    /// <para>Devuelve la sugerencia CRUDA (con <c>RateDate</c> como <see cref="DateOnly"/>) en vez del
+    /// DTO ya armado: <see cref="PickNewestDollarSource"/> necesita comparar esa fecha contra la del
+    /// snapshot ANTES de decidir cual de las dos mostrar (TRABAJO 1, "el dato mas nuevo gana") — armar
+    /// el DTO (que solo tiene la fecha como texto) antes de esa comparacion habria obligado a
+    /// re-parsear un texto que nosotros mismos generamos, en vez de comparar la fecha real que ya
+    /// teniamos. Si no hay resolver inyectado (unit tests con el ctor corto) o la libreta no tiene
+    /// dato REAL para HOY, devuelve null.</para>
     /// </summary>
-    private async Task<BnaUsdSellerRateDto?> TryLoadOfficialFallbackRateAsync(CancellationToken cancellationToken)
+    private async Task<ExchangeRateSuggestion?> TryLoadOfficialFallbackSuggestionAsync(CancellationToken cancellationToken)
     {
         if (_exchangeRateResolver is null)
         {
@@ -463,26 +540,8 @@ public class ReportService : IReportService
         try
         {
             var hoyArgentina = DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday());
-            var suggestion = await _exchangeRateResolver.GetSuggestionAsync(
+            return await _exchangeRateResolver.GetSuggestionAsync(
                 "USD", hoyArgentina, cancellationToken, excludePracticeOfficialData: true);
-            if (suggestion is null)
-            {
-                return null;
-            }
-
-            return new BnaUsdSellerRateDto(
-                Value: suggestion.Rate,
-                // La API publica de respaldo solo trae USD: nunca inventamos euro/real (T-5, "el
-                // sistema no inventa datos"). El front oculta esos tiles cuando vienen null.
-                EuroValue: null,
-                RealValue: null,
-                PublishedDate: suggestion.RateDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
-                // Esta fuente es diaria (no trae "hora de publicacion" como el scrape del BNA): vacio
-                // en vez de inventar una hora que no existe. El front ya muestra "-" cuando falta.
-                PublishedTime: string.Empty,
-                Source: "oficial",
-                IsStale: suggestion.IsStale,
-                FetchedAt: suggestion.FetchedAt);
         }
         catch (Exception)
         {
@@ -490,6 +549,26 @@ public class ReportService : IReportService
             return null;
         }
     }
+
+    /// <summary>
+    /// Arma el DTO del widget a partir de una sugerencia de la libreta ya elegida como ganadora por
+    /// <see cref="PickNewestDollarSource"/>. Separado de <see cref="TryLoadOfficialFallbackSuggestionAsync"/>
+    /// para no armar el DTO (con la fecha ya convertida a texto) hasta DESPUES de decidir si la
+    /// libreta gana o pierde contra el snapshot.
+    /// </summary>
+    private static BnaUsdSellerRateDto BuildDtoFromLibretaSuggestion(ExchangeRateSuggestion suggestion) => new(
+        Value: suggestion.Rate,
+        // La API publica de respaldo solo trae USD: nunca inventamos euro/real (T-5, "el
+        // sistema no inventa datos"). El front oculta esos tiles cuando vienen null.
+        EuroValue: null,
+        RealValue: null,
+        PublishedDate: suggestion.RateDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+        // Esta fuente es diaria (no trae "hora de publicacion" como el scrape del BNA): vacio
+        // en vez de inventar una hora que no existe. El front ya muestra "-" cuando falta.
+        PublishedTime: string.Empty,
+        Source: "oficial",
+        IsStale: suggestion.IsStale,
+        FetchedAt: suggestion.FetchedAt);
 
     /// <summary>
     /// Cuanto espera el dashboard la cotizacion en vivo antes de degradarse al snapshot persistido. Corto a

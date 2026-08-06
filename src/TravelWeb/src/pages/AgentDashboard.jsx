@@ -64,8 +64,10 @@ export default function AgentDashboard() {
             </div>
 
             {/* Tira fina del dólar Banco Nación (P5=B, firmado): el vendedor ve exactamente la
-                misma tira que administración — ver el comentario completo en AdminDashboard.jsx. */}
-            <DolarBnaTira rate={dashboard.bnaUsdSellerRate} />
+                misma tira que administración — ver el comentario completo en AdminDashboard.jsx.
+                onRefrescar=loadDashboard: el botón "actualizar" (2026-08-05) pide de nuevo el
+                dashboard completo despues de encolar la sincronizacion, no solo el dólar. */}
+            <DolarBnaTira rate={dashboard.bnaUsdSellerRate} onRefrescar={loadDashboard} />
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {/* B3 (revisión 2026-07-27): "Ventas personales" separa ARS/USD igual que el

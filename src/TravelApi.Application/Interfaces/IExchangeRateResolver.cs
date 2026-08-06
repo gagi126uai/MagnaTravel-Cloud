@@ -36,6 +36,30 @@ public interface IExchangeRateResolver
     /// </param>
     Task<ExchangeRateSuggestion?> GetSuggestionAsync(
         string currency, DateOnly date, CancellationToken ct, bool excludePracticeOfficialData = false);
+
+    /// <summary>
+    /// TRABAJO 2 (boton "actualizar" de la tira del dolar, 2026-08-05, orden textual del dueño):
+    /// dispara EXPLICITAMENTE una sincronizacion on-demand para <paramref name="currency"/> — mismo
+    /// mecanismo fire-and-forget (<c>IBackgroundJobClient.Enqueue</c>) y MISMO debounce de 5 minutos
+    /// (misma clave de cache) que ya usa <see cref="GetSuggestionAsync"/> cuando detecta que no hay
+    /// fila de hoy. Compartir la clave de debounce es a proposito: un click del usuario y el disparo
+    /// automatico de una consulta normal NO deberian poder encolar el job dos veces en la misma
+    /// ventana de 5 minutos.
+    ///
+    /// <para>A diferencia del disparo automatico de <see cref="GetSuggestionAsync"/>, este metodo NO
+    /// chequea si ya hay fila de hoy antes de encolar: es un pedido EXPLICITO del usuario ("el dolar
+    /// esta viejo, buscalo de nuevo AHORA"), asi que si el debounce lo permite, encola sin
+    /// condiciones extra.</para>
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> si efectivamente encolo el job en esta llamada; <c>false</c> si estaba debounced
+    /// (ya se encolo hace menos de 5 minutos, por este mismo boton o por el disparo automatico) o si
+    /// no hay <c>IBackgroundJobClient</c> disponible (tests con el ctor corto). En los dos casos el
+    /// endpoint que llama a esto responde 202 igual (P-21: nunca se le hace saber al usuario un
+    /// detalle tecnico como "estaba debounced" — para el, el pedido "ya esta en camino" de cualquier
+    /// forma).
+    /// </returns>
+    Task<bool> RequestManualSyncAsync(string currency, CancellationToken ct);
 }
 
 /// <summary>

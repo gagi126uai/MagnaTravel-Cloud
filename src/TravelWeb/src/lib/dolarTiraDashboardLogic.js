@@ -64,3 +64,51 @@ export function hayOtrasMonedasParaMostrar(rate) {
 export function faltaDatoDelDolar(rate) {
   return !rate || rate.value === null || rate.value === undefined;
 }
+
+// ─── Botón "actualizar" (2026-08-05, orden textual del dueño mirando el ──────
+// dashboard EN VIVO: "yo pondría un botón para actualizar" — el scraper del
+// BNA venía roto desde el 8/7 y su recuerdo viejo le ganaba al dato fresco de
+// la libreta. Ver TRABAJO 2 del backend: POST /api/exchange-rates/refresh.
+
+/**
+ * Los dos únicos estados del botón: "quieto" (nada en curso, se puede
+ * apretar) y "buscando" (ya se pidió la actualización, se espera la
+ * respuesta del job en background — el botón queda deshabilitado para no
+ * encolar el pedido mil veces si el usuario lo aprieta a repetición).
+ */
+export const ESTADO_ACTUALIZAR_DOLAR = Object.freeze({
+  QUIETO: "quieto",
+  BUSCANDO: "buscando",
+});
+
+/**
+ * Cuánto esperar (en milisegundos) antes de volver a pedir
+ * `/reports/dashboard` después de haber encolado la sincronización, para
+ * darle tiempo al job en background a traer el dato nuevo. Una sola vez, no
+ * polling: si en esa ventana el job no llegó a terminar, el usuario ve el
+ * dato de siempre y puede volver a apretar "actualizar".
+ */
+export const ESPERA_REFRESCO_DOLAR_MS = 9000;
+
+/**
+ * Texto que se muestra adentro del botón según el estado.
+ *
+ * @param {string} estado uno de los valores de {@link ESTADO_ACTUALIZAR_DOLAR}
+ * @returns {string}
+ */
+export function textoBotonActualizarDolar(estado) {
+  return estado === ESTADO_ACTUALIZAR_DOLAR.BUSCANDO ? "buscando…" : "actualizar";
+}
+
+/**
+ * El botón se deshabilita mientras está "buscando": el backend ya tiene su
+ * propio candado de 5 minutos (no encola el job dos veces), pero acá alcanza
+ * con no dejar apretarlo de nuevo mientras la primera respuesta todavía no
+ * volvió — es una mejora de UX, no una segunda fuente de verdad.
+ *
+ * @param {string} estado
+ * @returns {boolean}
+ */
+export function botonActualizarDolarDeshabilitado(estado) {
+  return estado === ESTADO_ACTUALIZAR_DOLAR.BUSCANDO;
+}

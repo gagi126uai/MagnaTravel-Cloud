@@ -134,12 +134,10 @@ public class ExchangeRateResolver : IExchangeRateResolver
             return;
         }
 
-        var debounceKey = $"fx:ondemand-sync-debounce:{currency}";
-        if (_cache.TryGetValue(debounceKey, out _))
+        if (!TryClaimOnDemandSyncDebounceSlot(currency))
         {
             return;
         }
-        _cache.Set(debounceKey, true, OnDemandSyncDebounceTtl);
 
         bool hasTodayRow = await _context.ExchangeRateQuotes
             .AsNoTracking()
@@ -149,10 +147,64 @@ public class ExchangeRateResolver : IExchangeRateResolver
             return;
         }
 
-        _backgroundJobClient.Enqueue<ExchangeRateSyncJob>(job => job.RunAsync(CancellationToken.None));
+        EnqueueSyncJob();
         _logger.LogInformation(
             "ExchangeRateResolver: no habia cotizacion de hoy ({Today}) para {Currency}; se encolo una sincronizacion on-demand.",
             todayArgentina, currency);
+    }
+
+    /// <summary>
+    /// TRABAJO 2 (boton "actualizar" de la tira del dolar, 2026-08-05): ver el contrato completo en
+    /// <see cref="IExchangeRateResolver.RequestManualSyncAsync"/>. Reusa la MISMA clave de debounce que
+    /// <see cref="EnsureTodayCoverageOnDemandAsync"/> (<see cref="TryClaimOnDemandSyncDebounceSlot"/>),
+    /// pero — a diferencia de ese metodo — no chequea si ya hay fila de hoy: el usuario esta pidiendo
+    /// EXPLICITAMENTE que se busque de nuevo, asi que alcanza con no estar debounced.
+    /// </summary>
+    public Task<bool> RequestManualSyncAsync(string currency, CancellationToken ct)
+    {
+        if (_backgroundJobClient is null)
+        {
+            return Task.FromResult(false);
+        }
+
+        if (!TryClaimOnDemandSyncDebounceSlot(currency))
+        {
+            return Task.FromResult(false);
+        }
+
+        EnqueueSyncJob();
+        _logger.LogInformation(
+            "ExchangeRateResolver: el boton 'actualizar' pidio una sincronizacion manual para {Currency}; se encolo.",
+            currency);
+        return Task.FromResult(true);
+    }
+
+    /// <summary>
+    /// "Reclama" la ventana de 5 minutos del debounce on-demand para <paramref name="currency"/>: si ya
+    /// habia una ventana abierta (por este mismo camino o por el otro), devuelve <c>false</c> sin tocar
+    /// nada. Compartir esta clave entre <see cref="EnsureTodayCoverageOnDemandAsync"/> (disparo
+    /// automatico) y <see cref="RequestManualSyncAsync"/> (boton manual) es el punto central de
+    /// TRABAJO 2: los dos caminos NO pueden encolar el job dos veces en la misma ventana.
+    /// </summary>
+    private bool TryClaimOnDemandSyncDebounceSlot(string currency)
+    {
+        var debounceKey = OnDemandSyncDebounceCacheKey(currency);
+        if (_cache.TryGetValue(debounceKey, out _))
+        {
+            return false;
+        }
+        _cache.Set(debounceKey, true, OnDemandSyncDebounceTtl);
+        return true;
+    }
+
+    private static string OnDemandSyncDebounceCacheKey(string currency) => $"fx:ondemand-sync-debounce:{currency}";
+
+    /// <summary>Solo el ENCOLADO en si (sin loguear: cada caller loguea su propio mensaje, porque
+    /// cada uno tiene contexto distinto que contar — "no habia fila de hoy" vs "lo pidio el
+    /// botón"). El job en si solo sincroniza USD hoy (MVP): no hace falta pasarle la moneda.</summary>
+    private void EnqueueSyncJob()
+    {
+        _backgroundJobClient!.Enqueue<ExchangeRateSyncJob>(job => job.RunAsync(CancellationToken.None));
     }
 
     private async Task<bool> GetIsProductionAsync(CancellationToken ct)

@@ -1,10 +1,15 @@
-import React, { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { ChevronDown, RefreshCw } from "lucide-react";
+import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
 import {
+    ESPERA_REFRESCO_DOLAR_MS,
+    ESTADO_ACTUALIZAR_DOLAR,
+    botonActualizarDolarDeshabilitado,
     faltaDatoDelDolar,
     formatearFechaDolarTira,
     hayOtrasMonedasParaMostrar,
+    textoBotonActualizarDolar,
 } from "../lib/dolarTiraDashboardLogic";
 
 // Copia CARÁCTER POR CARÁCTER del contenedor de ReservaKPIs.jsx:19 (molde firmado, guía P2=A).
@@ -31,11 +36,68 @@ const CLASES_ROTULO = "text-[11px] font-bold uppercase tracking-wide text-slate-
  *
  * Decisiones completas: docs/ux/specs/2026-08-06-dolar-en-dashboard.md (P1..P6,
  * firmada 2026-08-05).
+ *
+ * Botón "actualizar" (2026-08-05, TARDE — orden textual del dueño mirando el dashboard EN VIVO,
+ * pisa la línea "NO botón de refrescar ni link" que dice la spec de arriba, firmada esa misma
+ * mañana): el scraper del BNA venía roto desde el 8/7 y su recuerdo viejo le ganaba siempre al
+ * dato fresco. El botón es fantasma gris, mismo lenguaje que el resto de la tira (P11=A: no pide
+ * ninguna decisión, no lleva color) — pendiente: trasladar esta decisión a una adenda formal del
+ * doc de specs (ver informe de la tanda).
+ *
+ * @param {{ value?: number|null }|null} rate
+ * @param {() => void} [onRefrescar] callback para volver a pedir `/reports/dashboard` — lo maneja
+ *   la página dueña del estado (`AdminDashboard.jsx` / `AgentDashboard.jsx`), este componente no
+ *   guarda el dashboard entero.
  */
-export function DolarBnaTira({ rate }) {
+export function DolarBnaTira({ rate, onRefrescar }) {
     // Estado propio SOLO para abrir/cerrar "otras monedas" — no se persiste entre
     // cargas de la página, como el mismo patrón de AvisosPlegadosBar.jsx.
     const [otrasMonedasAbierto, setOtrasMonedasAbierto] = useState(false);
+    const [estadoActualizar, setEstadoActualizar] = useState(ESTADO_ACTUALIZAR_DOLAR.QUIETO);
+    const timeoutRefrescoRef = useRef(null);
+
+    // Limpieza si el componente se desmonta con un refresco en curso (ej. el usuario navega a otra
+    // pantalla apenas apretó el botón): evita el warning de React "setState en un componente
+    // desmontado" y una llamada a onRefrescar que ya nadie necesita.
+    useEffect(() => () => {
+        if (timeoutRefrescoRef.current) clearTimeout(timeoutRefrescoRef.current);
+    }, []);
+
+    const handleActualizarClick = async () => {
+        if (botonActualizarDolarDeshabilitado(estadoActualizar)) return;
+
+        setEstadoActualizar(ESTADO_ACTUALIZAR_DOLAR.BUSCANDO);
+        try {
+            await api.post("/exchange-rates/refresh");
+        } catch {
+            // Mismo patrón que useTipoCambioSugerido: si el pedido falla (red caída, sin permiso,
+            // lo que sea), la tira queda EXACTAMENTE como estaba — sin toast rojo, no es una falla
+            // que el usuario tenga que resolver. No tiene sentido esperar ni refrescar el dashboard
+            // si ni siquiera se pudo pedir la actualización.
+            setEstadoActualizar(ESTADO_ACTUALIZAR_DOLAR.QUIETO);
+            return;
+        }
+
+        // El backend encoló el job en background y ya respondió (fire-and-forget): le damos unos
+        // segundos de margen y volvemos a pedir el dashboard UNA sola vez, no polling infinito.
+        timeoutRefrescoRef.current = setTimeout(() => {
+            setEstadoActualizar(ESTADO_ACTUALIZAR_DOLAR.QUIETO);
+            onRefrescar?.();
+        }, ESPERA_REFRESCO_DOLAR_MS);
+    };
+
+    const botonActualizar = (
+        <button
+            type="button"
+            onClick={handleActualizarClick}
+            disabled={botonActualizarDolarDeshabilitado(estadoActualizar)}
+            data-testid="dolar-tira-actualizar"
+            className="flex items-center gap-1 text-[11px] font-bold text-slate-400 transition-colors hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-70 dark:text-slate-500 dark:hover:text-slate-300"
+        >
+            <RefreshCw className="h-3 w-3" aria-hidden="true" />
+            {textoBotonActualizarDolar(estadoActualizar)}
+        </button>
+    );
 
     if (faltaDatoDelDolar(rate)) {
         return (
@@ -44,6 +106,7 @@ export function DolarBnaTira({ rate }) {
                 <span className="text-sm font-medium text-slate-400 dark:text-slate-500">
                     sin dato hoy
                 </span>
+                <span className="ml-auto">{botonActualizar}</span>
             </div>
         );
     }
@@ -102,9 +165,12 @@ export function DolarBnaTira({ rate }) {
                 </div>
             )}
 
-            {textoFecha && (
-                <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">{textoFecha}</span>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+                {textoFecha && (
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500">{textoFecha}</span>
+                )}
+                {botonActualizar}
+            </div>
         </div>
     );
 }
