@@ -24,19 +24,26 @@ public class ReportService : IReportService
     // instancian ReportService sin el; con null se usa el fallback inline (misma query) — ver
     // BuildDashboardByCurrencyAsync.
     private readonly IFinancePositionService? _financePositionService;
+    // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): opcional para no romper los unit tests
+    // que instancian ReportService con el ctor de 2 args (mismo patron que los demas opcionales de
+    // arriba). Sin este servicio inyectado, GetDashboardBnaRateAsync simplemente no intenta el
+    // fallback "oficial" y el widget se comporta EXACTO como antes de esta obra.
+    private readonly IExchangeRateResolver? _exchangeRateResolver;
 
     public ReportService(
         AppDbContext dbContext,
         IBnaExchangeRateService bnaExchangeRateService,
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
-        IFinancePositionService? financePositionService = null)
+        IFinancePositionService? financePositionService = null,
+        IExchangeRateResolver? exchangeRateResolver = null)
     {
         _dbContext = dbContext;
         _bnaExchangeRateService = bnaExchangeRateService;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
         _financePositionService = financePositionService;
+        _exchangeRateResolver = exchangeRateResolver;
     }
 
     public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
@@ -290,6 +297,13 @@ public class ReportService : IReportService
         // null y el front ya lo tolera.
         var bnaUsdSellerRate = await GetDashboardBnaRateAsync(cancellationToken);
 
+        // Tarjeta 2 (ADR-011, enmienda 2026-08-05, decision firmada del dueño): "Dólar para facturar
+        // (ARCA)" — el MISMO valor que la pantalla de facturar sugeriria ahora mismo. A diferencia de
+        // bnaUsdSellerRate, esta NO filtra datos de práctica: en homologacion es correcto mostrar el
+        // numero de práctica (con el aviso EsDePrueba prendido), porque es el que ARCA va a exigir en
+        // el comprobante.
+        var dolarParaFacturar = await GetDolarParaFacturarAsync(cancellationToken);
+
         // ADR-021 Capa 6: desgloses por moneda (aditivos). Cobros/pagos por moneda REAL del movimiento;
         // ventas/costos por moneda del servicio (tabla hija filtrada por CreatedAt del mes); saldo
         // pendiente y cuentas por pagar por moneda del saldo contra las tablas hijas. CostosDelMes y
@@ -316,8 +330,49 @@ public class ReportService : IReportService
             DistribucionEstados: statusDistribution,
             BnaUsdSellerRate: bnaUsdSellerRate,
             ActivePotentialCustomers: activePotentialCustomers,
-            PorMoneda: porMoneda
+            PorMoneda: porMoneda,
+            DolarParaFacturar: dolarParaFacturar
         );
+    }
+
+    /// <summary>
+    /// Tarjeta 2 del dashboard (ADR-011, enmienda 2026-08-05, decision firmada del dueño): pregunta al
+    /// resolver EXACTAMENTE lo mismo que <c>GET /api/exchange-rates/suggestion</c> le contestaria a la
+    /// pantalla de facturar ahora mismo — mismo <c>excludePracticeOfficialData</c> en <c>false</c>
+    /// (default), a proposito: esta tarjeta muestra "lo que la factura va a usar", no "un dato real
+    /// garantizado" (para eso esta la tarjeta 1, <see cref="GetDashboardBnaRateAsync"/>).
+    ///
+    /// <para>Nunca tira: la cotizacion es informativa, un fallo del resolver no puede tumbar el
+    /// dashboard. Sin resolver inyectado (unit tests con el ctor corto) o sin sugerencia disponible,
+    /// devuelve <c>null</c> y el front muestra el estado vacio de la tarjeta.</para>
+    /// </summary>
+    private async Task<DolarParaFacturarDto?> GetDolarParaFacturarAsync(CancellationToken cancellationToken)
+    {
+        if (_exchangeRateResolver is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var hoyArgentina = DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday());
+            var suggestion = await _exchangeRateResolver.GetSuggestionAsync("USD", hoyArgentina, cancellationToken);
+            if (suggestion is null)
+            {
+                return null;
+            }
+
+            // Mismo criterio que la leyenda de la pantalla de facturar (hallazgo normativo 2026-08-05,
+            // validacion ARCA 10240): un AfipOficial que no vino del entorno productivo de ARCA es un
+            // numero de práctica, no el dolar real.
+            bool esDePrueba = suggestion.Source == ExchangeRateSource.AfipOficial && !suggestion.IsProductionSource;
+
+            return new DolarParaFacturarDto(Value: suggestion.Rate, RateDate: suggestion.RateDate, EsDePrueba: esDePrueba);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -325,8 +380,14 @@ public class ReportService : IReportService
     ///
     /// <para>Corre el fetch en vivo (que puede ir a la red, timeout interno de 10s) contra una ventana corta
     /// (<see cref="DashboardBnaTimeout"/>). Si gana la ventana, o si el fetch falla, nos degradamos al ultimo
-    /// snapshot persistido en DB (lectura local, sin red). Si ni siquiera hay snapshot persistido, devolvemos
-    /// null. NUNCA propaga excepcion: la cotizacion es informativa y no puede tumbar el dashboard.</para>
+    /// snapshot persistido en DB (lectura local, sin red). NUNCA propaga excepcion: la cotizacion es
+    /// informativa y no puede tumbar el dashboard.</para>
+    ///
+    /// <para>ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): si ni el fetch en vivo ni el snapshot
+    /// persistido tienen dato (el scraper del BNA viene fallando hace rato), esta ultima parada NO estaba
+    /// antes — el widget quedaba mudo. Ahora, DESPUES de agotar la cadena BNA de siempre, probamos la
+    /// libreta de <c>ExchangeRateQuotes</c> (fuente ARCA) para HOY. Si tiene dato, el widget lo muestra
+    /// etiquetado con honestidad como "oficial" en vez de mentir que es "BNA billetes".</para>
     ///
     /// <para>El CancellationTokenSource se linkea al token del request para que, si el usuario abandona la
     /// pantalla, tambien se corte el intento en vivo.</para>
@@ -337,9 +398,10 @@ public class ReportService : IReportService
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(DashboardBnaTimeout);
 
+        BnaUsdSellerRateDto? bnaRate;
         try
         {
-            return await _bnaExchangeRateService.GetUsdSellerRateAsync(timeoutSource.Token);
+            bnaRate = await _bnaExchangeRateService.GetUsdSellerRateAsync(timeoutSource.Token);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -347,8 +409,16 @@ public class ReportService : IReportService
             // fetch en vivo. Degradamos al snapshot persistido leyendo con el token ORIGINAL del request (no el
             // ya cancelado). Si el usuario abandono el request, cancellationToken.IsCancellationRequested es true
             // y dejamos que la excepcion de cancelacion del request se propague (no es nuestro caso a degradar).
-            return await TryLoadPersistedBnaRateAsync(cancellationToken);
+            bnaRate = await TryLoadPersistedBnaRateAsync(cancellationToken);
         }
+
+        if (bnaRate is not null)
+        {
+            return bnaRate;
+        }
+
+        // Cadena BNA agotada sin dato util: unica parada nueva de esta obra.
+        return await TryLoadOfficialFallbackRateAsync(cancellationToken);
     }
 
     /// <summary>
@@ -363,6 +433,60 @@ public class ReportService : IReportService
         }
         catch (Exception)
         {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// ADR-011 (enmienda 2026-08-05, decision firmada del dueño): fallback al resolver de la libreta
+    /// de cotizaciones cuando el BNA no trajo nada (ni en vivo ni el ultimo snapshot). SOLO lectura
+    /// local (el resolver nunca le pega a ARCA en el camino interactivo, ver
+    /// <see cref="IExchangeRateResolver"/>), asi que no hace falta otra ventana de timeout — ya
+    /// estamos en el camino "degradado" del dashboard.
+    ///
+    /// <para><b>Pide <c>excludePracticeOfficialData: true</c> a proposito</b>: esta es la tarjeta
+    /// "solo datos reales" (tarjeta 1). Un <c>AfipOficial</c> de homologacion (numero de práctica) NO
+    /// es una referencia valida para cotizarle al cliente — para eso esta la tarjeta 2
+    /// (<see cref="GetDolarParaFacturarAsync"/>), que si lo muestra con su aviso correspondiente.</para>
+    ///
+    /// <para>Si no hay resolver inyectado (unit tests con el ctor corto) o la libreta no tiene dato
+    /// REAL para HOY, devuelve null: el widget queda igual que antes de esta obra (nunca inventa un
+    /// numero).</para>
+    /// </summary>
+    private async Task<BnaUsdSellerRateDto?> TryLoadOfficialFallbackRateAsync(CancellationToken cancellationToken)
+    {
+        if (_exchangeRateResolver is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var hoyArgentina = DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday());
+            var suggestion = await _exchangeRateResolver.GetSuggestionAsync(
+                "USD", hoyArgentina, cancellationToken, excludePracticeOfficialData: true);
+            if (suggestion is null)
+            {
+                return null;
+            }
+
+            return new BnaUsdSellerRateDto(
+                Value: suggestion.Rate,
+                // La API publica de respaldo solo trae USD: nunca inventamos euro/real (T-5, "el
+                // sistema no inventa datos"). El front oculta esos tiles cuando vienen null.
+                EuroValue: null,
+                RealValue: null,
+                PublishedDate: suggestion.RateDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+                // Esta fuente es diaria (no trae "hora de publicacion" como el scrape del BNA): vacio
+                // en vez de inventar una hora que no existe. El front ya muestra "-" cuando falta.
+                PublishedTime: string.Empty,
+                Source: "oficial",
+                IsStale: suggestion.IsStale,
+                FetchedAt: suggestion.FetchedAt);
+        }
+        catch (Exception)
+        {
+            // Misma regla que el resto de la cadena BNA: la cotizacion es informativa, jamas tumba el dashboard.
             return null;
         }
     }

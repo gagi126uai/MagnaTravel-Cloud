@@ -17,12 +17,16 @@ namespace TravelApi.Infrastructure.Services;
 ///
 /// <para><b>Que hace cada corrida</b> (§7.2, en este orden):
 /// <list type="number">
-///   <item>Cotizacion de HOY (hora argentina) desde ARCA. Si ARCA falla, cae al respaldo del
-///   scraper de Banco Nacion (<see cref="IBnaExchangeRateService"/>, que ya existe) SOLO para hoy.</item>
+///   <item>Cotizacion de HOY (hora argentina) desde ARCA. Si ARCA falla, prueba el respaldo REAL de
+///   una API publica (<see cref="IOfficialDollarPublicApiService.GetTodayRateAsync"/>, ADR-011
+///   enmienda 2026-08-05). Si esa tambien falla, cae al scraper de Banco Nacion
+///   (<see cref="IBnaExchangeRateService"/>) — SOLO para hoy, en ese orden.</item>
 ///   <item>Backfill de los ultimos <see cref="BackfillDays"/> dias ANTERIORES a hoy: para cada
-///   fecha sin fila oficial todavia, vuelve a preguntarle a ARCA. Es la reconciliacion que pide
-///   T-12 — si el job no corrio un dia, o ARCA estuvo caido, la corrida siguiente se auto-repara
-///   sola sin intervencion manual.</item>
+///   fecha sin fila oficial todavia, vuelve a preguntarle a ARCA; si falla, prueba la MISMA API
+///   publica de respaldo pero con su variante "por fecha" (el scraper BNA no se usa aca: solo sabe
+///   dar el dato de "ahora", no tiene historial). Es la reconciliacion que pide T-12 — si el job no
+///   corrio un dia, o ARCA estuvo caido, la corrida siguiente se auto-repara sola sin intervencion
+///   manual.</item>
 /// </list></para>
 ///
 /// <para><b>Nunca tira una excepcion hacia afuera</b> (§7.2 punto 4): un job que explota deja de
@@ -63,19 +67,26 @@ public class ExchangeRateSyncJob
     private readonly IBnaExchangeRateService _bnaExchangeRateService;
     private readonly IMemoryCache _cache;
     private readonly ILogger<ExchangeRateSyncJob> _logger;
+    // ADR-011 (enmienda 2026-08-05): opcional para no romper los tests existentes que instancian el
+    // job con los 5 args de siempre (mismo patron que los opcionales de ReportService). Sin este
+    // servicio inyectado, el job simplemente NO intenta el respaldo de API publica y se comporta
+    // EXACTO como antes de esta obra (ARCA -> scraper BNA para hoy; solo ARCA en el backfill).
+    private readonly IOfficialDollarPublicApiService? _officialDollarPublicApiService;
 
     public ExchangeRateSyncJob(
         AppDbContext context,
         IAfipService afipService,
         IBnaExchangeRateService bnaExchangeRateService,
         IMemoryCache cache,
-        ILogger<ExchangeRateSyncJob> logger)
+        ILogger<ExchangeRateSyncJob> logger,
+        IOfficialDollarPublicApiService? officialDollarPublicApiService = null)
     {
         _context = context;
         _afipService = afipService;
         _bnaExchangeRateService = bnaExchangeRateService;
         _cache = cache;
         _logger = logger;
+        _officialDollarPublicApiService = officialDollarPublicApiService;
     }
 
     /// <summary>Ejecuta una pasada del job. Hangfire la invoca con la cron registrada en Program.cs;
@@ -92,13 +103,23 @@ public class ExchangeRateSyncJob
         bool todaySyncedFromArca = await TrySyncDateFromArcaAsync(today, isProduction, ct);
         if (!todaySyncedFromArca)
         {
-            await TrySyncTodayFromBnaFallbackAsync(today, isProduction, ct);
+            bool todaySyncedFromPublicApi = await TrySyncTodayFromPublicApiAsync(today, ct);
+            if (!todaySyncedFromPublicApi)
+            {
+                await TrySyncTodayFromBnaFallbackAsync(today, isProduction, ct);
+            }
         }
 
         for (int daysBack = 1; daysBack <= BackfillDays; daysBack++)
         {
             var date = today.AddDays(-daysBack);
-            await TrySyncDateFromArcaAsync(date, isProduction, ct);
+            bool syncedFromArca = await TrySyncDateFromArcaAsync(date, isProduction, ct);
+            if (!syncedFromArca)
+            {
+                // El scraper BNA NO participa del backfill (§7.2 punto 1 de arriba): solo sabe dar el
+                // dato de "ahora mismo", no tiene forma de contestar "cuanto valia el dolar hace 3 dias".
+                await TrySyncDateFromPublicApiAsync(date, ct);
+            }
         }
     }
 
@@ -192,6 +213,112 @@ public class ExchangeRateSyncJob
             rate: bnaSnapshot.Value,
             arcaFchCotiz: null,
             isProduction: isProduction,
+            ct: ct);
+    }
+
+    /// <summary>
+    /// Respaldo REAL (ADR-011, enmienda 2026-08-05): ARCA no contesto para HOY, probamos la API
+    /// publica (dolarapi.com) ANTES de caer al scraper BNA. Se salta la llamada de red si ya hay una
+    /// fila <see cref="ExchangeRateSource.OficialPorApi"/> para hoy (idempotencia, misma logica que
+    /// <see cref="TrySyncDateFromArcaAsync"/>). Devuelve <c>true</c> si quedo cubierto (para que el
+    /// caller no intente TAMBIEN el scraper BNA de forma redundante).
+    /// </summary>
+    private async Task<bool> TrySyncTodayFromPublicApiAsync(DateOnly today, CancellationToken ct)
+    {
+        if (_officialDollarPublicApiService is null)
+        {
+            return false;
+        }
+
+        bool alreadyCovered = await _context.ExchangeRateQuotes
+            .AsNoTracking()
+            .AnyAsync(q => q.Currency == Currency && q.QuoteDate == today && q.Source == ExchangeRateSource.OficialPorApi, ct);
+        if (alreadyCovered)
+        {
+            return true;
+        }
+
+        PublicDollarRateReading? reading;
+        try
+        {
+            reading = await _officialDollarPublicApiService.GetTodayRateAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            // IOfficialDollarPublicApiService ya atrapa sus propios fallos y devuelve null; esta
+            // ultima red es por si algo IMPREVISTO se escapa (mismo criterio que TrySyncDateFromArcaAsync).
+            _logger.LogWarning(ex,
+                "ExchangeRateSyncJob: fallo inesperado consultando la API publica de respaldo para {Currency}/{Date}.",
+                Currency, today);
+            return false;
+        }
+
+        if (reading is null)
+        {
+            return false;
+        }
+
+        await EnsureRowExistsAsync(
+            quoteDate: today,
+            source: ExchangeRateSource.OficialPorApi,
+            providerName: reading.ProviderName,
+            rate: reading.Rate,
+            arcaFchCotiz: null,
+            // Dato REAL (no depende de en que ambiente de ARCA esta corriendo el sistema): se marca
+            // IsProductionSource=true SIEMPRE, literal, no la variable "isProduction" de la corrida
+            // (que es el ambiente de ARCA, un concepto que a esta fuente no le aplica).
+            isProduction: true,
+            ct: ct);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Backfill (ADR-011, enmienda 2026-08-05): ARCA no contesto para <paramref name="date"/>, probamos
+    /// la variante "por fecha" de la API publica (argentinadatos.com). No hay caida a BNA aca: el
+    /// scraper no tiene historial, solo el dato de "ahora". Si tampoco hay dato, la fecha queda como
+    /// hueco para que una corrida futura lo reintente (mismo criterio que el backfill de ARCA).
+    /// </summary>
+    private async Task TrySyncDateFromPublicApiAsync(DateOnly date, CancellationToken ct)
+    {
+        if (_officialDollarPublicApiService is null)
+        {
+            return;
+        }
+
+        bool alreadyCovered = await _context.ExchangeRateQuotes
+            .AsNoTracking()
+            .AnyAsync(q => q.Currency == Currency && q.QuoteDate == date && q.Source == ExchangeRateSource.OficialPorApi, ct);
+        if (alreadyCovered)
+        {
+            return;
+        }
+
+        PublicDollarRateReading? reading;
+        try
+        {
+            reading = await _officialDollarPublicApiService.GetRateForDateAsync(date, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "ExchangeRateSyncJob: fallo inesperado consultando la API publica de respaldo (backfill) para {Currency}/{Date}.",
+                Currency, date);
+            return;
+        }
+
+        if (reading is null)
+        {
+            return;
+        }
+
+        await EnsureRowExistsAsync(
+            quoteDate: date,
+            source: ExchangeRateSource.OficialPorApi,
+            providerName: reading.ProviderName,
+            rate: reading.Rate,
+            arcaFchCotiz: null,
+            isProduction: true,
             ct: ct);
     }
 

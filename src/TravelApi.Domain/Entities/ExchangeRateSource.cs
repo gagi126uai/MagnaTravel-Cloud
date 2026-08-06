@@ -52,4 +52,20 @@ public enum ExchangeRateSource
     /// no afirma que sea obligatoria.</para>
     /// </summary>
     BNA_VendedorDivisa = 6,
+
+    /// <summary>
+    /// ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): dolar oficial minorista traido de una
+    /// API publica (dolarapi.com para hoy, argentinadatos.com para fechas pasadas) como respaldo
+    /// REAL cuando ARCA no sirve un numero util (ej. homologacion, que devuelve cotizaciones de
+    /// juguete — hallazgo del dueño 2026-08-05). Es un PROXY del dolar de mostrador de Banco
+    /// Nacion, no el TC oficial de ARCA en si: el proveedor tecnico exacto ("dolarapi"/
+    /// "argentinadatos") vive en <see cref="ExchangeRateQuote.ProviderName"/>, no en este enum.
+    ///
+    /// <para><b>Numero explicito 7 a proposito</b>, mismo criterio que <see cref="BNA_VendedorDivisa"/>:
+    /// se agrega AL FINAL sin renumerar (0..6 ya persistidos como int). Verificado que el unico CHECK
+    /// SQL sobre <c>FiscalSnapshot_Source</c> (<c>chk_BookingCancellations_fiscalsnapshot_consistent</c>)
+    /// solo exige <c>&lt;&gt; 0</c>, no enumera un whitelist de enteros — agregar este valor no rompe
+    /// ese constraint.</para>
+    /// </summary>
+    OficialPorApi = 7,
 }

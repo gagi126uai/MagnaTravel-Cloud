@@ -39,6 +39,7 @@ import {
 } from "recharts";
 
 import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
+import { DolarParaFacturarCard } from "../components/DolarParaFacturarCard";
 import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
@@ -129,7 +130,14 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
+            {/* ADR-011 (enmienda 2026-08-05, decision firmada del dueño): dos tarjetas hermanas, mismo
+                molde visual. La 1ra es "solo datos reales" (nunca un numero de práctica de ARCA); la
+                2da es "lo que la factura va a usar ahora mismo" (en homologación, avisa con el badge
+                ambar en vez de esconder el numero de práctica). */}
+            <div className="grid gap-4 md:grid-cols-2">
+                <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
+                <DolarParaFacturarCard dolar={dashboard.dolarParaFacturar} />
+            </div>
 
             {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

@@ -106,4 +106,78 @@ public class Adr022DashboardBnaDegradationTests
         // Camino feliz: no se toca el respaldo persistido.
         bna.Verify(b => b.GetPersistedUsdSellerRateAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    /// <summary>
+    /// ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): cuando el scraper del BNA se quedo sin dato
+    /// (ni en vivo ni el ultimo snapshot persistido), el dashboard ya NO se queda mudo — cae a la libreta
+    /// de <see cref="IExchangeRateResolver"/> (fuente ARCA) y lo etiqueta honestamente como "oficial".
+    /// </summary>
+    [Fact]
+    public async Task Dashboard_WhenBnaChainHasNoData_FallsBackToOfficialResolver_TaggedAsOficial()
+    {
+        await using var context = CreateContext();
+
+        var bna = new Mock<IBnaExchangeRateService>();
+        bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("BNA caido"));
+        // Tampoco hay snapshot persistido: la cadena BNA de siempre queda en null.
+        bna.Setup(b => b.GetPersistedUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BnaUsdSellerRateDto?)null);
+
+        var resolver = new Mock<IExchangeRateResolver>();
+        // excludePracticeOfficialData EN true a proposito: esta tarjeta ("solo datos reales") tiene
+        // que pedirle al resolver el modo honesto — si el service alguna vez regresara a pedir el modo
+        // por defecto (false, el de facturar), este mock ya no matchea y el test cae a null.
+        resolver
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1152.202m,
+                RateDate: new DateOnly(2026, 08, 04),
+                Source: ExchangeRateSource.OficialPorApi,
+                ProviderName: "dolarapi",
+                ArcaFchCotiz: null,
+                IsStale: true,
+                QuoteId: 7,
+                FetchedAt: DateTime.UtcNow.AddHours(-1),
+                IsProductionSource: true));
+
+        var service = new ReportService(context, bna.Object, exchangeRateResolver: resolver.Object);
+
+        var dashboard = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.NotNull(dashboard.BnaUsdSellerRate);
+        Assert.Equal(1152.202m, dashboard.BnaUsdSellerRate!.Value);
+        // La API publica de respaldo solo trae USD: nunca se inventa euro/real.
+        Assert.Null(dashboard.BnaUsdSellerRate.EuroValue);
+        Assert.Null(dashboard.BnaUsdSellerRate.RealValue);
+        Assert.True(dashboard.BnaUsdSellerRate.IsStale);
+    }
+
+    /// <summary>
+    /// Mismo escenario de arriba, pero la libreta oficial TAMPOCO tiene dato para hoy (job todavia no
+    /// corrio, o esta fuera de la ventana de respaldo). El dashboard se comporta EXACTO que antes de esta
+    /// obra: responde igual, la cotizacion viene null y el front la tolera.
+    /// </summary>
+    [Fact]
+    public async Task Dashboard_WhenBnaChainHasNoData_AndOfficialResolverHasNoSuggestionEither_DegradesToNull()
+    {
+        await using var context = CreateContext();
+
+        var bna = new Mock<IBnaExchangeRateService>();
+        bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("BNA caido"));
+        bna.Setup(b => b.GetPersistedUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BnaUsdSellerRateDto?)null);
+
+        var resolver = new Mock<IExchangeRateResolver>();
+        resolver
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync((ExchangeRateSuggestion?)null);
+
+        var service = new ReportService(context, bna.Object, exchangeRateResolver: resolver.Object);
+
+        var dashboard = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.Null(dashboard.BnaUsdSellerRate);
+    }
 }

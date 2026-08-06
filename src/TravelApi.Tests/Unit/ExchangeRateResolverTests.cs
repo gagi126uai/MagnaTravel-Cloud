@@ -245,4 +245,88 @@ public class ExchangeRateResolverTests
         Assert.False(suggestion!.IsStale);
         Assert.Equal(hoyArgentina, suggestion.RateDate);
     }
+
+    // ============================================================
+    // ADR-011 (enmienda 2026-08-05, hallazgo normativo "validacion ARCA 10240"): el flag
+    // excludePracticeOfficialData bifurca el resolver en dos modos. Tests 9-11 abajo.
+    // ============================================================
+
+    /// <summary>
+    /// Test 9: comportamiento de SIEMPRE (facturar, flag en false) — sin cambios. Un AfipOficial de
+    /// homologacion SIGUE sirviendose cuando el sistema corre en homologacion: la factura de prueba
+    /// necesita el numero de juguete que ARCA va a validar (error 10240 si no coincide).
+    /// </summary>
+    [Fact]
+    public async Task ModoFacturar_ConEntornoHomologacion_SigueSirviendoElAfipOficialDePractica()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: false);
+        var fecha = new DateOnly(2026, 08, 05);
+        ctx.ExchangeRateQuotes.Add(BuildQuote(fecha, ExchangeRateSource.AfipOficial, 1152.202m, isProduction: false));
+        await ctx.SaveChangesAsync();
+
+        var resolver = NewResolver(ctx);
+        var suggestion = await resolver.GetSuggestionAsync(
+            "USD", fecha, CancellationToken.None, excludePracticeOfficialData: false);
+
+        Assert.NotNull(suggestion);
+        Assert.Equal(1152.202m, suggestion!.Rate);
+        Assert.False(suggestion.IsProductionSource);
+    }
+
+    /// <summary>
+    /// Test 10: modo "solo datos reales" (dashboard, flag en true) — en homologacion, con SOLO una
+    /// fila AfipOficial de juguete disponible, el resolver NO la ofrece: devuelve null (el caller cae
+    /// al estado vacio honesto, nunca muestra un numero de práctica como referencia real).
+    /// </summary>
+    [Fact]
+    public async Task ModoSoloDatosReales_ConSoloAfipOficialDePractica_DevuelveNull()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: false);
+        var fecha = new DateOnly(2026, 08, 05);
+        ctx.ExchangeRateQuotes.Add(BuildQuote(fecha, ExchangeRateSource.AfipOficial, 1152.202m, isProduction: false));
+        await ctx.SaveChangesAsync();
+
+        var resolver = NewResolver(ctx);
+        var suggestion = await resolver.GetSuggestionAsync(
+            "USD", fecha, CancellationToken.None, excludePracticeOfficialData: true);
+
+        Assert.Null(suggestion);
+    }
+
+    /// <summary>
+    /// Test 11: modo "solo datos reales" con una fila REAL disponible (OficialPorApi, ADR-011) —
+    /// SI la sirve, sin importar que el sistema este corriendo en homologacion (IsProductionSource=true
+    /// en la fila, "vale en cualquier entorno").
+    /// </summary>
+    [Fact]
+    public async Task ModoSoloDatosReales_ConFilaOficialPorApi_LaSirve_SinImportarElEntornoActual()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: false);
+        var fecha = new DateOnly(2026, 08, 05);
+        // Solo hay juguete AfipOficial (homologacion) + el respaldo REAL (OficialPorApi, siempre
+        // IsProductionSource=true por diseño, ver ExchangeRateSyncJob).
+        ctx.ExchangeRateQuotes.Add(BuildQuote(fecha, ExchangeRateSource.AfipOficial, 1152.202m, isProduction: false));
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD",
+            QuoteDate = fecha,
+            Source = ExchangeRateSource.OficialPorApi,
+            Rate = 1496.50m,
+            ProviderName = "dolarapi",
+            FetchedAt = DateTime.UtcNow,
+            IsProductionSource = true,
+        });
+        await ctx.SaveChangesAsync();
+
+        var resolver = NewResolver(ctx);
+        var suggestion = await resolver.GetSuggestionAsync(
+            "USD", fecha, CancellationToken.None, excludePracticeOfficialData: true);
+
+        Assert.NotNull(suggestion);
+        Assert.Equal(1496.50m, suggestion!.Rate);
+        Assert.Equal(ExchangeRateSource.OficialPorApi, suggestion.Source);
+    }
 }

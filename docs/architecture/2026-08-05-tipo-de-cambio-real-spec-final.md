@@ -6,6 +6,21 @@
 
 > **Cómo leer esto:** es un cuerpo único y autosuficiente. No hay "deltas" ni versiones previas que consultar. Todo lo que hace falta para implementar está acá.
 
+> ## ⚠️ ADENDA NOCTURNA (2026-08-05, firmada por el dueño) — pisa §11/§12.1/D-4 donde choquen
+> La verificación EN VIVO demostró que `FEParamGetCotizacion` de HOMOLOGACIÓN devuelve una
+> cotización VIEJA (~14 meses: 1.152 cuando el real era ~1.496) — el sistema factura en modo
+> práctica, así que ese número solo sirve para facturas de prueba (validaciones 10038/10119/
+> **10240: MonCotiz ≤ oficial ARCA + $1**, manual WSFEv1 v4.7). Cambios firmados:
+> (a) SÍ se construyó `OficialPorApi = 7` + `OfficialDollarPublicApiService` (dolarapi +
+> argentinadatos, contratos verificados con curl 2026-08-05) como fuente de DÓLAR REAL —
+> lo que esta spec descartaba en §12.1/D-4 quedó revertido porque sin él no hay ningún dato
+> real mientras AFIP corra en homologación; (b) el resolver ganó `excludePracticeOfficialData`
+> (default false — facturar sigue sirviendo el AfipOficial del ambiente, CON leyenda "dólar de
+> prueba" cuando IsProductionSource=false); (c) el dashboard muestra DOS tarjetas: "Dólar
+> Banco Nación (venta)" (solo datos reales) y "Dólar para facturar (ARCA)" (lo que sugiere la
+> factura, con badge ámbar de prueba). Fundamento fiscal completo: agent-memory del
+> travel-agency-accountant (adr011-tc-fiscal...) — 10240 acota el criterio "TC realmente usado".
+
 ---
 
 ## Estado de implementación (actualizado 2026-08-05, por `backend-dotnet-senior`)

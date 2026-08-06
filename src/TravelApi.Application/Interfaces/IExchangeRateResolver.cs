@@ -22,7 +22,20 @@ public interface IExchangeRateResolver
     /// <param name="currency">Codigo ISO 4217 ("USD", "ARS"). "ARS"/"PES" siempre devuelve 1 sin
     /// consultar la base.</param>
     /// <param name="date">Fecha para la que se quiere el tipo de cambio.</param>
-    Task<ExchangeRateSuggestion?> GetSuggestionAsync(string currency, DateOnly date, CancellationToken ct);
+    /// <param name="excludePracticeOfficialData">
+    /// ADR-011 (enmienda 2026-08-05, "hallazgo normativo ARCA 10240"): en <c>false</c> (default,
+    /// el camino de SIEMPRE que usa la pantalla de facturar) el comportamiento NO cambia — una fila
+    /// <see cref="ExchangeRateSource.AfipOficial"/> de homologacion se sigue sirviendo como sugerencia,
+    /// porque facturar en homologacion EXIGE que el TC declarado coincida con el numero de juguete que
+    /// ARCA va a validar (si sugiriéramos el dolar real, la factura de prueba rebotaria con el error
+    /// 10240 de ARCA). En <c>true</c> (lo usa el dashboard, que NO factura nada, solo muestra una
+    /// referencia de negocio) una fila <see cref="ExchangeRateSource.AfipOficial"/> que no vino del
+    /// entorno productivo de ARCA (dato de juguete) se descarta SIEMPRE, sin importar en que entorno
+    /// esta corriendo el sistema ahora mismo; el resto de fuentes (BNA_*, <see
+    /// cref="ExchangeRateSource.OficialPorApi"/>) son datos reales y valen en cualquier entorno.
+    /// </param>
+    Task<ExchangeRateSuggestion?> GetSuggestionAsync(
+        string currency, DateOnly date, CancellationToken ct, bool excludePracticeOfficialData = false);
 }
 
 /// <summary>
@@ -40,6 +53,12 @@ public interface IExchangeRateResolver
 /// termina en <c>Invoice.ExchangeRateQuoteId</c> si el usuario acepta esta sugerencia tal cual.</param>
 /// <param name="FetchedAt">Momento (UTC) en que el job efectivamente trajo este dato de la fuente
 /// (no confundir con el momento en que se factura: eso lo decide quien consume la sugerencia).</param>
+/// <param name="IsProductionSource">
+/// ADR-011 (enmienda 2026-08-05): entorno de ARCA del que salio la fila (solo tiene sentido fiscal
+/// para <see cref="ExchangeRateSource.AfipOficial"/> — ver <see cref="ExchangeRateQuote.IsProductionSource"/>).
+/// El controller de facturas lo usa para armar la leyenda "dolar de prueba" cuando la sugerencia es
+/// un AfipOficial de homologacion (T-13: el texto se arma en el motor, no en el front).
+/// </param>
 public record ExchangeRateSuggestion(
     decimal Rate,
     DateOnly RateDate,
@@ -48,4 +67,5 @@ public record ExchangeRateSuggestion(
     DateOnly? ArcaFchCotiz,
     bool IsStale,
     int QuoteId,
-    DateTime FetchedAt);
+    DateTime FetchedAt,
+    bool IsProductionSource);

@@ -56,8 +56,15 @@ public class ExchangeRateQuote
     /// <summary>
     /// Entorno de ARCA (<c>AfipSettings.IsProduction</c>) del que salio el dato. El sistema hoy factura
     /// contra homologacion; sin esta columna, o la libreta de homologacion queda siempre vacia, o un
-    /// numero de juguete de homologacion termina citado en un comprobante real. El resolver SOLO ofrece
-    /// filas cuyo entorno coincide con el <c>IsProduction</c> vigente al momento de la consulta.
+    /// numero de juguete de homologacion termina citado en un comprobante real.
+    ///
+    /// <para><b>Solo tiene sentido fiscal para <see cref="ExchangeRateSource.AfipOficial"/></b> (ADR-011,
+    /// enmienda 2026-08-05): para esa fuente, el resolver que usa la pantalla de FACTURAR sigue
+    /// exigiendo que coincida con el <c>IsProduction</c> vigente (facturar en homologacion necesita el
+    /// numero de juguete que ARCA va a validar — RG error 10240 si no coincide). Para las demas fuentes
+    /// (<c>BNA_*</c>, <see cref="ExchangeRateSource.OficialPorApi"/>) esta columna es vestigial: son
+    /// datos reales que no dependen de contra que ambiente de ARCA esta corriendo el sistema, y el
+    /// modo "solo datos reales" del resolver (lo usa el dashboard) las sirve sin importar su valor.</para>
     /// </summary>
     public bool IsProductionSource { get; set; }
 

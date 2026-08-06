@@ -108,9 +108,22 @@ public class ExchangeRatesController : ControllerBase
     ///   falso. Ahora se compara <c>RateDate</c> contra el HOY real (Argentina), no contra
     ///   <c>IsStale</c>.</item>
     /// </list></para>
+    ///
+    /// <para><b>Aviso de "dolar de prueba" (hallazgo normativo 2026-08-05, validacion ARCA 10240)</b>:
+    /// si el sistema esta facturando contra homologacion, ARCA valida el comprobante contra SU PROPIO
+    /// numero de juguete — si le sugiriéramos al usuario el dolar REAL, la factura de prueba rebotaria.
+    /// Por eso la sugerencia de un <see cref="ExchangeRateSource.AfipOficial"/> de homologacion
+    /// (<see cref="ExchangeRateSuggestion.IsProductionSource"/> en <c>false</c>) SIGUE sirviendose
+    /// igual que siempre — pero la leyenda lo avisa con todas las letras, para que nadie confunda un
+    /// numero de práctica con el dolar real.</para>
     /// </summary>
     private static string BuildLeyenda(ExchangeRateSuggestion suggestion, DateOnly hoyArgentina)
     {
+        if (suggestion.Source == ExchangeRateSource.AfipOficial && !suggestion.IsProductionSource)
+        {
+            return "Dólar de prueba de ARCA (el sistema factura en modo práctica): sirve para facturas de prueba, NO es el dólar real.";
+        }
+
         var fechaEnCastellano = FormatFechaEnCastellano(suggestion.RateDate);
         var sustantivo = suggestion.Source == ExchangeRateSource.AfipOficial
             ? "Dólar oficial"

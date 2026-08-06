@@ -7,9 +7,13 @@
 >
 > 1. **Sin feature flag** (regla T-11 de la constitucion). No existe `EnableAuthoritativeExchangeRate`.
 >    El resolver + el job salen DIRECTOS, sin activacion condicionada.
-> 2. **Fuente primaria = ARCA `FEParamGetCotizacion`**, no BCRA A3500 ni scraping externo (D-4:
->    no se suma argentinadatos.com ni dolarapi.com). El respaldo es el scraper de Banco Nacion
->    que ya existia, no una fuente nueva.
+> 2. **Fuente primaria FISCAL = ARCA `FEParamGetCotizacion`**, no BCRA A3500. ⚠️ ADENDA NOCTURNA
+>    (2026-08-05, firmada por el dueño — pisa el D-4 original): SÍ se sumaron dolarapi.com +
+>    argentinadatos.com (`OficialPorApi = 7`, `OfficialDollarPublicApiService`) como fuente del
+>    DÓLAR REAL, porque en homologación ARCA devuelve cotizaciones viejas de práctica (~14 meses)
+>    y sin API real el dashboard no tendría ningún número verdadero. La factura sigue sugiriendo
+>    el AfipOficial del ambiente (con leyenda "dólar de prueba" en homologación); el dashboard
+>    muestra solo datos reales. Ver la ADENDA al inicio de la spec definitiva.
 > 3. **El camino interactivo (lo que ve la pantalla) NO llama a ARCA ni a ninguna red externa** —
 >    SOLO lee la libreta historica (`ExchangeRateQuotes`) que el job diario ya escribio. El
 >    resolver multi-proveedor con throttle contra WSAA que describe §5-§7 mas abajo NO se

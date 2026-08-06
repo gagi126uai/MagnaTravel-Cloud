@@ -267,4 +267,169 @@ public class ExchangeRateSyncJobTests
 
         Assert.All(await ctx.ExchangeRateQuotes.ToListAsync(), q => Assert.True(q.IsProductionSource));
     }
+
+    // ============================================================
+    // ADR-011 (enmienda 2026-08-05, "hallazgo del dueño en vivo"): respaldo REAL via API publica.
+    // Orden para HOY: ARCA -> API publica -> scraper BNA. Orden para backfill: ARCA -> API publica
+    // (el scraper NO participa del backfill, solo sabe dar el dato de "ahora").
+    // ============================================================
+
+    /// <summary>
+    /// Test: ARCA cae para HOY, la API publica SI contesta -> persiste con Source=OficialPorApi,
+    /// IsProductionSource=true SIEMPRE (es un dato real, no depende del entorno de ARCA), y el scraper
+    /// BNA ni se llama (ya quedo cubierto).
+    /// </summary>
+    [Fact]
+    public async Task ArcaCaidoParaHoy_ConApiPublicaDisponible_PersisteOficialPorApi_YNoLlamaAlScraperBna()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: false);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock
+            .Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock
+            .Setup(s => s.GetTodayRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1496.50m, ProviderName: "dolarapi"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaDeHoy = await ctx.ExchangeRateQuotes
+            .SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today);
+
+        Assert.NotNull(filaDeHoy);
+        Assert.Equal(ExchangeRateSource.OficialPorApi, filaDeHoy!.Source);
+        Assert.Equal("dolarapi", filaDeHoy.ProviderName);
+        Assert.Equal(1496.50m, filaDeHoy.Rate);
+        Assert.True(filaDeHoy.IsProductionSource);
+
+        bnaMock.Verify(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Test: ARCA cae para HOY, la API publica TAMBIEN falla -> el job cae al scraper BNA como
+    /// siempre (comportamiento preexistente, sin cambios).
+    /// </summary>
+    [Fact]
+    public async Task ArcaCaidoParaHoy_ConApiPublicaSinDato_CaeAlScraperBna()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock
+            .Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock
+            .Setup(s => s.GetTodayRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PublicDollarRateReading?)null);
+
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+        bnaMock
+            .Setup(s => s.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BnaUsdSellerRateDto(
+                Value: 1349m, EuroValue: 0m, RealValue: 0m,
+                PublishedDate: Today.ToString("d/M/yyyy"), PublishedTime: "15:00",
+                Source: "https://www.bna.com.ar/personas", IsStale: false, FetchedAt: DateTime.UtcNow));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaDeHoy = await ctx.ExchangeRateQuotes
+            .SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today);
+
+        Assert.NotNull(filaDeHoy);
+        Assert.Equal(ExchangeRateSource.BNA_Minorista, filaDeHoy!.Source);
+    }
+
+    /// <summary>
+    /// Test: sin <see cref="IOfficialDollarPublicApiService"/> inyectado (ctor corto, como TODOS los
+    /// tests de arriba de este archivo) el job se comporta EXACTO que antes de esta obra — cae directo
+    /// al scraper BNA sin intentar nada nuevo.
+    /// </summary>
+    [Fact]
+    public async Task SinServicioDeApiPublicaInyectado_SeComportaIgualQueAntes_CaeDirectoAlScraperBna()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock
+            .Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+        bnaMock
+            .Setup(s => s.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BnaUsdSellerRateDto(
+                Value: 1349m, EuroValue: 0m, RealValue: 0m,
+                PublishedDate: Today.ToString("d/M/yyyy"), PublishedTime: "15:00",
+                Source: "https://www.bna.com.ar/personas", IsStale: false, FetchedAt: DateTime.UtcNow));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaDeHoy = await ctx.ExchangeRateQuotes
+            .SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today);
+
+        Assert.NotNull(filaDeHoy);
+        Assert.Equal(ExchangeRateSource.BNA_Minorista, filaDeHoy!.Source);
+    }
+
+    /// <summary>
+    /// Test: en el BACKFILL, ARCA cae para un dia -> la API publica (variante "por fecha") lo cubre.
+    /// El scraper BNA NUNCA se llama para backfill (no tiene historial, solo el dato de "ahora").
+    /// </summary>
+    [Fact]
+    public async Task Backfill_ConArcaCaidoParaUnDia_LoCubreConLaApiPublicaPorFecha()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var diaSinArca = Today.AddDays(-2);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock
+            .Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), diaSinArca, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+        // El resto de fechas (hoy + otros dias del backfill) SI las cubre ARCA normalmente.
+        afipMock
+            .Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.Is<DateOnly>(d => d != diaSinArca), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string monId, DateOnly fecha, CancellationToken _) => new ArcaExchangeRate(monId, 1350.50m, fecha));
+
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock
+            .Setup(s => s.GetRateForDateAsync(diaSinArca, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1310m, ProviderName: "argentinadatos"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaDelDiaSinArca = await ctx.ExchangeRateQuotes
+            .SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == diaSinArca);
+
+        Assert.NotNull(filaDelDiaSinArca);
+        Assert.Equal(ExchangeRateSource.OficialPorApi, filaDelDiaSinArca!.Source);
+        Assert.Equal("argentinadatos", filaDelDiaSinArca.ProviderName);
+        Assert.Equal(1310m, filaDelDiaSinArca.Rate);
+
+        // El scraper BNA nunca participa del backfill (solo sabe dar el dato de "ahora").
+        bnaMock.Verify(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

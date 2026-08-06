@@ -557,6 +557,10 @@ builder.Services.AddScoped<IBnaExchangeRateService, BnaExchangeRateService>();
 // libreta ExchangeRateQuotes, nunca le pega a ARCA) + el job diario que la llena (unico que le pega
 // a ARCA). Sin flag (T-11): sale directo.
 builder.Services.AddScoped<IExchangeRateResolver, ExchangeRateResolver>();
+// ADR-011 (enmienda 2026-08-05, "hallazgo del dueño en vivo"): respaldo REAL via APIs publicas
+// (dolarapi.com / argentinadatos.com) para cuando ARCA no sirve un numero util (ej. homologacion,
+// que devuelve cotizaciones de juguete). Solo lo consume el job diario, nunca el camino interactivo.
+builder.Services.AddScoped<IOfficialDollarPublicApiService, OfficialDollarPublicApiService>();
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.ExchangeRateSyncJob>();
 builder.Services.AddScoped<IServicioReservaService, ServicioReservaService>();
 builder.Services.AddScoped<ICommissionService, CommissionService>();

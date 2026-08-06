@@ -88,6 +88,55 @@ public sealed class ExchangeRateResolverPostgresIntegrationTests
     }
 
     /// <summary>
+    /// Adenda nocturna 2026-08-05: tercer escalon de precedencia (OficialPorApi) + la rama
+    /// <c>excludePracticeOfficialData</c> tambien tienen que traducirse a SQL. Con las tres fuentes
+    /// cargadas: el camino de FACTURAR (default) sirve la AfipOficial del ambiente (aunque sea de
+    /// practica); el camino del DASHBOARD (exclude=true) la descarta y gana la OficialPorApi real
+    /// por sobre el scraper BNA.
+    /// </summary>
+    [Fact]
+    public async Task GetSuggestionAsync_TercerEscalonYExcludePractice_TraducenASql_YEligenBien()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+
+        ctx.AfipSettings.Add(new AfipSettings { IsProduction = false });
+        var fecha = new DateOnly(2026, 08, 05);
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD", QuoteDate = fecha, Source = ExchangeRateSource.AfipOficial,
+            Rate = 1152.202m, ProviderName = "ARCA_WSFEv1", FetchedAt = DateTime.UtcNow,
+            ArcaFchCotiz = fecha, IsProductionSource = false, // numero de PRACTICA de homologacion
+        });
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD", QuoteDate = fecha, Source = ExchangeRateSource.OficialPorApi,
+            Rate = 1490m, ProviderName = "dolarapi", FetchedAt = DateTime.UtcNow,
+            IsProductionSource = true, // dato REAL de la API publica
+        });
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD", QuoteDate = fecha, Source = ExchangeRateSource.BNA_Minorista,
+            Rate = 1515m, ProviderName = "BNA_Scraper", FetchedAt = DateTime.UtcNow,
+            IsProductionSource = false,
+        });
+        await ctx.SaveChangesAsync();
+
+        var resolver = NewResolver(ctx);
+
+        // Facturar (default): la AfipOficial del ambiente gana, aunque sea de practica.
+        var facturar = await resolver.GetSuggestionAsync("USD", fecha, CancellationToken.None);
+        Assert.NotNull(facturar);
+        Assert.Equal(ExchangeRateSource.AfipOficial, facturar!.Source);
+        Assert.Equal(1152.202m, facturar.Rate);
+
+        // Dashboard (exclude=true): la practica se descarta y la API real le gana al scraper.
+        var dashboard = await resolver.GetSuggestionAsync("USD", fecha, CancellationToken.None, excludePracticeOfficialData: true);
+        Assert.NotNull(dashboard);
+        Assert.Equal(ExchangeRateSource.OficialPorApi, dashboard!.Source);
+        Assert.Equal(1490m, dashboard.Rate);
+    }
+
+    /// <summary>
     /// Mismo chequeo para el walk-back (rango de fechas + precedencia combinados): tambien tiene que
     /// traducir sin explotar, con varias filas de distintas fechas Y fuentes en el rango.
     /// </summary>

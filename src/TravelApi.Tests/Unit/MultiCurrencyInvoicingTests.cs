@@ -59,7 +59,7 @@ public class MultiCurrencyInvoicingTests
         _mapper = new MapperConfiguration(c => c.AddProfile<MappingProfile>()).CreateMapper();
 
         _exchangeRateResolverMock
-            .Setup(r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync((ExchangeRateSuggestion?)null);
     }
 
@@ -487,7 +487,8 @@ public class MultiCurrencyInvoicingTests
         ArcaFchCotiz: new DateOnly(2026, 08, 05),
         IsStale: false,
         QuoteId: 77,
-        FetchedAt: new DateTime(2026, 08, 05, 12, 0, 0, DateTimeKind.Utc));
+        FetchedAt: new DateTime(2026, 08, 05, 12, 0, 0, DateTimeKind.Utc),
+        IsProductionSource: true);
 
     /// <summary>Test 16: MonCotiz EXACTAMENTE igual a la sugerencia -> AfipOficial + QuoteId, SIN justificacion.</summary>
     [Fact]
@@ -497,7 +498,7 @@ public class MultiCurrencyInvoicingTests
         await SeedSettledReservaAsync(context);
 
         _exchangeRateResolverMock
-            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(SampleSuggestion);
 
         var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
@@ -524,7 +525,7 @@ public class MultiCurrencyInvoicingTests
         await SeedSettledReservaAsync(context);
 
         _exchangeRateResolverMock
-            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(SampleSuggestion);
 
         var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
@@ -578,7 +579,7 @@ public class MultiCurrencyInvoicingTests
         await SeedSettledReservaAsync(context);
 
         _exchangeRateResolverMock
-            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetSuggestionAsync("USD", It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(SampleSuggestion);
 
         var service = BuildInvoiceService(context, enableMultiCurrency: true, out var captured);
@@ -622,7 +623,7 @@ public class MultiCurrencyInvoicingTests
         Assert.Null(captured[0].ExchangeRateQuoteId);
         // El resolver NUNCA se llama para pesos (corta antes, ni siquiera pregunta).
         _exchangeRateResolverMock.Verify(
-            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()),
+            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
             Times.Never);
     }
 
@@ -664,7 +665,7 @@ public class MultiCurrencyInvoicingTests
         Assert.Equal(55, captured[0].ExchangeRateQuoteId);
         Assert.Equal(new DateOnly(2026, 07, 01), captured[0].ExchangeRateFchCotiz);
         _exchangeRateResolverMock.Verify(
-            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()),
+            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
             Times.Never);
     }
 

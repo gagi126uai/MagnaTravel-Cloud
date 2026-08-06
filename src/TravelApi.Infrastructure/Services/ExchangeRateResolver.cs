@@ -47,7 +47,8 @@ public class ExchangeRateResolver : IExchangeRateResolver
         _logger = logger;
     }
 
-    public async Task<ExchangeRateSuggestion?> GetSuggestionAsync(string currency, DateOnly date, CancellationToken ct)
+    public async Task<ExchangeRateSuggestion?> GetSuggestionAsync(
+        string currency, DateOnly date, CancellationToken ct, bool excludePracticeOfficialData = false)
     {
         // Paso 0 (§5.1): moneda local, sin base ni red. Corta aca — nunca cachea ni consulta nada,
         // ni siquiera necesita saber el entorno de ARCA.
@@ -64,14 +65,17 @@ public class ExchangeRateResolver : IExchangeRateResolver
         bool isPastDate = date < todayArgentina;
 
         var isProduction = await GetIsProductionAsync(ct);
-        var cacheKey = BuildCacheKey(currency, isProduction, date);
+        // El modo "solo datos reales" (dashboard) es una dimension MAS de la cache: la misma
+        // fecha puede tener respuestas distintas segun quien pregunta (facturar SI acepta un
+        // AfipOficial de homologacion; el dashboard NO), asi que viaja en la clave.
+        var cacheKey = BuildCacheKey(currency, isProduction, date, excludePracticeOfficialData);
 
         if (_cache.TryGetValue(cacheKey, out ExchangeRateSuggestion? cached))
         {
             return cached;
         }
 
-        var suggestion = await ResolveFromDatabaseAsync(currency, date, isProduction, ct);
+        var suggestion = await ResolveFromDatabaseAsync(currency, date, isProduction, excludePracticeOfficialData, ct);
 
         // Fechas pasadas son inmutables (el dato no va a cambiar): TTL largo. "Hoy" puede recibir la
         // fila que el job recien escribio: TTL corto. Un miss se cachea aparte y mas corto todavia,
@@ -98,10 +102,11 @@ public class ExchangeRateResolver : IExchangeRateResolver
     }
 
     private async Task<ExchangeRateSuggestion?> ResolveFromDatabaseAsync(
-        string currency, DateOnly date, bool isProduction, CancellationToken ct)
+        string currency, DateOnly date, bool isProduction, bool excludePracticeOfficialData, CancellationToken ct)
     {
         // Paso 1 (§5.1): match exacto de la fecha pedida.
-        var exactMatch = await QueryBestRowAsync(currency, fromDateInclusive: date, toDateInclusive: date, isProduction, ct);
+        var exactMatch = await QueryBestRowAsync(
+            currency, fromDateInclusive: date, toDateInclusive: date, isProduction, excludePracticeOfficialData, ct);
         if (exactMatch is not null)
         {
             return ToSuggestion(exactMatch, isStale: false);
@@ -110,7 +115,8 @@ public class ExchangeRateResolver : IExchangeRateResolver
         // Paso 2: walk-back hasta 5 dias hacia atras. Sin fila propia (fin de semana/feriado), cae a
         // la mas reciente dentro de la ventana; la fecha REAL del dato viaja en RateDate.
         var earliestDate = date.AddDays(-WalkBackWindowDays);
-        var fallbackMatch = await QueryBestRowAsync(currency, fromDateInclusive: earliestDate, toDateInclusive: date, isProduction, ct);
+        var fallbackMatch = await QueryBestRowAsync(
+            currency, fromDateInclusive: earliestDate, toDateInclusive: date, isProduction, excludePracticeOfficialData, ct);
         if (fallbackMatch is not null)
         {
             return ToSuggestion(fallbackMatch, isStale: true);
@@ -123,8 +129,9 @@ public class ExchangeRateResolver : IExchangeRateResolver
 
     /// <summary>
     /// Trae la MEJOR fila candidata dentro del rango de fechas pedido, aplicando la precedencia
-    /// de fuentes (§4.3): AfipOficial primero, despues los respaldos BNA_*, despues el resto; a
-    /// igualdad de fuente, la fecha mas reciente; a igualdad de fecha, la fila mas nueva.
+    /// de fuentes (§4.3, ampliada por ADR-011 enmienda 2026-08-05 con <see cref="ExchangeRateSource.OficialPorApi"/>):
+    /// AfipOficial primero, despues la API publica de respaldo, despues los respaldos BNA_*, despues
+    /// el resto; a igualdad de fuente, la fecha mas reciente; a igualdad de fecha, la fila mas nueva.
     ///
     /// <para><b>FIX BLOQUEANTE (revision post-implementacion, 2026-08-05)</b>: la primera version de
     /// este metodo llamaba a un helper <c>static</c> con un <c>switch</c>
@@ -136,27 +143,45 @@ public class ExchangeRateResolver : IExchangeRateResolver
     /// <c>condicion ? a : b</c> y lo arma como <c>CASE WHEN ... THEN ... ELSE ... END</c>). Blindado
     /// con un test de integracion contra Postgres real (Testcontainers) que ejecuta esta query tal
     /// cual corre en produccion — los tests InMemory NO alcanzan para esto.</para>
+    ///
+    /// <para><b>Los dos modos de <paramref name="excludePracticeOfficialData"/></b> (ver el doc de
+    /// <see cref="IExchangeRateResolver.GetSuggestionAsync"/> para el POR QUE de cada uno):</para>
+    /// <list type="bullet">
+    ///   <item><c>false</c> (facturar, comportamiento de SIEMPRE, sin cambios): la fila tiene que ser
+    ///   del MISMO entorno de ARCA que esta corriendo el sistema ahora mismo, sin importar la fuente.</item>
+    ///   <item><c>true</c> (dashboard, "solo datos reales"): un <see cref="ExchangeRateSource.AfipOficial"/>
+    ///   que no vino del entorno productivo de ARCA (dato de juguete) se descarta siempre; el resto de
+    ///   fuentes valen en cualquier entorno (son datos reales que no dependen de contra que ambiente de
+    ///   ARCA esta corriendo el sistema).</item>
+    /// </list>
     /// </summary>
     private Task<ExchangeRateQuote?> QueryBestRowAsync(
-        string currency, DateOnly fromDateInclusive, DateOnly toDateInclusive, bool isProduction, CancellationToken ct)
+        string currency, DateOnly fromDateInclusive, DateOnly toDateInclusive, bool isProduction,
+        bool excludePracticeOfficialData, CancellationToken ct)
     {
         return _context.ExchangeRateQuotes
             .AsNoTracking()
             .Where(quote =>
                 quote.Currency == currency
-                && quote.IsProductionSource == isProduction
                 && quote.SupersededByQuoteId == null
                 && quote.QuoteDate >= fromDateInclusive
-                && quote.QuoteDate <= toDateInclusive)
+                && quote.QuoteDate <= toDateInclusive
+                && (
+                    (!excludePracticeOfficialData && quote.IsProductionSource == isProduction)
+                    || (excludePracticeOfficialData
+                        && (quote.Source != ExchangeRateSource.AfipOficial || quote.IsProductionSource))
+                ))
             // El CASE de la precedencia (§4.3) INLINE, no en un metodo aparte: es lo unico que EF
             // Core 8 / Npgsql traducen de forma confiable a "ORDER BY CASE WHEN ... END" en SQL.
             .OrderBy(quote => quote.Source == ExchangeRateSource.AfipOficial
                 ? 0
-                : (quote.Source == ExchangeRateSource.BNA_Minorista
-                    || quote.Source == ExchangeRateSource.BNA_Mayorista
-                    || quote.Source == ExchangeRateSource.BNA_VendedorDivisa
-                        ? 1
-                        : 2))
+                : (quote.Source == ExchangeRateSource.OficialPorApi
+                    ? 1
+                    : (quote.Source == ExchangeRateSource.BNA_Minorista
+                        || quote.Source == ExchangeRateSource.BNA_Mayorista
+                        || quote.Source == ExchangeRateSource.BNA_VendedorDivisa
+                            ? 2
+                            : 3)))
             .ThenByDescending(quote => quote.QuoteDate)
             .ThenByDescending(quote => quote.Id)
             .FirstOrDefaultAsync(ct);
@@ -170,7 +195,8 @@ public class ExchangeRateResolver : IExchangeRateResolver
         ArcaFchCotiz: row.ArcaFchCotiz,
         IsStale: isStale,
         QuoteId: row.Id,
-        FetchedAt: row.FetchedAt);
+        FetchedAt: row.FetchedAt,
+        IsProductionSource: row.IsProductionSource);
 
     /// <summary>
     /// Sugerencia trivial para pesos: Rate=1, sin fuente registrada (no hay fila real detras — no
@@ -186,12 +212,15 @@ public class ExchangeRateResolver : IExchangeRateResolver
         ArcaFchCotiz: null,
         IsStale: false,
         QuoteId: 0,
-        FetchedAt: DateTime.UtcNow);
+        FetchedAt: DateTime.UtcNow,
+        // Pesos no es un dato de ARCA (Source=Unset, nunca AfipOficial): este flag no dispara ninguna
+        // leyenda de "dolar de prueba" para este caso, el valor exacto es irrelevante fuera de eso.
+        IsProductionSource: true);
 
     private static bool IsPesos(string currency) =>
         string.Equals(currency, "ARS", StringComparison.OrdinalIgnoreCase)
         || string.Equals(currency, "PES", StringComparison.OrdinalIgnoreCase);
 
-    private static string BuildCacheKey(string currency, bool isProduction, DateOnly date) =>
-        $"fx:{currency}:{isProduction}:{date:yyyy-MM-dd}";
+    private static string BuildCacheKey(string currency, bool isProduction, DateOnly date, bool excludePracticeOfficialData) =>
+        $"fx:{currency}:{isProduction}:{date:yyyy-MM-dd}:{excludePracticeOfficialData}";
 }

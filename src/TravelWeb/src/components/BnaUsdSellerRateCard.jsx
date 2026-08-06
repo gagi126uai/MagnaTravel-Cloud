@@ -25,6 +25,14 @@ const formatFetchedAt = (value) => {
   });
 };
 
+// ADR-011 (enmienda 2026-08-05, decision firmada del dueño): tarjeta 1 de las dos tarjetas del
+// dashboard. Esta SOLO muestra datos REALES (scraper BNA fresco, su ultimo snapshot, o el respaldo
+// de la API publica) — nunca un numero de práctica de ARCA. Para eso esta la tarjeta hermana,
+// DolarParaFacturarCard. El nombre y la ayuda son SIEMPRE los mismos, sin importar de cual de las
+// fuentes reales haya salido el numero.
+const TITULO = "Dólar Banco Nación (venta)";
+const AYUDA = "Para cotizarle al cliente. Es el del mostrador del banco.";
+
 export function BnaUsdSellerRateCard({ rate }) {
   if (!rate) {
     return (
@@ -32,8 +40,8 @@ export function BnaUsdSellerRateCard({ rate }) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Referencia operativa</p>
-            <h3 className="mt-1 text-base font-black text-slate-900 dark:text-white">BNA billetes</h3>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">No hay cotizacion oficial disponible.</p>
+            <h3 className="mt-1 text-base font-black text-slate-900 dark:text-white">{TITULO}</h3>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">No hay cotización disponible.</p>
           </div>
           <div className="rounded-xl bg-slate-100 p-2.5 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
             <Landmark className="h-4 w-4" />
@@ -54,7 +62,8 @@ export function BnaUsdSellerRateCard({ rate }) {
             </div>
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Referencia operativa</p>
-              <h3 className="text-base font-black text-slate-900 dark:text-white">BNA billetes vendedor</h3>
+              <h3 className="text-base font-black text-slate-900 dark:text-white">{TITULO}</h3>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{AYUDA}</p>
             </div>
           </div>
           <div className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${rate.isStale ? "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"}`}>
@@ -65,8 +74,11 @@ export function BnaUsdSellerRateCard({ rate }) {
 
         <div className="grid gap-2 md:grid-cols-3">
             <RateTile label="Dolar vendedor" value={rate.value} />
-            <RateTile label="Euro vendedor" value={rate.euroValue} />
-            <RateTile label="Real vendedor" value={rate.realValue} note="cada 100 unidades" />
+            {/* El respaldo de API publica (ADR-011) solo trae USD: mostrar $0,00 en Euro/Real seria
+                mentir que hay una cotizacion que en realidad no llego. Se ocultan los tiles en vez de
+                fingir un dato — la condicion mira el dato en si, no de que fuente tecnica vino. */}
+            {rate.euroValue != null && <RateTile label="Euro vendedor" value={rate.euroValue} />}
+            {rate.realValue != null && <RateTile label="Real vendedor" value={rate.realValue} note="cada 100 unidades" />}
           </div>
 
         <div className="grid gap-2 md:grid-cols-3">

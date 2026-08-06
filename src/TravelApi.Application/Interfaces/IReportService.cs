@@ -38,7 +38,12 @@ public record DashboardResponse(
     int ActivePotentialCustomers,
     // ADR-021 Capa 6 (aditivos): los escalares de arriba quedan para compat (hoy, todo ARS, coinciden con
     // el unico item ARS de cada lista). Estos desgloses NUNCA mezclan monedas en un solo total.
-    DashboardByCurrencyDto? PorMoneda = null);
+    DashboardByCurrencyDto? PorMoneda = null,
+    // ADR-011 (enmienda 2026-08-05, decision firmada del dueño): segunda tarjeta del dashboard, "Dólar
+    // para facturar (ARCA)" — el MISMO valor que la pantalla de facturar va a sugerir ahora mismo (no
+    // "solo datos reales" como BnaUsdSellerRate: en homologacion es correcto mostrar el numero de
+    // practica, con el aviso EsDePrueba prendido).
+    DolarParaFacturarDto? DolarParaFacturar = null);
 
 /// <summary>
 /// ADR-021 Capa 6: desgloses del dashboard SEPARADOS por moneda. Cada lista tiene a lo sumo una linea
@@ -66,15 +71,41 @@ public record PendingReservaDto(Guid PublicId, string NumeroReserva, string Name
 public record UpcomingTripDto(Guid PublicId, string NumeroReserva, string Name, DateTime StartDate, string Status);
 public record MonthlyMetricDto(string Month, decimal Sales, decimal Costs, decimal Profit);
 public record StatusDistributionDto(int Budgets, int Reserved, int Operational, int Closed, int Cancelled);
+/// <summary>
+/// Tarjeta 1 del dashboard, "Dólar Banco Nación (venta)" (decision firmada del dueño 2026-08-05):
+/// SOLO datos reales — scraper BNA fresco, o su ultimo snapshot persistido, o (ADR-011, enmienda
+/// 2026-08-05) el respaldo de la API publica cuando ninguno de los dos anteriores sirvio. Nunca un
+/// dato de práctica de ARCA: para eso esta la tarjeta 2 (<see cref="DolarParaFacturarDto"/>).
+/// </summary>
+/// <param name="Value">Dolar vendedor (billetes BNA, o su equivalente real via la API publica de respaldo).</param>
+/// <param name="EuroValue">Euro vendedor BNA. Null cuando el dato viene del respaldo de API publica
+/// (ADR-011): esa fuente solo tiene USD, nunca inventamos un valor de euro que no existe.</param>
+/// <param name="RealValue">Real vendedor BNA. Misma regla que <paramref name="EuroValue"/>.</param>
 public record BnaUsdSellerRateDto(
     decimal Value,
-    decimal EuroValue,
-    decimal RealValue,
+    decimal? EuroValue,
+    decimal? RealValue,
     string PublishedDate,
     string PublishedTime,
     string Source,
     bool IsStale,
     DateTime FetchedAt);
+
+/// <summary>
+/// Tarjeta 2 del dashboard, "Dólar para facturar (ARCA)" (ADR-011, enmienda 2026-08-05, decision
+/// firmada del dueño): el MISMO valor que <c>GET /api/exchange-rates/suggestion</c> le sugeriria
+/// ahora mismo a la pantalla de facturar — a proposito NO se filtra por "solo datos reales" (a
+/// diferencia de la tarjeta 1): en homologacion, ARCA exige facturar con SU numero de practica, asi
+/// que mostrar ese mismo numero aca (con el aviso <see cref="EsDePrueba"/> prendido) es lo honesto.
+/// </summary>
+/// <param name="Value">El tipo de cambio, tal cual lo devuelve el resolver.</param>
+/// <param name="RateDate">Fecha REAL del dato (puede ser anterior a hoy si vino de un walk-back).</param>
+/// <param name="EsDePrueba">
+/// <c>true</c> cuando el sistema esta facturando contra homologacion y este numero es el de practica
+/// de ARCA (T-5: nada de enums crudos — el front arma el cartel ambar a partir de este bool, no de un
+/// <c>ExchangeRateSource</c>).
+/// </param>
+public record DolarParaFacturarDto(decimal Value, DateOnly RateDate, bool EsDePrueba);
 
 public record ReportsSummaryResponse(
     int TotalCustomers,

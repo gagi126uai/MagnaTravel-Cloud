@@ -32,7 +32,7 @@ public class ExchangeRatesControllerTests
     {
         var resolverMock = new Mock<IExchangeRateResolver>();
         resolverMock
-            .Setup(r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync((ExchangeRateSuggestion?)null);
 
         var controller = BuildController(resolverMock);
@@ -47,7 +47,7 @@ public class ExchangeRatesControllerTests
     {
         var resolverMock = new Mock<IExchangeRateResolver>();
         resolverMock
-            .Setup(r => r.GetSuggestionAsync("USD", new DateOnly(2026, 08, 05), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetSuggestionAsync("USD", new DateOnly(2026, 08, 05), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new ExchangeRateSuggestion(
                 Rate: 1350.5m,
                 RateDate: new DateOnly(2026, 08, 04),
@@ -56,7 +56,8 @@ public class ExchangeRatesControllerTests
                 ArcaFchCotiz: new DateOnly(2026, 08, 04),
                 IsStale: true,
                 QuoteId: 42,
-                FetchedAt: DateTime.UtcNow));
+                FetchedAt: DateTime.UtcNow,
+                IsProductionSource: true));
 
         var controller = BuildController(resolverMock);
 
@@ -77,6 +78,42 @@ public class ExchangeRatesControllerTests
         Assert.Equal(4, propertyNames.Length);
     }
 
+    /// <summary>
+    /// ADR-011 (enmienda 2026-08-05, hallazgo normativo "validacion ARCA 10240"): un AfipOficial de
+    /// homologacion (IsProductionSource=false) SIGUE sirviendose como sugerencia — pero la leyenda
+    /// tiene que avisar con todas las letras que es un numero de práctica, para que nadie lo confunda
+    /// con el dolar real. Texto FIJADO literal (T-6): si alguien lo cambia, este test lo detecta.
+    /// </summary>
+    [Fact]
+    public async Task ConSugerenciaDePractica_LaLeyendaAvisaQueNoEsElDolarReal()
+    {
+        var resolverMock = new Mock<IExchangeRateResolver>();
+        resolverMock
+            .Setup(r => r.GetSuggestionAsync("USD", new DateOnly(2026, 08, 05), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1152.202m,
+                RateDate: new DateOnly(2026, 08, 05),
+                Source: ExchangeRateSource.AfipOficial,
+                ProviderName: "ARCA_WSFEv1",
+                ArcaFchCotiz: new DateOnly(2026, 08, 05),
+                IsStale: false,
+                QuoteId: 99,
+                FetchedAt: DateTime.UtcNow,
+                IsProductionSource: false));
+
+        var controller = BuildController(resolverMock);
+
+        var actionResult = await controller.GetSuggestion("USD", new DateOnly(2026, 08, 05), CancellationToken.None);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var body = Assert.IsType<ExchangeRateSuggestionResponse>(okResult.Value);
+
+        Assert.Equal(1152.202m, body.TipoCambio);
+        Assert.Equal(
+            "Dólar de prueba de ARCA (el sistema factura en modo práctica): sirve para facturas de prueba, NO es el dólar real.",
+            body.Leyenda);
+    }
+
     [Fact]
     public async Task ConMonedaInvalida_Devuelve400()
     {
@@ -87,7 +124,7 @@ public class ExchangeRatesControllerTests
 
         Assert.IsType<BadRequestObjectResult>(actionResult.Result);
         resolverMock.Verify(
-            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()),
+            r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
             Times.Never);
     }
 
@@ -107,8 +144,8 @@ public class ExchangeRatesControllerTests
 
         var resolverMock = new Mock<IExchangeRateResolver>();
         resolverMock
-            .Setup(r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
-            .Callback<string, DateOnly, CancellationToken>((_, date, _) => fechaRecibidaPorElResolver = date)
+            .Setup(r => r.GetSuggestionAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback<string, DateOnly, CancellationToken, bool>((_, date, _, _) => fechaRecibidaPorElResolver = date)
             .ReturnsAsync((ExchangeRateSuggestion?)null);
 
         var controller = BuildController(resolverMock);
