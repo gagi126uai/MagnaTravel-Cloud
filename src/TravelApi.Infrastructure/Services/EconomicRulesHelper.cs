@@ -46,10 +46,10 @@ internal static class EconomicRulesHelper
 
         if (settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason)
         {
-            return (false, "La reserva tiene deuda. AFIP queda bloqueado por defecto y requiere override con motivo.", true);
+            return (false, "La reserva tiene deuda. Facturar en ARCA queda bloqueado por defecto y hay que autorizarlo con un motivo.", true);
         }
 
-        return (false, "La reserva no esta cancelada economicamente y no puede emitirse en AFIP.", false);
+        return (false, "La reserva no está saldada y no se puede facturar en ARCA.", false);
     }
 
     public static string? GetCombinedEconomicBlockReason(Reserva reserva, OperationalFinanceSettings settings)

@@ -26,7 +26,7 @@ namespace TravelApi.Tests.Unit;
 /// </summary>
 public class Adr042DataExposureFugasTests
 {
-    private const string GenericArca = "AFIP rechazó la factura. Revisá los datos fiscales o volvé a intentar.";
+    private const string GenericArca = "ARCA rechazó la factura. Revisá los datos fiscales o volvé a intentar.";
 
     // =========================================================================
     // FUGA 1 — bandeja de NDs pendientes: DebitNoteArcaErrorMessage saneado en el DTO

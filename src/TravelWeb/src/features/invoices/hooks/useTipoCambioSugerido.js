@@ -21,6 +21,12 @@
  * SIN toast ni cartel de error en ningún caso: red caída, 204 o el usuario sin
  * permiso para consultar se ven todos igual, "sin sugerencia" — el casillero queda
  * vacío y editable, nunca se traba la pantalla (spec §4 punto 9).
+ *
+ * Ampliado por la spec "ayuda invisible del tipo de cambio" (2026-08-06): además de
+ * la sugerencia y la leyenda, el motor ahora manda `topeDelDia` (el máximo que la
+ * factura admite ese día, para el acomodo de A4) y `loCompletaElSistema` (A3: el
+ * casillero no se dibuja porque el motor completa el número solo). Los dos viajan
+ * en el mismo GET, sin pedidos extra.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -36,12 +42,16 @@ const DEBOUNCE_MS = 300;
  * @param {string} fecha - "YYYY-MM-DD", la fecha de emisión del comprobante (hoy en Argentina)
  * @param {{ enabled?: boolean }} [options] - enabled=false desactiva el hook entero
  *   (no dispara ningún fetch) — se usa cuando la moneda elegida no es USD.
- * @returns {{ tipoCambioSugerido: number|null, leyenda: string|null, cargando: boolean }}
+ * @returns {{ tipoCambioSugerido: number|null, leyenda: string|null, cargando: boolean, topeDelDia: number|null, loCompletaElSistema: boolean }}
  */
 export function useTipoCambioSugerido(moneda, fecha, { enabled = true } = {}) {
   const [tipoCambioSugerido, setTipoCambioSugerido] = useState(null);
   const [leyenda, setLeyenda] = useState(null);
   const [cargando, setCargando] = useState(false);
+  // "Ayuda invisible" (2026-08-06): techo del día para el acomodo (A4) y aviso de
+  // "el motor completa solo" (A3). Viajan en la misma respuesta que la sugerencia.
+  const [topeDelDia, setTopeDelDia] = useState(null);
+  const [loCompletaElSistema, setLoCompletaElSistema] = useState(false);
 
   // Guarda cuál es la combinación moneda+fecha "vigente" en todo momento (sin
   // depender de closures del useEffect), para que la comparación de abajo siempre
@@ -57,6 +67,8 @@ export function useTipoCambioSugerido(moneda, fecha, { enabled = true } = {}) {
       setTipoCambioSugerido(null);
       setLeyenda(null);
       setCargando(false);
+      setTopeDelDia(null);
+      setLoCompletaElSistema(false);
       return;
     }
 
@@ -67,6 +79,8 @@ export function useTipoCambioSugerido(moneda, fecha, { enabled = true } = {}) {
     // tipo de cambio "sugerido" que en realidad era de la consulta vieja.
     setTipoCambioSugerido(null);
     setLeyenda(null);
+    setTopeDelDia(null);
+    setLoCompletaElSistema(false);
     setCargando(true);
 
     const timer = setTimeout(async () => {
@@ -79,10 +93,16 @@ export function useTipoCambioSugerido(moneda, fecha, { enabled = true } = {}) {
         // Refuerzo explícito (ver comentario de cabecera): si la clave vigente ya
         // cambió mientras esta consulta estaba en vuelo, esta respuesta es vieja.
         if (claveConsultada !== claveVigenteRef.current) return;
-        const { tipoCambioSugerido: sugerido, leyenda: leyendaMotor } =
-          interpretarRespuestaSugerenciaTC(respuesta);
+        const {
+          tipoCambioSugerido: sugerido,
+          leyenda: leyendaMotor,
+          topeDelDia: tope,
+          loCompletaElSistema: completaSolo,
+        } = interpretarRespuestaSugerenciaTC(respuesta);
         setTipoCambioSugerido(sugerido);
         setLeyenda(leyendaMotor);
+        setTopeDelDia(tope);
+        setLoCompletaElSistema(completaSolo);
       } catch {
         // 204 ya lo maneja interpretarRespuestaSugerenciaTC (api.get devuelve null,
         // no tira error). Acá solo caen errores de red/servidor/permiso — caso
@@ -91,6 +111,8 @@ export function useTipoCambioSugerido(moneda, fecha, { enabled = true } = {}) {
         if (!cancelado) {
           setTipoCambioSugerido(null);
           setLeyenda(null);
+          setTopeDelDia(null);
+          setLoCompletaElSistema(false);
         }
       } finally {
         if (!cancelado) setCargando(false);
@@ -103,5 +125,5 @@ export function useTipoCambioSugerido(moneda, fecha, { enabled = true } = {}) {
     };
   }, [moneda, fecha, enabled]);
 
-  return { tipoCambioSugerido, leyenda, cargando };
+  return { tipoCambioSugerido, leyenda, cargando, topeDelDia, loCompletaElSistema };
 }

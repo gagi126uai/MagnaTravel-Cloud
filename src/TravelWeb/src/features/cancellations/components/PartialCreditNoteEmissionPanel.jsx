@@ -229,7 +229,7 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
         onClose={() => setConfirmOpen(false)}
         onConfirm={emit}
         title="¿Seguro?"
-        message="Se va a emitir la nota de crédito en AFIP por la devolución del servicio anulado. Una vez emitida no se puede deshacer."
+        message="Se va a emitir la nota de crédito en ARCA por la devolución del servicio anulado. Una vez emitida no se puede deshacer."
         confirmText="Sí, emitir"
         cancelText="Volver"
         type="warning"

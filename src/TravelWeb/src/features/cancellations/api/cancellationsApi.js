@@ -456,7 +456,9 @@ export const cancellationsApi = {
 export const DEBIT_NOTE_STATUS_LABELS = {
   Pending: { label: "En proceso", color: "amber" },
   Issued: { label: "Emitida", color: "emerald" },
-  Failed: { label: "Error AFIP/ARCA", color: "rose" },
+  // Item 6 (fix, P5=A a fondo): "AFIP" se barre de este circuito — el término fiscal
+  // vive SOLO en el cartel de "factura en proceso" de las pantallas de emitir factura.
+  Failed: { label: "Error ARCA", color: "rose" },
   ManualReview: { label: "En revision manual", color: "slate" },
   NotApplicable: { label: "No aplica", color: "slate" },
   // Pseudo-estado: penalidad confirmada pero la ND nunca llego a crearse.

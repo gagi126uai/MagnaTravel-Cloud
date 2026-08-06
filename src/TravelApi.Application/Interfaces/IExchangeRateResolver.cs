@@ -60,6 +60,21 @@ public interface IExchangeRateResolver
     /// forma).
     /// </returns>
     Task<bool> RequestManualSyncAsync(string currency, CancellationToken ct);
+
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, A5.7): el TECHO del dia — el tipo
+    /// de cambio MAS ALTO que un comprobante en <paramref name="currency"/> puede declarar para
+    /// <paramref name="date"/> sin que el organismo lo rechace.
+    ///
+    /// <para>Sale SIEMPRE de la cotizacion oficial del organismo (<see cref="ExchangeRateSource.AfipOficial"/>)
+    /// mas el margen que fija <see cref="TravelApi.Domain.Helpers.ArcaInvoicingRateCeiling"/>. A proposito
+    /// NO se calcula sobre las fuentes de respaldo (Banco Nacion, APIs publicas): el techo es una regla
+    /// del organismo contra SU propio numero, y calcularlo sobre otro dato podria bajarle el valor a una
+    /// factura legitima. Si no hay cotizacion oficial conocida para esa fecha (ni caminando hacia atras
+    /// dentro de la ventana de respaldo), devuelve <c>null</c> = "no sabemos el techo" y nadie acomoda
+    /// nada (mismo comportamiento que antes de esta obra).</para>
+    /// </summary>
+    Task<decimal?> GetInvoicingCeilingAsync(string currency, DateOnly date, CancellationToken ct);
 }
 
 /// <summary>
@@ -92,4 +107,18 @@ public record ExchangeRateSuggestion(
     bool IsStale,
     int QuoteId,
     DateTime FetchedAt,
-    bool IsProductionSource);
+    bool IsProductionSource)
+{
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, A3): <c>true</c> cuando este
+    /// numero NO es plata de verdad — es el que el organismo exige mientras el sistema emite
+    /// comprobantes de ensayo. En ese caso el motor completa el tipo de cambio SOLO y la pantalla ni
+    /// dibuja el casillero: si le sugirieramos el dolar real, el comprobante rebotaria.
+    ///
+    /// <para><b>Fuente unica del criterio (regla T-6)</b>: antes esta misma comparacion estaba escrita
+    /// a mano en tres lugares (la leyenda de facturar, la tarjeta del inicio y el gate de emision). Al
+    /// vivir en el propio dato, los tres no pueden volver a decir cosas distintas.</para>
+    /// </summary>
+    public bool LoCompletaElSistema =>
+        Source == ExchangeRateSource.AfipOficial && !IsProductionSource;
+}

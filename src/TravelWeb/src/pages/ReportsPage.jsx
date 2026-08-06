@@ -48,6 +48,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import Swal from "sweetalert2";
 import AnalyticsPage from "./AnalyticsPage";
 import { getPublicId } from "../lib/publicIds";
+// "Facturas en dólares" (spec firmada 2026-08-06, Parte B): solapa nueva, solo lectura,
+// que muestra la diferencia entre lo cobrado y lo facturado en moneda extranjera. Vive
+// en su propio archivo (no acá) porque trae su propia carga de datos y su propio Excel.
+import { UsdInvoicesReportTab } from "../features/invoices/components/UsdInvoicesReportTab";
 
 export default function ReportsPage() {
   const [report, setReport] = useState(null);
@@ -55,6 +59,12 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const navigate = useNavigate();
+
+  // Fix bloqueante (review post-implementación, Parte B): la spec dice literal
+  // "Exportar Excel reusa el botón que la pantalla ya tiene arriba" — no un botón
+  // propio de la solapa. Para eso el botón de arriba necesita saber qué solapa
+  // está activa; antes el <Tabs> llevaba ese estado adentro y nadie de afuera lo veía.
+  const [activeReportTab, setActiveReportTab] = useState("sales");
 
   // Date range — default: first day of current month to today
   const today = new Date();
@@ -206,6 +216,47 @@ export default function ReportsPage() {
     }
   };
 
+  /**
+   * "Facturas en dólares" (Parte B): mismo botón "Exportar Excel" de arriba, pero
+   * en vez de abrir el modal de configuración del reporte combinado, baja
+   * directo el Excel de esta solapa con el mismo período que ya está elegido en
+   * la barra de fechas — no hay nada que configurar acá (una sola tabla, un
+   * solo período).
+   */
+  const handleExportUsdInvoices = async () => {
+    setIsExporting(true);
+    try {
+      const response = await api.get(`/reports/usd-invoices/export?from=${dateFrom}&to=${dateTo}`, {
+        responseType: "blob",
+      });
+      const url = window.URL.createObjectURL(new Blob([response]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `Facturas_en_dolares_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+    } catch (error) {
+      showError("Error al exportar Excel.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  /**
+   * El botón de arriba es UNO SOLO para toda la pantalla (spec Parte B: "reusa el
+   * botón que la pantalla ya tiene arriba") — según la solapa activa, exporta el
+   * reporte combinado (con su modal de configuración) o el de facturas en dólares
+   * (descarga directa, sin nada que configurar).
+   */
+  const handleExportClick = () => {
+    if (activeReportTab === "usd-invoices") {
+      handleExportUsdInvoices();
+      return;
+    }
+    openExportModal();
+  };
+
   if (loading && !report) {
     return <ReportsSkeleton />;
   }
@@ -302,9 +353,10 @@ export default function ReportsPage() {
         </div>
         <Button
           variant="outline"
-          onClick={openExportModal}
+          onClick={handleExportClick}
           disabled={isExporting}
           className="flex items-center gap-2"
+          data-testid="btn-exportar-excel-reportes"
         >
           {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           Exportar Excel
@@ -352,15 +404,23 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="sales" className="space-y-6">
+      <Tabs defaultValue="sales" onValueChange={setActiveReportTab} className="space-y-6">
         <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
           <TabsTrigger value="sales" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Ventas y Margen</TabsTrigger>
           <TabsTrigger value="finance" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Finanzas y Deudas</TabsTrigger>
+          <TabsTrigger value="usd-invoices" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Facturas en dólares</TabsTrigger>
           <TabsTrigger value="intelligence" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Inteligencia Analítica</TabsTrigger>
         </TabsList>
 
         <TabsContent value="intelligence" className="space-y-6">
            <AnalyticsPage />
+        </TabsContent>
+
+        {/* "Facturas en dólares" (2026-08-06, Parte B): reusa la MISMA barra de fechas
+            de arriba (dateFrom/dateTo) — la spec pide "períodos con el selector que
+            Reportes ya usa", no un segundo selector propio de esta solapa. */}
+        <TabsContent value="usd-invoices" className="space-y-6">
+          <UsdInvoicesReportTab dateFrom={dateFrom} dateTo={dateTo} />
         </TabsContent>
 
         <TabsContent value="sales" className="space-y-6">

@@ -384,6 +384,10 @@ public class InvoiceService : IInvoiceService
             request.ExchangeRateFetchedAt = null;
             request.ExchangeRateQuoteId = null;
             request.ExchangeRateFchCotiz = null;
+            // "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06): el rastro de COMO se
+            // llego al TC lo escribe SOLO el servidor, por la misma razon que las 4 lineas de arriba.
+            request.ExchangeRateOrigin = null;
+            request.RequestedExchangeRate = null;
         }
 
         var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(request.ReservaId, ct);
@@ -484,13 +488,13 @@ public class InvoiceService : IInvoiceService
             if (!EconomicRulesHelper.IsEconomicallySettled(reserva))
             {
                 if (!request.ForceIssue)
-                    throw new InvalidOperationException(afip.BlockReason ?? "La reserva tiene deuda y no puede emitirse en AFIP.");
+                    throw new InvalidOperationException(afip.BlockReason ?? "La reserva tiene deuda y no puede facturarse en ARCA.");
 
                 if (settings.AfipInvoiceControlMode != AfipInvoiceControlModes.AllowAgentOverrideWithReason)
-                    throw new InvalidOperationException("La configuracion actual no permite emitir AFIP con deuda.");
+                    throw new InvalidOperationException("La configuración actual no permite facturar en ARCA con deuda.");
 
                 if (string.IsNullOrWhiteSpace(request.ForceReason) || request.ForceReason.Trim().Length < 10)
-                    throw new InvalidOperationException("Debe indicar un motivo valido para emitir AFIP con deuda.");
+                    throw new InvalidOperationException("Indicá un motivo válido para facturar en ARCA con deuda.");
 
                 request.ForceReason = request.ForceReason.Trim();
                 request.ForcedByUserId = userId;
@@ -781,18 +785,6 @@ public class InvoiceService : IInvoiceService
             request.MonId = arcaCode;
         }
 
-        // Cotizacion coherente: mismo criterio que el guard de la NC parcial (InvoiceService
-        // ~1884). Un dolar no vale 0 ni 1 peso; un TC <= 0 o == 1 para moneda extranjera es
-        // un dato corrupto y emitiriamos un comprobante mal valuado. Corre ANTES de preguntarle
-        // nada al resolver: no tiene sentido comparar un numero corrupto contra la sugerencia.
-        bool exchangeRateIncoherent = request.MonCotiz <= 0m || request.MonCotiz == 1m;
-        if (exchangeRateIncoherent)
-        {
-            throw new InvalidOperationException(
-                $"La cotizacion de la moneda '{currencyCode}' ({request.MonCotiz}) es incoherente " +
-                "(debe ser mayor a 0 y distinta de 1). No se puede valuar una moneda extranjera como pesos.");
-        }
-
         // ADR-011 (enmienda 2026-08-05): SOLO para facturas de venta GENUINAS. La NC/ND jamas pasa
         // por aca: hereda MonCotiz/ExchangeRateSource/ExchangeRateQuoteId del comprobante que
         // corrige (regla INAMOVIBLE, §6.2 — "nunca se recotiza"), ya vienen completos en el
@@ -800,10 +792,47 @@ public class InvoiceService : IInvoiceService
         // campos del original ANTES de llamar CreateAsync). Comparar un TC heredado contra "la
         // sugerencia de hoy" seria comparar peras con bananas: la fecha de la NC casi nunca
         // coincide con la fecha del comprobante que corrige.
+        //
+        // ORDEN (cambiado por la "ayuda invisible", spec firmada 2026-08-06): esto corre AHORA
+        // ANTES del guard de cotizacion coherente, y el orden importa. En el modo donde el motor
+        // completa el tipo de cambio solo (spec A3), la pantalla NO manda ningun numero y el
+        // request llega con el default 1 — con el orden viejo, el guard de abajo lo rechazaba por
+        // "un dolar no vale 1 peso" ANTES de que el motor tuviera chance de completarlo. Para el
+        // resto de los casos el resultado es identico: si despues de pasar por el resolver el
+        // numero sigue siendo corrupto, el guard de abajo lo rechaza igual que siempre.
         bool isGenuineSaleInvoice = !request.IsCreditNote && !request.IsDebitNote;
+        bool elMotorTeniaQueCompletarElTipoDeCambio = false;
         if (isGenuineSaleInvoice)
         {
-            await ResolveExchangeRateSourceServerSideAsync(request, ct);
+            elMotorTeniaQueCompletarElTipoDeCambio = await ResolveExchangeRateSourceServerSideAsync(request, ct);
+        }
+
+        // Cotizacion coherente: mismo criterio que el guard de la NC parcial (InvoiceService
+        // ~1884). Un dolar no vale 0 ni 1 peso; un TC <= 0 o == 1 para moneda extranjera es
+        // un dato corrupto y emitiriamos un comprobante mal valuado.
+        bool exchangeRateIncoherent = request.MonCotiz <= 0m || request.MonCotiz == 1m;
+        if (exchangeRateIncoherent)
+        {
+            // Hallazgo de exposicion B1 (2026-08-06): hay DOS motivos posibles y decirle al usuario el
+            // equivocado es peor que no decirle nada.
+            //
+            // (a) La pantalla no le mostro el casillero porque el motor iba a completar el numero, y
+            //     entre que abrio la pantalla y apreto "Emitir" el motor dejo de poder hacerlo (cambio
+            //     el entorno de facturacion, o la cotizacion que iba a usar quedo corregida). El
+            //     usuario NUNCA escribio un numero: echarle la culpa a "la cotizacion que cargaste"
+            //     seria mentirle. Lo unico util es "probá de nuevo".
+            //
+            // (b) El usuario si escribio un numero y no sirve. Ahi el mensaje le pide que lo revise, en
+            //     criollo — antes le volcabamos el numero que "cargó" (que muchas veces ni escribio) y
+            //     la regla interna entre parentesis, jerga pura para un vendedor.
+            if (elMotorTeniaQueCompletarElTipoDeCambio)
+            {
+                throw new InvalidOperationException(
+                    "No pudimos completar el tipo de cambio en este momento. Probá de nuevo en unos minutos.");
+            }
+
+            throw new InvalidOperationException(
+                "Revisá el tipo de cambio: no podés facturar en dólares con ese valor.");
         }
 
         // Trazabilidad del TC (patron INV-120): no se permite emitir en moneda extranjera sin
@@ -851,7 +880,13 @@ public class InvoiceService : IInvoiceService
     /// nada). El front normal no necesita puntear exacto "a mano": precarga el valor tal cual
     /// recibio la sugerencia, asi que si el usuario no lo toca, empata solo.
     /// </summary>
-    private async Task ResolveExchangeRateSourceServerSideAsync(CreateInvoiceRequest request, CancellationToken ct)
+    /// <returns>
+    /// <c>true</c> cuando el motor DEBIA completar el tipo de cambio solo (la pantalla no le mostro el
+    /// casillero al usuario) pero NO pudo hacerlo. Quien llama lo usa para elegir el mensaje correcto si
+    /// despues el numero no sirve: culpar al usuario por un numero que nunca escribio seria mentirle
+    /// (hallazgo de exposicion B1, 2026-08-06).
+    /// </returns>
+    private async Task<bool> ResolveExchangeRateSourceServerSideAsync(CreateInvoiceRequest request, CancellationToken ct)
     {
         if (_exchangeRateResolver is null)
         {
@@ -869,7 +904,7 @@ public class InvoiceService : IInvoiceService
                 "ADR-011: ResolveExchangeRateSourceServerSideAsync corrio sin IExchangeRateResolver " +
                 "cableado. La factura en moneda extranjera queda con la fuente que mando el request, " +
                 "sin verificar contra la libreta de cotizaciones. Esto NUNCA deberia pasar en produccion.");
-            return;
+            return false;
         }
 
         // request.MonId ya esta normalizado a codigo ARCA ("DOL") a esta altura del metodo; el
@@ -887,13 +922,73 @@ public class InvoiceService : IInvoiceService
         // la fecha de emision en la practica de este sistema — si algun dia se permite programar una
         // emision para OTRO dia (factura diferida), este es el lugar donde hay que leer esa fecha en
         // vez de ArgentinaTime.GetArgentinaToday().
+        var invoicingDate = DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday());
+
+        // "El request llego SIN tipo de cambio propio": la pantalla no le dibujo el casillero al
+        // vendedor (caso A3) y por eso mando el valor por defecto del contrato. Se captura ACA, antes
+        // de que cualquier paso siguiente pise el numero — despues ya no hay forma de distinguir "no
+        // mando nada" de "mando esto". Es lo unico que permite, mas adelante, no culpar al vendedor por
+        // un numero que nunca escribio (hallazgo de exposicion B1, 2026-08-06).
+        bool llegoSinTipoDeCambioPropio = request.MonCotiz <= 0m || request.MonCotiz == 1m;
+
         ExchangeRateSuggestion? suggestion = isoCurrency is null
             ? null
-            : await _exchangeRateResolver.GetSuggestionAsync(
-                isoCurrency,
-                DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday()),
-                ct);
+            : await _exchangeRateResolver.GetSuggestionAsync(isoCurrency, invoicingDate, ct);
 
+        // PASO 1 — "el motor lo completa solo" (spec firmada 2026-08-06, A3). Mientras el sistema
+        // emite comprobantes de ensayo, el organismo exige SU propio tipo de cambio y cualquier otro
+        // rebota. La pantalla ni dibuja el casillero, asi que no manda numero: lo pone el motor. Este
+        // paso va PRIMERO porque pisa el TC del request antes de cualquier otra comparacion.
+        if (suggestion is not null && suggestion.LoCompletaElSistema)
+        {
+            // CANDADO A PRUEBA DE FALLAS (hallazgo de seguridad B1, 2026-08-06). El dato que dice "este
+            // numero es de ensayo" viaja dentro de la sugerencia, y la sugerencia se arma contra un
+            // entorno de facturacion CACHEADO hasta 5 minutos. Si el admin acaba de pasar la agencia a
+            // emitir comprobantes REALES, ese cache puede estar mintiendo — y autocompletar aca dejaria
+            // un CAE real con un numero de juguete, que no se puede deshacer.
+            //
+            // Por eso releemos el entorno directo de la base, SIN cache, justo antes de decidir.
+            // Preferimos molestar al usuario antes que emitir un comprobante real mal valuado.
+            bool emitiendoComprobantesReales = await IsInvoicingAgainstProductionAuthoritativeAsync(ct);
+            if (!emitiendoComprobantesReales)
+            {
+                ApplySystemFilledExchangeRate(request, suggestion);
+                return false;
+            }
+
+            _logger.LogWarning(
+                "Se evito autocompletar el tipo de cambio de un comprobante: la sugerencia venia marcada " +
+                "como dato de ensayo, pero la configuracion vigente indica emision de comprobantes reales. " +
+                "Probable cambio de entorno reciente con el dato de entorno todavia cacheado.");
+
+            // Emitiendo comprobantes reales, TODO lo que dependa de esa sugerencia de ensayo queda
+            // descartado: ni se usa como numero sugerido, ni se calcula techo con ella. El comprobante
+            // sale por el camino de carga a mano (con su explicacion escrita, como siempre) si el
+            // vendedor puso un numero; si no puso ninguno, el guard de mas arriba corta con el mensaje
+            // que corresponde gracias al valor que devolvemos.
+            ApplyManualExchangeRate(request);
+            return llegoSinTipoDeCambioPropio;
+        }
+
+        // PASO 2 — el techo del dia (spec A4, excepcion firmada a la regla P-21). Si el usuario
+        // declaro un tipo de cambio mas alto del que la factura admite, el motor lo ACOMODA al techo
+        // y emite igual: es la unica forma de que el comprobante no rebote despues de darle "Emitir"
+        // con un error que el vendedor no sabe arreglar. El numero que el habia querido poner NO se
+        // pierde: queda en el rastro interno (ver ApplyCeilingClampedExchangeRate).
+        if (isoCurrency is not null)
+        {
+            var dailyCeiling = await _exchangeRateResolver.GetInvoicingCeilingAsync(isoCurrency, invoicingDate, ct);
+            if (dailyCeiling.HasValue && ArcaInvoicingRateCeiling.ExceedsCeiling(request.MonCotiz, dailyCeiling.Value))
+            {
+                ApplyCeilingClampedExchangeRate(request, dailyCeiling.Value);
+                return false;
+            }
+        }
+
+        // NOTA: si el request llego SIN tipo de cambio, el techo de arriba nunca dispara (el valor por
+        // defecto no supera ningun techo) y se sigue de largo hasta aca — que es lo correcto.
+
+        // PASO 3 — el camino normal: comparar contra la sugerencia por igualdad EXACTA.
         bool matchesSuggestionExactly = suggestion is not null && suggestion.Rate == request.MonCotiz;
 
         if (matchesSuggestionExactly)
@@ -905,20 +1000,125 @@ public class InvoiceService : IInvoiceService
             // trajo de la fuente (suggestion.FetchedAt), no el momento de esta emision — es el
             // dato que el contador necesita para saber cuando se publico ese numero.
             request.ExchangeRateFetchedAt = suggestion.FetchedAt;
+            request.ExchangeRateOrigin = InvoiceExchangeRateOrigin.SuggestedAccepted;
+            request.RequestedExchangeRate = null;
         }
         else
         {
-            // Distinto de la sugerencia (el usuario lo piso), o no hubo sugerencia disponible para
-            // hoy: Manual. El servidor IGNORA a proposito cualquier ExchangeRateSource que haya
-            // llegado en el request (un front viejo todavia manda "BNA_VendedorDivisa" inventado
-            // sin haber consultado nada — regla de compatibilidad del Deploy 1, §10) y pone la
-            // suya. QuoteId/FchCotiz quedan NULL: no hay fila de la libreta detras de un TC manual.
-            request.ExchangeRateSource = Domain.Entities.ExchangeRateSource.Manual;
-            request.ExchangeRateQuoteId = null;
-            request.ExchangeRateFchCotiz = null;
-            request.ExchangeRateFetchedAt = DateTime.UtcNow;
+            ApplyManualExchangeRate(request);
         }
+
+        // Si no hubo sugerencia para hoy Y el request llego sin tipo de cambio, la pantalla le mostro
+        // al vendedor un casillero vacio... o no le mostro ninguno porque cuando la abrio el motor SI
+        // iba a completar el numero y despues dejo de poder (caso A3 desfasado). En los dos casos el
+        // vendedor no eligio ningun numero, y quien llama necesita saberlo para elegir el mensaje.
+        return llegoSinTipoDeCambioPropio;
     }
+
+    /// <summary>
+    /// Marca el tipo de cambio como CARGA A MANO: el usuario puso un numero distinto del sugerido, o no
+    /// habia sugerencia, o el motor descarto la que habia. El servidor IGNORA a proposito cualquier
+    /// fuente que haya llegado en el request (un formulario viejo todavia manda una inventada sin haber
+    /// consultado nada) y pone la suya. Sin fila de la libreta detras: un tipo de cambio a mano no tiene
+    /// procedencia que citar.
+    /// </summary>
+    private static void ApplyManualExchangeRate(CreateInvoiceRequest request)
+    {
+        request.ExchangeRateSource = Domain.Entities.ExchangeRateSource.Manual;
+        request.ExchangeRateQuoteId = null;
+        request.ExchangeRateFchCotiz = null;
+        request.ExchangeRateFetchedAt = DateTime.UtcNow;
+        request.ExchangeRateOrigin = InvoiceExchangeRateOrigin.ManualWithJustification;
+        request.RequestedExchangeRate = null;
+    }
+
+    /// <summary>
+    /// Lee de la base, SIN pasar por ningun cache, si la agencia esta emitiendo comprobantes REALES.
+    ///
+    /// <para><b>Por que no se reusa el dato que ya tiene el resolver</b> (hallazgo de seguridad B1,
+    /// 2026-08-06): el resolver lo cachea 5 minutos porque lo consulta muchisimas veces (una por tecla
+    /// del casillero de tipo de cambio) y cambia rarisima vez. Ese cambio rarisimo es justo el momento
+    /// peligroso: pasar de comprobantes de ensayo a comprobantes reales. Una unica consulta extra en el
+    /// momento de emitir — algo que pasa unas pocas veces por dia — es un precio ridiculo al lado de un
+    /// CAE real emitido con un tipo de cambio de juguete.</para>
+    /// </summary>
+    private async Task<bool> IsInvoicingAgainstProductionAuthoritativeAsync(CancellationToken ct)
+    {
+        return await _context.AfipSettings
+            .AsNoTracking()
+            .Select(settings => settings.IsProduction)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, A3): el motor completa el tipo de
+    /// cambio SOLO, con el numero exacto que el comprobante exige en este momento, y descarta lo que
+    /// haya llegado del front (que en este modo no manda nada, pero un caller viejo podria mandar algo).
+    ///
+    /// <para>La procedencia queda COMPLETA igual que en el camino normal (fuente + fila de la libreta +
+    /// fecha), porque el numero SI salio de la libreta: la unica diferencia con "el usuario acepto la
+    /// sugerencia" es que nunca hubo casillero, y eso es lo que registra
+    /// <see cref="InvoiceExchangeRateOrigin.SystemFilled"/>.</para>
+    /// </summary>
+    private static void ApplySystemFilledExchangeRate(CreateInvoiceRequest request, ExchangeRateSuggestion suggestion)
+    {
+        request.MonCotiz = suggestion.Rate;
+        request.ExchangeRateSource = suggestion.Source;
+        request.ExchangeRateQuoteId = suggestion.QuoteId;
+        request.ExchangeRateFchCotiz = suggestion.ArcaFchCotiz;
+        request.ExchangeRateFetchedAt = suggestion.FetchedAt;
+        request.ExchangeRateOrigin = InvoiceExchangeRateOrigin.SystemFilled;
+        request.RequestedExchangeRate = null;
+        // No se le pide explicacion a nadie: no hubo numero que pisar (spec A5.4). Si un caller viejo
+        // mando texto, se descarta — explicaria un numero que el usuario nunca eligio.
+        request.ExchangeRateJustification = null;
+    }
+
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, A4): el usuario declaro un tipo de
+    /// cambio mas alto que el techo del dia. El motor lo baja al techo y emite, sin frenar nada y sin
+    /// pedirle explicacion — el numero que quedo NO lo eligio el.
+    ///
+    /// <para><b>Lo que quiso poner NO se pierde</b>: va a <c>RequestedExchangeRate</c> (rastro interno,
+    /// no se muestra en ninguna pantalla) y ademas se escribe en la justificacion del comprobante, que
+    /// es donde el contador la va a buscar cuando tenga que explicar por que la factura salio a un dolar
+    /// y el cobro entro a otro. Esa justificacion la escribe el MOTOR, no el usuario: sin ella el
+    /// comprobante quedaria con tipo de cambio a mano y sin una sola linea que lo explique (invariante
+    /// INV-120, "no hay tipo de cambio a mano sin explicacion").</para>
+    ///
+    /// <para><b>Por que la fuente queda "a mano" y no la del organismo</b>: el numero que termina en el
+    /// comprobante es el techo (la cotizacion oficial mas el margen tolerado), NO la cotizacion oficial
+    /// publicada. Etiquetarlo como si fuera el numero del organismo seria mentirle a una auditoria. La
+    /// explicacion completa de como se llego a el vive en <c>ExchangeRateOrigin</c>.</para>
+    /// </summary>
+    private static void ApplyCeilingClampedExchangeRate(CreateInvoiceRequest request, decimal dailyCeiling)
+    {
+        var requestedRate = request.MonCotiz;
+
+        request.MonCotiz = dailyCeiling;
+        request.ExchangeRateSource = Domain.Entities.ExchangeRateSource.Manual;
+        request.ExchangeRateQuoteId = null;
+        request.ExchangeRateFchCotiz = null;
+        request.ExchangeRateFetchedAt = DateTime.UtcNow;
+        request.ExchangeRateOrigin = InvoiceExchangeRateOrigin.ClampedToDailyCeiling;
+        request.RequestedExchangeRate = requestedRate;
+        request.ExchangeRateJustification = BuildCeilingClampJustification(requestedRate, dailyCeiling);
+    }
+
+    /// <summary>
+    /// Texto en criollo que el motor deja como explicacion del tipo de cambio cuando lo acomodo al techo
+    /// del dia. Sin jerga, sin numeros de error, sin nombres de la maquinaria (reglas T-5 / P-17): un
+    /// contador o un vendedor lo leen y entienden que paso.
+    /// </summary>
+    private static string BuildCeilingClampJustification(decimal requestedRate, decimal dailyCeiling)
+    {
+        var pedido = requestedRate.ToString("N2", SpanishArgentinaCulture);
+        var techo = dailyCeiling.ToString("N2", SpanishArgentinaCulture);
+        return $"El tipo de cambio se ajustó automáticamente al máximo que entra en la factura ($ {techo}). " +
+               $"El tipo de cambio cargado era $ {pedido}.";
+    }
+
+    private static readonly CultureInfo SpanishArgentinaCulture = CultureInfo.GetCultureInfo("es-AR");
 
     /// <summary>
     /// B1.15 (2026-05-11): detecta unique_violation (SQLSTATE 23505) de PostgreSQL
@@ -951,7 +1151,7 @@ public class InvoiceService : IInvoiceService
             throw new InvalidOperationException(
                 invoice.AnnulmentStatus == AnnulmentStatus.Succeeded
                     ? "No se puede reintentar la emision de una factura ya anulada (NC aprobada)."
-                    : "No se puede reintentar la emision de una factura con anulacion en proceso. Esperá a que AFIP confirme la NC.");
+                    : "No se puede reintentar la emisión de una factura con anulación en proceso. Esperá a que ARCA confirme la nota de crédito.");
         }
 
         // B1.15 (2026-05-11, fiscal critico): idempotencia con job de emision en vuelo.
@@ -1250,7 +1450,7 @@ public class InvoiceService : IInvoiceService
         if (invoice == null) throw new KeyNotFoundException("Factura no encontrada");
 
         var settings = await _context.AfipSettings.FirstOrDefaultAsync(ct);
-        if (settings == null) throw new InvalidOperationException("Configuración de AFIP no encontrada");
+        if (settings == null) throw new InvalidOperationException("No encontramos la configuración de ARCA.");
 
         var agencySettings = await _context.AgencySettings.FirstOrDefaultAsync(ct) ?? new AgencySettings();
 
@@ -1925,8 +2125,8 @@ public class InvoiceService : IInvoiceService
                     && !string.Equals(sanitizedDetail, ArcaErrorSanitizer.GenericArcaMessage, StringComparison.Ordinal);
 
                 var rechazoMessage = showDetail
-                    ? $"AFIP rechazó la anulación de la reserva {numeroReserva}. Revisá los datos fiscales de la factura o volvé a intentar. {sanitizedDetail}"
-                    : $"AFIP rechazó la anulación de la reserva {numeroReserva}. Revisá los datos fiscales de la factura o volvé a intentar.";
+                    ? $"ARCA rechazó la anulación de la reserva {numeroReserva}. Revisá los datos fiscales de la factura o volvé a intentar. {sanitizedDetail}"
+                    : $"ARCA rechazó la anulación de la reserva {numeroReserva}. Revisá los datos fiscales de la factura o volvé a intentar.";
                 await CreateNotification(userId, rechazoMessage, "Error", invoiceId);
                 return; // Job finishes effectively "Failed" but successfully handled
             }
@@ -1938,7 +2138,7 @@ public class InvoiceService : IInvoiceService
             // RETOMA la NC pendiente en vez de duplicarla), así que se lo contamos al usuario sin jerga de "job/reintento
             // automático". El detalle técnico ya quedó en el log de arriba.
             var userFacingError =
-                $"La anulación de la reserva {numeroReserva} quedó en camino: AFIP no respondió en este momento. " +
+                $"La anulación de la reserva {numeroReserva} quedó en camino: ARCA no respondió en este momento. " +
                 "La estamos reintentando por vos, no hace falta que hagas nada.";
             await CreateNotification(userId, userFacingError, "Error", invoiceId);
             throw; // Hangfire reintenta; gracias a F1 el reintento RETOMA la NC pendiente en vez de duplicarla.
@@ -2087,8 +2287,8 @@ public class InvoiceService : IInvoiceService
             var showFailureReason = failureReason is not null
                 && !string.Equals(failureReason, ArcaErrorSanitizer.GenericArcaMessage, StringComparison.Ordinal);
             var failureMessage = showFailureReason
-                ? $"AFIP no aceptó la anulación de la reserva {numeroReserva}. Revisá los datos de la factura y volvé a intentar. {failureReason}"
-                : $"AFIP no aceptó la anulación de la reserva {numeroReserva}. Revisá los datos de la factura y volvé a intentar.";
+                ? $"ARCA no aceptó la anulación de la reserva {numeroReserva}. Revisá los datos de la factura y volvé a intentar. {failureReason}"
+                : $"ARCA no aceptó la anulación de la reserva {numeroReserva}. Revisá los datos de la factura y volvé a intentar.";
             await CreateNotification(userId, failureMessage, "Error", invoiceId);
 
             // FC1.2.1 v3 §6.2: notificar al BC asociado. Mismo patron try/catch:
@@ -2134,7 +2334,7 @@ public class InvoiceService : IInvoiceService
                 "de la factura {InvoiceId}. Se trata como error tecnico transitorio y se reintentara (no se marca el BC como rechazado).",
                 newInvoice.Resultado ?? "(null)", newInvoice.Id, invoiceId);
             throw new InvoiceAnnulmentPendingRetryException(
-                "AFIP no respondió al emitir la Nota de Crédito");
+                "ARCA no respondió al emitir la Nota de Crédito");
         }
     }
 
@@ -3715,8 +3915,8 @@ public class InvoiceService : IInvoiceService
     private IQueryable<InvoicingWorkItemDto> BuildInvoicingWorkItemsQuery(OperationalFinanceSettings settings, string? ownerScope = null)
     {
         var allowsOverride = settings.AfipInvoiceControlMode == AfipInvoiceControlModes.AllowAgentOverrideWithReason;
-        var overrideBlockReason = "La reserva tiene deuda. AFIP queda bloqueado por defecto y requiere override con motivo.";
-        var hardBlockReason = "La reserva no esta cancelada economicamente y no puede emitirse en AFIP.";
+        var overrideBlockReason = "La reserva tiene deuda. Facturar en ARCA queda bloqueado por defecto y hay que autorizarlo con un motivo.";
+        var hardBlockReason = "La reserva no está saldada y no se puede facturar en ARCA.";
 
         var reservasBase = _context.Reservas
             .AsNoTracking()
@@ -3804,7 +4004,7 @@ public class InvoiceService : IInvoiceService
                             ? "override"
                             : "blocked",
                 FiscalStatusLabel = item.HasInvoiceInProgress
-                    ? "En proceso AFIP"
+                    ? "En proceso en ARCA"
                     : item.Balance <= 0m
                         ? "Lista para emitir"
                         : allowsOverride

@@ -60,7 +60,7 @@ public static class DeleteGuards
 
         var hasInvoiceWithCae = await db.Invoices.AnyAsync(i => i.ReservaId == reservaId && !string.IsNullOrEmpty(i.CAE), ct);
         if (hasInvoiceWithCae)
-            return "No se puede eliminar una Reserva con facturas AFIP emitidas (CAE asignado). Marcá la Reserva como Cancelada.";
+            return "No se puede eliminar una Reserva con facturas emitidas en ARCA (CAE asignado). Marcá la Reserva como Cancelada.";
 
         // INV-020-04: aunque la reserva este en Cotizacion/Presupuesto, NO se borra fisicamente si
         // algun servicio ya fue confirmado por el operador (ConfirmedAt sellado = compromiso/deuda

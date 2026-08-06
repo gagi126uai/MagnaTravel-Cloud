@@ -788,6 +788,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(i => i.ExchangeRateQuoteId)
                   .OnDelete(DeleteBehavior.Restrict);
 
+            // "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06): rastro interno de COMO
+            // llego el sistema al TC de este comprobante. El enum se persiste como int (mismo patron
+            // que ExchangeRateSource) y el TC pedido con la misma precision que MonCotiz, para que
+            // comparar "lo que quiso poner" contra "lo que quedo" no pierda decimales.
+            entity.Property(i => i.ExchangeRateOrigin)
+                  .HasConversion<int?>();
+            entity.Property(i => i.RequestedExchangeRate)
+                  .HasPrecision(18, 6);
+
             // ADR-042 §3.3.1 (2026-07-01): CanMisMonExt congelado al emitir. NULLABLE y SIN default:
             // pesos/facturas historicas quedan NULL (no se emite el nodo, byte-identico). Divisa emite 'N'.
             entity.Property(i => i.CanMisMonExt)

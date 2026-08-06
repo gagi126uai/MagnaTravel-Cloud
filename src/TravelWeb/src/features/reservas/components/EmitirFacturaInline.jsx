@@ -61,11 +61,16 @@ import { elegirGrupoPrecarga } from "../lib/invoiceCurrencyDefault";
 // de "cuándo pedir justificación", que vive en un solo lugar para no divergir entre
 // esta pantalla y CreateInvoiceModal.jsx (Pagos). Ver docs/ux/specs/2026-08-05-tc-sugerido-en-facturar.md.
 import { useTipoCambioSugerido } from "../../invoices/hooks/useTipoCambioSugerido";
+// "Ayuda invisible del tipo de cambio" (2026-08-06): acomodarAlTope calcula si hay
+// que bajar el número al techo del día (A4); las demás funciones ya existían y se
+// extendieron para soportar A3/A4 sin romper el camino normal. Ver la cabecera de
+// exchangeRateSuggestion.js para el detalle de cada caso.
 import {
   debeMostrarJustificacionTC,
   faltaJustificacionTC,
   textoLeyendaTC,
   construirCamposUSDParaPayload,
+  acomodarAlTope,
 } from "../../invoices/lib/exchangeRateSuggestion";
 
 // ─── Funciones puras exportables ─────────────────────────────────────────────
@@ -124,10 +129,17 @@ export function hayDescuadre(totalItems, suggestedTotal, tolerancia = 0.5) {
  * (compartida con CreateInvoiceModal.jsx) para que las dos pantallas la pidan en el
  * mismo momento, sin divergir.
  *
- * @param {{ tipoCambio: string|number, justificacion: string, tipoCambioSugerido: number|null, huboSugerencia: boolean }} params
+ * "Ayuda invisible" (2026-08-06, A4): `fueAcomodadoAlTope` se pasa a
+ * debeMostrarJustificacionTC para que, si el sistema bajó el número al techo, no se
+ * exija una explicación que el vendedor no puede dar (no eligió ese número).
+ * IMPORTANTE (A3): esta función NO se llama en absoluto cuando `loCompletaElSistema`
+ * es `true` — el llamador (handleClickEmitir) se salta esta validación entera,
+ * porque en ese modo no hay casillero que validar.
+ *
+ * @param {{ tipoCambio: string|number, justificacion: string, tipoCambioSugerido: number|null, huboSugerencia: boolean, fueAcomodadoAlTope?: boolean }} params
  * @returns {string | null} mensaje de error legible, o null si todo está bien
  */
-export function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboSugerencia }) {
+export function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboSugerencia, fueAcomodadoAlTope = false }) {
   const tcNum = Number(tipoCambio);
   if (!tipoCambio || isNaN(tcNum) || tcNum <= 0) {
     return "Ingresá el tipo de cambio para facturas en dólares.";
@@ -139,6 +151,7 @@ export function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido
     tipoCambioEscrito: tipoCambio,
     tipoCambioSugerido,
     huboSugerencia,
+    fueAcomodadoAlTope,
   });
   if (faltaJustificacionTC({ mostrar: requiereJustificacion, texto: justificacion })) {
     return "Ingresá la justificación del tipo de cambio.";
@@ -328,6 +341,13 @@ export function EmitirFacturaInline({
   // patrón que ConfirmarMultaOperadorInline.jsx). OJO: esto NO decide si se pide
   // justificación (esa cuenta es number vs number, ver debeMostrarJustificacionTC).
   const [tipoCambioTocado, setTipoCambioTocado] = useState(false);
+  // "Ayuda invisible" (2026-08-06, A4): true apenas el sistema acomodó el número al
+  // techo del día (al salir del casillero). Mientras esté en true: se muestra la
+  // línea gris del acomodo en vez de la leyenda normal, y NUNCA se pide
+  // justificación (el vendedor no eligió ese número). Se apaga solo si el usuario
+  // vuelve a tocar el casillero (onChange) — recién ahí vuelve a valer la
+  // comparación normal contra la sugerencia.
+  const [fueAcomodadoAlTope, setFueAcomodadoAlTope] = useState(false);
 
   // Override de emisión cuando la reserva tiene deuda pero canEmitAfipInvoice=true
   const [forceIssue, setForceIssue] = useState(false);
@@ -392,11 +412,17 @@ export function EmitirFacturaInline({
   const monedaEfectiva = isMultiCurrencyEnabled ? monedaSeleccionada : "ARS";
   const esUSD = monedaEfectiva === "USD";
 
-  // TC sugerido (2026-08-05): la fecha de emisión de estas facturas es SIEMPRE hoy
-  // en Argentina (ninguna de las dos pantallas deja elegir otra fecha de emisión —
-  // spec §4 punto 2). `enabled: esUSD` evita gastar pedidos mientras la moneda
-  // elegida es pesos.
-  const { tipoCambioSugerido, leyenda: leyendaTC, cargando: buscandoTC } =
+  // TC sugerido (2026-08-05, ampliado 2026-08-06 "ayuda invisible"): la fecha de
+  // emisión de estas facturas es SIEMPRE hoy en Argentina (ninguna de las dos
+  // pantallas deja elegir otra fecha de emisión — spec §4 punto 2). `enabled: esUSD`
+  // evita gastar pedidos mientras la moneda elegida es pesos.
+  //
+  // topeDelDia y loCompletaElSistema son los dos campos nuevos del motor (A3/A4):
+  //   - loCompletaElSistema=true → el casillero de TC directamente no se dibuja
+  //     (ver el JSX más abajo, `esUSD && !loCompletaElSistema`).
+  //   - topeDelDia → el máximo que la factura admite hoy; se usa en el onBlur del
+  //     casillero para acomodar el número si el vendedor escribió uno más alto.
+  const { tipoCambioSugerido, leyenda: leyendaTC, cargando: buscandoTC, topeDelDia, loCompletaElSistema } =
     useTipoCambioSugerido("USD", hoyArgentina(), { enabled: esUSD });
   const huboSugerenciaTC = tipoCambioSugerido != null;
 
@@ -404,6 +430,9 @@ export function EmitirFacturaInline({
   // "viene ya escrito y se pisa escribiendo encima"). Si el usuario YA tocó el
   // campo, no lo pisamos. Si la sugerencia se va y el campo sigue sin tocar, lo
   // vaciamos — mismo criterio que ConfirmarMultaOperadorInline.jsx:352-357.
+  // En modo A3 (loCompletaElSistema) tipoCambioSugerido siempre viene null, así que
+  // este efecto simplemente deja el casillero vacío — no importa, porque ese
+  // casillero ni se dibuja en ese modo.
   useEffect(() => {
     if (!tipoCambioTocado) {
       setTipoCambio(tipoCambioSugerido != null ? String(tipoCambioSugerido) : "");
@@ -412,15 +441,38 @@ export function EmitirFacturaInline({
   }, [tipoCambioSugerido]);
 
   // Justificación: aparece solo cuando el número escrito difiere del sugerido, o
-  // cuando no hubo sugerencia (spec §4 punto 5). Comparación número contra número,
-  // no "tocó la tecla" — ver debeMostrarJustificacionTC.
+  // cuando no hubo sugerencia (spec §4 punto 5) — EXCEPTO cuando el sistema acomodó
+  // el número al techo (A4: `fueAcomodadoAlTope`), caso en el que nunca se pide.
+  // Comparación número contra número, no "tocó la tecla" — ver debeMostrarJustificacionTC.
   // Fix N1 (review 2026-08-05): `!buscandoTC` evita que el campo parpadee mientras
   // la consulta está en vuelo — el Momento D de la spec solo muestra "Buscando…".
   const mostrarJustificacionTC = esUSD && !buscandoTC && debeMostrarJustificacionTC({
     tipoCambioEscrito: tipoCambio,
     tipoCambioSugerido,
     huboSugerencia: huboSugerenciaTC,
+    fueAcomodadoAlTope,
   });
+
+  // A5.5 (fix item 8): "aparece y desaparece en vivo... si el campo se esconde, su
+  // texto se descarta y no viaja". Antes el texto quedaba vivo en el estado y
+  // reaparecía tal cual si el vendedor volvía a un momento que lo pide de nuevo
+  // (ej: pisa el TC, lo vuelve a dejar como el sugerido, lo vuelve a pisar) — eso
+  // podía colar una justificación vieja, de otro número, sin que el vendedor la
+  // haya escrito para ESTE intento.
+  useEffect(() => {
+    if (!mostrarJustificacionTC) {
+      setJustificacionTC("");
+    }
+  }, [mostrarJustificacionTC]);
+
+  // Fix bloqueante (review post-implementación, A4): el casillero MUESTRA el techo
+  // cuando el sistema acomodó, pero `tipoCambio` (el estado real, el que viaja al
+  // backend) sigue siendo el número que el vendedor tipeó. Si mandáramos el techo
+  // exacto, el motor lo compararía contra la sugerencia, no matchearía, y lo trataría
+  // como carga manual sin justificar — rebota pidiendo una explicación que la pantalla
+  // nunca pidió. Este valor es SOLO para lo que se ve en el input.
+  const valorMostradoEnCasillero =
+    fueAcomodadoAlTope && Number(topeDelDia) > 0 ? String(topeDelDia) : tipoCambio;
 
   // ── Derivados de reserva ───────────────────────────────────────────────────
   const requiereOverride = Boolean(
@@ -459,7 +511,7 @@ export function EmitirFacturaInline({
         const response = await api.get("/afip/settings");
         if (!cancelado) setAfipSettings(response);
       } catch {
-        if (!cancelado) showError("No se pudo obtener la configuración de AFIP.");
+        if (!cancelado) showError("No se pudo obtener la configuración de ARCA.");
       } finally {
         if (!cancelado) setCargandoSettings(false);
       }
@@ -522,6 +574,9 @@ export function EmitirFacturaInline({
     // de nuevo (spec §4 punto 1: "si el usuario pasa de dólares a pesos y vuelve,
     // se vuelve a consultar").
     setTipoCambioTocado(false);
+    // El acomodo al techo (A4) era válido para la moneda anterior; al cambiar de
+    // moneda no tiene sentido arrastrarlo.
+    setFueAcomodadoAlTope(false);
 
     // Fix N1: al cambiar moneda limpiar errores y warnings previos.
     // Si el usuario tuvo un error en ARS y cambia a USD, el error viejo no aplica.
@@ -685,7 +740,7 @@ export function EmitirFacturaInline({
         } else if (estado === "Rejected") {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
-          setMotivoRechazo(factura?.rejectionReason || "AFIP no aceptó el comprobante.");
+          setMotivoRechazo(factura?.rejectionReason || "ARCA no aceptó el comprobante.");
           setEstadoEmision("rechazo");
         }
         // "InProcess" o null → seguimos polling sin cambiar estado.
@@ -736,12 +791,17 @@ export function EmitirFacturaInline({
       setErrorEnvio("Ingresá un motivo de al menos 10 caracteres.");
       return;
     }
-    if (esUSD) {
+    // "Ayuda invisible" (A3): con loCompletaElSistema=true no hay casillero de TC
+    // que validar — el motor lo completa solo al emitir. Saltarse esta validación
+    // es a propósito, no un descuido: si la corriéramos igual, tipoCambio estaría
+    // vacío (nunca se le pidió al usuario) y bloquearía la emisión sin sentido.
+    if (esUSD && !loCompletaElSistema) {
       const errorUSD = validarCamposUSD({
         tipoCambio,
         justificacion: justificacionTC,
         tipoCambioSugerido,
         huboSugerencia: huboSugerenciaTC,
+        fueAcomodadoAlTope,
       });
       if (errorUSD) {
         setErrorEnvio(errorUSD);
@@ -828,11 +888,15 @@ export function EmitirFacturaInline({
       // resuelve solo comparando el número (spec §4 punto 11; antes se mandaba
       // SIEMPRE una fuente fija falsa, aunque el número lo hubiera escrito el
       // usuario a mano — bug V8).
+      // "Ayuda invisible" (A3): con loCompletaElSistema, tipoCambio nunca se llenó
+      // (no hubo casillero) — construirCamposUSDParaPayload manda un valor de
+      // relleno que el backend ignora por completo y resuelve solo.
       if (esUSD) {
         Object.assign(payload, construirCamposUSDParaPayload({
           tipoCambio,
           justificacion: justificacionTC,
           mostrarJustificacion: mostrarJustificacionTC,
+          loCompletaElSistema,
         }));
       }
 
@@ -914,7 +978,7 @@ export function EmitirFacturaInline({
             <Calculator className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
           </div>
           <div>
-            <div className="text-sm font-bold text-slate-900 dark:text-white">Nueva factura AFIP</div>
+            <div className="text-sm font-bold text-slate-900 dark:text-white">Nueva factura ARCA</div>
             <div className="text-xs text-slate-500 dark:text-slate-400">
               {clientName || "Consumidor Final"}
               {clientCuit ? ` · CUIT ${clientCuit}` : ""}
@@ -1072,7 +1136,7 @@ export function EmitirFacturaInline({
                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <div>
                     <span className="font-semibold">Esta reserva tiene servicios en dólares.</span>
-                    {" "}Para facturarla en dólares hay que activar multimoneda en la configuración de AFIP.
+                    {" "}Para facturarla en dólares hay que activar multimoneda en la configuración de ARCA.
                     Podés ingresar los renglones manualmente en pesos si corresponde.
                   </div>
                 </div>
@@ -1175,8 +1239,14 @@ export function EmitirFacturaInline({
                     la franja celeste "Fuente del TC: BNA vendedor divisa..." se saca
                     de acá — mentía cuando el número lo escribía el usuario a mano.
                     La reemplaza la leyenda del motor, en gris, debajo del casillero,
-                    igual que en la pantalla de la multa. Ver spec §2 y §7.) */}
-                {esUSD && (
+                    igual que en la pantalla de la multa. Ver spec §2 y §7.)
+
+                    "Ayuda invisible" (2026-08-06, A3): `!loCompletaElSistema` — mientras
+                    el sistema emite comprobantes de ensayo, este bloque entero (casillero,
+                    leyenda y justificación) directamente NO se dibuja. El vendedor elige
+                    dólares y emite: el motor completa el tipo de cambio solo, sin que haya
+                    nada acá que le pida un número que no es plata de verdad. */}
+                {esUSD && !loCompletaElSistema && (
                   <div className="space-y-3 pt-2 border-t border-indigo-200 dark:border-indigo-700">
                     <div className="w-full sm:w-40">
                       <label
@@ -1190,29 +1260,63 @@ export function EmitirFacturaInline({
                         type="number"
                         step="0.01"
                         min="1.01"
-                        value={tipoCambio}
+                        // Fix bloqueante (review post-implementación): el casillero MUESTRA
+                        // el techo cuando el sistema acomodó (mejor UX, spec A4), pero el
+                        // ESTADO que viaja al backend (tipoCambio) nunca se pisa — es el
+                        // motor quien tiene que ver el número original para tratarlo como
+                        // "acomodo" y no como "carga manual sin justificar". Ver
+                        // valorMostradoEnCasillero más abajo y el armado del payload.
+                        value={valorMostradoEnCasillero}
                         onChange={(e) => {
                           setTipoCambio(e.target.value);
                           setTipoCambioTocado(true);
+                          // El usuario está corrigiendo a mano: el acomodo anterior (si
+                          // hubo uno) ya no aplica a este número nuevo. Al salir del
+                          // casillero de nuevo (onBlur) se vuelve a evaluar desde cero.
+                          setFueAcomodadoAlTope(false);
+                        }}
+                        onBlur={() => {
+                          // "Ayuda invisible" (A4): apenas el vendedor termina de escribir,
+                          // si el número supera el techo del día el sistema lo baja solo EN
+                          // PANTALLA, sin frenar nada ni pedir confirmación (excepción
+                          // firmada a P-21, ver spec §A4). acomodarAlTope devuelve null si no
+                          // hay que tocar nada (número dentro del techo, o techo desconocido).
+                          // OJO: tipoCambio (el estado real) NO se toca acá — solo se marca
+                          // fueAcomodadoAlTope para que el casillero MUESTRE el techo y el
+                          // motor reciba el número tal cual lo tipeó el vendedor.
+                          const valorAcomodado = acomodarAlTope(tipoCambio, topeDelDia);
+                          if (valorAcomodado !== null) {
+                            setFueAcomodadoAlTope(true);
+                          }
                         }}
                         placeholder="Ej: 1200.50"
                         className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
                         data-testid="input-tipo-cambio-inline"
                       />
                       {/* Texto que manda el motor (leyendaTC), tal cual — T-13. Mientras
-                          se consulta, un texto neutro de "buscando". Sin color extra ni
-                          ícono aunque el dato sea de otro día: la leyenda ya lo dice. */}
+                          se consulta, un texto neutro de "buscando". Si el sistema acomodó
+                          el número al techo (A4), este mismo renglón pasa a mostrar
+                          "En la factura entra hasta $X." en vez de la leyenda normal —
+                          textoLeyendaTC ya resuelve esa prioridad. Sin color extra ni ícono
+                          en ningún caso: es información, no una alerta (P11=A). */}
                       <div
                         className="mt-1 text-xs text-slate-500 dark:text-slate-400"
                         role="status"
                         data-testid="leyenda-tc-sugerido"
                       >
-                        {textoLeyendaTC({ cargando: buscandoTC, huboSugerencia: huboSugerenciaTC, leyenda: leyendaTC })}
+                        {textoLeyendaTC({
+                          cargando: buscandoTC,
+                          huboSugerencia: huboSugerenciaTC,
+                          leyenda: leyendaTC,
+                          fueAcomodadoAlTope,
+                          topeDelDia,
+                        })}
                       </div>
                     </div>
 
                     {/* Justificación: aparece solo cuando el número escrito difiere del
-                        sugerido (o cuando no hubo sugerencia) — ver mostrarJustificacionTC. */}
+                        sugerido (o cuando no hubo sugerencia), y NUNCA cuando el sistema
+                        acomodó el número al techo — ver mostrarJustificacionTC. */}
                     {mostrarJustificacionTC && (
                       <div>
                         <label
@@ -1496,14 +1600,21 @@ export function EmitirFacturaInline({
                 Total: {formatCurrency(totales.total, monedaEfectiva)}
               </div>
 
-              {/* Equivalente en pesos para facturas USD */}
-              {esUSD && Number(tipoCambio) > 1 && (
+              {/* Equivalente en pesos para facturas USD.
+                  "Ayuda invisible" (A3): `!loCompletaElSistema` — mientras el número lo
+                  completa el motor, este renglón tampoco se muestra: sería un cálculo
+                  hecho con un tipo de cambio de juguete puesto al lado de un total real.
+                  Usa valorMostradoEnCasillero (no tipoCambio): si el sistema acomodó al
+                  techo, la factura va a salir a ESE número — mostrarle al vendedor un
+                  equivalente calculado con el número que tipeó (y que el motor va a
+                  pisar) sería mentirle sobre cuánto va a decir el comprobante. */}
+              {esUSD && !loCompletaElSistema && Number(valorMostradoEnCasillero) > 1 && (
                 <div
                   data-testid="equivalente-pesos-inline"
                   className="text-xs text-indigo-600 dark:text-indigo-400 font-medium"
                 >
-                  ≈ {formatCurrency(totales.total * Number(tipoCambio), "ARS")}{" "}
-                  (TC ${Number(tipoCambio).toLocaleString("es-AR", {
+                  ≈ {formatCurrency(totales.total * Number(valorMostradoEnCasillero), "ARS")}{" "}
+                  (TC ${Number(valorMostradoEnCasillero).toLocaleString("es-AR", {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
                   })})
@@ -1539,7 +1650,11 @@ export function EmitirFacturaInline({
                     // la justificación. Fix B1 (review): antes exigía la
                     // justificación SIEMPRE, aunque el campo no estuviera ni
                     // mostrándose (sugerencia aceptada tal cual) → botón trabado.
-                    (esUSD &&
+                    // "Ayuda invisible" (A3): `!loCompletaElSistema` — en ese modo no hay
+                    // casillero que el vendedor haya llenado, así que esta condición
+                    // completa no aplica (si se dejara correr, tipoCambio vacío
+                    // bloquearía el botón sin ningún motivo real).
+                    (esUSD && !loCompletaElSistema &&
                       (!(Number(tipoCambio) > 0) ||
                         Number(tipoCambio) === 1 ||
                         faltaJustificacionTC({ mostrar: mostrarJustificacionTC, texto: justificacionTC })))
@@ -1727,7 +1842,7 @@ export function EmitirFacturaInline({
           <CheckCircle2 className="h-10 w-10 text-emerald-500" aria-hidden="true" />
           <div className="space-y-1">
             <p className="text-base font-bold text-emerald-700 dark:text-emerald-400">
-              La factura quedó en proceso en AFIP.
+              La factura quedó en proceso en ARCA.
             </p>
             <p className="text-sm text-slate-600 dark:text-slate-400">
               Podés seguir trabajando: apenas salga la vas a ver en el Estado de Cuenta.
@@ -1814,7 +1929,7 @@ export function EmitirFacturaInline({
           <AlertCircle className="h-10 w-10 text-rose-500" aria-hidden="true" />
           <div className="space-y-2">
             <p className="text-base font-bold text-rose-700 dark:text-rose-400">
-              AFIP rechazó la factura.
+              ARCA rechazó la factura.
             </p>
             {motivoRechazo && (
               <div className="rounded-xl border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300 text-left">
@@ -1850,7 +1965,7 @@ export function EmitirFacturaInline({
               Sigue en proceso, podés cerrar y verla más tarde.
             </p>
             <p className="text-xs text-slate-400">
-              AFIP puede tardar unos minutos. El resultado va a aparecer en el Estado de Cuenta.
+              ARCA puede tardar unos minutos. El resultado va a aparecer en el Estado de Cuenta.
             </p>
           </div>
           <button

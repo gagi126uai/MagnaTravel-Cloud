@@ -600,7 +600,7 @@ public class InvoiceServiceFilteringAndAnnulmentTests
 
         var item = Assert.Single(page.Items);
         Assert.Equal("in_progress", item.FiscalStatus);
-        Assert.Equal("En proceso AFIP", item.FiscalStatusLabel);
+        Assert.Equal("En proceso en ARCA", item.FiscalStatusLabel);
         // PendingFiscalAmount sigue >0 (la fila aparece, la UI solo deshabilita el boton).
         Assert.True(item.PendingFiscalAmount > 0m);
         // RequiresOverride debe estar en false: el flujo dominante es "esperar AFIP",

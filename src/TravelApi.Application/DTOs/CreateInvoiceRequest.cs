@@ -112,6 +112,24 @@ public class CreateInvoiceRequest
     public DateOnly? ExchangeRateFchCotiz { get; set; }
 
     /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06): COMO llego el sistema al tipo de
+    /// cambio de este comprobante. Mismo canal INTERNO server-a-server que
+    /// <see cref="ExchangeRateQuoteId"/>: lo completa <c>InvoiceService</c> y lo copia
+    /// <c>AfipService.CreatePendingInvoice</c> a <c>Invoice.ExchangeRateOrigin</c>.
+    /// <c>[JsonIgnore]</c> por el mismo motivo (regla F-4: la procedencia la decide el servidor).
+    /// </summary>
+    [JsonIgnore]
+    public InvoiceExchangeRateOrigin? ExchangeRateOrigin { get; set; }
+
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec A4): el tipo de cambio que el usuario QUISO poner,
+    /// cuando el sistema tuvo que acomodarlo al techo del dia. Rastro interno, nunca vuelve al front.
+    /// Mismo canal server-a-server y mismo <c>[JsonIgnore]</c> que los dos campos de arriba.
+    /// </summary>
+    [JsonIgnore]
+    public decimal? RequestedExchangeRate { get; set; }
+
+    /// <summary>
     /// FC1.3.F2.2 (fix fiscal B1, 2026-05-27): desglose de totales YA REDONDEADO que el
     /// caller calculo aparte (la NC parcial lo trae del <c>PartialCreditNoteIvaCalculator</c>).
     ///

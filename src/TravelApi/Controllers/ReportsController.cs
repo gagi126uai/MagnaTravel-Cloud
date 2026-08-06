@@ -75,6 +75,40 @@ public class ReportsController : ControllerBase
     }
 
     /// <summary>
+    /// "Facturas en dólares" (spec firmada 2026-08-06, Parte B): la solapa donde el contador ve, mes por
+    /// mes, cuánto se facturó en moneda extranjera y cuánta plata entró contra esas facturas. Solo
+    /// lectura. Detrás del permiso de Reportes: el vendedor común no la ve.
+    /// </summary>
+    [HttpGet("usd-invoices")]
+    [RequirePermission(Permissions.ReportesView)]
+    public async Task<ActionResult<UsdInvoicesReportResponse>> GetUsdInvoicesReport(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var response = await _reportService.GetUsdInvoicesReportAsync(from, to, cancellationToken);
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// El mismo reporte en Excel, con las mismas columnas. Reusa el botón "Exportar Excel" que la
+    /// pantalla de Reportes ya tiene arriba.
+    /// </summary>
+    [HttpGet("usd-invoices/export")]
+    [RequirePermission(Permissions.ReportesView)]
+    public async Task<ActionResult> ExportUsdInvoicesReport(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var content = await _reportService.ExportUsdInvoicesReportAsync(from, to, cancellationToken);
+        return File(
+            content,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"Facturas_en_dolares_{DateTime.Now:yyyyMMdd}.xlsx");
+    }
+
+    /// <summary>
     /// Obtener configuración de la agencia
     /// </summary>
     [HttpGet("settings")]

@@ -49,10 +49,12 @@ export const TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA =
     "Hubo cobros sin factura: revisalo con tu contador.";
 
 /**
- * Cartel ÁMBAR — caso CreditNote (con factura CAE vivo → emite NC en AFIP/ARCA).
+ * Cartel ÁMBAR — caso CreditNote (con factura CAE vivo → emite NC en ARCA).
+ * Item 6 (fix, P5=A a fondo): "AFIP" se barre de este circuito — el término fiscal
+ * vive SOLO en el cartel de "factura en proceso" de las pantallas de emitir factura.
  */
 export const TEXTO_BANNER_CREDIT_NOTE =
-    "Esta reserva tiene factura emitida, al anular se emite la nota de crédito en AFIP/ARCA para anularla.";
+    "Esta reserva tiene factura emitida, al anular se emite la nota de crédito en ARCA para anularla.";
 
 // ─── Mensajes de éxito (textos exactos de guia-ux-gaston.md 2026-06-25) ──────
 
@@ -85,7 +87,7 @@ export const MENSAJE_EXITO_CREDIT_NOTE =
  * Encabezado del estado PROCESANDO (Estado 2): mismo texto sea cual sea la cantidad de notas.
  */
 export const TEXTO_PROCESANDO_MULTI =
-    "Estamos emitiendo las notas de crédito en AFIP. En unos instantes vas a ver el resultado.";
+    "Estamos emitiendo las notas de crédito en ARCA. En unos instantes vas a ver el resultado.";
 
 /**
  * Prefijo fijo de la línea de saldo a favor del Estado 3 (éxito total). Va seguido de los

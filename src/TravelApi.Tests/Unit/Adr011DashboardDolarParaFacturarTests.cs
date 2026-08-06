@@ -70,11 +70,15 @@ public class Adr011DashboardDolarParaFacturarTests
     }
 
     /// <summary>
-    /// Homologación: el resolver sirve el AfipOficial de práctica igual que a la factura (mismo
-    /// llamado, mismo dato) — pero la tarjeta lo marca EsDePrueba=true para el badge ambar.
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, decision P6=A del dueño): cuando
+    /// el número que la factura va a usar NO es plata de verdad, la tarjeta NO SE MUESTRA.
+    ///
+    /// <para>Este test REEMPLAZA al anterior (que verificaba el badge ámbar "de prueba" al lado del
+    /// número). El dueño decidió que un número falso al lado de uno real es peor que no mostrar nada, y
+    /// que la palabra del aviso es justo una de las que no quiere ver más en pantalla (Parte C).</para>
     /// </summary>
     [Fact]
-    public async Task ConAfipOficialDePractica_DevuelveElValor_ConEsDePruebaEnTrue()
+    public async Task CuandoElNumeroNoEsPlataDeVerdad_LaTarjetaNoSeMuestra()
     {
         await using var context = CreateContext();
         var bna = NeutralBnaMock();
@@ -96,9 +100,7 @@ public class Adr011DashboardDolarParaFacturarTests
         var service = new ReportService(context, bna.Object, exchangeRateResolver: resolver.Object);
         var dashboard = await service.GetDashboardAsync(CancellationToken.None);
 
-        Assert.NotNull(dashboard.DolarParaFacturar);
-        Assert.Equal(1152.202m, dashboard.DolarParaFacturar!.Value);
-        Assert.True(dashboard.DolarParaFacturar.EsDePrueba);
+        Assert.Null(dashboard.DolarParaFacturar);
     }
 
     /// <summary>

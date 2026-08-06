@@ -4,6 +4,7 @@ using System.Security.Claims;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -29,6 +30,10 @@ public class ReportService : IReportService
     // arriba). Sin este servicio inyectado, GetDashboardBnaRateAsync simplemente no intenta el
     // fallback "oficial" y el widget se comporta EXACTO como antes de esta obra.
     private readonly IExchangeRateResolver? _exchangeRateResolver;
+    // Opcional, mismo criterio que los demas de arriba (no romper los unit tests que arman este
+    // servicio con el ctor corto). Se usa para dejar rastro de datos que el reporte decide IGNORAR
+    // — sin log, un cobro descartado seria invisible para quien tenga que explicar un total.
+    private readonly ILogger<ReportService>? _logger;
 
     public ReportService(
         AppDbContext dbContext,
@@ -36,7 +41,8 @@ public class ReportService : IReportService
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
         IFinancePositionService? financePositionService = null,
-        IExchangeRateResolver? exchangeRateResolver = null)
+        IExchangeRateResolver? exchangeRateResolver = null,
+        ILogger<ReportService>? logger = null)
     {
         _dbContext = dbContext;
         _bnaExchangeRateService = bnaExchangeRateService;
@@ -44,6 +50,7 @@ public class ReportService : IReportService
         _httpContextAccessor = httpContextAccessor;
         _financePositionService = financePositionService;
         _exchangeRateResolver = exchangeRateResolver;
+        _logger = logger;
     }
 
     public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
@@ -362,12 +369,17 @@ public class ReportService : IReportService
                 return null;
             }
 
-            // Mismo criterio que la leyenda de la pantalla de facturar (hallazgo normativo 2026-08-05,
-            // validacion ARCA 10240): un AfipOficial que no vino del entorno productivo de ARCA es un
-            // numero de práctica, no el dolar real.
-            bool esDePrueba = suggestion.Source == ExchangeRateSource.AfipOficial && !suggestion.IsProductionSource;
+            // "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, decision P6=A del dueño):
+            // mientras el numero que la factura va a usar NO es plata de verdad, esta tarjeta NO SE
+            // MUESTRA. Antes se mostraba con un cartel al lado avisando que era de ensayo; el dueño
+            // decidio que un numero falso al lado de uno real es peor que no mostrar nada, y que la
+            // palabra del aviso es justo una de las que no quiere ver mas en pantalla.
+            if (suggestion.LoCompletaElSistema)
+            {
+                return null;
+            }
 
-            return new DolarParaFacturarDto(Value: suggestion.Rate, RateDate: suggestion.RateDate, EsDePrueba: esDePrueba);
+            return new DolarParaFacturarDto(Value: suggestion.Rate, RateDate: suggestion.RateDate, EsDePrueba: false);
         }
         catch (Exception)
         {
@@ -1285,6 +1297,300 @@ public class ReportService : IReportService
         workbook.SaveAs(stream);
         return stream.ToArray();
     }
+
+    // ============================================================================================
+    // "Facturas en dolares" (spec firmada 2026-08-06, Parte B)
+    //
+    // Que resuelve, en criollo: cuando vendes en dolares casi siempre COBRAS a un dolar y FACTURAS a
+    // otro (el maximo que el comprobante admite ese dia). La diferencia es real y normal, y el contador
+    // la necesita ordenada mes por mes. El vendedor no la tiene que ver nunca: por eso esto vive detras
+    // del permiso de Reportes y no en el estado de cuenta de la reserva (regla P-16).
+    // ============================================================================================
+
+    public async Task<UsdInvoicesReportResponse> GetUsdInvoicesReportAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken)
+    {
+        var rows = await BuildUsdInvoiceRowsAsync(from, to, cancellationToken);
+        return new UsdInvoicesReportResponse(rows, BuildUsdInvoicesTotals(rows));
+    }
+
+    public async Task<byte[]> ExportUsdInvoicesReportAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken)
+    {
+        var rows = await BuildUsdInvoiceRowsAsync(from, to, cancellationToken);
+        var totals = BuildUsdInvoicesTotals(rows);
+
+        // Mismo mecanismo de export que ya usa el resto de Reportes (ClosedXML + un worksheet por
+        // reporte): el contador recibe un archivo con la pinta a la que esta acostumbrado.
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("Facturas en dólares");
+
+        sheet.Cell(1, 1).Value = "Fecha";
+        sheet.Cell(1, 2).Value = "Comprobante";
+        sheet.Cell(1, 3).Value = "Reserva";
+        sheet.Cell(1, 4).Value = "Cliente";
+        sheet.Cell(1, 5).Value = "Moneda";
+        sheet.Cell(1, 6).Value = "Monto";
+        sheet.Cell(1, 7).Value = "Tipo de cambio";
+        sheet.Cell(1, 8).Value = "Pesos de la factura";
+        sheet.Cell(1, 9).Value = "Pesos cobrados";
+        sheet.Cell(1, 10).Value = "Diferencia";
+
+        int row = 2;
+        foreach (var line in rows)
+        {
+            sheet.Cell(row, 1).Value = line.Fecha;
+            sheet.Cell(row, 2).Value = line.Comprobante;
+            sheet.Cell(row, 3).Value = line.NumeroReserva ?? string.Empty;
+            sheet.Cell(row, 4).Value = line.Cliente;
+            sheet.Cell(row, 5).Value = line.Moneda;
+            sheet.Cell(row, 6).Value = line.MontoEnMonedaExtranjera;
+            sheet.Cell(row, 7).Value = line.TipoCambioFactura;
+            sheet.Cell(row, 8).Value = line.PesosDeLaFactura;
+            // Celda VACIA cuando no hay dato, no un cero: un cero diria "cobre cero pesos", que es
+            // una afirmacion distinta de "todavia no cobre nada" (mismo criterio que el guion de la
+            // pantalla).
+            if (line.PesosCobrados.HasValue) sheet.Cell(row, 9).Value = line.PesosCobrados.Value;
+            if (line.Diferencia.HasValue) sheet.Cell(row, 10).Value = line.Diferencia.Value;
+            row++;
+        }
+
+        sheet.Cell(row, 8).Value = totals.PesosDeLaFactura;
+        if (totals.PesosCobrados.HasValue) sheet.Cell(row, 9).Value = totals.PesosCobrados.Value;
+        if (totals.Diferencia.HasValue) sheet.Cell(row, 10).Value = totals.Diferencia.Value;
+        sheet.Cell(row, 7).Value = "Total del período";
+        sheet.Row(row).Style.Font.Bold = true;
+
+        sheet.Range(2, 8, row, 10).Style.NumberFormat.Format = "$ #,##0.00";
+        sheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return stream.ToArray();
+    }
+
+    /// <summary>
+    /// El corazon del reporte: trae las facturas de venta en moneda extranjera del periodo y les pega
+    /// lo cobrado.
+    ///
+    /// <para><b>Que entra y que no</b>: solo FACTURAS de venta (las notas de credito y de debito que la
+    /// corrigen no van: mezclarlas en la misma tabla haria que los totales dejen de significar "lo que
+    /// facture en dolares este mes"), aprobadas por el organismo, y que no hayan sido anuladas — una
+    /// factura anulada por nota de credito ya no vale, sumarla infla el total.</para>
+    /// </summary>
+    private async Task<List<UsdInvoiceRowDto>> BuildUsdInvoiceRowsAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken)
+    {
+        // Mismos defaults de periodo que ExportReportAsync (mes en curso): el front manda siempre las
+        // dos fechas, esto es la red de seguridad para una llamada sin parametros.
+        var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
+
+        var candidates = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(invoice =>
+                invoice.MonId != "PES"
+                && invoice.Resultado == "A"
+                && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded
+                // Dia de emision: el que el organismo tiene registrado. Las facturas viejas (anteriores
+                // a que se persistiera ese dia) caen a cuando se emitio y, en ultima instancia, a
+                // cuando se creo el comprobante.
+                && (invoice.CbteFchArgentina ?? invoice.IssuedAt ?? invoice.CreatedAt) >= dateFrom
+                && (invoice.CbteFchArgentina ?? invoice.IssuedAt ?? invoice.CreatedAt) <= dateTo)
+            .Select(invoice => new UsdInvoiceRawRow(
+                invoice.Id,
+                invoice.PublicId,
+                invoice.TipoComprobante,
+                invoice.PuntoDeVenta,
+                invoice.NumeroComprobante,
+                invoice.MonId,
+                invoice.MonCotiz,
+                invoice.ImporteTotal,
+                invoice.CbteFchArgentina ?? invoice.IssuedAt ?? invoice.CreatedAt,
+                invoice.Reserva != null ? invoice.Reserva.NumeroReserva : null,
+                invoice.Reserva != null ? invoice.Reserva.PublicId : (Guid?)null,
+                invoice.Reserva != null && invoice.Reserva.Payer != null ? invoice.Reserva.Payer.FullName : null))
+            .ToListAsync(cancellationToken);
+
+        // El filtro "es una factura de venta" se aplica EN MEMORIA a proposito: la lista ya viene
+        // acotada (facturas en moneda extranjera de un periodo) y llamar al helper del Dominio dentro
+        // del Where no se puede — el traductor a SQL no sabe convertir una llamada a metodo arbitraria
+        // (misma trampa documentada en ExchangeRateResolver). Preferimos reusar la fuente unica del
+        // criterio antes que volver a escribir la lista de codigos aca.
+        var saleInvoices = candidates
+            .Where(row => ComprobanteLabel.IsSaleInvoice(row.TipoComprobante))
+            .OrderByDescending(row => row.Fecha)
+            .ThenByDescending(row => row.Id)
+            .ToList();
+
+        var collectedByInvoice = await BuildCollectedPesosByInvoiceAsync(saleInvoices, cancellationToken);
+
+        return saleInvoices.Select(row => BuildUsdInvoiceRow(row, collectedByInvoice)).ToList();
+    }
+
+    /// <summary>
+    /// Cuanta plata EN PESOS entro imputada a cada una de estas facturas.
+    ///
+    /// <para><b>Que cuenta como "imputado a esta factura"</b>: el cobro que el usuario vinculo a ella al
+    /// registrarlo (es el unico vinculo cobro-factura que existe en el sistema). Un cobro suelto de la
+    /// reserva, sin vincular, NO se reparte por adivinanza entre las facturas: preferimos mostrar un
+    /// guion honesto antes que un numero inventado.</para>
+    ///
+    /// <para><b>Como se valua cada cobro</b>: si entro en pesos, valen los pesos que entraron, tal cual
+    /// (es el caso tipico — cobras en pesos a tu dolar y la factura salio a otro; esa es JUSTAMENTE la
+    /// diferencia que este reporte muestra). Si entro en la misma moneda de la factura, se valua al tipo
+    /// de cambio de la propia factura: recibiste exactamente los dolares que facturaste, asi que no hay
+    /// diferencia de cambio que declarar.</para>
+    ///
+    /// <para><b>Un cobro en una TERCERA moneda no se cuenta</b> (hallazgo 2026-08-06): si la factura es
+    /// en dolares y el cliente pago en euros, no tenemos con que valuar esos euros en pesos — el tipo de
+    /// cambio de la factura es dolar/peso, no euro/peso. Usarlo igual produciria un numero inventado en
+    /// una planilla contable. Se ignora y se loguea; el contador ve un guion o un cobrado parcial, que
+    /// es honesto, en vez de un total falso.</para>
+    /// </summary>
+    private async Task<Dictionary<int, decimal>> BuildCollectedPesosByInvoiceAsync(
+        List<UsdInvoiceRawRow> invoices, CancellationToken cancellationToken)
+    {
+        if (invoices.Count == 0)
+        {
+            return new Dictionary<int, decimal>();
+        }
+
+        var invoiceIds = invoices.Select(invoice => invoice.Id).ToList();
+
+        var payments = await _dbContext.Payments
+            .AsNoTracking()
+            .Where(payment =>
+                payment.LinkedInvoiceId != null
+                && invoiceIds.Contains(payment.LinkedInvoiceId.Value)
+                && payment.Status == "Paid"
+                // Solo plata que efectivamente movio caja. Los movimientos "puente" (por ejemplo, un
+                // saldo a favor que se aplica) no son plata que entro por esta factura.
+                && payment.AffectsCash)
+            .Select(payment => new
+            {
+                InvoiceId = payment.LinkedInvoiceId!.Value,
+                payment.Amount,
+                payment.Currency
+            })
+            .ToListAsync(cancellationToken);
+
+        var invoiceById = invoices.ToDictionary(invoice => invoice.Id);
+        var collected = new Dictionary<int, decimal>();
+
+        foreach (var payment in payments)
+        {
+            var invoice = invoiceById[payment.InvoiceId];
+
+            bool entroEnPesos = string.Equals(payment.Currency, Monedas.ARS, StringComparison.OrdinalIgnoreCase);
+            bool entroEnLaMonedaDeLaFactura = string.Equals(
+                payment.Currency, ToDisplayCurrency(invoice.MonId), StringComparison.OrdinalIgnoreCase);
+
+            if (!entroEnPesos && !entroEnLaMonedaDeLaFactura)
+            {
+                _logger?.LogWarning(
+                    "Reporte de facturas en moneda extranjera: se ignoro un cobro en {PaymentCurrency} " +
+                    "imputado a un comprobante en {InvoiceCurrency}. No hay forma honesta de valuarlo en pesos.",
+                    payment.Currency, ToDisplayCurrency(invoice.MonId));
+                continue;
+            }
+
+            decimal pesosDeEsteCobro = entroEnPesos
+                ? payment.Amount
+                : payment.Amount * invoice.MonCotiz;
+
+            collected.TryGetValue(payment.InvoiceId, out var acumulado);
+            collected[payment.InvoiceId] = acumulado + pesosDeEsteCobro;
+        }
+
+        return collected;
+    }
+
+    /// <summary>
+    /// Codigo de moneda para mostrar ("USD"), a partir del codigo interno del comprobante ("DOL").
+    ///
+    /// <para><b>Fallback seguro</b> (hallazgo de exposicion 2026-08-06): si el codigo interno no esta en
+    /// el catalogo, se muestra "Otra". Antes se mostraba el codigo crudo, y un codigo como "060" en una
+    /// planilla que abre el contador no significa nada para nadie fuera del sistema (regla T-5).</para>
+    /// </summary>
+    private static string ToDisplayCurrency(string arcaCurrencyCode)
+        => ArcaCurrencyMapper.ToIso(arcaCurrencyCode) ?? "Otra";
+
+    private static UsdInvoiceRowDto BuildUsdInvoiceRow(
+        UsdInvoiceRawRow row, IReadOnlyDictionary<int, decimal> collectedByInvoice)
+    {
+        var pesosDeLaFactura = EconomicRulesHelper.RoundCurrency(row.ImporteTotal * row.MonCotiz);
+
+        decimal? pesosCobrados = collectedByInvoice.TryGetValue(row.Id, out var cobrado)
+            ? EconomicRulesHelper.RoundCurrency(cobrado)
+            : null;
+
+        // "Cero o sin cobros = guion" (spec Parte B): una diferencia de cero no es informacion, es
+        // ruido. Se muestra solo cuando hay algo que contar.
+        decimal? diferencia = null;
+        if (pesosCobrados.HasValue)
+        {
+            var delta = EconomicRulesHelper.RoundCurrency(pesosCobrados.Value - pesosDeLaFactura);
+            diferencia = delta == 0m ? null : delta;
+        }
+
+        return new UsdInvoiceRowDto(
+            Fecha: row.Fecha,
+            Comprobante: ComprobanteLabel.Format(row.TipoComprobante, row.PuntoDeVenta, row.NumeroComprobante),
+            ComprobanteId: row.PublicId,
+            NumeroReserva: row.NumeroReserva,
+            ReservaId: row.ReservaPublicId,
+            Cliente: string.IsNullOrWhiteSpace(row.ClienteNombre) ? "Cliente ocasional" : row.ClienteNombre!,
+            // El codigo interno del comprobante ("DOL") nunca sale a pantalla: se traduce al codigo
+            // corto que la gente usa ("USD"), regla T-5. Ver ToDisplayCurrency para el fallback.
+            Moneda: ToDisplayCurrency(row.MonId),
+            MontoEnMonedaExtranjera: row.ImporteTotal,
+            TipoCambioFactura: row.MonCotiz,
+            PesosDeLaFactura: pesosDeLaFactura,
+            PesosCobrados: pesosCobrados,
+            Diferencia: diferencia);
+    }
+
+    /// <summary>
+    /// Pie de la tabla. La diferencia total es la SUMA de las diferencias de cada fila, no la resta de
+    /// los dos totales: las facturas que todavia no cobraron nada no aportan una diferencia (no se
+    /// "deben" esos pesos, simplemente no entraron todavia), asi que restar los totales daria un numero
+    /// enorme y falso.
+    /// </summary>
+    private static UsdInvoicesReportTotalsDto BuildUsdInvoicesTotals(List<UsdInvoiceRowDto> rows)
+    {
+        var totalFacturado = EconomicRulesHelper.RoundCurrency(rows.Sum(row => row.PesosDeLaFactura));
+
+        var filasConCobros = rows.Where(row => row.PesosCobrados.HasValue).ToList();
+        decimal? totalCobrado = filasConCobros.Count == 0
+            ? null
+            : EconomicRulesHelper.RoundCurrency(filasConCobros.Sum(row => row.PesosCobrados!.Value));
+
+        var sumaDiferencias = EconomicRulesHelper.RoundCurrency(
+            rows.Where(row => row.Diferencia.HasValue).Sum(row => row.Diferencia!.Value));
+        decimal? totalDiferencia = sumaDiferencias == 0m ? null : sumaDiferencias;
+
+        return new UsdInvoicesReportTotalsDto(totalFacturado, totalCobrado, totalDiferencia);
+    }
+
+    /// <summary>
+    /// Fila cruda tal cual sale de la base, antes de convertirla en la fila que ve el usuario. Existe
+    /// para que la proyeccion a SQL sea explicita y para no arrastrar la entidad <c>Invoice</c> entera
+    /// (con sus snapshots JSON) por una tabla que solo necesita diez campos.
+    /// </summary>
+    private sealed record UsdInvoiceRawRow(
+        int Id,
+        Guid PublicId,
+        int TipoComprobante,
+        int PuntoDeVenta,
+        long NumeroComprobante,
+        string MonId,
+        decimal MonCotiz,
+        decimal ImporteTotal,
+        DateTime Fecha,
+        string? NumeroReserva,
+        Guid? ReservaPublicId,
+        string? ClienteNombre);
 
     public async Task<AgencySettings?> GetAgencySettingsAsync(CancellationToken cancellationToken)
     {

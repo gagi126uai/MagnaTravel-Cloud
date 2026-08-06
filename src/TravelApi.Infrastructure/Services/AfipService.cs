@@ -1,4 +1,5 @@
 #pragma warning disable CS8601, CS8602, CS8604, CS8618
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using System.Net.Http;
 using System.Globalization;
@@ -36,6 +37,8 @@ public class AfipService : IAfipService
     // cascade NC -> Receipt Voided. Opcional para no romper tests existentes y
     // ctors legacy (mismo patron que PaymentService.VoidReceiptAsync).
     private readonly IAuditService? _auditService;
+    // Hallazgo de seguridad B1 (2026-08-06): solo para invalidar el entorno cacheado al guardar. Ver el ctor.
+    private readonly IMemoryCache? _memoryCache;
 
     // URLs (TODO: move to config)
     private const string WsaaUrlDev = "https://wsaahomo.afip.gov.ar/ws/services/LoginCms";
@@ -45,18 +48,26 @@ public class AfipService : IAfipService
     private const string WsPadronUrlDev = "https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA5";
     private const string WsPadronUrlProd = "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5";
 
+    /// <param name="memoryCache">
+    /// Hallazgo de seguridad B1 (2026-08-06): opcional (default <c>null</c>) para no romper los tests
+    /// que arman este servicio con el ctor de 4 argumentos. Se usa para UNA sola cosa — borrar la clave
+    /// donde el resolver de cotizaciones cachea el entorno de facturacion cuando el admin lo cambia.
+    /// Ver <see cref="ExchangeRateResolver.IsProductionCacheKey"/>.
+    /// </param>
     public AfipService(
         AppDbContext context,
         ILogger<AfipService> logger,
         HttpClient httpClient,
         ISensitiveDataProtector sensitiveDataProtector,
-        IAuditService? auditService = null)
+        IAuditService? auditService = null,
+        IMemoryCache? memoryCache = null)
     {
         _context = context;
         _logger = logger;
         _httpClient = httpClient;
         _sensitiveDataProtector = sensitiveDataProtector;
         _auditService = auditService;
+        _memoryCache = memoryCache;
     }
 
     private byte[]? GetCertificateData(AfipSettings settings) => 
@@ -416,6 +427,16 @@ public class AfipService : IAfipService
         }
 
         await _context.SaveChangesAsync();
+
+        // Hallazgo de seguridad B1 (2026-08-06, "ayuda invisible del tipo de cambio"): el resolver de
+        // cotizaciones cachea 5 minutos si la agencia esta emitiendo comprobantes de ensayo o REALES, y
+        // de eso depende que el motor complete el tipo de cambio solo. Si no borramos esa clave acá,
+        // durante hasta 5 minutos despues de pasar a productivo el sistema seguiria autocompletando con
+        // el numero de juguete — y un CAE real con ese numero no se puede deshacer. Se borra SIEMPRE
+        // (no solo cuando cambia el entorno): cuesta una consulta extra a la base y elimina el riesgo
+        // de que alguien agregue un camino nuevo y se olvide de invalidar.
+        _memoryCache?.Remove(ExchangeRateResolver.IsProductionCacheKey);
+
         return MapDecryptedSettings(settings);
     }
 
@@ -554,9 +575,14 @@ public class AfipService : IAfipService
             }
             catch
             {
-                // If not XML and error status, throw original error
+                // Barrido de jerga (spec 2026-08-06, Parte C): la respuesta cruda del organismo se
+                // loguea (le sirve a quien diagnostica), nunca se le muestra al que opera.
                 if (!response.IsSuccessStatusCode)
-                    throw new Exception($"WSAA Error {response.StatusCode}: {responseXml}");
+                {
+                    _logger.LogWarning(
+                        "WSAA respondio {StatusCode} con un cuerpo que no es XML valido.", response.StatusCode);
+                    throw new Exception("No se pudo conectar con ARCA. Intentá de nuevo en unos minutos.");
+                }
                 throw;
             }
 
@@ -566,37 +592,43 @@ public class AfipService : IAfipService
             {
                 var faultString = fault.Element("faultstring")?.Value;
                 var faultCode = fault.Element("faultcode")?.Value;
-                
+
+                // Barrido de jerga (spec 2026-08-06, Parte C): el codigo y el texto crudos del
+                // organismo se LOGUEAN (el que opera no los puede usar para nada, pero al que tiene
+                // que diagnosticar le sirven) y NUNCA viajan en el mensaje que ve el usuario.
+                _logger.LogWarning(
+                    "WSAA devolvio un fault. Codigo={FaultCode} Detalle={FaultString}", faultCode, faultString);
+
                 // Handle "Already Authenticated" - If we have a token, assume it's valid
                 if (faultCode != null && faultCode.Contains("alreadyAuthenticated"))
                 {
-                     if (!string.IsNullOrEmpty(GetAuthToken(settings))) 
+                     if (!string.IsNullOrEmpty(GetAuthToken(settings)))
                      {
-                        _logger.LogWarning("AFIP reported alreadyAuthenticated. Using existing local token.");
+                        _logger.LogWarning("ARCA reported alreadyAuthenticated. Using existing local token.");
                         return;
                      }
                      else
                      {
-                         // No local token but AFIP says we have one. We are locked out.
-                         throw new Exception($"AFIP Error: Ya existe un token válido pero no lo tenemos guardado. Esperá 10 minutos para reintentar. ({faultCode})");
+                         // No local token but ARCA says we have one. We are locked out.
+                         throw new Exception("ARCA ya tiene una sesión abierta que el sistema no llegó a guardar. Esperá 10 minutos y volvé a intentar.");
                      }
                 }
                 
                 if (faultCode != null && faultCode.Contains("cms"))
                 {
-                     throw new Exception($"Error de Certificado AFIP: El certificado subido no es válido o está corrupto. ({faultString})");
+                     throw new Exception("El certificado digital cargado no es válido o está dañado. Volvé a subirlo desde Configuración.");
                 }
                 
-                throw new Exception($"Error de Autenticación AFIP (WSAA): {faultString}");
+                throw new Exception("ARCA no aceptó la conexión. Revisá el certificado y el CUIT en Configuración.");
             }
 
             if (!response.IsSuccessStatusCode)
-                throw new Exception($"Error de conexión con AFIP (WSAA): {response.StatusCode}. Intentá de nuevo en unos minutos.");
+                throw new Exception("No se pudo conectar con ARCA. Intentá de nuevo en unos minutos.");
 
             var loginCmsReturn = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "loginCmsReturn")?.Value;
             
             if (string.IsNullOrEmpty(loginCmsReturn))
-                throw new Exception("WSAA Empty Response");
+                throw new Exception("ARCA no devolvió la sesión. Intentá de nuevo en unos minutos.");
 
             var ticket = XDocument.Parse(loginCmsReturn);
             var token = ticket.Descendants("token").First().Value;
@@ -649,7 +681,7 @@ public class AfipService : IAfipService
     public async Task<Invoice> CreatePendingInvoice(int ReservaId, CreateInvoiceRequest request)
     {
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
-        if (settings == null) throw new Exception("AFIP no configurado");
+        if (settings == null) throw new Exception("ARCA no está configurado.");
 
         // 1. Get Reserva & Customer
         var reserva = await _context.Reservas
@@ -887,6 +919,11 @@ public class AfipService : IAfipService
              // gate (NC/ND, que heredan el TC del original y nunca recotizan).
              ExchangeRateQuoteId = request.ExchangeRateQuoteId,
              ExchangeRateFchCotiz = request.ExchangeRateFchCotiz,
+             // "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06): rastro interno de COMO
+             // llego el sistema a este TC y, si lo acomodo al techo del dia, que numero habia querido
+             // poner el usuario. Mismo canal server-a-server que las dos lineas de arriba.
+             ExchangeRateOrigin = request.ExchangeRateOrigin,
+             RequestedExchangeRate = request.RequestedExchangeRate,
              CreatedAt = DateTime.UtcNow,
              WasForced = request.ForceIssue,
              ForceReason = request.ForceReason,
@@ -1270,7 +1307,7 @@ public class AfipService : IAfipService
         try 
         {
             var settings = await _context.AfipSettings.FirstOrDefaultAsync();
-            if (settings == null) throw new Exception("AFIP Not Configured");
+            if (settings == null) throw new Exception("ARCA no está configurado.");
 
             // FC1.3.F2.5 (fix m-2, 2026-05-28): validacion defensiva del boundary. MonId es una
             // prop publica de CreateInvoiceRequest sin validacion; un caller equivocado podria
@@ -1626,7 +1663,9 @@ public class AfipService : IAfipService
                 // resolver permite que un re-despacho la detecte como huerfana y recupere el
                 // CAE consultando a ARCA, en vez de re-emitir.
                 invoice.Resultado = "PENDING";
-                invoice.Observaciones = "AFIP respondió con un error de red o XML inválido. Reintentá en unos segundos.";
+                // Barrido de jerga (spec 2026-08-06, Parte C): "XML inválido" no le dice nada al que
+                // opera. Lo unico accionable es "no salio ahora, probá de nuevo".
+                invoice.Observaciones = "ARCA no respondió bien en este intento. Reintentá en unos segundos.";
                 await _context.SaveChangesAsync();
                 return;
             }
@@ -1714,9 +1753,13 @@ public class AfipService : IAfipService
                     cabResult, invoiceId);
 
                 invoice.Resultado = "PENDING";
-                invoice.Observaciones = successObservations is null
-                    ? "AFIP no devolvió CAE en la respuesta. Reintentá en unos segundos."
-                    : "AFIP no devolvió CAE en la respuesta. Observaciones: " + successObservations;
+                // Barrido de jerga (spec 2026-08-06, Parte C): las observaciones vienen CRUDAS del
+                // organismo y suelen traer nombres de campo del comprobante. Pasan por el saneador
+                // antes de quedar pegadas a algo que el usuario va a leer.
+                var observacionesLegibles = ArcaErrorSanitizer.SanitizeArcaError(successObservations);
+                invoice.Observaciones = observacionesLegibles is null
+                    ? "ARCA no devolvió el CAE. Reintentá en unos segundos."
+                    : "ARCA no devolvió el CAE. Motivo: " + observacionesLegibles;
                 await _context.SaveChangesAsync();
                 return;
             }
@@ -1875,20 +1918,46 @@ public class AfipService : IAfipService
         }
     }
 
-    private string TranslateAfipError(string? code, string? rawMsg)
+    /// <summary>
+    /// Traduce el rechazo del organismo a un motivo que entienda el que opera el sistema.
+    ///
+    /// <para><b>Barrido de jerga (spec firmada 2026-08-06, Parte C)</b>: esta funcion es la ULTIMA
+    /// frontera antes de que un texto del organismo llegue a una pantalla. Dos cosas cambiaron en esa
+    /// obra y las dos son reglas, no gusto personal:</para>
+    /// <list type="number">
+    ///   <item><b>Nunca se muestra un numero de error.</b> Antes, un codigo que no estuviera en esta
+    ///   lista terminaba en pantalla como "Error AFIP [10240]". Un vendedor no puede hacer nada con
+    ///   eso.</item>
+    ///   <item><b>El texto crudo del organismo pasa por el saneador</b>
+    ///   (<see cref="ArcaErrorSanitizer"/>): si trae nombres de campo del comprobante o de los
+    ///   servicios del organismo, se reemplaza por un motivo generico en castellano.</item>
+    /// </list>
+    /// </summary>
+    // internal (no private): InternalsVisibleTo("TravelApi.Tests") ya esta configurado y esta funcion
+    // es la ultima frontera antes de que un texto del organismo llegue a una pantalla — merece test
+    // directo, sin tener que montar una emision entera para ejercitarla.
+    internal string TranslateAfipError(string? code, string? rawMsg)
     {
-        if (string.IsNullOrEmpty(code)) return rawMsg ?? "Error desconocido";
+        if (string.IsNullOrEmpty(code))
+        {
+            return ArcaErrorSanitizer.SanitizeArcaError(rawMsg) ?? ArcaErrorSanitizer.GenericArcaMessage;
+        }
 
         return code switch
         {
-            "10047" => "Validación de IVA: En facturas tipo C el IVA siempre debe ser cero (0).",
-            "10048" => "Desequilibrio numérico: El total no coincide con la suma del neto y tributos. Revisá los importes.",
-            "10015" => "Punto de Venta inválido: El punto de venta no está habilitado para factura electrónica en AFIP.",
-            "10016" => "Tipo de Comprobante inválido: El tipo de factura no coincide con tu categoría ante AFIP.",
-            "501" or "502" => "Certificado expirado o inválido: Es necesario renovar el certificado digital en el panel de configuración.",
-            "1000\"" or "1001" => "CUIT emisor no autorizado: Tu CUIT no tiene permisos para emitir este tipo de comprobante. Revisá el 'Punto de Venta' y 'Condición frente al IVA' en la configuración.",
-            "10074" => "CUIT del receptor inválido: El CUIT o DNI del cliente no es válido o no existe en los registros de AFIP.",
-            _ => rawMsg ?? $"Error AFIP [{code}]"
+            "10047" => "En las facturas tipo C el IVA tiene que ir en cero. Revisá los importes.",
+            "10048" => "Los importes no cierran: el total no coincide con la suma de los renglones y los impuestos. Revisá los importes.",
+            "10015" => "El punto de venta no está habilitado para factura electrónica en ARCA.",
+            "10016" => "El tipo de factura no coincide con la condición fiscal de la agencia. Revisala en Configuración.",
+            "501" or "502" => "El certificado digital venció o no es válido. Hay que renovarlo desde Configuración.",
+            "1000\"" or "1001" => "El CUIT de la agencia no tiene permiso para emitir este tipo de comprobante. Revisá el punto de venta y la condición frente al IVA en Configuración.",
+            "10074" => "El CUIT o DNI del cliente no es válido o no figura en ARCA.",
+            // "Ayuda invisible del tipo de cambio" (2026-08-06): con el techo del dia calculado por el
+            // motor este rechazo no deberia volver a pasar, pero si pasa (por ejemplo, porque el dia
+            // que se emitio no habia cotizacion conocida y no se pudo calcular el techo) el motivo
+            // tiene que ser accionable y sin numeros.
+            "10240" => "El tipo de cambio de la factura es más alto del que ARCA acepta para ese día. Volvé a emitirla: el sistema lo acomoda solo.",
+            _ => ArcaErrorSanitizer.SanitizeArcaError(rawMsg) ?? ArcaErrorSanitizer.GenericArcaMessage
         };
     }
 
@@ -2702,7 +2771,7 @@ public class AfipService : IAfipService
         // EnsureAuth garantiza un token WSAA valido; sin el, GetNextVoucherNumber le pega
         // a ARCA con un token vencido y rebota.
         var settings = await _context.AfipSettings.FirstOrDefaultAsync(ct);
-        if (settings == null) throw new InvalidOperationException("AFIP no esta configurado.");
+        if (settings == null) throw new InvalidOperationException("ARCA no está configurado.");
 
         await EnsureAuth(settings);
 
@@ -3328,7 +3397,7 @@ public class AfipService : IAfipService
     {
         var settings = await _context.AfipSettings.FirstOrDefaultAsync();
         if (settings == null || GetCertificateData(settings) == null)
-            throw new Exception("AFIP no configurado o certificado faltante.");
+            throw new Exception("ARCA no está configurado o falta el certificado digital.");
 
         // We need a specific token for ws_sr_padron_a5, not wsfe.
         // We will authenticate dynamically for this call.
@@ -3497,7 +3566,14 @@ public class AfipService : IAfipService
         catch
         {
             if (!response.IsSuccessStatusCode)
-                throw new Exception($"WSAA Error Padron: {response.StatusCode} {responseXml}");
+            {
+                // Barrido de jerga (spec 2026-08-06, Parte C): la respuesta cruda del organismo se
+                // loguea, nunca se le muestra al que opera el sistema.
+                _logger.LogWarning(
+                    "WSAA (consulta de datos fiscales) respondio {StatusCode} con un cuerpo que no es XML valido.",
+                    response.StatusCode);
+                throw new Exception("No se pudo conectar con ARCA para consultar datos fiscales. Intentá de nuevo en unos minutos.");
+            }
             throw;
         }
 
@@ -3508,19 +3584,27 @@ public class AfipService : IAfipService
             var faultCode = fault.Element("faultcode")?.Value;
             var faultString = fault.Element("faultstring")?.Value;
 
+            _logger.LogWarning(
+                "WSAA (consulta de datos fiscales) devolvio un fault. Codigo={FaultCode} Detalle={FaultString}",
+                faultCode, faultString);
+
             if (faultCode != null && faultCode.Contains("alreadyAuthenticated"))
             {
-                 throw new Exception("AFIP Error: Ya existe un token generado recientemente para el Padron (posiblemente un intento anterior que no se guardó). Por seguridad de AFIP, debés esperar aproximadamente 12 horas para que el ticket actual expire y el sistema pueda generar y guardar uno nuevo automáticamente.");
+                 throw new Exception("ARCA ya tiene una sesión abierta para consultar datos fiscales que el sistema no llegó a guardar. Por seguridad de ARCA hay que esperar unas 12 horas hasta que caduque; después el sistema la renueva solo.");
             }
-            throw new Exception($"Error de Autenticación AFIP Padron: {faultString}");
+            throw new Exception("ARCA no aceptó la conexión para consultar datos fiscales. Revisá el certificado y el CUIT en Configuración.");
         }
 
         if (!response.IsSuccessStatusCode)
-            throw new Exception($"Error authenticating with WSAA for ws_sr_padron_a5: {response.StatusCode} {responseXml}");
+        {
+            _logger.LogWarning(
+                "WSAA (consulta de datos fiscales) respondio {StatusCode}.", response.StatusCode);
+            throw new Exception("No se pudo conectar con ARCA para consultar datos fiscales. Intentá de nuevo en unos minutos.");
+        }
 
         var loginCmsReturn = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "loginCmsReturn")?.Value;
         if (string.IsNullOrEmpty(loginCmsReturn))
-            throw new Exception("WSAA Empty Response for ws_sr_padron_a5");
+            throw new Exception("ARCA no devolvió la sesión para consultar datos fiscales. Intentá de nuevo en unos minutos.");
 
         var ticket = XDocument.Parse(loginCmsReturn);
         var token = ticket.Descendants("token").First().Value;

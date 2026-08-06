@@ -523,10 +523,10 @@ test("TEXTO_BANNER_DIRECT_CANCEL = texto exacto de la guía UX 2026-06-25", () =
     );
 });
 
-test("TEXTO_BANNER_CREDIT_NOTE = texto exacto de la guía UX 2026-06-25", () => {
+test("TEXTO_BANNER_CREDIT_NOTE = texto exacto (actualizado item 6, P5=A: 'AFIP' se barre de este circuito)", () => {
     assert.equal(
         TEXTO_BANNER_CREDIT_NOTE,
-        "Esta reserva tiene factura emitida, al anular se emite la nota de crédito en AFIP/ARCA para anularla."
+        "Esta reserva tiene factura emitida, al anular se emite la nota de crédito en ARCA para anularla."
     );
 });
 

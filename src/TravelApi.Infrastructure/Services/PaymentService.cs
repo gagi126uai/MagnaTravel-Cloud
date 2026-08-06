@@ -1326,7 +1326,7 @@ public class PaymentService : IPaymentService
                     }
                 });
 
-                page.Footer().AlignCenter().Text("Documento interno. No reemplaza la factura AFIP.").Italic().FontSize(9).FontColor(Colors.Grey.Darken1);
+                page.Footer().AlignCenter().Text("Documento interno. No reemplaza la factura de ARCA.").Italic().FontSize(9).FontColor(Colors.Grey.Darken1);
             });
         });
 

@@ -4319,7 +4319,7 @@ public class BookingCancellationService
                     // Alguna hija quedo Failed: forzar una sola no cierra la anulacion (el reevaluate dejo
                     // ArcaRejected). El admin debe reintentar/forzar las falladas.
                     throw new BusinessInvariantViolationException(
-                        "No se puede completar la anulacion: hay notas de credito rechazadas por AFIP. " +
+                        "No se puede completar la anulación: hay notas de crédito rechazadas por ARCA. " +
                         "Reintentá las notas de credito faltantes antes de forzar el cierre.",
                         invariantCode: "INV-093");
 
@@ -6685,7 +6685,7 @@ public class BookingCancellationService
         else
         {
             child.Status = BookingCancellationCreditNoteStatus.Failed;
-            var err = afipErrorMessage ?? "AFIP rechazo la NC sin mensaje.";
+            var err = afipErrorMessage ?? "ARCA rechazó la nota de crédito sin dar un motivo.";
             child.ArcaErrorMessage = err.Length > 1000 ? err[..1000] : err;
         }
         // Persistir la hija DENTRO de la tx antes de contar: asi el conteo fresco ve este resultado.
@@ -6797,7 +6797,7 @@ public class BookingCancellationService
                      && c.ArcaErrorMessage != null)
             .Select(c => c.ArcaErrorMessage)
             .FirstOrDefaultAsync(ct);
-        bc.ArcaErrorMessage = failedChildError ?? "AFIP rechazó una o más devoluciones de esta cancelación. Volvé a intentar desde la reserva.";
+        bc.ArcaErrorMessage = failedChildError ?? "ARCA rechazó una o más devoluciones de esta cancelación. Volvé a intentar desde la reserva.";
 
         _auditService.StageBusinessEvent(
             action: AuditActions.BookingCancellationArcaRejected,
@@ -6938,7 +6938,7 @@ public class BookingCancellationService
         }
 
         failedBc.Status = BookingCancellationStatus.ArcaRejected;
-        var errorMessage = afipErrorMessage ?? "AFIP rechazo la NC sin mensaje.";
+        var errorMessage = afipErrorMessage ?? "ARCA rechazó la nota de crédito sin dar un motivo.";
         failedBc.ArcaErrorMessage = errorMessage.Length > 1000 ? errorMessage[..1000] : errorMessage;
 
         await _auditService.LogBusinessEventAsync(
@@ -14752,25 +14752,11 @@ public class BookingCancellationService
     /// <summary>
     /// ADR-042 (2026-07-01): etiqueta legible de un comprobante para el front ("Factura B 0001-00012345"),
     /// sin exponer IDs internos. El numero se formatea PtoVta(4)-Numero(8) como en los comprobantes de ARCA.
+    ///
+    /// <para>Delega en <see cref="ComprobanteLabel"/> (Dominio) desde 2026-08-06: el mismo texto lo
+    /// necesita ahora el reporte de facturas en dolares, y dos copias del mismo switch terminan
+    /// diciendo cosas distintas.</para>
     /// </summary>
     private static string FormatComprobanteLabel(int tipoComprobante, int puntoDeVenta, long numeroComprobante)
-    {
-        string tipoLabel = tipoComprobante switch
-        {
-            1 => "Factura A",
-            6 => "Factura B",
-            11 => "Factura C",
-            51 => "Factura M",
-            3 => "Nota de credito A",
-            8 => "Nota de credito B",
-            13 => "Nota de credito C",
-            53 => "Nota de credito M",
-            2 => "Nota de debito A",
-            7 => "Nota de debito B",
-            12 => "Nota de debito C",
-            52 => "Nota de debito M",
-            _ => "Comprobante",
-        };
-        return $"{tipoLabel} {puntoDeVenta:D4}-{numeroComprobante:D8}";
-    }
+        => ComprobanteLabel.Format(tipoComprobante, puntoDeVenta, numeroComprobante);
 }

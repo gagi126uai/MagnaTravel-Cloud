@@ -15,9 +15,9 @@ namespace TravelApi.Domain.Helpers;
 /// </summary>
 public static class ArcaErrorSanitizer
 {
-    /// <summary>Copy generico neutro (sirve para NC y ND) cuando el motivo de AFIP es ruido tecnico.</summary>
+    /// <summary>Copy generico neutro (sirve para NC y ND) cuando el motivo del organismo es ruido tecnico.</summary>
     public const string GenericArcaMessage =
-        "AFIP rechazó la factura. Revisá los datos fiscales o volvé a intentar.";
+        "ARCA rechazó la factura. Revisá los datos fiscales o volvé a intentar.";
 
     // Ruido tecnico que NUNCA debe llegar al usuario. Case-insensitive. Tokens en ingles/simbolos que el texto
     // de negocio en espanol no contiene, para no dar falsos positivos:
@@ -27,12 +27,22 @@ public static class ArcaErrorSanitizer
     //  - EF/Npgsql/DB:   "Sequence contains", "cannot be tracked", "entity type", "The instance of",
     //                    "An error occurred while", "inner exception", "IExecutionStrategy", "DbUpdate",
     //                    "ExecuteSql", "Npgsql", "duplicate key value", "violates".
+    //  - Jerga del comprobante (barrido "ayuda invisible", spec firmada 2026-08-06, Parte C):
+    //    los NOMBRES DE CAMPO del comprobante electronico (MonCotiz, CbteFch, AlicIva...) y los
+    //    nombres de los servicios del organismo (WSFEv1, WSAA, FECAE). El organismo los devuelve tal
+    //    cual en sus rechazos ("El campo MonCotiz debe ser..."), y para el que opera el sistema son
+    //    tan jerigonza como un stack trace. Ademas la palabra "homologacion", que nombra un modo
+    //    interno que el usuario no tiene por que conocer. Ninguna de estas cadenas aparece en un
+    //    texto de negocio en castellano, asi que no generan falsos positivos.
     private static readonly Regex TechnicalNoise = new(
         @"(<[^>]+>|Exception|System\.|SOAP|Traceback|stack\s*trace|https?://|[{}]" +
         @"|Error t[eé]cnico|Object reference not set|Value cannot be null|duplicate key value|violates" +
         @"| at TravelApi|\.cs:|Parameter '" +
         @"|Sequence contains|cannot be tracked|entity type|The instance of|An error occurred while" +
-        @"|inner exception|IExecutionStrategy|DbUpdate|ExecuteSql|Npgsql)",
+        @"|inner exception|IExecutionStrategy|DbUpdate|ExecuteSql|Npgsql" +
+        @"|MonCotiz|MonId|FchCotiz|CbteFch|CbteTipo|CbtesAsoc|CbteDesde|CbteHasta|PtoVta" +
+        @"|ImpTotal|ImpNeto|ImpIVA|ImpTrib|AlicIva|CanMisMonExt|DocTipo|DocNro|FchServ" +
+        @"|WSFEv1|WSAA|FECAE|homologa)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
@@ -43,9 +53,9 @@ public static class ArcaErrorSanitizer
         => !string.IsNullOrWhiteSpace(message) && TechnicalNoise.IsMatch(message);
 
     /// <summary>
-    /// Sanea el motivo de error de ARCA para mostrarlo al vendedor: un rechazo de AFIP en texto plano se
-    /// muestra tal cual (acotado a 300); el ruido tecnico se reemplaza por <see cref="GenericArcaMessage"/>.
-    /// Null/vacio -&gt; <c>null</c> (no hay motivo que mostrar).
+    /// Sanea el motivo de error del organismo para mostrarlo al vendedor: un rechazo en texto plano y
+    /// legible se muestra tal cual (acotado a 300); el ruido tecnico se reemplaza por
+    /// <see cref="GenericArcaMessage"/>. Null/vacio -&gt; <c>null</c> (no hay motivo que mostrar).
     /// </summary>
     public static string? SanitizeArcaError(string? raw)
     {

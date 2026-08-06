@@ -48,8 +48,12 @@ function hayDescuadre(totalItems, suggestedTotal, tolerancia = 0.5) {
  * 2026-08-05: la justificación ya no es obligatoria siempre — depende de
  * debeMostrarJustificacionTC (importada de la lib compartida, NO copiada acá,
  * para no arrastrar una copia de la regla que se pueda desactualizar sola).
+ *
+ * 2026-08-06 ("ayuda invisible"): `fueAcomodadoAlTope` se reenvía tal cual a
+ * debeMostrarJustificacionTC — cuando el sistema bajó el número al techo del día,
+ * nunca corresponde pedir explicación (A4).
  */
-function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboSugerencia }) {
+function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboSugerencia, fueAcomodadoAlTope = false }) {
   const tcNum = Number(tipoCambio);
   if (!tipoCambio || isNaN(tcNum) || tcNum <= 0) {
     return "Ingresá el tipo de cambio para facturas en dólares.";
@@ -61,6 +65,7 @@ function validarCamposUSD({ tipoCambio, justificacion, tipoCambioSugerido, huboS
     tipoCambioEscrito: tipoCambio,
     tipoCambioSugerido,
     huboSugerencia,
+    fueAcomodadoAlTope,
   });
   if (requiereJustificacion && !String(justificacion ?? "").trim()) {
     return "Ingresá la justificación del tipo de cambio.";
@@ -351,6 +356,21 @@ test("validarCamposUSD — CON sugerencia, número pisado y justificado → null
     justificacion: "Cotización que me pasó el operador",
     tipoCambioSugerido: 1234.5,
     huboSugerencia: true,
+  });
+  assert.equal(resultado, null);
+});
+
+// ─── Tests: validarCamposUSD — A4 "acomodado al techo" (spec 2026-08-06) ──────
+
+test("validarCamposUSD — fueAcomodadoAlTope=true, número distinto del sugerido y SIN justificación → null (nunca se le pide)", () => {
+  // El número que quedó en el casillero lo puso el sistema (bajó al techo), no el
+  // vendedor — pedirle que lo justifique sería pedirle explicar algo que no eligió.
+  const resultado = validarCamposUSD({
+    tipoCambio: "1235.5",
+    justificacion: "",
+    tipoCambioSugerido: 1234.5,
+    huboSugerencia: true,
+    fueAcomodadoAlTope: true,
   });
   assert.equal(resultado, null);
 });

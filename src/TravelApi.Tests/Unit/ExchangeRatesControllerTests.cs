@@ -58,6 +58,9 @@ public class ExchangeRatesControllerTests
                 QuoteId: 42,
                 FetchedAt: DateTime.UtcNow,
                 IsProductionSource: true));
+        resolverMock
+            .Setup(r => r.GetInvoicingCeilingAsync("USD", new DateOnly(2026, 08, 05), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1351.5m);
 
         var controller = BuildController(resolverMock);
 
@@ -69,23 +72,61 @@ public class ExchangeRatesControllerTests
         Assert.Equal(1350.5m, body.TipoCambio);
         Assert.Equal(new DateOnly(2026, 08, 04), body.Fecha);
         Assert.True(body.EsDeOtraFecha);
-        Assert.False(string.IsNullOrWhiteSpace(body.Leyenda));
+        // "Ayuda invisible" (spec firmada 2026-08-06, A5.7): el techo del dia viaja YA CALCULADO. La
+        // pantalla nunca le suma un peso a nada por su cuenta (regla T-13).
+        Assert.Equal(1351.5m, body.TopeDelDia);
+        Assert.False(body.LoCompletaElSistema);
 
-        // T-5: la respuesta serializable es EXCLUSIVAMENTE ExchangeRateSuggestionResponse (4
+        // T-5: la respuesta serializable es EXCLUSIVAMENTE ExchangeRateSuggestionResponse (6
         // propiedades de negocio) — no hay forma de que ProviderName/QuoteId/Source/IsProductionSource
         // se filtren porque ni siquiera existen como propiedades del tipo que se serializa.
         var propertyNames = typeof(ExchangeRateSuggestionResponse).GetProperties();
-        Assert.Equal(4, propertyNames.Length);
+        Assert.Equal(6, propertyNames.Length);
     }
 
     /// <summary>
-    /// ADR-011 (enmienda 2026-08-05, hallazgo normativo "validacion ARCA 10240"): un AfipOficial de
-    /// homologacion (IsProductionSource=false) SIGUE sirviendose como sugerencia — pero la leyenda
-    /// tiene que avisar con todas las letras que es un numero de práctica, para que nadie lo confunda
-    /// con el dolar real. Texto FIJADO literal (T-6): si alguien lo cambia, este test lo detecta.
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, tabla A6, decision P1=A): la
+    /// leyenda queda en su MINIMO — qué dólar es y de qué día. Texto FIJADO literal (T-6). Dos cosas
+    /// que este test protege: que no vuelva la muletilla "Si ponés otro número, lo tomamos a mano." y
+    /// que no vuelva la variante "de hoy (…)".
+    /// </summary>
+    [Theory]
+    [InlineData(ExchangeRateSource.AfipOficial, "Dólar oficial del 6 de agosto.")]
+    [InlineData(ExchangeRateSource.OficialPorApi, "Dólar Banco Nación del 6 de agosto.")]
+    [InlineData(ExchangeRateSource.BNA_Minorista, "Dólar Banco Nación del 6 de agosto.")]
+    public async Task LaLeyendaDiceQueDolarEsYDeQueDia_YNadaMas(ExchangeRateSource source, string leyendaEsperada)
+    {
+        var fecha = new DateOnly(2026, 08, 06);
+        var resolverMock = new Mock<IExchangeRateResolver>();
+        resolverMock
+            .Setup(r => r.GetSuggestionAsync("USD", fecha, It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new ExchangeRateSuggestion(
+                Rate: 1234.5m,
+                RateDate: fecha,
+                Source: source,
+                ProviderName: "cualquiera",
+                ArcaFchCotiz: fecha,
+                IsStale: false,
+                QuoteId: 7,
+                FetchedAt: DateTime.UtcNow,
+                IsProductionSource: true));
+
+        var controller = BuildController(resolverMock);
+
+        var actionResult = await controller.GetSuggestion("USD", fecha, CancellationToken.None);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var body = Assert.IsType<ExchangeRateSuggestionResponse>(okResult.Value);
+        Assert.Equal(leyendaEsperada, body.Leyenda);
+    }
+
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, A3 + Parte C, decision P2=A):
+    /// cuando el numero lo completa el motor, la pantalla NO dibuja el casillero — y la respuesta no
+    /// lleva ni el numero ni una sola palabra. La leyenda vieja ("Dólar de prueba de ARCA…") MURIO.
     /// </summary>
     [Fact]
-    public async Task ConSugerenciaDePractica_LaLeyendaAvisaQueNoEsElDolarReal()
+    public async Task CuandoLoCompletaElSistema_NoViajaNiElNumeroNiNingunTexto()
     {
         var resolverMock = new Mock<IExchangeRateResolver>();
         resolverMock
@@ -99,6 +140,7 @@ public class ExchangeRatesControllerTests
                 IsStale: false,
                 QuoteId: 99,
                 FetchedAt: DateTime.UtcNow,
+                // Este es el unico dato que distingue el caso: el numero no es plata de verdad.
                 IsProductionSource: false));
 
         var controller = BuildController(resolverMock);
@@ -108,10 +150,10 @@ public class ExchangeRatesControllerTests
         var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
         var body = Assert.IsType<ExchangeRateSuggestionResponse>(okResult.Value);
 
-        Assert.Equal(1152.202m, body.TipoCambio);
-        Assert.Equal(
-            "Dólar de prueba de ARCA (el sistema factura en modo práctica): sirve para facturas de prueba, NO es el dólar real.",
-            body.Leyenda);
+        Assert.True(body.LoCompletaElSistema);
+        Assert.Null(body.TipoCambio);
+        Assert.Null(body.TopeDelDia);
+        Assert.Equal(string.Empty, body.Leyenda);
     }
 
     [Fact]

@@ -38,7 +38,16 @@ public class ExchangeRateResolver : IExchangeRateResolver
     /// consulta sin arriesgar que un cambio de entorno tarde en reflejarse.
     /// </summary>
     private static readonly TimeSpan IsProductionCacheTtl = TimeSpan.FromMinutes(5);
-    private const string IsProductionCacheKey = "afip-settings:is-production";
+
+    /// <summary>
+    /// Clave de cache del entorno de facturacion. Es <c>public</c> a proposito: cuando un admin cambia
+    /// el entorno desde Configuracion, <c>AfipService</c> TIENE que borrar esta clave en el mismo
+    /// guardado (hallazgo de seguridad B1, 2026-08-06). Sin eso quedaba una ventana de hasta 5 minutos
+    /// en la que el sistema seguia creyendo que estaba en modo de ensayo aunque ya estuviera emitiendo
+    /// comprobantes REALES — y en modo de ensayo el motor completa el tipo de cambio solo, con un
+    /// numero de juguete. Un CAE real con tipo de cambio de juguete no se puede deshacer.
+    /// </summary>
+    public const string IsProductionCacheKey = "afip-settings:is-production";
 
     /// <summary>
     /// ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): debounce del disparo on-demand — cuanto
@@ -206,6 +215,63 @@ public class ExchangeRateResolver : IExchangeRateResolver
     private void EnqueueSyncJob()
     {
         _backgroundJobClient!.Enqueue<ExchangeRateSyncJob>(job => job.RunAsync(CancellationToken.None));
+    }
+
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, A5.7): ver el contrato completo en
+    /// <see cref="IExchangeRateResolver.GetInvoicingCeilingAsync"/>.
+    ///
+    /// <para>Busca la cotizacion OFICIAL del organismo (y solo esa fuente) para la fecha del
+    /// comprobante o, si ese dia no tiene, para el dia habil anterior. <b>NO</b> usa la ventana larga de
+    /// 5 dias que si usa la sugerencia (<see cref="WalkBackWindowDays"/>), y la diferencia es
+    /// deliberada: la sugerencia PROPONE un numero (el usuario lo puede pisar), mientras que el techo
+    /// BAJA el numero que el usuario ya declaro, en un comprobante que despues no se puede deshacer.
+    /// Con una cotizacion rancia el techo acomodaria una factura legitima hacia abajo — preferimos
+    /// quedarnos sin techo (hallazgo de seguridad B2, 2026-08-06; ver
+    /// <see cref="ArcaInvoicingRateCeiling.EarliestAcceptableQuoteDate"/>).</para>
+    /// </summary>
+    public async Task<decimal?> GetInvoicingCeilingAsync(string currency, DateOnly date, CancellationToken ct)
+    {
+        // Pesos no tiene techo: no se declara ninguna cotizacion en un comprobante en pesos.
+        if (IsPesos(currency))
+        {
+            return null;
+        }
+
+        var isProduction = await GetIsProductionAsync(ct);
+        var earliestDate = ArcaInvoicingRateCeiling.EarliestAcceptableQuoteDate(date);
+
+        var officialRate = await _context.ExchangeRateQuotes
+            .AsNoTracking()
+            .Where(quote =>
+                quote.Currency == currency
+                && quote.Source == ExchangeRateSource.AfipOficial
+                && quote.IsProductionSource == isProduction
+                && quote.SupersededByQuoteId == null
+                && quote.QuoteDate >= earliestDate
+                && quote.QuoteDate <= date)
+            .OrderByDescending(quote => quote.QuoteDate)
+            .ThenByDescending(quote => quote.Id)
+            .Select(quote => (decimal?)quote.Rate)
+            .FirstOrDefaultAsync(ct);
+
+        if (officialRate is null)
+        {
+            return null;
+        }
+
+        // Piso de cordura: con un dato corrupto (una moneda extranjera "vale" 1 peso o menos) no se
+        // calcula ningun techo. Ver ArcaInvoicingRateCeiling.IsUsableOfficialRate.
+        if (!ArcaInvoicingRateCeiling.IsUsableOfficialRate(officialRate.Value))
+        {
+            _logger.LogWarning(
+                "No se calculo el techo del dia para {Currency} en {Date}: la cotizacion oficial guardada " +
+                "no es un valor usable para una moneda extranjera.",
+                currency, date);
+            return null;
+        }
+
+        return ArcaInvoicingRateCeiling.FromOfficialRate(officialRate.Value);
     }
 
     private async Task<bool> GetIsProductionAsync(CancellationToken ct)

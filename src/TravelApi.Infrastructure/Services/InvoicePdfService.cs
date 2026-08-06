@@ -443,7 +443,7 @@ public class InvoicePdfService : IInvoicePdfService
                 {
                     c.Item().AlignCenter().Text("QR ERROR").Bold().FontSize(8).FontColor(Colors.Red.Medium);
                 }
-                c.Item().AlignCenter().Text("AFIP").Bold().FontSize(8);
+                c.Item().AlignCenter().Text("ARCA").Bold().FontSize(8);
             });
         });
     }

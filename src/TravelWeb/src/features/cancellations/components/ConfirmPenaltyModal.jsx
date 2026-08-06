@@ -118,7 +118,7 @@ export default function ConfirmPenaltyModal({
     try {
       await cancellationsApi.confirmPenalty(cancellationPublicId, payload);
       showSuccess(
-        "El cargo de la agencia quedo en proceso de emision en AFIP/ARCA. Podes seguir el estado en la bandeja de cargos pendientes.",
+        "El cargo de la agencia quedo en proceso de emision en ARCA. Podes seguir el estado en la bandeja de cargos pendientes.",
         "Cargo confirmado"
       );
       onConfirmed();
@@ -147,7 +147,7 @@ export default function ConfirmPenaltyModal({
         } else if (invariantCode === "INV-ADR014-003") {
           humanMessage = "Este cargo ya fue confirmado o la nota de debito ya esta en proceso. Si hay un problema, habla con administracion.";
         } else if (invariantCode === "INV-ADR014-001") {
-          humanMessage = "La nota de credito todavia no tiene CAE aprobado en AFIP/ARCA. Esperá que se procese y volvé a intentar.";
+          humanMessage = "La nota de credito todavia no tiene CAE aprobado en ARCA. Esperá que se procese y volvé a intentar.";
         } else if (invariantCode === "INV-ADR014-002") {
           humanMessage = "Esta penalidad corresponde al operador, no a la agencia. No se emite un cargo propio.";
         } else if (invariantCode === "INV-ADR014-PERM" || invariantCode === "INV-ADR013-PERM") {
@@ -210,7 +210,7 @@ export default function ConfirmPenaltyModal({
             <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 text-sm text-orange-800 dark:bg-orange-950/30 dark:border-orange-800 dark:text-orange-200 flex items-start gap-2">
               <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
               <div>
-                Al confirmar se emite la <strong>nota de debito (cargo de la agencia)</strong> en AFIP/ARCA.
+                Al confirmar se emite la <strong>nota de debito (cargo de la agencia)</strong> en ARCA.
                 Esta accion no se puede deshacer. Solo confirma si el operador ya te comunico el monto definitivo.
               </div>
             </div>

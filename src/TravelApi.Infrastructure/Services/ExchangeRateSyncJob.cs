@@ -82,8 +82,14 @@ public class ExchangeRateSyncJob
     /// cache compartida (<see cref="IMemoryCache"/> es un singleton del proceso). Cachear aca
     /// TAMBIEN evita que, si el job alguna vez llama a <c>GetIsProductionAsync</c> mas de una vez
     /// por corrida, cada llamada vuelva a pegarle a la base.
+    ///
+    /// <para><b>Fuente unica de la clave (regla T-6, 2026-08-06)</b>: apunta a la const de
+    /// <see cref="ExchangeRateResolver.IsProductionCacheKey"/> en vez de repetir el literal. Que dos
+    /// archivos escriban a mano el nombre de la MISMA entrada de cache es como se rompe silenciosamente
+    /// una invalidacion: alguien la renombra en un lado y el otro sigue leyendo un valor viejo que ya
+    /// nadie borra.</para>
     /// </summary>
-    private const string IsProductionCacheKey = "afip-settings:is-production";
+    private const string IsProductionCacheKey = ExchangeRateResolver.IsProductionCacheKey;
     private static readonly TimeSpan IsProductionCacheTtl = TimeSpan.FromMinutes(5);
 
     private readonly AppDbContext _context;

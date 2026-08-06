@@ -74,12 +74,34 @@ public class ExchangeRatesController : ControllerBase
             return NoContent();
         }
 
+        // "Ayuda invisible" (spec firmada 2026-08-06, A3): cuando el numero lo completa el motor, la
+        // pantalla no dibuja NADA — ni casillero, ni leyenda, ni el equivalente en pesos. Por eso no le
+        // mandamos el numero (no es plata de verdad) ni ningun texto: mandarselo seria confiar en que el
+        // front se acuerde de esconderlo.
+        if (suggestion.LoCompletaElSistema)
+        {
+            return Ok(new ExchangeRateSuggestionResponse
+            {
+                TipoCambio = null,
+                Fecha = suggestion.RateDate,
+                EsDeOtraFecha = suggestion.IsStale,
+                Leyenda = string.Empty,
+                TopeDelDia = null,
+                LoCompletaElSistema = true,
+            });
+        }
+
+        // "Ayuda invisible" (spec A5.7): el techo del dia lo dice el motor, nunca lo calcula la pantalla.
+        var topeDelDia = await _resolver.GetInvoicingCeilingAsync(normalizedCurrency, effectiveDate, cancellationToken);
+
         return Ok(new ExchangeRateSuggestionResponse
         {
             TipoCambio = suggestion.Rate,
             Fecha = suggestion.RateDate,
             EsDeOtraFecha = suggestion.IsStale,
-            Leyenda = BuildLeyenda(suggestion, hoyArgentina),
+            Leyenda = BuildLeyenda(suggestion),
+            TopeDelDia = topeDelDia,
+            LoCompletaElSistema = false,
         });
     }
 
@@ -112,46 +134,35 @@ public class ExchangeRatesController : ControllerBase
         normalizedCurrency is "ARS" or "PES";
 
     /// <summary>
-    /// Arma el texto que va debajo del casillero (T-13: el front recibe el texto ya armado, no
-    /// deduce fechas). Mismo tono que ya usa la pantalla de multas para el dolar BNA.
+    /// Arma el texto gris que va debajo del casillero (T-13: el front recibe el texto ya armado, no
+    /// deduce fechas ni arma frases).
     ///
-    /// <para><b>FIX (detalle #6, revision post-implementacion 2026-08-05)</b>: la version anterior
-    /// tenia DOS bugs de honestidad:
+    /// <para><b>Textos EXACTOS de la spec firmada 2026-08-06 (tabla A6)</b>: <c>Dólar oficial del 6 de
+    /// agosto.</c> / <c>Dólar Banco Nación del 5 de agosto.</c> — qué dólar es y de qué día, nada más.
+    /// Dos cosas MURIERON en esta obra, las dos por decision firmada del dueño:</para>
     /// <list type="number">
-    ///   <item>Decia "Dólar oficial" SIEMPRE, aunque el dato viniera del respaldo de Banco Nación
-    ///   (<c>ExchangeRateSource.BNA_Minorista</c>) — un dato que no salio de ARCA no es "oficial".
-    ///   Ahora el sustantivo depende de <see cref="ExchangeRateSuggestion.Source"/>.</item>
-    ///   <item>Decia "de hoy" para CUALQUIER match exacto (<c>IsStale=false</c>), pero un match
-    ///   exacto tambien ocurre cuando el usuario pide una fecha PASADA y esa fecha puntual SI tiene
-    ///   fila (ej. corrigiendo una factura de la semana pasada) — "de hoy" ahi es directamente
-    ///   falso. Ahora se compara <c>RateDate</c> contra el HOY real (Argentina), no contra
-    ///   <c>IsStale</c>.</item>
-    /// </list></para>
+    ///   <item>La muletilla <i>"Si ponés otro número, lo tomamos a mano."</i> (decision P1=A): es un
+    ///   sermón sobre cómo funciona el sistema, y además se explica solo — apenas el usuario pisa el
+    ///   número le aparece el renglón que le pregunta de dónde lo sacó.</item>
+    ///   <item>La leyenda larga del modo de ensayo: en ese modo ya no hay casillero que leyendear, así
+    ///   que la funcion ni se llama (ver <c>ExchangeRateSuggestion.LoCompletaElSistema</c>).</item>
+    /// </list>
     ///
-    /// <para><b>Aviso de "dolar de prueba" (hallazgo normativo 2026-08-05, validacion ARCA 10240)</b>:
-    /// si el sistema esta facturando contra homologacion, ARCA valida el comprobante contra SU PROPIO
-    /// numero de juguete — si le sugiriéramos al usuario el dolar REAL, la factura de prueba rebotaria.
-    /// Por eso la sugerencia de un <see cref="ExchangeRateSource.AfipOficial"/> de homologacion
-    /// (<see cref="ExchangeRateSuggestion.IsProductionSource"/> en <c>false</c>) SIGUE sirviendose
-    /// igual que siempre — pero la leyenda lo avisa con todas las letras, para que nadie confunda un
-    /// numero de práctica con el dolar real.</para>
+    /// <para>La variante "de hoy (…)" tambien se fue: la spec pide UNA sola forma, "del {dia}", valga
+    /// para hoy o para una fecha pasada. Menos ramas, menos formas de decir lo mismo (P-16).</para>
+    ///
+    /// <para><b>Qué dólar es</b>: "Dólar oficial" cuando el dato lo publicó el organismo fiscal; para
+    /// cualquier otra fuente (el respaldo de Banco Nación y las APIs públicas que lo replican) el
+    /// nombre honesto es "Dólar Banco Nación" — es el mismo nombre que ya usa la tira del inicio.</para>
     /// </summary>
-    private static string BuildLeyenda(ExchangeRateSuggestion suggestion, DateOnly hoyArgentina)
+    private static string BuildLeyenda(ExchangeRateSuggestion suggestion)
     {
-        if (suggestion.Source == ExchangeRateSource.AfipOficial && !suggestion.IsProductionSource)
-        {
-            return "Dólar de prueba de ARCA (el sistema factura en modo práctica): sirve para facturas de prueba, NO es el dólar real.";
-        }
-
         var fechaEnCastellano = FormatFechaEnCastellano(suggestion.RateDate);
         var sustantivo = suggestion.Source == ExchangeRateSource.AfipOficial
             ? "Dólar oficial"
             : "Dólar Banco Nación";
-        bool esHoy = suggestion.RateDate == hoyArgentina;
 
-        return esHoy
-            ? $"{sustantivo} de hoy ({fechaEnCastellano}). Si ponés otro número, lo tomamos a mano."
-            : $"{sustantivo} del {fechaEnCastellano}. Si ponés otro número, lo tomamos a mano.";
+        return $"{sustantivo} del {fechaEnCastellano}.";
     }
 
     private static readonly CultureInfo SpanishArgentina = CultureInfo.GetCultureInfo("es-AR");

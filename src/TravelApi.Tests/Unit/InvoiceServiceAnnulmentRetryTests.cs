@@ -363,7 +363,7 @@ public class InvoiceServiceAnnulmentRetryTests
         var notif = await context.Notifications.AsNoTracking().FirstOrDefaultAsync(n => n.RelatedEntityId == original.Id);
         Assert.NotNull(notif);
         // Voz de los avisos (2026-07-08): rechazo fiscal contado en negocio, con el número de reserva.
-        Assert.Contains("AFIP no aceptó la anulación de la reserva", notif!.Message);
+        Assert.Contains("ARCA no aceptó la anulación de la reserva", notif!.Message);
     }
 
     /// <summary>
@@ -396,7 +396,7 @@ public class InvoiceServiceAnnulmentRetryTests
         // El aviso al usuario es de negocio (no filtra estado tecnico interno).
         var notif = await context.Notifications.AsNoTracking().FirstOrDefaultAsync(n => n.RelatedEntityId == original.Id);
         Assert.NotNull(notif);
-        Assert.Contains("AFIP no respondió", notif!.Message);
+        Assert.Contains("ARCA no respondió", notif!.Message);
         Assert.Contains("La estamos reintentando por vos", notif.Message);
         Assert.DoesNotContain("PENDING", notif.Message);
     }
@@ -434,7 +434,7 @@ public class InvoiceServiceAnnulmentRetryTests
         Assert.NotNull(notif);
         // El aviso es el copy generico de negocio; el hostname/host tecnico jamas aparece.
         Assert.Equal(
-            "La anulación de la reserva F-ANNUL-0001 quedó en camino: AFIP no respondió en este momento. " +
+            "La anulación de la reserva F-ANNUL-0001 quedó en camino: ARCA no respondió en este momento. " +
             "La estamos reintentando por vos, no hace falta que hagas nada.",
             notif!.Message);
         Assert.DoesNotContain("wsaahomo", notif.Message);
@@ -468,7 +468,7 @@ public class InvoiceServiceAnnulmentRetryTests
 
         var notif = await context.Notifications.AsNoTracking().FirstOrDefaultAsync(n => n.RelatedEntityId == original.Id);
         Assert.NotNull(notif);
-        Assert.Contains("AFIP rechazó la anulación de la reserva F-ANNUL-0001", notif!.Message);
+        Assert.Contains("ARCA rechazó la anulación de la reserva F-ANNUL-0001", notif!.Message);
         // El XML/SOAP tecnico NUNCA llega al usuario: el saneador lo reemplaza por el copy generico.
         Assert.DoesNotContain("<soap", notif.Message);
         Assert.DoesNotContain("faultstring", notif.Message);

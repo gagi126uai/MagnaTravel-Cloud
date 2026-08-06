@@ -188,6 +188,30 @@ public class Invoice : IHasPublicId
     public DateOnly? ExchangeRateFchCotiz { get; set; }
 
     /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec firmada 2026-08-06, A4 + Parte B): COMO llego el
+    /// sistema al tipo de cambio de este comprobante (lo acepto el usuario, lo escribio el, se lo
+    /// acomodo el sistema al techo del dia, o lo completo el sistema solo). Ver
+    /// <see cref="InvoiceExchangeRateOrigin"/> para el por que de tener esto ADEMAS de
+    /// <see cref="ExchangeRateSource"/>.
+    ///
+    /// <para>NULL para comprobantes en pesos y para todo lo emitido antes de esta obra (sin backfill).
+    /// Lo llena SIEMPRE el servidor, nunca el request.</para>
+    /// </summary>
+    public InvoiceExchangeRateOrigin? ExchangeRateOrigin { get; set; }
+
+    /// <summary>
+    /// "Ayuda invisible del tipo de cambio" (spec A4): el tipo de cambio que el usuario QUISO poner,
+    /// guardado tal cual cuando el sistema tuvo que acomodarlo al techo del dia
+    /// (<see cref="InvoiceExchangeRateOrigin.ClampedToDailyCeiling"/>). Es el rastro que permite
+    /// explicar, meses despues, por que la factura salio a un dolar y el cobro entro a otro.
+    ///
+    /// <para><b>Rastro INTERNO</b>: no viaja en ninguna respuesta que vea el que opera el sistema
+    /// (spec A4: "no se muestra en ningun lado del formulario"). NULL en todos los demas casos.</para>
+    /// </summary>
+    [Column(TypeName = "decimal(18,6)")]
+    public decimal? RequestedExchangeRate { get; set; }
+
+    /// <summary>
     /// ADR-042 §3.3.1 (2026-07-01): valor fiscal <c>CanMisMonExt</c> ("Cancela en Misma Moneda
     /// Extranjera", RG 5616/2024) CONGELADO al emitir este comprobante. <c>null</c> = pesos/no aplica
     /// (no se emite el nodo, byte-identico al historico); <c>'S'</c>/<c>'N'</c> para divisa. Hoy toda

@@ -1844,7 +1844,7 @@ public class ReservaService : IReservaService
             .AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE), ct);
         if (hasInvoiceWithCae)
         {
-            dto.HardBlockers.Add("La reserva tiene facturas AFIP emitidas con CAE. No se puede volver atrás: ya hay facturas emitidas. Si la querés anular, emití primero una nota de crédito.");
+            dto.HardBlockers.Add("La reserva tiene facturas emitidas en ARCA con CAE. No se puede volver atrás: ya hay facturas emitidas. Si la querés anular, emití primero una nota de crédito.");
             dto.AllowedTargets.Clear();
         }
 
@@ -1937,7 +1937,7 @@ public class ReservaService : IReservaService
         // Hard blockers
         var hasInvoiceWithCae = await _context.Invoices.AnyAsync(i => i.ReservaId == id && !string.IsNullOrEmpty(i.CAE), ct);
         if (hasInvoiceWithCae)
-            throw new InvalidOperationException("La reserva tiene facturas AFIP emitidas con CAE. No se puede volver atrás: ya hay facturas emitidas.");
+            throw new InvalidOperationException("La reserva tiene facturas emitidas en ARCA con CAE. No se puede volver atrás: ya hay facturas emitidas.");
 
         // ADR-020 (M5): el unico revert con gate es InManagement -> Budget (sin pagos vivos + sin
         // facturas + sin servicios resueltos). El gate unificado vive en EnsureCanRevertToBudgetAsync.

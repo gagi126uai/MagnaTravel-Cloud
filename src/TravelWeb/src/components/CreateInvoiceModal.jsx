@@ -13,17 +13,23 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Calculator, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
+import { getApiErrorMessage } from "../lib/errors";
 import { formatDate, hoyArgentina } from "../lib/utils";
 // TC sugerido al facturar en USD (2026-08-05, ADR-011 "tipo de cambio real"):
 // mismo hook y misma regla de "cuándo pedir justificación" que usa
 // EmitirFacturaInline.jsx (la ficha de la reserva) — viven en un solo lugar para
 // que las dos pantallas no puedan divergir. Ver docs/ux/specs/2026-08-05-tc-sugerido-en-facturar.md.
 import { useTipoCambioSugerido } from "../features/invoices/hooks/useTipoCambioSugerido";
+// "Ayuda invisible del tipo de cambio" (2026-08-06): acomodarAlTope calcula si hay
+// que bajar el número al techo del día (A4). Las demás funciones se extendieron
+// para soportar A3 (el motor completa solo) sin romper el camino normal — ver la
+// cabecera de exchangeRateSuggestion.js para el detalle de cada caso.
 import {
   debeMostrarJustificacionTC,
   faltaJustificacionTC,
   textoLeyendaTC,
   construirCamposUSDParaPayload,
+  acomodarAlTope,
 } from "../features/invoices/lib/exchangeRateSuggestion";
 
 // Alícuotas de IVA según catálogo de ARCA/AFIP.
@@ -112,6 +118,11 @@ export default function CreateInvoiceModal({
   // lo puede seguir pisando (spec 2026-08-05 §4 punto 3). NO decide si se pide
   // justificación — esa cuenta es number vs number (debeMostrarJustificacionTC).
   const [exchangeRateTocado, setExchangeRateTocado] = useState(false);
+  // "Ayuda invisible" (2026-08-06, A4): true apenas el sistema acomodó el número al
+  // techo del día. Mientras esté en true, la línea gris muestra el acomodo (no la
+  // leyenda normal) y nunca se pide justificación. Se apaga si el usuario vuelve a
+  // tocar el casillero — ahí vuelve a valer la comparación normal.
+  const [exchangeRateFueAcomodado, setExchangeRateFueAcomodado] = useState(false);
 
   const isMonotributista =
     afipSettings?.taxCondition?.trim() === "Monotributo" ||
@@ -125,10 +136,15 @@ export default function CreateInvoiceModal({
   const activeCurrency = isMultiCurrencyEnabled ? selectedCurrency : "ARS";
   const isUSD = activeCurrency === "USD";
 
-  // TC sugerido (2026-08-05): la fecha de emisión es SIEMPRE hoy en Argentina (este
-  // modal no deja elegir otra fecha de emisión — spec §4 punto 2). `enabled: isOpen
-  // && isUSD` evita gastar pedidos con el modal cerrado o en pesos.
-  const { tipoCambioSugerido, leyenda: leyendaTC, cargando: buscandoTC } =
+  // TC sugerido (2026-08-05, ampliado 2026-08-06 "ayuda invisible"): la fecha de
+  // emisión es SIEMPRE hoy en Argentina (este modal no deja elegir otra fecha de
+  // emisión — spec §4 punto 2). `enabled: isOpen && isUSD` evita gastar pedidos con
+  // el modal cerrado o en pesos.
+  //
+  // topeDelDia (A4, techo del día para el acomodo) y loCompletaElSistema (A3: el
+  // casillero no se dibuja porque el motor completa el número solo) son los dos
+  // campos nuevos del motor.
+  const { tipoCambioSugerido, leyenda: leyendaTC, cargando: buscandoTC, topeDelDia, loCompletaElSistema } =
     useTipoCambioSugerido("USD", hoyArgentina(), { enabled: isOpen && isUSD });
   const huboSugerenciaTC = tipoCambioSugerido != null;
 
@@ -142,14 +158,32 @@ export default function CreateInvoiceModal({
   }, [tipoCambioSugerido]);
 
   // Justificación: solo cuando el número escrito difiere del sugerido, o cuando no
-  // hubo sugerencia (spec §4 punto 5) — comparación número contra número.
+  // hubo sugerencia (spec §4 punto 5) — EXCEPTO cuando el sistema acomodó el número
+  // al techo (A4), caso en el que nunca se pide. Comparación número contra número.
   // Fix N1 (review 2026-08-05): `!buscandoTC` evita que el campo parpadee mientras
   // la consulta está en vuelo — el Momento D de la spec solo muestra "Buscando…".
   const mostrarJustificacionTC = isUSD && !buscandoTC && debeMostrarJustificacionTC({
     tipoCambioEscrito: exchangeRate,
     tipoCambioSugerido,
     huboSugerencia: huboSugerenciaTC,
+    fueAcomodadoAlTope: exchangeRateFueAcomodado,
   });
+
+  // A5.5 (fix item 8): "si el campo se esconde, su texto se descarta y no viaja".
+  // Antes el texto quedaba vivo en el estado y podía reaparecer/viajar en un
+  // intento posterior aunque el vendedor no lo haya escrito para ESE número.
+  useEffect(() => {
+    if (!mostrarJustificacionTC) {
+      setExchangeRateJustification("");
+    }
+  }, [mostrarJustificacionTC]);
+
+  // Fix bloqueante (review post-implementación, A4): el casillero MUESTRA el techo
+  // cuando el sistema acomodó, pero `exchangeRate` (el estado real, el que viaja al
+  // backend) sigue siendo el número que el vendedor tipeó — si mandáramos el techo
+  // exacto, el motor lo trataría como carga manual sin justificar y rebotaría.
+  const valorMostradoEnCasillero =
+    exchangeRateFueAcomodado && Number(topeDelDia) > 0 ? String(topeDelDia) : exchangeRate;
 
   const requiresOverride = Boolean(reserva && !reserva.isEconomicallySettled && reserva.canEmitAfipInvoice);
   const isBlockedByDebt = Boolean(reserva && !reserva.isEconomicallySettled && !reserva.canEmitAfipInvoice);
@@ -163,7 +197,7 @@ export default function CreateInvoiceModal({
         setAfipSettings(response);
       } catch (error) {
         console.error("Error fetching AFIP settings:", error);
-        showError("No se pudo obtener la configuración de AFIP.");
+        showError("No se pudo obtener la configuración de ARCA.");
       } finally {
         setFetchingSettings(false);
       }
@@ -211,6 +245,7 @@ export default function CreateInvoiceModal({
     setExchangeRate("");
     setExchangeRateJustification("");
     setExchangeRateTocado(false);
+    setExchangeRateFueAcomodado(false);
   }, [fetchingSettings, initialAmount, isMonotributista, isOpen]);
 
   const totals = useMemo(() => {
@@ -307,7 +342,11 @@ export default function CreateInvoiceModal({
 
     // Validación de campos multimoneda cuando la moneda elegida es USD.
     // El backend también valida esto, pero lo hacemos acá para dar feedback inmediato al operador.
-    if (isUSD) {
+    // "Ayuda invisible" (A3): con loCompletaElSistema=true no hay casillero que
+    // validar — el motor completa el tipo de cambio solo al emitir. Saltear esta
+    // validación es a propósito: si corriera igual, exchangeRate estaría vacío
+    // (nunca se le pidió al usuario) y bloquearía la emisión sin ningún motivo real.
+    if (isUSD && !loCompletaElSistema) {
       const rateNumber = Number(exchangeRate);
       if (!exchangeRate || isNaN(rateNumber) || rateNumber <= 0) {
         showError("Ingresá el tipo de cambio para facturas en dólares.");
@@ -358,23 +397,33 @@ export default function CreateInvoiceModal({
       // resuelve solo comparando el número (spec §4 punto 11; antes se mandaba
       // SIEMPRE una fuente fija falsa, aunque el número lo hubiera escrito el
       // usuario a mano — bug V8).
+      // "Ayuda invisible" (A3): con loCompletaElSistema, exchangeRate nunca se
+      // llenó (no hubo casillero) — construirCamposUSDParaPayload manda un valor de
+      // relleno que el backend ignora por completo y resuelve solo.
       if (isUSD) {
         Object.assign(payload, construirCamposUSDParaPayload({
           tipoCambio: exchangeRate,
           justificacion: exchangeRateJustification,
           mostrarJustificacion: mostrarJustificacionTC,
+          loCompletaElSistema,
         }));
       }
 
       await api.post("/invoices", payload);
-      showSuccess("Comprobante AFIP encolado.");
+      // Item 4 (fix, review post-implementación): mismo texto que la pantalla
+      // hermana EmitirFacturaInline.jsx (T-6/P-16: un mismo hecho no se cuenta de
+      // dos formas distintas en dos pantallas).
+      showSuccess("La factura quedó en proceso en ARCA.");
       onSuccess();
       onClose();
     } catch (error) {
       console.error(error);
       // 409 cuando ya hay una Invoice con Resultado="PENDING" para esta reserva.
       // El backend devuelve { message } con texto accionable — mostrarlo verbatim.
-      showError(error?.payload?.message ?? error?.message ?? "Error al crear factura.");
+      // Item 5 (fix): antes el fallback usaba error?.message crudo (puede traer
+      // texto técnico en inglés del framework/fetch) salteando getApiErrorMessage,
+      // que es el traductor único a español que usa el resto de la app.
+      showError(error?.payload?.message ?? getApiErrorMessage(error) ?? "Error al crear factura.");
     } finally {
       setLoading(false);
     }
@@ -393,7 +442,7 @@ export default function CreateInvoiceModal({
               <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
                 <Calculator className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
               </div>
-              Nueva Factura AFIP
+              Nueva Factura ARCA
             </h2>
             <div className="mt-4 flex flex-col gap-1">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Cliente</span>
@@ -430,7 +479,7 @@ export default function CreateInvoiceModal({
                 <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
                 <div className="space-y-2">
                   <div className="font-semibold">
-                    {isBlockedByDebt ? "AFIP bloqueado por deuda" : "Emisión por excepción habilitada"}
+                    {isBlockedByDebt ? "ARCA bloqueado por deuda" : "Emisión por excepción habilitada"}
                   </div>
                   <p className="text-sm">
                     {reserva?.economicBlockReason || "La reserva todavía no está cancelada económicamente."}
@@ -457,7 +506,7 @@ export default function CreateInvoiceModal({
                       onChange={(event) => setForceIssue(event.target.checked)}
                       className="mt-1 rounded border-slate-300"
                     />
-                    Confirmo que el agente decide emitir AFIP aun con deuda pendiente.
+                    Confirmo que el agente decide emitir en ARCA aun con deuda pendiente.
                   </label>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
@@ -534,6 +583,8 @@ export default function CreateInvoiceModal({
                         // Si vuelve a USD, que la precarga pueda escribir la sugerencia
                         // de nuevo (spec §4 punto 1).
                         setExchangeRateTocado(false);
+                        // El acomodo al techo (A4) era válido para la moneda anterior.
+                        setExchangeRateFueAcomodado(false);
                       }}
                       data-testid={`radio-currency-${option.value}`}
                     />
@@ -547,8 +598,13 @@ export default function CreateInvoiceModal({
                   divisa..." (mentía cuando el número lo escribía el operador a mano) y
                   el renglón "Fecha del TC que se registrará" (repetía lo que ya dice la
                   leyenda del motor). Los reemplaza la leyenda gris debajo del casillero,
-                  igual que en la pantalla de la multa. Ver spec §2 y §7, preguntas P2/P3. */}
-              {isUSD && (
+                  igual que en la pantalla de la multa. Ver spec §2 y §7, preguntas P2/P3.
+
+                  "Ayuda invisible" (2026-08-06, A3): `!loCompletaElSistema` — mientras el
+                  sistema emite comprobantes de ensayo, este bloque entero (casillero,
+                  leyenda y justificación) directamente NO se dibuja. El motor completa
+                  el tipo de cambio solo, sin pedirle al vendedor un número de juguete. */}
+              {isUSD && !loCompletaElSistema && (
                 <div className="space-y-3 pt-2 border-t border-indigo-200 dark:border-indigo-700">
                   <div className="w-full sm:w-40">
                     <label
@@ -562,27 +618,57 @@ export default function CreateInvoiceModal({
                       type="number"
                       step="0.01"
                       min="1.01"
-                      value={exchangeRate}
+                      // Fix bloqueante (review post-implementación): el casillero MUESTRA
+                      // el techo cuando el sistema acomodó (spec A4), pero el ESTADO que
+                      // viaja al backend (exchangeRate) nunca se pisa — el motor necesita
+                      // ver el número original para tratarlo como "acomodo" (con rastro y
+                      // justificación propia) y no como carga manual sin justificar.
+                      value={valorMostradoEnCasillero}
                       onChange={(event) => {
                         setExchangeRate(event.target.value);
                         setExchangeRateTocado(true);
+                        // El usuario está corrigiendo a mano: el acomodo anterior (si
+                        // hubo) ya no aplica a este número nuevo.
+                        setExchangeRateFueAcomodado(false);
+                      }}
+                      onBlur={() => {
+                        // "Ayuda invisible" (A4): al salir del casillero, si el número
+                        // supera el techo del día el sistema lo baja solo EN PANTALLA, sin
+                        // frenar nada ni pedir confirmación (excepción firmada a P-21).
+                        // exchangeRate (el estado real) NO se toca acá — solo se marca
+                        // exchangeRateFueAcomodado para que el casillero MUESTRE el techo
+                        // y el motor reciba el número tal cual lo tipeó el vendedor.
+                        const valorAcomodado = acomodarAlTope(exchangeRate, topeDelDia);
+                        if (valorAcomodado !== null) {
+                          setExchangeRateFueAcomodado(true);
+                        }
                       }}
                       placeholder="Ej: 1200.50"
                       className="w-full text-sm rounded-md border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-right"
                       data-testid="input-tipo-cambio"
                     />
-                    {/* Texto que manda el motor (leyendaTC), tal cual — T-13. */}
+                    {/* Texto que manda el motor (leyendaTC), tal cual — T-13. Si el
+                        sistema acomodó el número al techo (A4), este renglón pasa a
+                        mostrar "En la factura entra hasta $X." — textoLeyendaTC ya
+                        resuelve esa prioridad. */}
                     <div
                       className="mt-1 text-xs text-slate-500 dark:text-slate-400"
                       role="status"
                       data-testid="leyenda-tc-sugerido"
                     >
-                      {textoLeyendaTC({ cargando: buscandoTC, huboSugerencia: huboSugerenciaTC, leyenda: leyendaTC })}
+                      {textoLeyendaTC({
+                        cargando: buscandoTC,
+                        huboSugerencia: huboSugerenciaTC,
+                        leyenda: leyendaTC,
+                        fueAcomodadoAlTope: exchangeRateFueAcomodado,
+                        topeDelDia,
+                      })}
                     </div>
                   </div>
 
                   {/* Justificación: aparece solo cuando el número escrito difiere del
-                      sugerido (o cuando no hubo sugerencia) — ver mostrarJustificacionTC. */}
+                      sugerido (o cuando no hubo sugerencia), y NUNCA cuando el sistema
+                      acomodó el número al techo — ver mostrarJustificacionTC. */}
                   {mostrarJustificacionTC && (
                     <div>
                       <label
@@ -765,10 +851,16 @@ export default function CreateInvoiceModal({
             <div className="text-xs text-gray-500 max-w-md">
               <p className="flex items-center gap-1">
                 <AlertCircle className="w-3 h-3" />
-                Los montos se enviarán a AFIP para autorización.
-                {isUSD && (
+                Los montos se enviarán a ARCA para autorización.
+                {/* "Ayuda invisible" (A3): en modo ensayo no hay ningún TC que el vendedor
+                    haya cargado — mostrar "TC: pendiente" acá sería sugerir que falta
+                    completar algo, cuando en realidad el sistema ya lo tiene resuelto. */}
+                {isUSD && !loCompletaElSistema && (
                   <span className="ml-1 font-semibold text-indigo-600 dark:text-indigo-400">
-                    Factura en USD — TC: {exchangeRate ? `$${Number(exchangeRate).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "pendiente"}
+                    {/* valorMostradoEnCasillero (no exchangeRate): si el sistema acomodó al
+                        techo, la factura sale a ESE número — este renglón informativo tiene
+                        que decir lo mismo que va a decir el comprobante. */}
+                    Factura en USD — TC: {valorMostradoEnCasillero ? `$${Number(valorMostradoEnCasillero).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "pendiente"}
                   </span>
                 )}
               </p>
@@ -806,19 +898,25 @@ export default function CreateInvoiceModal({
 
                 {/* Equivalente en pesos: se muestra solo cuando la moneda es USD
                     y el operador ya cargó un TC válido (mayor a 0 y distinto de 1).
-                    El cálculo es: total en USD × tipo de cambio ingresado.
-                    Si el TC todavía no fue cargado, mostramos un guión para no confundir. */}
-                {isUSD && (
+                    El cálculo es: total en USD × tipo de cambio efectivo.
+                    Si el TC todavía no fue cargado, mostramos un guión para no confundir.
+                    "Ayuda invisible" (A3): `!loCompletaElSistema` — en modo ensayo este
+                    renglón tampoco se muestra (sería un cálculo con un TC de juguete
+                    puesto al lado de un total real).
+                    Usa valorMostradoEnCasillero (no exchangeRate): si el sistema acomodó
+                    al techo, la factura sale a ESE número — el equivalente en pesos tiene
+                    que coincidir con lo que el comprobante va a decir de verdad. */}
+                {isUSD && !loCompletaElSistema && (
                   <div
                     data-testid="equivalente-pesos"
                     className="mt-1 text-xs text-indigo-600 dark:text-indigo-400 font-medium"
                   >
-                    {Number(exchangeRate) > 1
-                      ? `≈ ${(totals.total * Number(exchangeRate)).toLocaleString("es-AR", {
+                    {Number(valorMostradoEnCasillero) > 1
+                      ? `≈ ${(totals.total * Number(valorMostradoEnCasillero)).toLocaleString("es-AR", {
                           style: "currency",
                           currency: "ARS",
                           minimumFractionDigits: 2,
-                        })} (TC $${Number(exchangeRate).toLocaleString("es-AR", {
+                        })} (TC $${Number(valorMostradoEnCasillero).toLocaleString("es-AR", {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                         })})`
@@ -847,7 +945,10 @@ export default function CreateInvoiceModal({
                 // válido (> 0 y distinto de 1) y, SOLO si corresponde (ver
                 // mostrarJustificacionTC — 2026-08-05), la justificación.
                 // Esto evita que el submit llegue al handleSubmit con datos incompletos.
-                (isUSD && (
+                // "Ayuda invisible" (A3): `!loCompletaElSistema` — en ese modo no hay
+                // casillero que el vendedor haya llenado, así que esta condición no
+                // aplica (si corriera igual, un exchangeRate vacío trabaría el botón).
+                (isUSD && !loCompletaElSistema && (
                   !(Number(exchangeRate) > 0) ||
                   Number(exchangeRate) === 1 ||
                   faltaJustificacionTC({ mostrar: mostrarJustificacionTC, texto: exchangeRateJustification })

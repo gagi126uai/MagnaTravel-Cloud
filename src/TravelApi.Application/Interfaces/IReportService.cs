@@ -9,6 +9,16 @@ public interface IReportService
     Task<object> GetDetailedReportAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);
     Task<IEnumerable<object>> GetDetailedReceivablesAsync(CancellationToken cancellationToken);
     Task<byte[]> ExportReportAsync(DateTime? from, DateTime? to, bool includeSales, bool includeReceivables, bool includePayables, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// "Facturas en dolares" (spec firmada 2026-08-06, Parte B): una fila por factura de venta emitida en
+    /// moneda extranjera dentro del periodo, con lo que se facturo en pesos y lo que efectivamente se
+    /// cobro. Solo lectura, sin botones de accion: es la planilla que el contador se lleva una vez por mes.
+    /// </summary>
+    Task<UsdInvoicesReportResponse> GetUsdInvoicesReportAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);
+
+    /// <summary>El mismo reporte, en Excel, con las MISMAS columnas que la pantalla.</summary>
+    Task<byte[]> ExportUsdInvoicesReportAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);
     Task<AgencySettings?> GetAgencySettingsAsync(CancellationToken cancellationToken);
     Task<AgencySettings> UpdateAgencySettingsAsync(AgencySettings updated, CancellationToken cancellationToken);
     
@@ -107,11 +117,64 @@ public record BnaUsdSellerRateDto(
 /// <param name="Value">El tipo de cambio, tal cual lo devuelve el resolver.</param>
 /// <param name="RateDate">Fecha REAL del dato (puede ser anterior a hoy si vino de un walk-back).</param>
 /// <param name="EsDePrueba">
-/// <c>true</c> cuando el sistema esta facturando contra homologacion y este numero es el de practica
-/// de ARCA (T-5: nada de enums crudos — el front arma el cartel ambar a partir de este bool, no de un
-/// <c>ExchangeRateSource</c>).
+/// SIEMPRE <c>false</c> desde la "ayuda invisible del tipo de cambio" (spec firmada 2026-08-06,
+/// decision P6=A): cuando el numero no es plata de verdad, la tarjeta entera viene en <c>null</c> y no
+/// se muestra — ya no existe el caso "se muestra con un aviso al lado". El campo se conserva para no
+/// romper el contrato con la pantalla que ya lo lee (regla T-8) y quedara sin uso.
 /// </param>
 public record DolarParaFacturarDto(decimal Value, DateOnly RateDate, bool EsDePrueba);
+
+// ============================================================================================
+// "Facturas en dolares" (spec firmada 2026-08-06, Parte B). El dueño lo resumio asi: cobraste
+// US$ 1.000 a $1.500 (te entraron $1.500.000) pero la factura salio al dolar del techo, $1.234,50
+// ($1.234.500). Esos $265.500 de diferencia son REALES y NORMALES: el contador los necesita
+// ordenados, mes por mes. El vendedor no los tiene que ver nunca — por eso esto vive detras del
+// permiso de Reportes y no en el estado de cuenta de la reserva.
+// ============================================================================================
+
+/// <param name="Filas">Una por factura de venta en moneda extranjera del periodo, de la mas nueva a la mas vieja.</param>
+/// <param name="Totales">Totales del periodo (el pie de la tabla).</param>
+public record UsdInvoicesReportResponse(
+    List<UsdInvoiceRowDto> Filas,
+    UsdInvoicesReportTotalsDto Totales);
+
+/// <param name="Fecha">Dia de emision del comprobante.</param>
+/// <param name="Comprobante">Etiqueta legible ("Factura B 0001-00000012").</param>
+/// <param name="ComprobanteId">Identificador publico de la factura, para que el front arme el link.</param>
+/// <param name="NumeroReserva">Numero de la reserva a la que pertenece ("R-1042"). Null si la factura no tiene reserva.</param>
+/// <param name="ReservaId">Identificador publico de la reserva, para el link. Null si no tiene reserva.</param>
+/// <param name="Cliente">Nombre del cliente que pago.</param>
+/// <param name="Moneda">Moneda del comprobante, en codigo corto ("USD").</param>
+/// <param name="MontoEnMonedaExtranjera">Lo que dice la factura en su moneda (los US$ de la tabla).</param>
+/// <param name="TipoCambioFactura">El tipo de cambio con el que se emitio.</param>
+/// <param name="PesosDeLaFactura">Monto x tipo de cambio: lo que la factura vale en pesos.</param>
+/// <param name="PesosCobrados">
+/// La plata que efectivamente entro imputada a ESTA factura. <c>null</c> = todavia no se cobro nada
+/// (no es un pendiente ni un error: simplemente no hay dato que mostrar).
+/// </param>
+/// <param name="Diferencia">
+/// Cobrado menos facturado. <c>null</c> cuando no hay cobros o cuando da exactamente cero — en los dos
+/// casos no hay nada que contar y la tabla muestra un guion.
+/// </param>
+public record UsdInvoiceRowDto(
+    DateTime Fecha,
+    string Comprobante,
+    Guid ComprobanteId,
+    string? NumeroReserva,
+    Guid? ReservaId,
+    string Cliente,
+    string Moneda,
+    decimal MontoEnMonedaExtranjera,
+    decimal TipoCambioFactura,
+    decimal PesosDeLaFactura,
+    decimal? PesosCobrados,
+    decimal? Diferencia);
+
+/// <summary>Pie de la tabla. Mismo criterio de "null = nada que mostrar" que las filas.</summary>
+public record UsdInvoicesReportTotalsDto(
+    decimal PesosDeLaFactura,
+    decimal? PesosCobrados,
+    decimal? Diferencia);
 
 public record ReportsSummaryResponse(
     int TotalCustomers,

@@ -110,7 +110,8 @@ public class InvoiceServiceRetryIdempotencyTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.RetryAsync(inv.Id, CancellationToken.None));
-        Assert.Contains("anulacion", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // El mensaje al usuario lleva tilde ("anulación"): la comparacion Ordinal no la ignora.
+        Assert.Contains("anulación", ex.Message, StringComparison.OrdinalIgnoreCase);
         // No se debe haber encolado un nuevo job ni reseteado el Resultado.
         _jobClientMock.Verify(
             c => c.Create(It.IsAny<Hangfire.Common.Job>(), It.IsAny<Hangfire.States.IState>()),
