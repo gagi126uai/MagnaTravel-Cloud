@@ -3,8 +3,8 @@ import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 // MonthNavigator — filtro de mes canónico del sistema.
 //
 // Patron: navegacion mensual con chevron prev/next + label "Mayo 2026".
-// Extraido de PaymentsInvoicingPage y replicado en Cobranza y Facturación
-// para mantener sinergia visual entre pantallas del módulo financiero.
+// Compartido por varias pantallas del módulo financiero (Caja, Movimientos,
+// Cobranza por reserva, Comisiones) para mantener la misma navegación mensual.
 //
 // Props:
 //   month:       Date | null — primer dia del mes activo (ej. new Date(2026, 4, 1)).

@@ -498,8 +498,10 @@ test("Fix#4 banner: USD — sin símbolo duplicado", () => {
 // Fix #3 → E) PaymentModal — ahora usa monedaPrincipal del DTO (fix completo)
 //
 // El fix parcial (currency:"ARS" explícito) fue reemplazado por la solución
-// completa: PaymentModal recibe monedaPrincipal + porMoneda del CollectionWorkItemDto
-// y usa la misma lógica que RegistrarCobroInline.
+// completa: PaymentModal recibía monedaPrincipal + porMoneda del CollectionWorkItemDto
+// y usaba la misma lógica que RegistrarCobroInline.
+// Nota (poda Tanda B0): components/PaymentModal.jsx ya no existe (pantalla huérfana
+// borrada); la lógica sigue viva y es la misma que hoy corre en RegistrarCobroInline.jsx.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

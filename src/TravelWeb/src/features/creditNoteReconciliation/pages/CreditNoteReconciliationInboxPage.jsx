@@ -23,7 +23,7 @@ export default function CreditNoteReconciliationInboxPage() {
   // ─── Modal de solicitud de aprobacion (cuatro ojos) ───────────────────────────
   // Cuando anular un recibo devuelve 409 requiresApproval, la fila llama a
   // handleApprovalRequired y guardamos los datos necesarios para abrir el modal.
-  // Mismo patron que PaymentsHistoryPage.
+  // Mismo patron que PaymentsMovementsPage (pantalla "Movimientos", ruta /payments/movements).
   const [approvalContext, setApprovalContext] = useState(null);
 
   const handleApprovalRequired = ({ requestType, entityType, entityId }) => {

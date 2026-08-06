@@ -138,7 +138,7 @@ test("formatDate: repro EXACTO del bug reportado 2026-07-22 (cobro 22/07 no debe
 });
 
 // ─── formatDateTime(): mismo criterio, para las pantallas que además muestran hora ──────
-// (Movimientos de caja / Historial de cobros — MovementsTab.jsx, PaymentsHistoryPage.jsx)
+// (Movimientos de caja — MovementsTab.jsx, pantalla "Caja" en /cash)
 
 test("formatDateTime: fecha de negocio (medianoche UTC, sin hora real) → solo el día, sin hora inventada", () => {
     assert.equal(formatDateTime("2026-07-22T00:00:00Z"), "22/07/2026");

@@ -15,9 +15,6 @@ import CustomerAccountPage from "./features/customers/pages/CustomerAccountPage"
 import ReservasPage from "./features/reservas/pages/ReservasPage";
 import ReservaDetailPage from "./features/reservas/pages/ReservaDetailPage";
 import PaymentsPage from "./features/payments/pages/PaymentsPage";
-import PaymentsCollectionsPage from "./features/payments/pages/PaymentsCollectionsPage";
-import PaymentsInvoicingPage from "./features/payments/pages/PaymentsInvoicingPage";
-import PaymentsHistoryPage from "./features/payments/pages/PaymentsHistoryPage";
 import PaymentsByReservaPage from "./features/payments/pages/PaymentsByReservaPage";
 import PaymentsMovementsPage from "./features/payments/pages/PaymentsMovementsPage";
 import PaymentsPendingPage from "./features/payments/pages/PaymentsPendingPage";
@@ -268,12 +265,12 @@ export default function App() {
                       <Route path="reservas" element={<PaymentsByReservaPage />} />
                       <Route path="movements" element={<PaymentsMovementsPage />} />
                       <Route path="pending" element={<PaymentsPendingPage />} />
-                      {/* Rutas viejas: mantengo accesibles para bookmarks y links externos.
-                          Recomendaria deprecarlas en Fase D'.D si no se usan. */}
-                      <Route path="collections" element={<PaymentsCollectionsPage />} />
+                      {/* Rutas viejas: las paginas que resolvian ya no existen (demolicion Tanda B0).
+                          Solo queda el redirect, para que un bookmark viejo caiga en la pantalla nueva y no en un 404. */}
+                      <Route path="collections" element={<Navigate to="/payments/reservas" replace />} />
                       <Route path="cash" element={<Navigate to="/cash" replace />} />
-                      <Route path="invoicing" element={<PaymentsInvoicingPage />} />
-                      <Route path="history" element={<PaymentsHistoryPage />} />
+                      <Route path="invoicing" element={<Navigate to="/payments/pending" replace />} />
+                      <Route path="history" element={<Navigate to="/payments/movements" replace />} />
                     </Route>
                     <Route path="/cash" element={<CashPage />} />
                     <Route

@@ -15,13 +15,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// ─── Lógica pura replicada de PaymentsCollectionsPage.jsx ────────────────────
+// ─── Lógica pura replicada de PaymentsCashPage.jsx (pantalla "Caja", ruta /cash) ──
 // El patrón del proyecto: replicar la función pura aquí para testearla sin bundler.
 // Si cambia la lógica original en JSX, actualizar acá también.
 
 /**
  * Arma el objeto de métrica para "Cobrado este mes" a partir del summary del backend.
- * Usada tanto en PaymentsCollectionsPage como en PaymentsHomePage (mismo patrón).
+ * Usada hoy en PaymentsCashPage (pantalla "Caja", ruta /cash), vía FinanceMetricsGrid.
  *
  * Regla: usar `valuesByCurrency` cuando hay al menos 1 entrada en `collectedThisMonthByCurrency`.
  * Solo cae al escalar `collectedThisMonth` si el array viene vacío o ausente.
