@@ -84,7 +84,11 @@ public class AuthController : ControllerBase
 
     [HttpPost("refresh")]
     [AllowAnonymous]
-    [EnableRateLimiting("auth")]
+    // Politica propia "auth-refresh" (2026-08-06): ver el comentario junto a su registro en
+    // Program.cs. En corto: este endpoint es trafico automatico y frecuente (cada pestaña
+    // abierta lo llama solo cuando el token de acceso vence), no un objetivo de fuerza bruta
+    // como login, asi que necesita un balde mucho mas generoso.
+    [EnableRateLimiting("auth-refresh")]
     public async Task<ActionResult<AuthSessionResponse>> Refresh()
     {
         if (!Request.Cookies.TryGetValue(AuthCookieNames.Refresh, out var refreshToken) || string.IsNullOrWhiteSpace(refreshToken))

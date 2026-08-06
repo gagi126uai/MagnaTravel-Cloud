@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -26,22 +27,82 @@ public class AuthService : IAuthService
     private static readonly TimeSpan RefreshTokenLifetime = TimeSpan.FromDays(7);
     private const string GenericAuthFailureMessage = "No se pudo iniciar sesion con las credenciales provistas.";
 
+    // Hallazgo 2026-08-06 (revision de seguridad, bloqueante B2): con varias pestañas
+    // compartiendo la MISMA cookie de refresh, una ráfaga de reconexion (por ejemplo, el
+    // reinicio del contenedor "api" en cada deploy) puede hacer que DOS pestañas manden el
+    // mismo refresh token casi al mismo tiempo. La PRIMERA lo rota (crea uno nuevo, marca el
+    // viejo como revocado). La SEGUNDA, milisegundos despues, llega con el MISMO token viejo
+    // -que ya esta marcado como revocado- y el codigo de deteccion de robo (mas abajo,
+    // RefreshCoreAsync) lo trata como un intento de REUSO MALICIOSO: revoca TODA la cadena
+    // de sesion del usuario, incluida la que la primera pestaña recien recibio. Resultado:
+    // el dueño (o cualquier usuario con dos pestañas) queda deslogueado por una carrera
+    // legitima, no por un robo real.
+    //
+    // FIX (ventana de gracia de rotacion, patron estandar de la industria — Auth0 lo llama
+    // "reuse interval", Okta "grace period"): si el reuso llega DENTRO de una ventana chica
+    // despues de la rotacion original, no es robo — es la segunda pestaña llegando tarde.
+    // En ese caso le devolvemos LA MISMA respuesta (mismo access+refresh) que ya se le dio a
+    // la primera pestaña, sin revocar nada. Pasada la ventana (o si no encontramos la
+    // respuesta en cache, por ejemplo tras un reinicio del proceso), seguimos tratando el
+    // reuso como robo real, exactamente como antes: la deteccion de seguridad sigue viva.
+    //
+    // La gracia esta ATADA AL CLIENTE (hallazgo B-N1 de la revision de seguridad del 2026-08-06,
+    // regla T-10: lo sensible se verifica del lado del servidor): no alcanza con que el token
+    // coincida, tambien tienen que coincidir la IP y el user-agent del pedido con los de la
+    // rotacion original. Dos pestañas del MISMO navegador comparten ambos datos, asi que la
+    // carrera legitima sigue resolviendose igual; en cambio un token robado y replayado desde
+    // OTRA maquina dentro de esos 15 segundos ya no recibe la sesion viva del dueño: cae al
+    // camino de robo de siempre (se revoca la cadena entera) y queda registrado en el log.
+    //
+    // La respuesta original vive en memoria (IMemoryCache), NUNCA en la base: guardar un
+    // refresh token en texto plano en Postgres (aunque sea unos segundos) es justamente lo
+    // que la tabla RefreshTokens evita a proposito (solo persiste el HASH). Vivir en memoria
+    // tiene un residual conocido: si "api" corre en mas de una instancia (hoy corre en una
+    // sola, ver docker-compose.yml), una carrera entre pestañas podria caer en dos procesos
+    // distintos y no encontrar la cache -> se trataria como robo (falla del lado seguro, no
+    // inseguro). Documentado para revisar si el dia de mañana se escala "api" a mas de un
+    // replica.
+    internal static readonly TimeSpan RefreshRotationGraceWindow = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan RefreshRotationCacheTtl = RefreshRotationGraceWindow + TimeSpan.FromSeconds(15);
+
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly JwtOptions _jwtOptions;
     private readonly ILogger<AuthService> _logger;
     private readonly AppDbContext _dbContext;
+    private readonly IMemoryCache _refreshRotationCache;
+    private readonly TimeProvider _timeProvider;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
         IOptions<JwtOptions> jwtOptions,
         ILogger<AuthService> logger,
-        AppDbContext dbContext)
+        AppDbContext dbContext,
+        IMemoryCache refreshRotationCache)
+        : this(userManager, jwtOptions, logger, dbContext, refreshRotationCache, TimeProvider.System)
+    {
+    }
+
+    /// <summary>
+    /// Constructor interno con <see cref="TimeProvider"/> inyectable: los tests de la ventana
+    /// de gracia de rotacion necesitan simular "pasaron 20 segundos" sin un delay real.
+    /// </summary>
+    internal AuthService(
+        UserManager<ApplicationUser> userManager,
+        IOptions<JwtOptions> jwtOptions,
+        ILogger<AuthService> logger,
+        AppDbContext dbContext,
+        IMemoryCache refreshRotationCache,
+        TimeProvider timeProvider)
     {
         _userManager = userManager;
         _jwtOptions = jwtOptions.Value;
         _logger = logger;
         _dbContext = dbContext;
+        _refreshRotationCache = refreshRotationCache;
+        _timeProvider = timeProvider;
     }
+
+    private DateTime UtcNow => _timeProvider.GetUtcNow().UtcDateTime;
 
     public async Task<AuthTokensResult> RegisterAsync(RegisterRequest request, string? ipAddress = null, string? userAgent = null)
     {
@@ -193,6 +254,34 @@ public class AuthService : IAuthService
 
         if (storedToken.IsRevoked)
         {
+            // Ventana de gracia de rotacion (ver comentario largo junto a RefreshRotationGraceWindow,
+            // arriba del todo de la clase): si este mismo token YA fue rotado hace poquito por OTRA
+            // pestaña, no es un robo — es una carrera legitima. Le devolvemos la MISMA respuesta que
+            // ya se le entrego a la primera pestaña, sin tocar nada mas.
+            //
+            // OJO: "otra pestaña" tiene que ser del MISMO cliente. Si el pedido llega con otra IP
+            // u otro navegador, no es una carrera: es el mismo token apareciendo en otra maquina.
+            if (IsWithinRefreshRotationGraceWindow(storedToken.RevokedAt) &&
+                _refreshRotationCache.TryGetValue(tokenHash, out RefreshRotationReplay? gracefulReplay) &&
+                gracefulReplay is not null)
+            {
+                if (IsSameClientAsOriginalRotation(gracefulReplay, ipAddress, userAgent))
+                {
+                    // Warning (no Information) a proposito: es un evento raro y queremos poder
+                    // confirmar en los logs de produccion que la ventana de gracia se activo de
+                    // verdad en los deploys, sin tener que subir el nivel de log.
+                    _logger.LogWarning(
+                        "Ventana de gracia de rotacion ACTIVADA para el usuario {UserId}: mismo cliente (misma IP y mismo dispositivo) reuso el refresh token recien rotado. Se repite la sesion ya emitida en vez de tratarlo como robo.",
+                        storedToken.UserId);
+                    return gracefulReplay.Tokens;
+                }
+
+                _logger.LogWarning(
+                    "Ventana de gracia de rotacion RECHAZADA para el usuario {UserId}: el refresh token recien rotado se reuso desde un cliente distinto (IP {ClientIpAddress}). Se trata como robo y se revoca la cadena entera.",
+                    storedToken.UserId,
+                    ipAddress ?? "desconocida");
+            }
+
             await RevokeAllRefreshTokensAsync(storedToken.UserId);
             throw new UnauthorizedAccessException(GenericAuthFailureMessage);
         }
@@ -200,7 +289,7 @@ public class AuthService : IAuthService
         var user = await _userManager.FindByIdAsync(storedToken.UserId);
         if (storedToken.IsExpired || user is null || !user.IsActive)
         {
-            storedToken.RevokedAt = DateTime.UtcNow;
+            storedToken.RevokedAt = UtcNow;
             await _dbContext.SaveChangesAsync();
             throw new UnauthorizedAccessException(GenericAuthFailureMessage);
         }
@@ -208,11 +297,56 @@ public class AuthService : IAuthService
         // La fila original permanece bloqueada hasta el commit. Un segundo refresh con
         // el mismo token espera y luego observa RevokedAt, en vez de emitir otra sesion.
         var replacementToken = await IssueSessionAsync(user, ipAddress, userAgent, storedToken.IsPersistent);
-        storedToken.RevokedAt = DateTime.UtcNow;
+        storedToken.RevokedAt = UtcNow;
         storedToken.ReplacedByTokenHash = ComputeTokenHash(replacementToken.RefreshToken);
         await _dbContext.SaveChangesAsync();
 
+        // Se guarda DESPUES del SaveChanges exitoso: si algo de arriba falla, no queremos dejar en
+        // cache una respuesta "fantasma" que nunca quedo persistida como la rotacion oficial.
+        // Junto con la respuesta se guarda A QUIEN se le entrego (IP + user-agent), que es lo que
+        // despues habilita -o no- el replay de la ventana de gracia.
+        _refreshRotationCache.Set(
+            tokenHash,
+            new RefreshRotationReplay(replacementToken, ipAddress, userAgent),
+            RefreshRotationCacheTtl);
+
         return replacementToken;
+    }
+
+    /// <summary>
+    /// Foto de una rotacion recien hecha: la respuesta que se entrego y el cliente que la pidio.
+    /// Vive solo unos segundos en memoria para poder repetirsela a la segunda pestaña del MISMO
+    /// cliente (ver la ventana de gracia arriba del todo de la clase).
+    /// </summary>
+    private sealed record RefreshRotationReplay(AuthTokensResult Tokens, string? IpAddress, string? UserAgent);
+
+    /// <summary>
+    /// El replay de la ventana de gracia solo vale para el mismo cliente: dos pestañas del mismo
+    /// navegador comparten IP y user-agent; un token robado usado desde otra maquina, no.
+    /// Comparacion exacta y a prueba de nulos: si un dato falta de un lado, tiene que faltar del
+    /// otro tambien (si no, se cae del lado seguro y el reuso se trata como robo).
+    /// </summary>
+    private static bool IsSameClientAsOriginalRotation(
+        RefreshRotationReplay originalRotation,
+        string? ipAddress,
+        string? userAgent)
+    {
+        var sameIpAddress = string.Equals(originalRotation.IpAddress, ipAddress, StringComparison.Ordinal);
+        var sameUserAgent = string.Equals(originalRotation.UserAgent, userAgent, StringComparison.Ordinal);
+        return sameIpAddress && sameUserAgent;
+    }
+
+    // "hace poquito" = dentro de RefreshRotationGraceWindow. Si el token viejo nunca tuvo
+    // RevokedAt (no deberia pasar, IsRevoked ya lo garantiza) lo tratamos como AFUERA de la
+    // ventana -> cae al camino de robo real, del lado seguro.
+    private bool IsWithinRefreshRotationGraceWindow(DateTime? revokedAt)
+    {
+        if (revokedAt is null)
+        {
+            return false;
+        }
+
+        return UtcNow - revokedAt.Value <= RefreshRotationGraceWindow;
     }
 
     public async Task<CurrentUserResponse?> GetCurrentUserAsync(string userId)
@@ -240,14 +374,15 @@ public class AuthService : IAuthService
             return;
         }
 
-        storedToken.RevokedAt = DateTime.UtcNow;
+        storedToken.RevokedAt = UtcNow;
         await _dbContext.SaveChangesAsync();
     }
 
     public async Task RevokeAllRefreshTokensAsync(string userId)
     {
+        var now = UtcNow;
         var activeTokens = await _dbContext.RefreshTokens
-            .Where(token => token.UserId == userId && token.RevokedAt == null && token.ExpiresAt > DateTime.UtcNow)
+            .Where(token => token.UserId == userId && token.RevokedAt == null && token.ExpiresAt > now)
             .ToListAsync();
 
         if (activeTokens.Count == 0)
@@ -257,7 +392,7 @@ public class AuthService : IAuthService
 
         foreach (var token in activeTokens)
         {
-            token.RevokedAt = DateTime.UtcNow;
+            token.RevokedAt = now;
         }
 
         await _dbContext.SaveChangesAsync();
@@ -294,8 +429,8 @@ public class AuthService : IAuthService
     private async Task<AuthTokensResult> IssueSessionAsync(ApplicationUser user, string? ipAddress, string? userAgent, bool isPersistent)
     {
         var currentUser = await BuildCurrentUserAsync(user);
-        var accessTokenExpiresAt = DateTime.UtcNow.Add(AccessTokenLifetime);
-        var refreshTokenExpiresAt = DateTime.UtcNow.Add(RefreshTokenLifetime);
+        var accessTokenExpiresAt = UtcNow.Add(AccessTokenLifetime);
+        var refreshTokenExpiresAt = UtcNow.Add(RefreshTokenLifetime);
         var accessToken = await CreateAccessTokenAsync(user, AccessTokenLifetime);
         var refreshToken = CreateRandomToken();
         var refreshTokenHash = ComputeTokenHash(refreshToken);
@@ -305,7 +440,7 @@ public class AuthService : IAuthService
         {
             UserId = user.Id,
             TokenHash = refreshTokenHash,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = UtcNow,
             ExpiresAt = refreshTokenExpiresAt,
             CreatedByIp = ipAddress,
             UserAgent = userAgent?.Length > 512 ? userAgent[..512] : userAgent,
@@ -327,7 +462,7 @@ public class AuthService : IAuthService
             {
                 UserId = user.Id,
                 TokenHash = refreshTokenHash,
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = UtcNow,
                 ExpiresAt = refreshTokenExpiresAt,
                 CreatedByIp = ipAddress,
                 UserAgent = userAgent?.Length > 512 ? userAgent[..512] : userAgent,
@@ -377,7 +512,7 @@ public class AuthService : IAuthService
             issuer: _jwtOptions.Issuer,
             audience: _jwtOptions.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.Add(lifetime),
+            expires: UtcNow.Add(lifetime),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

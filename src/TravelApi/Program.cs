@@ -327,6 +327,37 @@ builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler
 builder.Services.AddScoped<IUserPermissionResolver, UserPermissionResolver>();
 builder.Services.AddScoped<IOwnershipResolver, OwnershipResolver>();
 
+// Rate limiting: helper compartido para particionar por la IP real del cliente.
+//
+// Hallazgo 2026-08-06 (no bloqueante, mismo review de seguridad que el fix de ForwardedHeaders
+// de mas arriba): si por algun motivo el middleware no logra determinar una IP (un pedido sin
+// conexion TCP real, o una topologia de proxy que cambio), TODOS esos pedidos comparten un
+// unico balde "unknown". Es un fallback INTENCIONAL (mejor compartir un balde que no limitar
+// nada), pero si pasa seguido en produccion es señal de que algo esta mal (por ejemplo, la
+// misma familia de bug que causo el hallazgo B1). Un solo LogWarning (no uno por pedido, para
+// no inundar los logs) avisa la primera vez que pasa.
+var unknownClientIpWarningLogged = 0;
+string ResolveClientIpPartitionKey(HttpContext context)
+{
+    var remoteIp = context.Connection.RemoteIpAddress?.ToString();
+    if (remoteIp is not null)
+    {
+        return remoteIp;
+    }
+
+    if (Interlocked.Exchange(ref unknownClientIpWarningLogged, 1) == 0)
+    {
+        context.RequestServices.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("RateLimiter")
+            .LogWarning(
+                "No se pudo determinar la IP del cliente para el limitador de pedidos; los " +
+                "pedidos sin IP comparten un unico balde ('unknown'). Si esto se repite seguido " +
+                "en produccion, revisar la configuracion de ForwardedHeaders.");
+    }
+
+    return "unknown";
+}
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -341,7 +372,7 @@ builder.Services.AddRateLimiter(options =>
 
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
-        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var partitionKey = ResolveClientIpPartitionKey(context);
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey,
             _ => new FixedWindowRateLimiterOptions
@@ -356,7 +387,7 @@ builder.Services.AddRateLimiter(options =>
 
     options.AddPolicy("auth", context =>
     {
-        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var partitionKey = ResolveClientIpPartitionKey(context);
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 10,
@@ -366,9 +397,31 @@ builder.Services.AddRateLimiter(options =>
         });
     });
 
+    // "auth-refresh" separada de "auth" (2026-08-06, mismo hallazgo que el fix de
+    // ForwardedHeaders de arriba): /auth/login es un objetivo de fuerza bruta (alguien
+    // probando contraseñas), asi que tiene sentido que sea estricta. /auth/refresh es
+    // TODO LO CONTRARIO: no hay nada que adivinar (exige la cookie de refresh, un token
+    // aleatorio de 64 bytes ya emitido), y el frontend la llama SOLA, en automatico, cada
+    // vez que el token de acceso vence (cada 15 min) o que una pestaña reconecta despues de
+    // un corte de red (por ejemplo, el reinicio del contenedor en cada deploy). Compartir el
+    // balde de 10 pedidos/5min entre ambas hacia que una sola persona con varias pestañas
+    // abiertas (SignalR reconectando + polling de avisos + navegacion) pudiera agotar el
+    // balde con trafico 100% legitimo y quedar deslogueada por un 429, no por session invalida.
+    options.AddPolicy("auth-refresh", context =>
+    {
+        var partitionKey = ResolveClientIpPartitionKey(context);
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 60,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+
     options.AddPolicy("webhooks", context =>
     {
-        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var partitionKey = ResolveClientIpPartitionKey(context);
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 45,
@@ -381,8 +434,7 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("uploads", context =>
     {
         var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
-                     ?? context.Connection.RemoteIpAddress?.ToString()
-                     ?? "unknown";
+                     ?? ResolveClientIpPartitionKey(context);
         return RateLimitPartition.GetFixedWindowLimiter(userId, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 20,
@@ -394,7 +446,7 @@ builder.Services.AddRateLimiter(options =>
 
     options.AddPolicy("public-leads", context =>
     {
-        var partitionKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var partitionKey = ResolveClientIpPartitionKey(context);
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 8,
@@ -409,7 +461,7 @@ builder.Services.AddRateLimiter(options =>
         var isAuth = context.User.Identity?.IsAuthenticated == true;
         if (isAuth) return RateLimitPartition.GetNoLimiter<string>("no-limit");
 
-        var partitionKey = $"{context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous"}:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+        var partitionKey = $"{context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous"}:{ResolveClientIpPartitionKey(context)}";
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 30,
@@ -423,11 +475,10 @@ builder.Services.AddRateLimiter(options =>
     {
         var isAuth = context.User.Identity?.IsAuthenticated == true;
         if (isAuth) return RateLimitPartition.GetNoLimiter<string>("no-limit");
-        
+
         var partitionKey = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
-                         ?? context.Connection.RemoteIpAddress?.ToString()
-                         ?? "unknown";
-                         
+                         ?? ResolveClientIpPartitionKey(context);
+
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 50,
@@ -810,10 +861,24 @@ else
 }
 
 // 1. Forwarded Headers (CRITICAL for Nginx Reverse Proxy) - MUST BE FIRST
-app.UseForwardedHeaders(new ForwardedHeadersOptions
-{
-    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
-});
+//
+// BUG REAL encontrado el 2026-08-06 (deploy invalidaba TODAS las sesiones): por defecto,
+// ForwardedHeadersOptions solo confia en el header X-Forwarded-For si el que se conecto
+// DIRECTO al contenedor "api" es localhost. Pero ese contenedor nunca recibe conexiones de
+// localhost: en docker-compose.yml "api" NO publica el puerto 8080 al host (solo "expose",
+// no "ports"), asi que la UNICA forma de llegar a el es a traves del contenedor "web"
+// (nginx que sirve el SPA). Como la IP de "web" no es localhost, el middleware descartaba
+// el header por "no confiable" y TODOS los usuarios externos aparecian con la MISMA IP
+// interna (la del contenedor "web") — eso rompia el rate limiter de mas abajo (ver policy
+// "auth"): al particionar por IP, TODOS los usuarios compartian un unico balde de pedidos
+// para login+refresh, y una ráfaga de reconexion tras un deploy lo agotaba en segundos,
+// deslogueando gente que no hizo nada mal.
+//
+// La config completa (con el detalle de POR QUE se eligen redes privadas en vez de confiar
+// en todo el mundo — hallazgo B1 de la revision de seguridad del 2026-08-06) vive en
+// ForwardedHeadersConfiguration.Build(), compartida con los tests que prueban la semantica
+// exacta de reenvio (TravelApi.Tests/Http/ForwardedHeadersConfigurationTests.cs).
+app.UseForwardedHeaders(TravelApi.Middleware.ForwardedHeadersConfiguration.Build());
 
 // 2. CORS (MUST be before any other middleware that responds or sets headers)
 app.UseCors("web");

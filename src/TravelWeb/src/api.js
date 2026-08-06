@@ -1,6 +1,7 @@
-import { normalizeMessage, SPANISH_NETWORK_GENERIC } from "./lib/errors";
+import { normalizeMessage, SPANISH_NETWORK_GENERIC, getApiErrorMessage } from "./lib/errors";
 import { esErrorDeMantenimiento } from "./features/admin/lib/dangerRestoreLogic";
 import { activateMaintenance } from "./maintenanceState";
+import { isSessionDefinitelyInvalid } from "./lib/sessionRefreshFailure";
 
 const configuredApiUrl = (import.meta.env.VITE_API_URL || "").trim();
 
@@ -229,7 +230,30 @@ export async function apiRequest(path, options = {}) {
       try {
         await refreshSession();
         return executeRequest(true);
-      } catch {
+      } catch (refreshError) {
+        // Hallazgo 2026-08-06 (revision de seguridad): SOLO un 401 real del propio
+        // /auth/refresh significa "la sesion ya no es valida" (sin cookie de sesion, o el
+        // backend la rechazo explicitamente por vencida/revocada). Un 429 (limite de
+        // pedidos — puede pasar en una rafaga de reconexion tras un deploy), un 5xx
+        // (problema transitorio del backend) o un error de red (fetch nunca llego a
+        // responder, sin "status" en el error) NO significan que la sesion este muerta:
+        // son fallas pasajeras. Antes de este fix, CUALQUIERA de esos casos deslogueaba al
+        // usuario aunque su sesion siguiera siendo perfectamente valida — el usuario podia
+        // reintentar la accion mas tarde sin necesidad de volver a loguearse.
+        if (!isSessionDefinitelyInvalid(refreshError)) {
+          // No relanzamos el error crudo del refresh: si vino de un fallo de red
+          // (TypeError "Failed to fetch" del browser) o de un statusText bare del
+          // servidor, ese texto en ingles llegaria intacto a ~30 pantallas que
+          // pintan error.message tal cual. Lo traducimos con el mismo mapeo que
+          // ya usa el resto del cliente HTTP (getApiErrorMessage), conservando
+          // status/code/payload por si alguna pantalla los necesita.
+          const fallaPasajera = new Error(getApiErrorMessage(refreshError, SPANISH_NETWORK_GENERIC));
+          fallaPasajera.status = refreshError?.status ?? null;
+          fallaPasajera.code = refreshError?.code ?? null;
+          fallaPasajera.payload = refreshError?.payload ?? null;
+          throw fallaPasajera;
+        }
+
         if (!options.skipAuthRedirect && typeof window !== "undefined") {
           window.dispatchEvent(new Event("auth:unauthorized"));
         }
