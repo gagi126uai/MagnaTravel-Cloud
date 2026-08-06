@@ -21,6 +21,36 @@
 > factura, con badge ámbar de prueba). Fundamento fiscal completo: agent-memory del
 > travel-agency-accountant (adr011-tc-fiscal...) — 10240 acota el criterio "TC realmente usado".
 
+> ## ⚠️ ADENDA "EL DOLAR NUNCA FALTA" (2026-08-05, aprobada por el dueño) — Tanda 2
+> Con el dueño viendo el dashboard EN VIVO, el pedido fue: el numero del dolar oficial **nunca**
+> tiene que faltar. Cambios de esta tanda:
+> (a) **CINCO proveedores publicos** en vez de dos: dolarapi.com, monedapi.ar (BNA especifico,
+> `GET /api/v2/usd/bna`), criptoya.com (`GET /api/bancostodos`, clave `"bna"`), argentinadatos.com
+> (sin cambios, ahora TAMBIEN cubre "hoy" ademas del backfill) y bluelytics.com.ar (`GET /v2/latest`,
+> campo `oficial.value_sell` — es un PROMEDIO de mercado, no el BNA puntual, por eso va ULTIMO).
+> Los cinco quedan implementados en `OfficialDollarPublicApiService`, todos bajo el mismo enum
+> `OficialPorApi = 7` (se distinguen por `ProviderName`, no se agrega ningun valor de enum nuevo).
+> Contratos verificados con `curl` real contra las cinco APIs el 2026-08-05.
+> (b) **Escalera del dia** ampliada: ARCA -> dolarapi -> monedapi -> criptoya -> argentinadatos ->
+> bluelytics -> scraper BNA (el scraper pasa a ser el ULTIMO respaldo de toda la cadena, ya no el
+> unico). Corta en el primer proveedor que conteste un valor util.
+> (c) **Cadencia**: el recurring de `ExchangeRateSyncJob` pasa de 1 vez/dia (`0 15 * * *`) a
+> **cada hora** (`0 * * * *`). Guard barato al inicio de cada corrida
+> (`IsTodayAlreadyFullyCoveredAsync`): si ya hay fila `OficialPorApi` de HOY Y (solo si el ambiente
+> es productivo) fila `AfipOficial` de hoy con `IsProductionSource=true`, la corrida corta sin
+> llamar a nadie. En homologacion NO se exige la fila `AfipOficial` de practica para este guard —
+> volver a pedirle a ARCA cada hora en ese entorno es barato y no aporta nada distinto.
+> (d) **On-demand**: `ExchangeRateResolver.GetSuggestionAsync` (unico punto de lectura de toda la
+> libreta, usado tanto por el dashboard como por facturar) ahora, si no hay fila de HOY para la
+> moneda pedida, encola `ExchangeRateSyncJob` en Hangfire (`IBackgroundJobClient.Enqueue`,
+> fire-and-forget — el request que disparo la pregunta NUNCA espera a que el job termine). Debounce
+> de 5 minutos por moneda (`IMemoryCache`) para no encolar de mas.
+> (e) **Defensa de coherencia**: si el valor que se esta por guardar difiere mas de 5% de la fila
+> mas reciente ya existente para el mismo dia (de cualquier otra fuente), se deja un `Warning` en el
+> log — nunca bloquea el guardado (P-21/T-12).
+> Detalle tecnico completo en el comentario de clase de `ExchangeRateSyncJob`,
+> `ExchangeRateResolver` e `IOfficialDollarPublicApiService`.
+
 ---
 
 ## Estado de implementación (actualizado 2026-08-05, por `backend-dotnet-senior`)
@@ -36,12 +66,12 @@ solo para factura de venta genuina — NC/ND siguen heredando sin recotizar); en
 `GET /api/exchange-rates/suggestion`. Detalle completo, desvíos declarados y qué falta: ver el
 informe de la tanda en el historial de conversación del agente (2026-08-05).
 
-**NO implementado todavía (tanda aparte, gate UX obligatorio primero):** los dos formularios de
-factura (`EmitirFacturaInline.jsx`, `CreateInvoiceModal.jsx`) siguen mandando
-`exchangeRateSource`/`exchangeRateFetchedAt` inventados — el backend los ignora (compatible hacia
-atrás), pero el casillero todavía NO se precarga con la sugerencia ni el gate de justificación es
-condicional en pantalla. Antes de tocar esas dos pantallas: `ux-ui-disenador` primero (regla del
-proyecto).
+**Frontend de facturar: IMPLEMENTADO Y DEPLOYADO el mismo 2026-08-05 (deploy 2, `71a7e3de`)**:
+los dos formularios precargan la sugerencia (hook `useTipoCambioSugerido`), la justificación es
+condicional a que el número difiera (lib compartida `exchangeRateSuggestion.js`), y dejaron de
+mandar `exchangeRateSource`/`exchangeRateFetchedAt` (la etiqueta la pone el servidor). Verificado
+en PROD con keeper (campo precargado + leyenda del motor). Este párrafo reemplaza al aviso viejo
+de "NO implementado" que quedó desactualizado.
 
 **Pendiente de verificar en homologación (§14, honestidad):** si `FEParamGetCotizacion` devuelve
 cotizaciones reales en homologación, el formato exacto de `FchCotiz`, si `EnableMultiCurrencyInvoicing`

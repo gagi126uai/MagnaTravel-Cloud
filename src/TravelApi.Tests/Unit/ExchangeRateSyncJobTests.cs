@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.Interfaces;
@@ -36,6 +38,20 @@ public class ExchangeRateSyncJobTests
     {
         ctx.AfipSettings.Add(new AfipSettings { Id = 1, IsProduction = isProduction });
         await ctx.SaveChangesAsync();
+    }
+
+    /// <summary>Logger que captura los entries en memoria — usado para verificar el Warning de coherencia.</summary>
+    private sealed class CapturingLogger : ILogger<ExchangeRateSyncJob>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Entries.Add((logLevel, formatter(state, exception)));
+        }
     }
 
     // ============================================================
@@ -431,5 +447,276 @@ public class ExchangeRateSyncJobTests
 
         // El scraper BNA nunca participa del backfill (solo sabe dar el dato de "ahora").
         bnaMock.Verify(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ============================================================
+    // ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): escalera de CINCO APIs publicas para
+    // HOY (dolarapi -> monedapi -> criptoya -> argentinadatos -> bluelytics). Cada test caido la
+    // corta en un nivel distinto para probar que el siguiente SI se intenta y los de mas atras NO.
+    // ============================================================
+
+    [Fact]
+    public async Task Escalera_DolarApiYMonedApiCaen_CriptoYaContesta_PersisteConProviderCriptoya()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateFromMonedApiAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateFromCriptoYaAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1520m, ProviderName: "criptoya"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today);
+        Assert.NotNull(filaDeHoy);
+        Assert.Equal("criptoya", filaDeHoy!.ProviderName);
+        Assert.Equal(1520m, filaDeHoy.Rate);
+
+        // argentinadatos (variante de HOY) y bluelytics estan MAS ABAJO en la escalera de HOY: no
+        // deberian llamarse para la fecha de hoy porque criptoya ya la cubrio. El mock SI recibe
+        // llamados a GetRateForDateAsync para las fechas del BACKFILL (ARCA tambien falla ahi, y ese
+        // camino es independiente de la escalera de hoy) — por eso la verificacion se acota a "Today".
+        publicApiMock.Verify(s => s.GetRateForDateAsync(Today, It.IsAny<CancellationToken>()), Times.Never);
+        publicApiMock.Verify(s => s.GetTodayRateFromBluelyticsAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Escalera_PrimerasTresApisCaen_ArgentinaDatosContestaParaHoy_PersisteConEseProvider()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateFromMonedApiAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateFromCriptoYaAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        // Variante "por fecha" de argentinadatos.com sirve TAMBIEN el dia de hoy (verificado con curl).
+        publicApiMock.Setup(s => s.GetRateForDateAsync(Today, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1520m, ProviderName: "argentinadatos"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today);
+        Assert.NotNull(filaDeHoy);
+        Assert.Equal("argentinadatos", filaDeHoy!.ProviderName);
+
+        publicApiMock.Verify(s => s.GetTodayRateFromBluelyticsAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Bluelytics es el PROMEDIO de mercado, va al final de la escalera de APIs (antes de caer al
+    /// scraper BNA): solo se usa si las otras cuatro fallaron las cuatro.
+    /// </summary>
+    [Fact]
+    public async Task Escalera_LasCuatroApisAnterioresCaen_BluelyticsContesta_PersisteConEseProvider_YNoLlamaAlScraperBna()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx);
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateFromMonedApiAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateFromCriptoYaAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetRateForDateAsync(Today, It.IsAny<CancellationToken>())).ReturnsAsync((PublicDollarRateReading?)null);
+        publicApiMock.Setup(s => s.GetTodayRateFromBluelyticsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1520m, ProviderName: "bluelytics"));
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        var filaDeHoy = await ctx.ExchangeRateQuotes.SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today);
+        Assert.NotNull(filaDeHoy);
+        Assert.Equal("bluelytics", filaDeHoy!.ProviderName);
+        Assert.Equal(ExchangeRateSource.OficialPorApi, filaDeHoy.Source);
+
+        bnaMock.Verify(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ============================================================
+    // ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): guard barato de cadencia. Con el
+    // recurring corriendo cada hora, la corrida debe cortar SIN llamar a nadie cuando el dia ya
+    // esta resuelto — la definicion exacta de "resuelto" depende del entorno (ver
+    // ExchangeRateSyncJob.IsTodayAlreadyFullyCoveredAsync).
+    // ============================================================
+
+    [Fact]
+    public async Task GuardDeCadencia_EnHomologacion_ConFilaOficialPorApiDeHoy_CortaSinLlamarANadie()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: false);
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD",
+            QuoteDate = Today,
+            Source = ExchangeRateSource.OficialPorApi,
+            Rate = 1520m,
+            ProviderName = "dolarapi",
+            FetchedAt = DateTime.UtcNow,
+            IsProductionSource = true,
+        });
+        await ctx.SaveChangesAsync();
+
+        var afipMock = new Mock<IAfipService>();
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance,
+            officialDollarPublicApiService: publicApiMock.Object);
+        await job.RunAsync(CancellationToken.None);
+
+        // En homologacion, la fila OficialPorApi de hoy alcanza para el guard: NADA se llama, ni
+        // siquiera ARCA para el backfill de los ultimos 7 dias.
+        afipMock.Verify(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+        bnaMock.Verify(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()), Times.Never);
+        publicApiMock.Verify(s => s.GetTodayRateAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GuardDeCadencia_EnProduccion_ConSoloFilaOficialPorApi_SinAfipOficialDeHoy_NoCorta()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: true);
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD",
+            QuoteDate = Today,
+            Source = ExchangeRateSource.OficialPorApi,
+            Rate = 1520m,
+            ProviderName = "dolarapi",
+            FetchedAt = DateTime.UtcNow,
+            IsProductionSource = true,
+        });
+        await ctx.SaveChangesAsync();
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string monId, DateOnly fecha, CancellationToken _) => new ArcaExchangeRate(monId, 1520m, fecha));
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance);
+        await job.RunAsync(CancellationToken.None);
+
+        // En produccion, con AfipOficial de hoy TODAVIA sin fila, el guard NO corta: ARCA se sigue
+        // consultando (aca para hoy y para el backfill de 7 dias).
+        afipMock.Verify(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), Today, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GuardDeCadencia_EnProduccion_ConOficialPorApiYAfipOficialDeHoy_CortaSinLlamarANadie()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: true);
+        ctx.ExchangeRateQuotes.AddRange(
+            new ExchangeRateQuote
+            {
+                Currency = "USD",
+                QuoteDate = Today,
+                Source = ExchangeRateSource.OficialPorApi,
+                Rate = 1520m,
+                ProviderName = "dolarapi",
+                FetchedAt = DateTime.UtcNow,
+                IsProductionSource = true,
+            },
+            new ExchangeRateQuote
+            {
+                Currency = "USD",
+                QuoteDate = Today,
+                Source = ExchangeRateSource.AfipOficial,
+                Rate = 1520m,
+                ProviderName = "ARCA_WSFEv1",
+                FetchedAt = DateTime.UtcNow,
+                ArcaFchCotiz = Today,
+                IsProductionSource = true,
+            });
+        await ctx.SaveChangesAsync();
+
+        var afipMock = new Mock<IAfipService>();
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), NullLogger<ExchangeRateSyncJob>.Instance);
+        await job.RunAsync(CancellationToken.None);
+
+        afipMock.Verify(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+        bnaMock.Verify(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ============================================================
+    // ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): defensa de coherencia. Dos fuentes del
+    // mismo dia que difieren mas de 5% dejan un Warning en el log, pero NUNCA bloquean el guardado
+    // (P-21/T-12: el sistema sugiere, no decide, y nunca se cae por un dato sospechoso).
+    // ============================================================
+
+    [Fact]
+    public async Task Coherencia_NuevaFuenteDivergeMasDe5PorcientoDeOtraDelMismoDia_NoBloqueaElGuardado()
+    {
+        await using var ctx = NewContext();
+        await SeedAfipSettingsAsync(ctx, isProduction: false);
+
+        // Fila previa de HOY con un valor MUY distinto (simula, por ejemplo, una fuente vieja
+        // desactualizada) — el punto del test es que el job NO se frena por esto.
+        ctx.ExchangeRateQuotes.Add(new ExchangeRateQuote
+        {
+            Currency = "USD",
+            QuoteDate = Today,
+            Source = ExchangeRateSource.AfipOficial,
+            Rate = 1000m,
+            ProviderName = "ARCA_WSFEv1",
+            FetchedAt = DateTime.UtcNow,
+            ArcaFchCotiz = Today,
+            IsProductionSource = true, // entorno DISTINTO al de esta corrida (false) -> ARCA la vuelve a intentar.
+        });
+        await ctx.SaveChangesAsync();
+
+        var afipMock = new Mock<IAfipService>();
+        afipMock.Setup(s => s.GetOfficialExchangeRateAsync(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ArcaExchangeRate?)null);
+        var bnaMock = new Mock<IBnaExchangeRateService>();
+
+        var publicApiMock = new Mock<IOfficialDollarPublicApiService>();
+        publicApiMock.Setup(s => s.GetTodayRateAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PublicDollarRateReading(Rate: 1520m, ProviderName: "dolarapi")); // 52% de diferencia con 1000.
+
+        var capturingLogger = new CapturingLogger();
+        var job = new ExchangeRateSyncJob(
+            ctx, afipMock.Object, bnaMock.Object, new MemoryCache(new MemoryCacheOptions()), capturingLogger,
+            officialDollarPublicApiService: publicApiMock.Object);
+
+        var exception = await Record.ExceptionAsync(() => job.RunAsync(CancellationToken.None));
+
+        Assert.Null(exception);
+        var filaNueva = await ctx.ExchangeRateQuotes
+            .SingleOrDefaultAsync(q => q.Currency == "USD" && q.QuoteDate == Today && q.Source == ExchangeRateSource.OficialPorApi);
+        Assert.NotNull(filaNueva);
+        Assert.Equal(1520m, filaNueva!.Rate); // se guarda TAL CUAL, la divergencia no lo altera ni lo bloquea.
+
+        Assert.Contains(capturingLogger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("diferencia"));
     }
 }

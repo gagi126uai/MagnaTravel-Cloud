@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Briefcase, Calendar, FileText, TrendingUp } from "lucide-react";
 import { api } from "../api";
 import { useAuthState } from "../auth";
-import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
+import { DolarBnaTira } from "../components/DolarBnaTira";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
@@ -63,10 +63,9 @@ export default function AgentDashboard() {
                 </div>
             </div>
 
-            {/* Dolar de referencia (solo datos reales). La tarjeta "Dolar para facturar" quedó
-                DESMONTADA por decisión del dueño (2026-08-05 noche) hasta maqueta firmada —
-                ver el comentario en AdminDashboard.jsx. */}
-            <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
+            {/* Tira fina del dólar Banco Nación (P5=B, firmado): el vendedor ve exactamente la
+                misma tira que administración — ver el comentario completo en AdminDashboard.jsx. */}
+            <DolarBnaTira rate={dashboard.bnaUsdSellerRate} />
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {/* B3 (revisión 2026-07-27): "Ventas personales" separa ARS/USD igual que el

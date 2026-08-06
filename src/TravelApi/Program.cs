@@ -553,13 +553,15 @@ builder.Services.AddScoped<IBankAccountService, BankAccountService>();
 builder.Services.AddScoped<IPassengerSearchService, PassengerSearchService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IBnaExchangeRateService, BnaExchangeRateService>();
-// ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): resolver de sugerencia de TC (solo LEE la
-// libreta ExchangeRateQuotes, nunca le pega a ARCA) + el job diario que la llena (unico que le pega
-// a ARCA). Sin flag (T-11): sale directo.
+// ADR-011 (enmienda 2026-08-05, "tipo de cambio real" + "el dolar nunca falta"): resolver de
+// sugerencia de TC (solo LEE la libreta ExchangeRateQuotes, nunca le pega a ARCA EN VIVO — la unica
+// excepcion es encolar ExchangeRateSyncJob on-demand cuando falta la fila de hoy, fire-and-forget)
+// + el job por hora que la llena (unico que le pega a ARCA/APIs publicas). Sin flag (T-11): sale directo.
 builder.Services.AddScoped<IExchangeRateResolver, ExchangeRateResolver>();
-// ADR-011 (enmienda 2026-08-05, "hallazgo del dueño en vivo"): respaldo REAL via APIs publicas
-// (dolarapi.com / argentinadatos.com) para cuando ARCA no sirve un numero util (ej. homologacion,
-// que devuelve cotizaciones de juguete). Solo lo consume el job diario, nunca el camino interactivo.
+// ADR-011 (enmienda 2026-08-05, "hallazgo del dueño en vivo" + "el dolar nunca falta"): respaldo
+// REAL via CINCO APIs publicas (dolarapi.com / monedapi.ar / criptoya.com / argentinadatos.com /
+// bluelytics.com.ar) para cuando ARCA no sirve un numero util (ej. homologacion, que devuelve
+// cotizaciones de juguete). Solo lo consume el job, nunca el camino interactivo.
 builder.Services.AddScoped<IOfficialDollarPublicApiService, OfficialDollarPublicApiService>();
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.ExchangeRateSyncJob>();
 builder.Services.AddScoped<IServicioReservaService, ServicioReservaService>();
@@ -947,14 +949,18 @@ if (hangfireSchedulerEnabled)
         job => job.RunScheduledAsync(CancellationToken.None),
         Cron.Daily(6));
 
-    // ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): 15:00 UTC ≈ 12:00 ART, DELIBERADAMENTE
-    // no junto al housekeeping de la madrugada. A las 6am UTC (3am ART) la cotizacion del dia
-    // todavia no esta publicada en ARCA; el job siempre traeria el dia anterior. Backfill de 7 dias
-    // + reconciliacion viven DENTRO del job (ver ExchangeRateSyncJob), no en la cron.
+    // ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): CADA HORA (antes era 1 vez/dia a las
+    // 15:00 UTC ≈ 12:00 ART). El job tiene su propio guard barato al inicio
+    // (ver ExchangeRateSyncJob.IsTodayAlreadyFullyCoveredAsync) que corta sin llamar a nadie cuando
+    // el dia ya esta resuelto, asi que correr cada hora no significa 24 rondas de llamadas reales por
+    // dia — la mayoria de las corridas se encuentran el trabajo ya hecho. El beneficio real: si las
+    // fuentes fallan a la mañana, el sistema se auto-sana en la hora siguiente en vez de esperar hasta
+    // el dia siguiente. Backfill de 7 dias + reconciliacion siguen viviendo DENTRO del job, no en la
+    // cron.
     RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.ExchangeRateSyncJob>(
         "exchange-rate-sync",
         job => job.RunAsync(CancellationToken.None),
-        "0 15 * * *");
+        "0 * * * *");
 }
 
 // 3. Health Check

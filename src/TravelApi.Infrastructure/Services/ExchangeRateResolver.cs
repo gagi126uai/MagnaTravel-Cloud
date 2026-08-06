@@ -1,3 +1,4 @@
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -9,9 +10,12 @@ using TravelApi.Infrastructure.Persistence;
 namespace TravelApi.Infrastructure.Services;
 
 /// <summary>
-/// ADR-011 (enmienda 2026-08-05, "tipo de cambio real"): implementacion del resolver. SOLO lee
-/// la libreta de cotizaciones (<c>ExchangeRateQuotes</c>) — nunca le pega a ARCA ni a ninguna red
-/// externa. Eso lo hace unicamente el job diario (<see cref="ExchangeRateSyncJob"/>).
+/// ADR-011 (enmienda 2026-08-05, "tipo de cambio real" + "el dolar nunca falta"): implementacion
+/// del resolver. SOLO lee la libreta de cotizaciones (<c>ExchangeRateQuotes</c>) — nunca le pega a
+/// ARCA ni a ninguna red externa EN VIVO. La UNICA excepcion es indirecta: si no hay fila de HOY,
+/// este resolver ENCOLA (fire-and-forget, via Hangfire) al job que si le pega a las fuentes reales
+/// (<see cref="EnsureTodayCoverageOnDemandAsync"/>) — el request que disparo la pregunta jamas
+/// espera a que ese job termine, solo lo deja anotado para que corra en background.
 /// </summary>
 public class ExchangeRateResolver : IExchangeRateResolver
 {
@@ -36,15 +40,33 @@ public class ExchangeRateResolver : IExchangeRateResolver
     private static readonly TimeSpan IsProductionCacheTtl = TimeSpan.FromMinutes(5);
     private const string IsProductionCacheKey = "afip-settings:is-production";
 
+    /// <summary>
+    /// ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): debounce del disparo on-demand — cuanto
+    /// tiempo esperar antes de volver a chequear/encolar para la MISMA moneda. 5 minutos evita
+    /// "encolar mil veces" (ej. la pantalla de facturar preguntando en cada tecla del casillero de
+    /// TC) sin retrasar demasiado la auto-curacion si de verdad falta el dato.
+    /// </summary>
+    private static readonly TimeSpan OnDemandSyncDebounceTtl = TimeSpan.FromMinutes(5);
+
     private readonly AppDbContext _context;
     private readonly IMemoryCache _cache;
     private readonly ILogger<ExchangeRateResolver> _logger;
+    // ADR-011 (enmienda 2026-08-05): opcional, mismo criterio que "_officialDollarPublicApiService"
+    // en ExchangeRateSyncJob — sin este cliente inyectado (ej. tests que instancian el resolver con
+    // los 3 args de siempre), el resolver simplemente NO dispara la sincronizacion on-demand y se
+    // comporta EXACTO como antes de esta obra.
+    private readonly IBackgroundJobClient? _backgroundJobClient;
 
-    public ExchangeRateResolver(AppDbContext context, IMemoryCache cache, ILogger<ExchangeRateResolver> logger)
+    public ExchangeRateResolver(
+        AppDbContext context,
+        IMemoryCache cache,
+        ILogger<ExchangeRateResolver> logger,
+        IBackgroundJobClient? backgroundJobClient = null)
     {
         _context = context;
         _cache = cache;
         _logger = logger;
+        _backgroundJobClient = backgroundJobClient;
     }
 
     public async Task<ExchangeRateSuggestion?> GetSuggestionAsync(
@@ -63,6 +85,13 @@ public class ExchangeRateResolver : IExchangeRateResolver
         // existe) y la pantalla quede sin sugerencia todas las noches.
         var todayArgentina = DateOnly.FromDateTime(ArgentinaTime.GetArgentinaToday());
         bool isPastDate = date < todayArgentina;
+
+        // "El dolar nunca falta" (ADR-011, enmienda 2026-08-05): si nadie disparo TODAVIA la
+        // sincronizacion de HOY para esta moneda (el recurring por hora, o un disparo on-demand
+        // anterior), la encolamos aca — SIN esperarla (fire-and-forget). Corre independiente de que
+        // fecha pidio este request puntual: la idea es que, apenas alguien pregunta por esta moneda,
+        // el sistema empiece a autocurarse para HOY si hace falta.
+        await EnsureTodayCoverageOnDemandAsync(currency, todayArgentina, ct);
 
         var isProduction = await GetIsProductionAsync(ct);
         // El modo "solo datos reales" (dashboard) es una dimension MAS de la cache: la misma
@@ -86,6 +115,44 @@ public class ExchangeRateResolver : IExchangeRateResolver
         _cache.Set(cacheKey, suggestion, ttl);
 
         return suggestion;
+    }
+
+    /// <summary>
+    /// "El dolar nunca falta" (ADR-011, enmienda 2026-08-05): si no hay fila de HOY para
+    /// <paramref name="currency"/>, encola <see cref="ExchangeRateSyncJob.RunAsync"/> en Hangfire
+    /// (fire-and-forget: <see cref="IBackgroundJobClient.Enqueue{T}"/> solo ANOTA el trabajo en la
+    /// cola, no lo ejecuta aca ni espera a que termine). El debounce por
+    /// <see cref="OnDemandSyncDebounceTtl"/> cubre DOS cosas a la vez, a proposito: evita encolar el
+    /// job de mas (el motivo original del pedido), Y TAMBIEN evita repetir el chequeo "hay fila de
+    /// hoy" en la base en cada llamada durante esa ventana — una vez que revisamos, no hace falta
+    /// volver a revisar hasta que pase el TTL.
+    /// </summary>
+    private async Task EnsureTodayCoverageOnDemandAsync(string currency, DateOnly todayArgentina, CancellationToken ct)
+    {
+        if (_backgroundJobClient is null)
+        {
+            return;
+        }
+
+        var debounceKey = $"fx:ondemand-sync-debounce:{currency}";
+        if (_cache.TryGetValue(debounceKey, out _))
+        {
+            return;
+        }
+        _cache.Set(debounceKey, true, OnDemandSyncDebounceTtl);
+
+        bool hasTodayRow = await _context.ExchangeRateQuotes
+            .AsNoTracking()
+            .AnyAsync(q => q.Currency == currency && q.QuoteDate == todayArgentina, ct);
+        if (hasTodayRow)
+        {
+            return;
+        }
+
+        _backgroundJobClient.Enqueue<ExchangeRateSyncJob>(job => job.RunAsync(CancellationToken.None));
+        _logger.LogInformation(
+            "ExchangeRateResolver: no habia cotizacion de hoy ({Today}) para {Currency}; se encolo una sincronizacion on-demand.",
+            todayArgentina, currency);
     }
 
     private async Task<bool> GetIsProductionAsync(CancellationToken ct)

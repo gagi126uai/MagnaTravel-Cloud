@@ -38,7 +38,7 @@ import {
     Legend
 } from "recharts";
 
-import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
+import { DolarBnaTira } from "../components/DolarBnaTira";
 import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
@@ -129,12 +129,12 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* Dolar de referencia (solo datos reales, nunca un numero de práctica de ARCA).
-                La tarjeta "Dolar para facturar" fue DESAPROBADA por el dueño (2026-08-05 noche):
-                queda desmontada hasta que firme la maqueta del rediseño (el componente sigue en
-                el repo y el dato viaja en el DTO; el que factura ve el TC en la propia pantalla
-                de facturar). NO volver a montarla sin maqueta firmada. */}
-            <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
+            {/* Tira fina del dólar Banco Nación (spec firmada docs/ux/specs/2026-08-06-dolar-en-dashboard.md,
+                2026-08-05): reemplaza a la tarjeta grande BnaUsdSellerRateCard, que el dueño
+                desaprobó por completo ("es feo"). Un solo dólar: el "para facturar" no se pinta
+                acá (ya vive precargado en las pantallas de facturar); el dato sigue viajando en
+                el DTO del dashboard sin usarse en esta tira. */}
+            <DolarBnaTira rate={dashboard.bnaUsdSellerRate} />
 
             {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
