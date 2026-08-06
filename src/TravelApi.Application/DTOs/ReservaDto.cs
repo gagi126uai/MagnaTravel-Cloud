@@ -174,6 +174,17 @@ public class ReservaCapabilitiesDto
     public CapabilityDto CanEditPassengers { get; set; } = new();
 
     /// <summary>
+    /// (2026-08-06, refina decision 2026-06-17 "agregar = completar"): si se puede AGREGAR un pasajero
+    /// NUEVO en el estado actual. Casi siempre coincide con <see cref="CanEditPassengers"/> (mismo piso por
+    /// estado), salvo un caso puntual: reserva Confirmada SIN autorización viva (candado activo) con el
+    /// roster declarado YA completo. Ahí <c>CanEditPassengers.Allowed</c> sigue en true (completar/editar un
+    /// dato ya cargado tiene sus propias reglas), pero ESTA da false: agregar uno más ya no es completar, es
+    /// alterar. El front usa esto para pintar "Agregar Pasajero" travado con candadito (mismo patrón que
+    /// Editar/Borrar de un pasajero ya cargado) en vez de dejarlo siempre encendido.
+    /// </summary>
+    public CapabilityDto CanAddPassenger { get; set; } = new();
+
+    /// <summary>
     /// ADR-035 (2026-06-19): si se pueden editar las FECHAS / datos de cabecera de la reserva en el estado
     /// actual. El front apaga el boton "Editar fechas" cuando es false. En estados terminales = false.
     /// </summary>

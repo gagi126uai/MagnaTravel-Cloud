@@ -2,7 +2,9 @@
  * Control "Para: Todos" / "Para: X de N" por servicio (Pieza A — ADR-031 v2.1).
  *
  * Aparece en cada fila de servicio de la lista.
- * Al tocarlo, despliega EN LÍNEA el PanelAsignarPasajeros (nunca un modal).
+ * Al tocarlo, despliega el PanelAsignarPasajeros — nunca un modal. En mobile lo hace
+ * EN LÍNEA (empuja la tarjeta); en la tabla de escritorio (prop flotante) es un popover
+ * anclado al botón para no romper la altura de la fila (ver prop `flotante` más abajo).
  *
  * Reglas (guía UX 2026-06-15 tarde):
  *   - Si no hay nombres cargados: muestra "Para: Todos — cargá los nombres para elegir"
@@ -28,12 +30,27 @@
  *                          Recibe el ServiceNominalCoverageDto que devuelve el PUT atómico,
  *                          para actualizar el estado SIN hacer otra llamada al backend.
  *   className            — clases adicionales de Tailwind (para adaptar a desktop/mobile)
+ *   flotante             — bool (default false). En true, el panel deja de empujar el flujo
+ *                          y se despliega como POPOVER ANCLADO al botón (mismo patrón que el
+ *                          menú "⋯" de ReservaHeader.jsx y "otras monedas" de DolarBnaTira.jsx:
+ *                          position:absolute + click afuera + Escape cierran y devuelven el
+ *                          foco al botón). Lo usa la tabla de escritorio de ServiceList, donde
+ *                          el panel inline rompía la altura de la fila (bug visual 2026-08-06).
+ *                          La tarjeta mobile sigue con el panel EN el flujo (flotante=false):
+ *                          ahí cada tarjeta ya cambia de alto libremente, no hay fila que romper.
  */
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { ChevronDown, Users } from "lucide-react";
 import { PanelAsignarPasajeros } from "./PanelAsignarPasajeros";
 import { debeMostrarAvisoSinNombresParaElegir } from "../lib/serviceResolutionActions";
+
+// Mismo lenguaje visual que los demás popovers del repo (menú "⋯" de ReservaHeader,
+// desplegable "otras monedas" de DolarBnaTira): fondo blanco/slate, borde sutil, sombra
+// media, esquinas redondeadas. Ancho fijo moderado (no un cuadrado gigante) para que la
+// lista de pasajeros entre cómoda sin ocupar media pantalla.
+const CLASE_POPOVER_FLOTANTE =
+    "w-72 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-md dark:border-slate-700 dark:bg-slate-900";
 
 export function ControlAsignacionServicio({
     reservaId,
@@ -45,8 +62,37 @@ export function ControlAsignacionServicio({
     coverageLoading,
     onAsignacionGuardada,
     className = "",
+    flotante = false,
 }) {
     const [panelAbierto, setPanelAbierto] = useState(false);
+    const contenedorRef = useRef(null);
+    const triggerRef = useRef(null);
+
+    // Cierra el popover al clickear afuera o con Escape, y devuelve el foco al botón —
+    // solo aplica en modo flotante (mobile deja el panel en el flujo, no necesita esto).
+    // El listener se registra siempre que el componente vive en modo flotante (no solo
+    // mientras está abierto): mismo patrón que MenuAccionesExcepcion en ReservaHeader.jsx.
+    useEffect(() => {
+        if (!flotante) return undefined;
+
+        function alClickearAfuera(evento) {
+            if (contenedorRef.current && !contenedorRef.current.contains(evento.target)) {
+                setPanelAbierto(false);
+            }
+        }
+        function alApretarTecla(evento) {
+            if (evento.key === "Escape") {
+                setPanelAbierto(false);
+                triggerRef.current?.focus();
+            }
+        }
+        document.addEventListener("mousedown", alClickearAfuera);
+        document.addEventListener("keydown", alApretarTecla);
+        return () => {
+            document.removeEventListener("mousedown", alClickearAfuera);
+            document.removeEventListener("keydown", alApretarTecla);
+        };
+    }, [flotante]);
 
     const hayNombresCargados = Array.isArray(pasajerosConNombre) && pasajerosConNombre.length > 0;
 
@@ -90,10 +136,14 @@ export function ControlAsignacionServicio({
     }
 
     return (
-        <div className={className}>
+        <div
+            ref={contenedorRef}
+            className={flotante ? `relative ${className}` : className}
+        >
             {/* Botón del control: muestra el estado actual y abre el panel al tocarlo */}
             <button
                 type="button"
+                ref={triggerRef}
                 onClick={() => setPanelAbierto(!panelAbierto)}
                 aria-expanded={panelAbierto}
                 aria-controls={`panel-asignacion-${servicePublicId}`}
@@ -112,15 +162,20 @@ export function ControlAsignacionServicio({
                 />
             </button>
 
-            {/* Panel inline de tildes: se despliega debajo del botón (no en ventana flotante) */}
+            {/* En flotante (desktop): popover anclado al botón, no empuja la fila.
+                En inline (mobile): panel EN el flujo, debajo del control, como siempre. */}
             {panelAbierto && (
-                <div id={`panel-asignacion-${servicePublicId}`}>
+                <div
+                    id={`panel-asignacion-${servicePublicId}`}
+                    className={flotante ? `absolute right-0 top-full z-20 mt-1 ${CLASE_POPOVER_FLOTANTE}` : undefined}
+                >
                     <PanelAsignarPasajeros
                         reservaId={reservaId}
                         serviceType={serviceType}
                         servicePublicId={servicePublicId}
                         pasajeros={pasajerosConNombre}
                         coverage={coverage}
+                        {...(flotante ? { claseContenedor: "" } : {})}
                         onListo={(nuevaCoverage) => {
                             setPanelAbierto(false);
                             // Propagamos la coverage que devolvió el PUT atómico al padre.

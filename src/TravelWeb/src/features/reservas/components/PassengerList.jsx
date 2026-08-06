@@ -28,11 +28,24 @@
  *   onUsarSugerencia      — callback({ adultCount, childCount, infantCount }) cuando el vendedor
  *                           aprieta [Usar] en la franja. El padre actualiza los casilleros.
  *   onRequestEdit         — callback () => void: abre la ventana de destrabar (EditAuthorizationModal).
- *                           Candado C1 (spec 2026-07-22): "Editar" y "Eliminar" de un pasajero YA
- *                           CARGADO quedan gris + candadito cuando la reserva está bloqueada sin
- *                           autorización viva. "Agregar Pasajero" y "Cargar" (slot vacío) quedan
- *                           SIEMPRE encendidos — completar una identidad vacía no espera candado
+ *                           Candado C1 (spec 2026-07-22, REFINADA 2026-08-06 — ver abajo): "Editar" y
+ *                           "Eliminar" de un pasajero YA CARGADO quedan gris + candadito cuando la
+ *                           reserva está bloqueada sin autorización viva. "Cargar" (slot vacío) queda
+ *                           SIEMPRE encendido — completar una identidad vacía no espera candado
  *                           (exención anti-callejón, spec §1.6).
+ *   canAddPassenger       — capacidad del backend { allowed, reason } (reserva.capabilities.canAddPassenger),
+ *                           o null/undefined si el DTO no la trae (se degrada a "permitido", igual que
+ *                           canEditPassengers). Frente 0 (2026-08-06, refina la decisión 2026-06-17):
+ *                           "Agregar Pasajero" tiene 3 estados. (1) Bajo candado con algún nombre
+ *                           declarado TODAVÍA sin cargar: sigue encendido, dice "Completar pasajero" —
+ *                           la decisión 17/06 sigue intacta, eso es completar, no altera nada. (2) Bajo
+ *                           candado con los N declarados YA TODOS cargados: agregar uno de más deja de
+ *                           ser completar — no queda ningún lugar vacío — y pasa a ser alterar la
+ *                           reserva; el botón queda gris + candadito, MISMO patrón que Editar/Borrar, y
+ *                           el motor lo rechaza si igual se insiste (RESERVA_PASAJEROS_COMPLETOS_BAJO_
+ *                           CANDADO). (3) Sin candado: "Agregar Pasajero" de siempre, sin cartel especial.
+ *                           El SI/NO de (2) lo decide el backend (T-13): la pantalla no vuelve a comparar
+ *                           declarados-vs-cargados por su cuenta para eso, solo lee canAddPassenger.
  */
 
 import React, { useState } from 'react';
@@ -179,6 +192,9 @@ export function PassengerList({
     // Candado C1 (2026-07-22): abre la ventana de destrabar cuando se toca un botón
     // gris + candadito de "Editar"/"Eliminar" de un pasajero ya cargado.
     onRequestEdit,
+    // Frente 0 (2026-08-06): capacidad { allowed, reason } que decide el ESTADO 2 de "Agregar
+    // Pasajero" (roster declarado completo bajo candado). Ver doc de props arriba.
+    canAddPassenger = null,
 }) {
     // Slot que tiene el mini-formulario inline abierto.
     // null = ninguno; guardamos el índice del slot.
@@ -186,8 +202,9 @@ export function PassengerList({
 
     // Candado C1 (spec 2026-07-22): con la reserva bloqueada y sin autorización viva, los
     // botones "Editar" y "Eliminar" de un pasajero YA CARGADO quedan gris + candadito.
-    // "Agregar Pasajero" y "Cargar" (slot vacío) NO llevan candado — completar un dato que
-    // falta no espera destrabe (exención anti-callejón, spec §1.6).
+    // "Cargar" (slot vacío) NO lleva candado — completar un dato que falta no espera destrabe
+    // (exención anti-callejón, spec §1.6). "Agregar Pasajero" se calcula aparte, más abajo
+    // (Frente 0, 2026-08-06): tiene un tercer estado que este booleano solo no alcanza a distinguir.
     const candadoDeEdicionActivo = tieneCandadoDeEdicionActivo(reserva);
 
     const passengers = reserva?.passengers || [];
@@ -198,6 +215,20 @@ export function PassengerList({
 
     // Pasajeros que tienen nombre cargado (no vacío).
     const cargados = passengers.filter(p => p?.fullName?.trim()).length;
+
+    // Frente 0 (2026-08-06, refina la decisión 2026-06-17): los 3 estados del botón "Agregar Pasajero".
+    //   1) Candado activo + todavía falta algún nombre por cargar -> sigue encendido, dice
+    //      "Completar pasajero" (decisión 17/06 intacta: eso es completar, no altera nada).
+    //   2) Candado activo + los N declarados YA TODOS cargados -> travado con candadito. El SI/NO lo
+    //      decide el MOTOR (canAddPassenger, T-13) — la pantalla no vuelve a comparar declarados-vs-
+    //      cargados por su cuenta para esta decisión puntual, solo lee la capacidad que ya viaja en el
+    //      DTO de la reserva. Si el DTO todavía no la trae (degradación elegante, mismo criterio que
+    //      canEditPassengers), se asume permitido: nunca se traba de más por un dato faltante.
+    //   3) Sin candado -> "Agregar Pasajero" de siempre, sin ningún cartel especial.
+    const bloqueadoPorCandado = canAddPassenger != null && canAddPassenger.allowed === false;
+    const tituloBotonAgregar = candadoDeEdicionActivo && cargados < totalDeclarado
+        ? "Completar pasajero"
+        : "Agregar Pasajero";
 
     const slots = buildSlots(adultCount, childCount, infantCount, passengers);
 
@@ -247,15 +278,31 @@ export function PassengerList({
                 </div>
 
                 {/* "Agregar Pasajero" se oculta en estados terminales donde canEditPassengers=false.
-                    Feedback 2026-06-19: en Perdida/Cancelada/Finalizada no se pueden agregar pasajeros. */}
+                    Feedback 2026-06-19: en Perdida/Cancelada/Finalizada no se pueden agregar pasajeros.
+                    Frente 0 (2026-08-06): con la reserva EDITABLE pero bajo candado y el roster ya
+                    completo, en vez de ocultarse queda TRAVADO con candadito (mismo patrón que
+                    Editar/Borrar de un pasajero ya cargado) — abre la misma ventana de destrabar. */}
                 {canEditPassengers && (
-                    <button
-                        onClick={onAddPassenger}
-                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
-                        data-testid="btn-agregar-pasajero"
-                    >
-                        <Plus className="w-4 h-4" /> Agregar Pasajero
-                    </button>
+                    bloqueadoPorCandado ? (
+                        <button
+                            type="button"
+                            onClick={onRequestEdit}
+                            aria-label="Agregar pasajero — bloqueado, pedí autorización"
+                            title={canAddPassenger?.reason || undefined}
+                            data-testid="btn-agregar-pasajero-bloqueado"
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+                        >
+                            <Lock className="w-4 h-4" aria-hidden="true" /> Agregar Pasajero
+                        </button>
+                    ) : (
+                        <button
+                            onClick={onAddPassenger}
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+                            data-testid="btn-agregar-pasajero"
+                        >
+                            <Plus className="w-4 h-4" /> {tituloBotonAgregar}
+                        </button>
+                    )
                 )}
             </div>
 

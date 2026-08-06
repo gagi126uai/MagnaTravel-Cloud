@@ -33,6 +33,13 @@
  *   coverage        — ServiceNominalCoverageDto del backend (puede ser null mientras carga)
  *   onListo         — callback(nuevaCoverage) cuando el usuario aprieta [Listo] con éxito
  *   onCancelar      — callback() cuando el usuario aprieta [Cancelar]
+ *   claseContenedor — clases Tailwind del div raíz. Por defecto es la "caja" inline con
+ *                      fondo índigo que usa mobile (se despliega EN el flujo de la tarjeta).
+ *                      ControlAsignacionServicio la pisa en desktop, donde este panel vive
+ *                      DENTRO de un popover flotante propio (fix bug visual 2026-08-06:
+ *                      el panel inflaba la altura de la fila de la tabla) — ahí el color/
+ *                      borde/sombra del popover ya los pone el contenedor flotante, así que
+ *                      el panel solo necesita quedar "desnudo" (sin doble caja).
  */
 
 import React, { useState, useEffect } from "react";
@@ -43,6 +50,9 @@ import { getApiErrorMessage } from "../../../lib/errors";
 // sin transpiler de JSX (los tests usan node --test sobre .mjs, sin Vite/Babel).
 import { inicializarTildados, armarPayloadPut } from "../lib/panelAsignarPasajerosHelpers";
 
+const CLASE_CONTENEDOR_INLINE_DEFAULT =
+    "mt-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 dark:border-indigo-800/40 dark:bg-indigo-950/10";
+
 export function PanelAsignarPasajeros({
     reservaId,
     serviceType,
@@ -51,6 +61,7 @@ export function PanelAsignarPasajeros({
     coverage,
     onListo,
     onCancelar,
+    claseContenedor = CLASE_CONTENEDOR_INLINE_DEFAULT,
 }) {
     // Estado de guardado: mientras se guarda, se deshabilitan los controles
     const [guardando, setGuardando] = useState(false);
@@ -121,7 +132,7 @@ export function PanelAsignarPasajeros({
 
     return (
         <div
-            className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 dark:border-indigo-800/40 dark:bg-indigo-950/10"
+            className={claseContenedor}
             data-testid="panel-asignar-pasajeros"
         >
             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
@@ -150,7 +161,9 @@ export function PanelAsignarPasajeros({
                                 disabled={guardando}
                                 className="h-4 w-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500 dark:border-indigo-700"
                             />
-                            <span className="text-sm text-slate-800 dark:text-slate-200 font-medium">
+                            {/* min-w-0 + break-words: en el popover flotante (w-72) un nombre largo
+                                hace wrap adentro del borde en vez de desbordar (review 2026-08-06). */}
+                            <span className="min-w-0 break-words text-sm text-slate-800 dark:text-slate-200 font-medium">
                                 {pax.fullName || pax.FullName || "(sin nombre)"}
                             </span>
                             {/* Indicador "faltan datos" si el coverage nos lo dice.

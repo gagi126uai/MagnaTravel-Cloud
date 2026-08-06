@@ -1228,8 +1228,12 @@ export function ServiceList({
                 </div>
             ) : (
                 <>
-                    {/* Desktop Table View */}
-                    <div className="hidden md:block overflow-hidden">
+                    {/* Desktop Table View.
+                        Nota (fix 2026-08-06): antes este contenedor tenía "overflow-hidden" sin
+                        ningún borde redondeado propio que justifique recortar contenido — pero sí
+                        recortaba el popover flotante de ControlAsignacionServicio en cuanto se
+                        abría cerca del borde de la tabla. Se saca porque acá nada más lo necesita. */}
+                    <div className="hidden md:block">
                         {/* Fix alineación (2026-08-04, pedido del dueño viendo PROD): antes cada
                             columna tenía su propio padding suelto (algunas sin nada, otras con
                             pr-4) — por eso se veían "gaps" enormes e irregulares entre columnas.
@@ -1664,6 +1668,11 @@ export function ServiceList({
                                                             coverageLoading={coverageLoading}
                                                             onAsignacionGuardada={updateCoverage}
                                                             className="mb-1"
+                                                            // Fix bug visual 2026-08-06: en la tabla de escritorio el panel
+                                                            // ya NO se despliega en el flujo de la fila (inflaba su altura
+                                                            // y rompía la tabla) — ahora es un popover flotante anclado
+                                                            // al chip, igual que el resto de los desplegables del repo.
+                                                            flotante
                                                         />
                                                     )}
 

@@ -67,6 +67,21 @@ public sealed record Cap(bool Allowed, string? Reason)
 /// no facturan (edicion de pagos, documentos, voucher, etc.) esta capacidad no se evalua, asi que el default
 /// no cambia ningun comportamiento existente.
 /// </param>
+/// <param name="PassengersRosterComplete">
+/// (2026-08-06, refina decision 2026-06-17): True si la cantidad de pasajeros NOMINALES ya cargados
+/// (<c>Passengers.Count</c>) alcanzo o supero la cantidad DECLARADA de la reserva (Adult+Child+Infant). Lo
+/// usa <see cref="ReservaCapabilityPolicy.EvaluateAddPassenger"/> para distinguir "completar el roster que
+/// falta" (siempre libre, decision 17/06 intacta) de "agregar de mas" (bajo candado, eso SI se frena). Lo
+/// calcula quien arma el contexto comparando los mismos dos numeros que ya usa el guard real de escritura
+/// (<c>ReservaService.AddPassengerAsync</c>, "Regla C"). Default false: en callers que no arman la ficha de
+/// pasajeros (la mayoria) esta capacidad no se evalua, asi que el default no bloquea nada de mas.
+/// </param>
+/// <param name="DeclaredPassengerCount">
+/// (2026-08-06): cantidad DECLARADA de pasajeros (Adult+Child+Infant) de la reserva. Solo se usa para
+/// redactar el motivo legible de <see cref="ReservaCapabilityPolicy.EvaluateAddPassenger"/> cuando
+/// <see cref="PassengersRosterComplete"/> es true bajo candado (para decir "Los 2 pasajeros..." en vez de
+/// un texto generico). Default 0: inofensivo mientras <see cref="PassengersRosterComplete"/> sea false.
+/// </param>
 public sealed record ReservaCapabilityContext(
     string Status,
     decimal Balance,
@@ -77,7 +92,9 @@ public sealed record ReservaCapabilityContext(
     bool HasPendingOperatorPenalty = false,
     bool HasOperatorConfirmedService = false,
     OperatorPenaltyOutcome OperatorPenaltyOutcome = OperatorPenaltyOutcome.None,
-    bool HasUnacknowledgedChanges = false);
+    bool HasUnacknowledgedChanges = false,
+    bool PassengersRosterComplete = false,
+    int DeclaredPassengerCount = 0);
 
 /// <summary>
 /// ADR-035 (2026-06-19): conjunto de capacidades de una reserva, ya resueltas. Es la respuesta de
@@ -92,6 +109,7 @@ public sealed record ReservaCapabilities(
     Cap CanEditOrDeletePayment,
     Cap CanEditServices,
     Cap CanEditPassengers,
+    Cap CanAddPassenger,
     Cap CanEditReservaData,
     Cap CanCancel,
     Cap CanAnnul,
@@ -425,6 +443,7 @@ public static class ReservaCapabilityPolicy
             CanEditOrDeletePayment: EvaluateEditOrDeletePayment(ctx),
             CanEditServices: EvaluateEditServices(ctx),
             CanEditPassengers: EvaluateEditPassengers(ctx),
+            CanAddPassenger: EvaluateAddPassenger(ctx),
             CanEditReservaData: EvaluateEditReservaData(ctx),
             CanCancel: EvaluateCancel(ctx),
             CanAnnul: EvaluateAnnul(ctx),
@@ -543,6 +562,55 @@ public static class ReservaCapabilityPolicy
         if (!ContainsStatus(ServiceEditableStatuses, ctx.Status))
             return Cap.No("No se pueden editar los pasajeros en este estado de la reserva.");
         return Cap.Yes;
+    }
+
+    /// <summary>
+    /// (2026-08-06, refina decision 2026-06-17 "agregar = completar"): AGREGAR un pasajero NUEVO. Mismo piso
+    /// que <see cref="EvaluateEditPassengers"/> (estados vivos del ciclo; terminales bloqueados de raiz).
+    ///
+    /// <para>La diferencia con <see cref="EvaluateEditPassengers"/> aparece SOLO en Confirmada SIN
+    /// autorizacion viva (candado activo, el unico estado con candado real segun
+    /// <c>ReservaLockGuard.LockedStatuses</c>): mientras falte algun pasajero de los declarados
+    /// (Adult+Child+Infant), agregar sigue sin pedir permiso — es COMPLETAR el roster que el propio sistema
+    /// exige para emitir (decision 2026-06-17, intacta). Pero una vez que los N declarados YA estan TODOS
+    /// cargados (<see cref="ReservaCapabilityContext.PassengersRosterComplete"/>), agregar uno de mas deja
+    /// de ser completar — no hay ningun lugar vacio que llenar — y pasa a ser ALTERAR la reserva: ahi el
+    /// candado SI aplica, igual que Editar/Borrar de un pasajero ya cargado.</para>
+    ///
+    /// <para>El guard real de escritura (<c>ReservaService.AddPassengerAsync</c>, la excepcion tipada
+    /// <c>PassengerRosterCompleteUnderLockException</c>) construye el mensaje con
+    /// <see cref="BuildPassengerRosterCompleteUnderLockReason"/> — EXACTAMENTE el mismo texto que esta
+    /// capacidad, para que el boton apagado y el rechazo del motor nunca digan cosas distintas (T-6).</para>
+    /// </summary>
+    private static Cap EvaluateAddPassenger(ReservaCapabilityContext ctx)
+    {
+        if (!ContainsStatus(ServiceEditableStatuses, ctx.Status))
+            return Cap.No("No se pueden editar los pasajeros en este estado de la reserva.");
+
+        // Candado real = SOLO Confirmed (ver ReservaLockGuard.LockedStatuses, Infrastructure). Traveling y
+        // Closed ya quedaron afuera de ServiceEditableStatuses arriba, asi que no hace falta repetirlos aca.
+        var candadoActivo = EqualsStatus(ctx.Status, EstadoReserva.Confirmed) && !ctx.HasLiveEditAuth;
+        if (candadoActivo && ctx.PassengersRosterComplete)
+            return Cap.No(BuildPassengerRosterCompleteUnderLockReason(ctx.DeclaredPassengerCount));
+
+        return Cap.Yes;
+    }
+
+    /// <summary>
+    /// Texto UNICO (T-6) del motivo "roster declarado completo bajo candado". Lo usan
+    /// <see cref="EvaluateAddPassenger"/> (motivo del boton apagado) Y la excepcion tipada
+    /// <c>PassengerRosterCompleteUnderLockException</c> que lanza el guard real de escritura — nunca se
+    /// redacta el texto dos veces.
+    /// </summary>
+    public static string BuildPassengerRosterCompleteUnderLockReason(int declaredPassengerCount)
+    {
+        // Misma voz que el mensaje de la Regla C (2026-06-08, sin candado, mas abajo en
+        // ReservaService.AddPassengerAsync): "la reserva declara N pasajero(s) y ya estan cargados". Evita a
+        // proposito la forma "Los N pasajeros declarados..." (con N=1 queda mal concordado: "Los 1 pasajero
+        // declarados").
+        var passengerWord = declaredPassengerCount == 1 ? "pasajero" : "pasajeros";
+        return $"La reserva declara {declaredPassengerCount} {passengerWord} y ya están todos cargados. " +
+               "Para agregar uno más, destrabá la reserva.";
     }
 
     /// <summary>

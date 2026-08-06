@@ -3535,6 +3535,13 @@ public class ReservaService : IReservaService
         var hasOperatorConfirmedService = isPreSaleForDelete
             && await DeleteGuards.ReservaHasOperatorConfirmedServiceAsync(_context, file.Id, CancellationToken.None);
 
+        // (2026-08-06, refina decision 2026-06-17): mismos dos numeros que compara la "Regla C" del guard
+        // real de escritura (ReservaService.AddPassengerAsync) para saber si el roster declarado ya esta
+        // completo. Sin query extra: file.Passengers y las 3 columnas de cantidad ya vienen cargados.
+        var declaredPassengerCount = file.AdultCount + file.ChildCount + file.InfantCount;
+        var passengersRosterComplete =
+            declaredPassengerCount > 0 && (file.Passengers?.Count ?? 0) >= declaredPassengerCount;
+
         var capabilityContext = new ReservaCapabilityContext(
             Status: file.Status,
             Balance: file.Balance,
@@ -3548,7 +3555,9 @@ public class ReservaService : IReservaService
             // ADR-043 Fase 1 (2026-08-05): la reserva ya trae la columna cargada (sin query extra). Con esto
             // el boton "Emitir factura" de la ficha se apaga solo cuando hay cambios del operador sin
             // revisar, con el motivo puesto por ReservaCapabilityPolicy.EvaluateInvoiceSale.
-            HasUnacknowledgedChanges: file.HasUnacknowledgedChanges);
+            HasUnacknowledgedChanges: file.HasUnacknowledgedChanges,
+            PassengersRosterComplete: passengersRosterComplete,
+            DeclaredPassengerCount: declaredPassengerCount);
         dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
 
         // Tanda 6 (contrato pantalla-motor, 2026-07-20): capacidad de editar/eliminar CADA cobro puntual, no
@@ -3724,6 +3733,7 @@ public class ReservaService : IReservaService
             CanEditOrDeletePayment = Map(caps.CanEditOrDeletePayment),
             CanEditServices = Map(caps.CanEditServices),
             CanEditPassengers = Map(caps.CanEditPassengers),
+            CanAddPassenger = Map(caps.CanAddPassenger),
             CanEditReservaData = Map(caps.CanEditReservaData),
             CanCancel = Map(caps.CanCancel),
             CanAnnul = Map(caps.CanAnnul),
@@ -4828,6 +4838,20 @@ public class ReservaService : IReservaService
 
         if (file.Passengers.Count >= declaredPax)
         {
+            // Regla nueva del dueño (2026-08-06), refina la decision 2026-06-17: con la reserva Confirmada
+            // SIN autorizacion de edicion viva (candado activo) y el roster declarado YA completo, agregar
+            // uno mas ya no es "completar" (no hay ningun lugar vacio), es "alterar" — ahi el candado SI
+            // frena, igual que Editar/Borrar de un pasajero ya cargado. Sin candado (otro estado editable, o
+            // Confirmada CON autorizacion viva) el tope declarado sigue siendo el mismo de siempre (Regla C,
+            // 2026-06-08): un dato de coherencia del roster, no una regla de autorizacion.
+            var candadoActivo = string.Equals(file.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase)
+                && !await ReservaLockGuard.HasLiveAuthorizationAsync(_context, reservaId, CancellationToken.None);
+            if (candadoActivo)
+            {
+                throw new PassengerRosterCompleteUnderLockException(
+                    ReservaCapabilityPolicy.BuildPassengerRosterCompleteUnderLockReason(declaredPax));
+            }
+
             var passengerWord = declaredPax == 1 ? "pasajero" : "pasajeros";
             throw new InvalidOperationException(
                 $"La reserva declara {declaredPax} {passengerWord} y ya están todos cargados. " +

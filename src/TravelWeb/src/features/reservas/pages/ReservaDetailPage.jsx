@@ -2491,6 +2491,9 @@ export default function ReservaDetailPage() {
                 // los botones de pasajeros se ocultan. La capability viene del backend.
                 // Degradación elegante: si no hay capabilities, se permite editar (comportamiento previo).
                 canEditPassengers={reserva?.capabilities?.canEditPassengers?.allowed ?? true}
+                // Frente 0 (2026-08-06): distingue "completar" de "agregar de más" bajo candado. Si el
+                // DTO todavía no la trae, PassengerList se degrada a "permitido" (mismo criterio de arriba).
+                canAddPassenger={reserva?.capabilities?.canAddPassenger ?? null}
                 onPasajeroGuardado={() => {
                   // Recargar la reserva para actualizar el snapshot de pasajeros
                   // y que el contador y los hints queden al día.

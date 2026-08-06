@@ -116,4 +116,22 @@ public static class ReservaLockGuard
 
         return liveAuthorization;
     }
+
+    /// <summary>
+    /// (2026-08-06) Version SIN efectos secundarios de "hay candado activo": solo consulta si existe una
+    /// autorizacion viva, sin registrar ningun <see cref="ReservaEditAuthorizationChange"/>. La usan los
+    /// write-paths que necesitan decidir el MOTIVO de un rechazo (para armar un mensaje distinto segun haya
+    /// o no candado) sin auditar una operacion que en la mayoria de los casos ni siquiera esta bajo candado
+    /// — ej. <c>ReservaService.AddPassengerAsync</c>: completar el roster declarado es libre (decision
+    /// 2026-06-17), asi que llamar <see cref="EnsureCanEditAsync"/> ahi dejaria un rastro de auditoria falso
+    /// para el caso normal (completar), que es el 99% de las altas.
+    /// </summary>
+    public static async Task<bool> HasLiveAuthorizationAsync(
+        AppDbContext context, int reservaId, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        return await context.ReservaEditAuthorizations
+            .AsNoTracking()
+            .AnyAsync(a => a.ReservaId == reservaId && a.ExpiresAt > now, ct);
+    }
 }

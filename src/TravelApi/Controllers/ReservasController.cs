@@ -385,6 +385,14 @@ public class ReservasController : ControllerBase
         {
             return NotFound();
         }
+        // (2026-08-06) ANTES del catch generico de InvalidOperationException: esta excepcion tipada hereda
+        // de esa misma clase (mismo status 409), pero suma "code" al body (envelope aditivo, mismo patron
+        // que ya usa InvoicesController con ReservaChangesPendingReviewException). El front lo necesita para
+        // pintar "Agregar Pasajero" travado con candadito, en vez de mostrar un toast generico.
+        catch (PassengerRosterCompleteUnderLockException ex)
+        {
+            return Conflict(new { message = ex.Message, code = ex.Code });
+        }
         catch (InvalidOperationException ex)
         {
             return Conflict(new { message = ex.Message });
