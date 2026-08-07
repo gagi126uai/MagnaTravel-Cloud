@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Security.Claims;
 using AutoMapper;
 using Microsoft.AspNetCore.Http;
@@ -118,7 +118,7 @@ public class BookingServiceCostPreservationTests
         SupplierId: supplierPublicId, HotelName: "Hotel test", StarRating: 4, City: "Bariloche", Country: "Argentina",
         CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
         RoomType: "Doble", MealPlan: "Desayuno", Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
-        NetCost: 250m, SalePrice: 400m, Commission: 110m, Notes: null, Tax: 40m);
+        NetCost: 250m, SalePrice: 400m, Commission: 110m, Notes: null, Tax: 40m, Currency: "ARS");
 
     // El update que mandaria el form de un caller SIN ver-costos: NetCost/Tax rebotan en 0
     // y la Commission viene calculada con ese 0 (= SalePrice). Cambia venta y notas.
@@ -181,7 +181,7 @@ public class BookingServiceCostPreservationTests
         Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
         DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
         CabinClass: "Economy", Baggage: null, PNR: null,
-        NetCost: 300m, SalePrice: 500m, Commission: 170m, Tax: 30m, Notes: null);
+        NetCost: 300m, SalePrice: 500m, Commission: 170m, Tax: 30m, Notes: null, Currency: "ARS");
 
     private static UpdateFlightRequest BuildFlightUpdateFromMaskedForm(string supplierPublicId, decimal newSalePrice) => new(
         SupplierId: supplierPublicId, AirlineCode: "AR", AirlineName: "Aerolineas", FlightNumber: "1234",
@@ -239,7 +239,7 @@ public class BookingServiceCostPreservationTests
         SupplierId: supplierPublicId, PickupLocation: "Aeropuerto", DropoffLocation: "Hotel centro",
         PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: "Sedan", Passengers: 2,
         IsRoundTrip: false, ReturnDateTime: null,
-        NetCost: 70m, SalePrice: 120m, Commission: 38m, Notes: null, Tax: 12m);
+        NetCost: 70m, SalePrice: 120m, Commission: 38m, Notes: null, Tax: 12m, Currency: "ARS");
 
     private static UpdateTransferRequest BuildTransferUpdateFromMaskedForm(string supplierPublicId, decimal newSalePrice) => new(
         SupplierId: supplierPublicId, PickupLocation: "Aeropuerto", DropoffLocation: "Hotel centro",
@@ -297,7 +297,7 @@ public class BookingServiceCostPreservationTests
         StartDate: DateTime.UtcNow.Date.AddDays(20), EndDate: DateTime.UtcNow.Date.AddDays(27),
         IncludesHotel: true, IncludesFlight: true, IncludesTransfer: true, IncludesExcursions: false, IncludesMeals: true,
         Adults: 2, Children: 0, Itinerary: null,
-        NetCost: 900m, SalePrice: 1500m, Commission: 540m, Notes: null, Tax: 60m);
+        NetCost: 900m, SalePrice: 1500m, Commission: 540m, Notes: null, Tax: 60m, Currency: "ARS");
 
     private static UpdatePackageRequest BuildPackageUpdateFromMaskedForm(string supplierPublicId, decimal newSalePrice) => new(
         SupplierId: supplierPublicId, PackageName: "Paquete Caribe", Destination: "Cancun",
@@ -356,7 +356,7 @@ public class BookingServiceCostPreservationTests
         ValidFrom: DateTime.UtcNow.Date.AddDays(10), ValidTo: DateTime.UtcNow.Date.AddDays(20),
         Adults: 2, Children: 0,
         NetCost: 100m, SalePrice: 250m, Commission: 140m,
-        PlanType: "Premium 60K", Tax: 10m);
+        PlanType: "Premium 60K", Tax: 10m, Currency: "ARS");
 
     private static UpdateAssistanceRequest BuildAssistanceUpdateFromMaskedForm(string supplierPublicId, decimal newSalePrice) => new(
         SupplierId: supplierPublicId,
@@ -434,6 +434,10 @@ public class BookingServiceCostPreservationTests
             Tax = tax,
             SalePrice = 160m,
             Commission = 45m,
+            // La moneda de la tarifa tiene que coincidir con la de la venta: la cadena de reposicion de
+            // costo NO usa una referencia en otra moneda (no se mezclan monedas en un costo que el
+            // vendedor no ve). Sin esto el costo repuesto seria 0.
+            Currency = "ARS",
             IsActive = true
         };
         context.Rates.Add(rate);
@@ -449,7 +453,7 @@ public class BookingServiceCostPreservationTests
         CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
         RoomType: "Doble", MealPlan: "Desayuno", Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
         NetCost: 0m, SalePrice: salePrice, Commission: salePrice, Notes: null,
-        RateId: rateId, Tax: 0m);
+        RateId: rateId, Tax: 0m, Currency: "ARS");
 
     [Fact]
     public async Task CreateHotelAsync_FromRate_UserWithoutSeeCost_ResolvesCostsFromRate()

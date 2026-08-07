@@ -1,42 +1,25 @@
 import { NavLink } from "react-router-dom";
-import { Activity, ClipboardList, FolderOpen, FileMinus2 } from "lucide-react";
-import { hasPermission } from "../../../auth";
+import { Activity, ClipboardList, PlaneTakeoff, Users } from "lucide-react";
 
-// B1.15 Fase D'.B (2026-05-11): 3 tabs principales (Por reserva / Movimientos / Pendientes).
-// Reemplaza la triada vieja (Cobranzas / Facturacion / Historial)
-// porque la nueva division es coherente con el modelo de Movement unificado.
+// Spec firmada 2026-08-06 (§4.1, P11=A): 4 tabs nuevos. "Por reserva" se elimina
+// (repetía lo que ya da la ficha de la reserva) y en su lugar entran "Viajan pronto y
+// deben" y "Deuda por cliente".
 //
-// Tab adicional "NC por revisar" (ADR-025): solo para usuarios con cobranzas.view_all.
-// La ruta /cancellations/credit-notes/inbox es una ruta separada (no sub-ruta de /payments),
-// pero se expone como tab en esta subnav porque es la "bandeja hermana" del flujo de cancelación
-// y pertenece conceptualmente al área de Cobranza y Facturación.
-const BASE_NAV_ITEMS = [
-  { to: "/payments/reservas", label: "Por reserva", icon: FolderOpen },
-  { to: "/payments/movements", label: "Movimientos", icon: Activity },
+// También se saca la tab "NC por revisar": esas entradas fueron derogadas el
+// 2026-07-08 ("fin de las bandejas por tipo de comprobante") y hoy esa ruta vieja
+// (/cancellations/credit-notes/inbox) solo redirige a Facturación — sacarla de acá es
+// aplicar una regla ya firmada, no una decisión nueva de esta tanda.
+const NAV_ITEMS = [
+  { to: "/payments/departures", label: "Viajan pronto y deben", icon: PlaneTakeoff },
+  { to: "/payments/by-customer", label: "Deuda por cliente", icon: Users },
   { to: "/payments/pending", label: "Pendientes de facturar", icon: ClipboardList },
+  { to: "/payments/movements", label: "Movimientos", icon: Activity },
 ];
 
-// Tab gateado: solo aparece si el usuario tiene cobranzas.view_all (back-office).
-// Definido separado para poder filtrarlo en el render sin hardcodear la lógica en el JSX.
-const NC_REVIEW_ITEM = {
-  to: "/cancellations/credit-notes/inbox",
-  label: "NC por revisar",
-  icon: FileMinus2,
-  requiredPermission: "cobranzas.view_all",
-};
-
 export function FinanceSubnav() {
-  // Construimos la lista de tabs según los permisos del usuario actual.
-  // El filtro corre en cada render; es liviano y no necesita memoización.
-  const navItems = [
-    ...BASE_NAV_ITEMS,
-    // Tab NC: solo visible para back-office con cobranzas.view_all.
-    ...(hasPermission(NC_REVIEW_ITEM.requiredPermission) ? [NC_REVIEW_ITEM] : []),
-  ];
-
   return (
     <div className="flex gap-6 border-b border-slate-100 dark:border-slate-800 overflow-x-auto">
-      {navItems.map((item) => (
+      {NAV_ITEMS.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}

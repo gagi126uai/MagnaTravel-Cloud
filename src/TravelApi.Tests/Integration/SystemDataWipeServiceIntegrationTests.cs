@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -611,6 +611,24 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
 
         var rate = new Rate { ServiceType = "Hotel", ProductName = "Hotel nacido de esta reserva", CreatedFromReservaId = reserva.Id };
         ctx.Rates.Add(rate);
+        await ctx.SaveChangesAsync();
+
+        // Memoria de venta del tarifario (spec 2026-08-06 M-1): recuerda de QUE reserva salio el ultimo
+        // precio. Es la unica fila que sobrevive apuntando a una reserva borrada, asi que su foreign key
+        // tambien tiene que desengancharse.
+        ctx.RateSupplierSales.Add(new RateSupplierSale
+        {
+            RateId = rate.Id,
+            SupplierId = supplier.Id,
+            LastSoldAt = DateTime.UtcNow,
+            LastNetCost = 100m,
+            LastTax = 0m,
+            LastSalePrice = 150m,
+            LastCurrency = "ARS",
+            LastPriceUnit = "noche_habitacion",
+            SalesCount = 1,
+            LastReservaId = reserva.Id,
+        });
 
         ctx.SupplierPayments.Add(new SupplierPayment { SupplierId = supplier.Id, ReservaId = reserva.Id, Amount = 1000m });
 
@@ -652,6 +670,12 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
         // Hallazgo B1: Rates sobrevive (tarifario no fue pedido) con CreatedFromReservaId desenganchado.
         var survivingRate = await verifyCtx.Rates.SingleAsync();
         Assert.Null(survivingRate.CreatedFromReservaId);
+
+        // Mismo criterio para la memoria de venta: el precio aprendido NO se pierde, solo se queda sin el
+        // enlace a la reserva que ya no existe.
+        var survivingSale = await verifyCtx.RateSupplierSales.SingleAsync();
+        Assert.Null(survivingSale.LastReservaId);
+        Assert.Equal(150m, survivingSale.LastSalePrice);
 
         // paisesYDestinos ni se toco (sin dependencia forzosa con reservasYPlata).
         Assert.Equal(1, await verifyCtx.Countries.CountAsync());

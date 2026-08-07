@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TravelApi.Application.DTOs;
@@ -106,6 +106,15 @@ public class OperationalFlagsControllerTests : IClassFixture<CustomWebApplicatio
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         foreach (var property in body.RootElement.EnumerateObject())
         {
+            if (property.Name == "enableCatalogFindOrCreate")
+            {
+                // Llave DEROGADA el 2026-08-06 (P8=A): el catalogo que aprende de las ventas ya no se
+                // puede apagar, asi que esta bandera responde true sin mirar la base. Sigue viajando en
+                // el contrato solo hasta que el front deje de preguntarla.
+                Assert.True(property.Value.GetBoolean());
+                continue;
+            }
+
             Assert.False(property.Value.GetBoolean());
         }
     }

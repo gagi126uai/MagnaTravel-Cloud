@@ -377,6 +377,7 @@ Ronda 7 (obligatoriedad heredada de la pantalla vieja — probando en vivo, 2026
 Ronda 6 (campanita de avisos + llaves en Configuración, 2026-06-06):
 - **Campanita: secciones apiladas en la misma ventanita.** Primero "Fechas límite", después "Tenés N costos a confirmar", abajo las notificaciones de siempre. Sin pestañas. Cada sección aparece solo si tiene avisos; sin avisos, la campanita se ve igual que hoy. Tocar un aviso lleva derecho a esa reserva.
 - **El numerito de la campanita SUMA TODO**: avisos de fechas límite + costos a confirmar + notificaciones sin leer. Un solo número. (Los avisos de Cobranzas — salida próxima con deuda / deuda con proveedores — NO entran en este numerito: viven en sus tarjetas de Cobranzas.)
+- ⚠️ **DEROGADA la llave del tarifario (Gastón, 2026-08-06, P8=A): "Tarifario que se arma solo desde las ventas" SALE DIRECTO PARA TODOS y el interruptor desaparece de Configuración** (orden general "basta de llaves"). Lo que sigue queda solo como registro histórico; la llave de "Avisos de fechas límite" de este mismo punto ya había sido reemplazada por "Avisos de próximos inicios" (Ronda 9). Ver la sección **"Tarifario que se arma solo + Cobranzas"** (2026-08-06) al final.
 - **Llaves nuevas en Configuración → Funciones avanzadas** (textos aprobados tal cual): "Tarifario que se arma solo desde las ventas" (descripción: "Al cargar un servicio, el vendedor busca el producto y, si no existe, lo crea ahí mismo. Queda guardado con su operador y un precio de referencia para la próxima venta. Apagado, todo sigue como hasta ahora.") y "Avisos de fechas límite (señar y emitir)" (descripción: "La campanita avisa cuando se acerca o ya pasó una fecha límite de seña al operador o de emisión de un aéreo. Cada vendedor ve los avisos de sus reservas; los admins ven todos.") con el casillero "Días de anticipación del aviso: [7]" pegado a su llave.
 - **La llave del tarifario se prende DIRECTO, sin ventanita** (como "Ciclo extendido"; la ventana de "¿seguro?" queda solo para lo fiscal). El "Guardar configuración" de la pantalla sigue siendo el paso final.
 
@@ -2333,3 +2334,133 @@ el historial (todo / todo con filtro / solo lo grueso) · **P16** si el paso de 
 pide algo (recomendado: al menos un servicio cargado) · **P17** qué pasa con un archivo subido por
 error (recomendado: quitar dejando rastro). Están al final de
 `docs/ux/2026-08-03-auditoria-reservas.md`. **Hasta que se respondan, esas tres cosas no se construyen.**
+
+## Tarifario que se arma solo + Cobranzas: la vista de deudores (2026-08-06, respuestas de Gastón P1..P19)
+
+> **Origen:** tanda B1 de rediseño de superficie. Gastón contó cómo trabaja de verdad: **cotiza a
+> mano cada vez y NO carga tarifas de antemano**, y para cobrar mira **dos cosas**: las reservas
+> que **viajan pronto y deben** (orden natural = fecha de viaje, nunca antigüedad contable
+> 30/60/90, porque acá se cobra por adelantado) y **cuánto le debe cada cliente en total**. La
+> investigación de mercado confirmó que ninguna agencia minorista carga tarifario previo: el
+> estándar es precio libre por expediente + **memoria del último precio**, con fecha y operador a
+> la vista, que **jamás pisa lo tipeado**. Respondió las 19 preguntas el mismo día.
+> Spec completa: `docs/ux/specs/2026-08-06-rediseno-tarifario-y-cobranza-FIRMADA.md`. **NO reabrir.**
+
+**El Tarifario:**
+
+- **(2026-08-06, P1=B) El Tarifario pasa a ser la MEMORIA DE LO QUE YA VENDISTE:** una lista de
+  productos aprendidos de las ventas, con el **último precio de cada operador y su fecha** a la
+  vista. Además se puede dar de alta un producto a mano. **Concreta la decisión del 2026-06-05**
+  ("el tarifario se arma solo a base de las reservas") dándole por fin una pantalla.
+- **(2026-08-06, P1=B + P4=A) El formulario largo de 20 campos MUERE como puerta de entrada.** El
+  alta a mano es una **fichita de pocos campos** (tipo · nombre\* · ciudad\* en hotel · operador ·
+  precio + moneda), en línea, sin leyendas ni "(opcional)" (P-15). El formulario completo
+  **sobrevive únicamente** detrás de un botón secundario **"Carga completa"**, para los casos
+  especiales que lo necesitan (vigencias, variaciones de habitación). Es el único acceso que le queda.
+- **(2026-08-06, P2=A) UNA sola lista:** las tarifas cargadas a mano que ya existen entran como un
+  producto más, **sin decir de dónde salieron** (coherente con la derogación del 2026-06-08 de la
+  etiqueta "creado en venta").
+- **(2026-08-06, P3=A) Se sigue llamando "Tarifario"** en el menú (sección CATÁLOGO).
+- **(2026-08-06, P5=A) Cada renglón muestra lo esencial:** nombre (+ ciudad debajo, gris) · tipo ·
+  operador · último precio · fecha. Nada de "vendido N veces" ni de ganancia promedio (eso vive en
+  Reportes). **Se eliminan las tarjetas de arriba** (Total / Hoteles / **Vencidas — "Acción
+  requerida"**): una tarifa "vencida" no es una tarea pendiente, y esa frase no pasa P-17.
+- **(2026-08-06, P6=A) Un renglón por operador** debajo del producto, el precio más nuevo arriba.
+  El precio sin el operador no sirve para decidir.
+- **(2026-08-06, P7 — palabra textual de Gastón: "HAY QUE EVITAR REPETIDOS A TODA COSTA, QUE EL
+  SISTEMA APRENDA A QUE NO HAYA REPETIDOS".) La PREVENCIÓN al crear es prioridad absoluta**, en los
+  dos lugares donde nace un producto (el buscador de la venta y el alta a mano): búsqueda tolerante
+  al tipeo, **los parecidos SIEMPRE antes de dejar crear**, "crear nuevo" siempre como **última**
+  opción, **freno con Cartel emergente de confirmación cuando hay un parecido fuerte** ("Ya tenés
+  'Maitei Posadas' en Posadas… [Usar ese] [Crear uno nuevo]"), y **el sistema aprende**: el texto
+  que el usuario escribió queda asociado al producto que eligió, para encontrarlo derecho la
+  próxima vez. **La pantalla de unir repetidos** (firmada el 2026-06-05) queda como **red de
+  seguridad, no como herramienta principal**: es una solapa "Repetidos (N)" dentro del Tarifario, y
+  al unir **nada se borra** (2026-08-03) — el producto que queda absorbe los precios del otro.
+- **(2026-08-06) Los precios NO se editan a mano en la ficha del producto:** son la memoria de lo
+  que pasó. Se cambian vendiendo. Lo que sí se corrige es el **nombre** y la **ciudad**.
+
+**El precio sugerido al cargar un servicio:**
+
+- **(2026-08-06, P8=A) El buscador que aprende de las ventas SALE DIRECTO PARA TODOS y la llave
+  desaparece de Configuración.** **DEROGA** la llave "Tarifario que se arma solo desde las ventas"
+  firmada el 2026-06-06 (Ronda 6), por la orden general del dueño **"basta de llaves"**. Es F1.3 de
+  ADR-017 saliendo sin interruptor. **Consecuencia:** la sección **"Costos a confirmar"** de la
+  campanita, que colgaba de esa llave, pasa a estar **siempre activa** para quien tiene permiso de
+  costos — que es justo lo que ya se había firmado el 2026-06-05 (Q4b).
+- **(2026-08-06, P9=A) Debajo del precio precargado va un renglón GRIS de una línea con la
+  procedencia:** "Último precio: Ola Mayorista · US$ 48 · 22/05/2026". Solo aparece si hay un precio
+  aprendido (si no hay, no se escribe nada — eso sería un cartelito, P-15). Sigue valiendo todo lo
+  del 2026-06-05: el número se precarga **en amarillo, editable**, y **nunca pisa** lo que el
+  vendedor ya escribió (P-21) — el renglón gris igual se muestra, para que compare.
+- **(2026-08-06, P10=A) Un precio de más de 60 días se sugiere IGUAL, con la fecha en ámbar** y el
+  tiempo transcurrido en criollo ("hace 5 meses"), calculado por el motor (T-13). Se usa el mismo
+  umbral de 60 días que ya existe para "costo a confirmar"; se vuelve configurable más adelante si
+  molesta.
+
+**Cobranzas (la pantalla de a quién le cobro):**
+
+- **(2026-08-06, P17=B) El menú queda con DOS puertas que no se pisan:** **"Cobranzas"** (a quién le
+  tenés que cobrar y los cobros que entraron) y **"Facturación"** (los comprobantes emitidos, back
+  office). Muere el nombre "Cobranza y Facturación", que se confundía con la entrada de al lado. El
+  título de la pantalla pasa a ser **"Cobranzas"**, con la bajada "A quién le tenés que cobrar y los
+  cobros que entraron."
+- **(2026-08-06, P11=A) Las solapas de Cobranzas quedan en cuatro:** **Viajan pronto y deben ·
+  Deuda por cliente · Pendientes de facturar · Movimientos**. **Se elimina "Por reserva"** (repetía
+  lo que ya da la ficha de la reserva). También se saca de esa barra la solapa **"NC por revisar"**,
+  que sobrevivía sin derecho: sus entradas ya habían sido derogadas el 2026-07-08.
+- **(2026-08-06, P12=A) "Viajan pronto y deben" lista a TODOS los que deben, ordenados por fecha de
+  salida**, el que sale primero arriba, sin corte de días. Columnas: cuenta regresiva + fecha ·
+  reserva y destino · cliente · total · **falta, por moneda separada** (P-3). Arriba, el total que
+  falta cobrar por moneda. No entran las Anuladas ni las Perdidas. **Es una lista pasiva** (regla
+  del 2026-07-08): la fila entera abre la ficha, **sin botones por fila** — no se cobra desde acá.
+- **(2026-08-06, P13=A) "Deuda por cliente" es una lista propia, solo con los que deben:** cliente ·
+  cuántas reservas con deuda · **cuánto debe por moneda** · primera salida. La fila abre **la ficha
+  del cliente que ya existe** (con su extracto firmado el 2026-07-16); no se duplica ninguna
+  pantalla. También es lista pasiva.
+- **(2026-08-06, P14=A) "Pendientes de facturar": la fila lleva a la ficha de la reserva**, donde
+  emitir la factura ya vive en línea. **Muere el uso de la ventana vieja de facturar en esa
+  solapa**, y no se reemplaza por otra: no hay botón de facturar en la lista. Reafirma "las bandejas
+  son listas pasivas y la acción vive en la ficha" (2026-07-08).
+
+**La fecha límite de pago (el concepto que faltaba):**
+
+- **(2026-08-06, P15=A) Nace el número "el saldo tiene que estar completo X días antes de la
+  salida", con default 21 días**, en Configuración → Operativa/Cobranzas. Un solo número para todas
+  las reservas: **nadie carga fechas a mano** en ninguna reserva (coherente con la Ronda 8 del
+  2026-06-06, que eliminó el campo "Fecha límite"). **La fecha concreta y el veredicto de "ya se
+  pasó" los calcula el motor** (T-13); el front nunca resta fechas. Esto tapa el agujero que hacía
+  imposible marcar deudores: el producto no tenía ninguna fecha de vencimiento de saldo (lo único
+  con fecha era el CAE de ARCA, que es otra cosa).
+- **(2026-08-06, P16=A) Pasada esa fecha con saldo: se PINTA y se AVISA, no se traba nada.** La fila
+  de la lista de deudores va en rojo con una línea debajo ("El saldo tenía que estar completo el
+  22/07/2026") y sale un aviso en la campanita ("F-2026-1042 · Fam. García — el saldo tenía que
+  estar completo el 22/07. Falta US$ 900."), con el alcance de siempre: cada vendedor las suyas, el
+  admin todas. **No impide facturar, ni emitir voucher, ni nada.** El único freno de plata sigue
+  siendo el ya firmado "no viaja si debe".
+- **(2026-08-06) Sigue valiendo que NO hay antigüedad de deuda 30/60/90** (2026-07-16 P5=A): acá el
+  orden lo manda la **fecha de viaje**, porque se cobra por adelantado.
+
+**Recordatorios de cobro — solo el hueco, NO se construye ahora:**
+
+- **(2026-08-06, P18=A) El día que se construyan, el disparador vive en la FICHA** (botón "Recordar
+  pago" junto a "Registrar cobro" y "Emitir factura"), nunca en la lista. La lista de deudores solo
+  muestra **si ya se avisó y cuándo**, en un renglón gris de una línea ("Último aviso:
+  02/08/2026"), sin botón — la bandeja mira, la ficha hace (2026-07-08).
+- **(2026-08-06, P19=A) Saldrán por WhatsApp**, reusando el envío que ya existe para los vouchers.
+- **Nada de esto entra en la tanda B1.** Lo único que se respeta hoy es dejar el lugar del renglón
+  gris en la fila.
+
+**⚠️ Tres detalles quedaron ABIERTOS al bajar las respuestas** (no frenan la obra; cada uno tiene
+qué se hace mientras tanto, siempre apoyado en una regla ya firmada). Están en la §7 de la spec:
+**D1** — el número nuevo de 21 días convive con el viejo "Días previos para alertar (7)" del aviso
+de reservas próximas con deuda, y el 2026-06-21 se había firmado "NO se inventa un parámetro nuevo":
+por ahora se construyen **los dos, separados** (21 = cuándo el saldo está vencido; 7 = cuándo aparece
+el chip "Debe — no viaja"), y se le pregunta a Gastón si quiere unificarlos. **D2** — "Deuda por
+cliente" no se puede ordenar "de mayor a menor" con dos monedas sin sumarlas (P-3 lo prohíbe): por
+ahora se ordena por **primera salida**, el mismo criterio que él firmó en P12. **D3** — las vigencias
+y variaciones de la "Carga completa" no entran en el renglón esencial: viven **adentro** de la ficha
+del producto.
+
+**Consecuencia sobre la sección Navegación:** la entrada de menú "Cobranza y Facturación" pasa a
+llamarse **"Cobranzas"**; "Facturación" queda igual. El resto del árbol no se toca en esta tanda.

@@ -23,8 +23,13 @@ const RUTA_APP_JSX = resolve(AQUI, "../../../App.jsx");
 const contenidoAppJsx = readFileSync(RUTA_APP_JSX, "utf-8");
 
 // Mapa ruta-vieja → ruta-viva esperado (mismo que quedó escrito en App.jsx).
+//
+// "collections" y "reservas" apuntan a "/payments/departures" desde la tanda del
+// 2026-08-06 (spec Tarifario y Cobranzas, P11=A): "Por reserva" murió, así que la
+// pestaña viva más parecida pasa a ser "Viajan pronto y deben".
 const REDIRECTS_ESPERADOS = [
-  { rutaVieja: "collections", rutaViva: "/payments/reservas" },
+  { rutaVieja: "collections", rutaViva: "/payments/departures" },
+  { rutaVieja: "reservas", rutaViva: "/payments/departures" },
   { rutaVieja: "invoicing", rutaViva: "/payments/pending" },
   { rutaVieja: "history", rutaViva: "/payments/movements" },
 ];

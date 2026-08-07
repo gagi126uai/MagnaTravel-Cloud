@@ -915,6 +915,20 @@ public class SystemDataWipeService : ISystemDataWipeService
             candidatos.Add(("Rates", "CreatedFromReservaId"));
         }
 
+        // reservasYPlata SIN tarifario NI operadores: RateSupplierSale.LastReservaId apunta a TravelFiles
+        // (de que reserva salio el ultimo precio aprendido — spec 2026-08-06 M-1).
+        //
+        // Por que la DOBLE exclusion: la tabla RateSupplierSales se trunca entera cuando se borra el
+        // tarifario O los operadores (sus otras dos foreign keys son obligatorias, ver
+        // BuildTablesToTruncateAsync). En esos casos no hay nada que desenganchar. El unico escenario en el
+        // que la tabla SOBREVIVE y quedaria apuntando a reservas borradas es este: borrar solo la plata.
+        // Sin este desenganche, la red fail-closed detecta una foreign key cruzada no contemplada y ABORTA
+        // todo el "Empezar de cero" selectivo.
+        if (incluyeReservas && !incluyeTarifario && !incluyeOperadores)
+        {
+            candidatos.Add(("RateSupplierSales", "LastReservaId"));
+        }
+
         return candidatos;
     }
 

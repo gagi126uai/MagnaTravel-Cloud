@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -155,8 +155,13 @@ public class QuoteServiceConvertCatalogTests
         Assert.Null(flight.TicketIssuedAt);
     }
 
+    /// <summary>
+    /// Al morir la llave del catalogo (spec firmada 2026-08-06, P8=A) la conversion de presupuesto
+    /// SIEMPRE deja la memoria de venta, aunque los settings tengan la vieja bandera apagada. Ademas
+    /// guarda de QUE reserva salio ese precio (M-1), que es lo que el Tarifario muestra como enlace.
+    /// </summary>
     [Fact]
-    public async Task ConvertToFile_FlagOff_HotelWithRate_NoUpsert()
+    public async Task ConvertToFile_SinLlave_HotelConTarifa_GuardaLaVentaConSuReserva()
     {
         await using var context = CreateContext();
         var rate = await SeedRateAsync(context, supplierId: 5, serviceType: "Hotel");
@@ -165,8 +170,11 @@ public class QuoteServiceConvertCatalogTests
 
         var reservaId = await service.ConvertToFileAsync(quoteId, CancellationToken.None);
 
-        Assert.True(reservaId > 0); // la conversion funciona igual (byte-identico al historico)
-        Assert.Equal(0, await context.RateSupplierSales.CountAsync()); // pero flag OFF nunca escribe la sugerencia
+        Assert.True(reservaId > 0);
+        var sale = Assert.Single(await context.RateSupplierSales.ToListAsync());
+        Assert.Equal(rate.Id, sale.RateId);
+        Assert.Equal(5, sale.SupplierId);
+        Assert.Equal(reservaId, sale.LastReservaId);
     }
 
     [Fact]

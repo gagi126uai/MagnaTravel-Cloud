@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Receipt, ShieldAlert } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2, ShieldAlert } from "lucide-react";
 import { formatCurrency, formatDate, getInvoiceLabel } from "../lib/financeUtils";
 import { getPublicId } from "../../../lib/publicIds";
 
@@ -40,7 +40,7 @@ function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-export function WorkItemSection({ status, onStatusChange, items, onInvoice, searchTerm, onSearchTermChange, customerFilter, onCustomerFilterChange, reservationFilter, onReservationFilterChange, pagination }) {
+export function WorkItemSection({ status, onStatusChange, items, searchTerm, onSearchTermChange, customerFilter, onCustomerFilterChange, reservationFilter, onReservationFilterChange, pagination }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-5 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
@@ -66,14 +66,22 @@ export function WorkItemSection({ status, onStatusChange, items, onInvoice, sear
       </div>
 
       {items.length === 0 ? (
-        <div className="px-6 py-10 text-sm text-slate-500 dark:text-slate-400">No hay reservas para esta vista.</div>
+        <div className="px-6 py-10 text-sm text-slate-500 dark:text-slate-400">No hay reservas pendientes de facturar.</div>
       ) : (
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          {/* Spec firmada 2026-08-06 (§4.4, P14=A): lista PASIVA — la fila entera lleva a la
+              ficha de la reserva, donde emitir la factura ya vive en línea (EmitirFacturaInline,
+              2026-06-13). Ya no hay botón "Emitir" acá ni ventana de facturar (CreateInvoiceModal
+              murió: sin consumidores, se borró del proyecto). */}
           {items.map((item) => (
-            <div key={item.reservaPublicId} className="flex flex-col gap-4 px-6 py-5 xl:flex-row xl:items-center xl:justify-between">
+            <Link
+              key={item.reservaPublicId}
+              to={`/reservas/${item.reservaPublicId}`}
+              className="flex flex-col gap-4 px-6 py-5 hover:bg-slate-50 dark:hover:bg-slate-800/40 xl:flex-row xl:items-center xl:justify-between"
+            >
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <Link to={`/reservas/${item.reservaPublicId}`} className="font-semibold text-slate-900 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-300">{item.numeroReserva}</Link>
+                  <span className="font-semibold text-slate-900 dark:text-white">{item.numeroReserva}</span>
                   <span
                     className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${item.fiscalStatus === "ready" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300" : item.fiscalStatus === "override" ? "bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300" : item.fiscalStatus === "in_progress" ? "bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300" : "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-300"}`}
                     role={item.fiscalStatus === "in_progress" ? "status" : undefined}
@@ -94,19 +102,8 @@ export function WorkItemSection({ status, onStatusChange, items, onInvoice, sear
                 <Metric label="Pendiente fiscal" value={formatCurrency(item.pendingFiscalAmount)} highlight />
               </div>
 
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => onInvoice(item)}
-                  disabled={item.fiscalStatus === "blocked" || item.fiscalStatus === "in_progress"}
-                  title={item.fiscalStatus === "in_progress" ? "Hay una factura en proceso para esta reserva" : undefined}
-                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${item.fiscalStatus === "override" ? "bg-amber-500 text-white hover:bg-amber-600" : item.fiscalStatus === "ready" ? "bg-indigo-600 text-white hover:bg-indigo-700" : "cursor-not-allowed bg-slate-100 text-slate-400"}`}
-                >
-                  <Receipt className="h-4 w-4" />
-                  {item.fiscalStatus === "override" ? "Emitir con autorizacion" : "Emitir en AFIP"}
-                </button>
-              </div>
-            </div>
+              <ExternalLink className="hidden h-4 w-4 shrink-0 text-slate-300 xl:block" aria-hidden="true" />
+            </Link>
           ))}
         </div>
       )}

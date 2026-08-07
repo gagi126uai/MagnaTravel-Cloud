@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
@@ -400,7 +400,7 @@ public class CostBelowPaidConfirmationGuardTests
             CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
             RoomType: "Doble", MealPlan: "Desayuno", Adults: 2, Children: 0, Rooms: 1,
             ConfirmationNumber: null, NetCost: 1_000m, SalePrice: 2_000m, Commission: 1_000m, Notes: null,
-            WorkflowStatus: "Confirmado");
+            WorkflowStatus: "Confirmado", Currency: "ARS");
 
         var dto = await booking.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
 

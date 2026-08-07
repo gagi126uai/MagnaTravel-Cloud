@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
 using AutoMapper;
@@ -142,7 +142,7 @@ public class BookingServiceCostMaskingTests
         Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
         DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
         CabinClass: "Economy", Baggage: null, PNR: null,
-        NetCost: netCost, SalePrice: 500m, Commission: 50m, Tax: 0m, Notes: null);
+        NetCost: netCost, SalePrice: 500m, Commission: 50m, Tax: 0m, Notes: null, Currency: "ARS");
 
     [Fact]
     public async Task CreateFlightAsync_UserWithoutSeeCost_MasksNetCost()
@@ -210,7 +210,7 @@ public class BookingServiceCostMaskingTests
         StartDate: DateTime.UtcNow.Date.AddDays(20), EndDate: DateTime.UtcNow.Date.AddDays(27),
         IncludesHotel: true, IncludesFlight: true, IncludesTransfer: true, IncludesExcursions: false, IncludesMeals: true,
         Adults: 2, Children: 0, Itinerary: null,
-        NetCost: netCost, SalePrice: 1500m, Commission: 150m, Notes: null);
+        NetCost: netCost, SalePrice: 1500m, Commission: 150m, Notes: null, Currency: "ARS");
 
     [Fact]
     public async Task CreatePackageAsync_UserWithoutSeeCost_MasksNetCost()
@@ -276,7 +276,7 @@ public class BookingServiceCostMaskingTests
         SupplierId: supplierPublicId, PickupLocation: "Aeropuerto", DropoffLocation: "Hotel centro",
         PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: "Sedan", Passengers: 2,
         IsRoundTrip: false, ReturnDateTime: null,
-        NetCost: netCost, SalePrice: 120m, Commission: 20m, Notes: null);
+        NetCost: netCost, SalePrice: 120m, Commission: 20m, Notes: null, Currency: "ARS");
 
     [Fact]
     public async Task CreateTransferAsync_UserWithoutSeeCost_MasksNetCost()
@@ -343,7 +343,7 @@ public class BookingServiceCostMaskingTests
         SupplierId: supplierPublicId, HotelName: "Hotel test", StarRating: 4, City: "Bariloche", Country: "Argentina",
         CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
         RoomType: "Doble", MealPlan: "Desayuno", Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
-        NetCost: netCost, SalePrice: 400m, Commission: 100m, Notes: null);
+        NetCost: netCost, SalePrice: 400m, Commission: 100m, Notes: null, Currency: "ARS");
 
     [Fact]
     public async Task GetHotelsAsync_UserWithoutSeeCost_MasksNetCostInList()

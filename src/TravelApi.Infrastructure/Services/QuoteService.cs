@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Data;
@@ -574,27 +574,25 @@ public class QuoteService : IQuoteService
         await transaction.CommitAsync(cancellationToken);
 
         // ADR-017 F1.3 (§2.3.b.7): upsert POST-EXITO best-effort de la "ultima venta" por (producto, operador).
-        // Solo con flag ON (catalog find-or-create). Skip de supplier 0 lo hace el propio helper. Asistencia
-        // NO entra (cae al servicio generico, que no snapshotea Rate). Si un upsert falla, se loguea y se
-        // sigue: la conversion ya quedo commiteada y la tabla es estadistica de sugerencia.
+        // Ya no hay llave que lo condicione (spec firmada 2026-08-06, P8=A): el tarifario aprende SIEMPRE.
+        // Skip de supplier 0 lo hace el propio helper. Asistencia NO entra (cae al servicio generico, que no
+        // snapshotea Rate). Si un upsert falla, se loguea y se sigue: la conversion ya quedo commiteada y la
+        // tabla es estadistica de sugerencia.
         try
         {
-            var settings = await _settingsService.GetEntityAsync(cancellationToken);
-            if (settings.EnableCatalogFindOrCreate)
+            foreach (var sale in pendingCatalogUpserts)
             {
-                foreach (var sale in pendingCatalogUpserts)
+                try
                 {
-                    try
-                    {
-                        await CatalogSaleUpsert.UpsertAsync(
-                            _db, sale.RateId, sale.SupplierId, sale.Unit, sale.Currency, DateTime.UtcNow, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger?.LogWarning(ex,
-                            "ConvertToFile: fallo el upsert best-effort de RateSupplierSale. RateId={RateId} SupplierId={SupplierId}",
-                            sale.RateId, sale.SupplierId);
-                    }
+                    await CatalogSaleUpsert.UpsertAsync(
+                        _db, sale.RateId, sale.SupplierId, sale.Unit, sale.Currency, DateTime.UtcNow,
+                        reservaId: file.Id, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex,
+                        "ConvertToFile: fallo el upsert best-effort de RateSupplierSale. RateId={RateId} SupplierId={SupplierId}",
+                        sale.RateId, sale.SupplierId);
                 }
             }
         }

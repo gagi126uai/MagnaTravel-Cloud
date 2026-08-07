@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
@@ -85,8 +85,18 @@ public class AlertService : IAlertService
         // inicios"). El nombre interno NO se renombra (decision D7: renombrar = migracion + churn por
         // cero valor de usuario); el nombre de cara al dueño es solo el texto de la UI.
         var upcomingStartsActive = settings.EnableServiceDeadlineAlerts;
-        // CostsToConfirm: gateado por el flag del catalogo + que el caller pueda ver costos (§2.8/D8b).
-        var costsToConfirmActive = settings.EnableCatalogFindOrCreate && caller.CanSeeCost;
+        // CostsToConfirm ("Costos a confirmar"): la seccion EXISTE siempre; lo que cambia por permiso es
+        // su CONTENIDO (§2.8/D8b: sin cobranzas.see_cost llega vacia, nunca con datos de costo).
+        //
+        // CONSECUENCIA DELIBERADA de matar la llave del catalogo (spec firmada 2026-08-06, P8=A / M-10):
+        // esta seccion antes dependia del interruptor EnableCatalogFindOrCreate y por eso casi nunca
+        // aparecia. Ahora queda SIEMPRE activa para quien tiene permiso de ver costos. NO es un bug: es
+        // exactamente lo que el dueño firmo el 2026-06-05 (Q4b) — si el sistema repuso un costo dudoso,
+        // alguien con permiso lo tiene que confirmar.
+        //
+        // Por que "activa siempre" y no "activa si el caller ve costos": si la presencia de la clave
+        // dependiera del permiso, el payload de un vendedor tendria OTRA FORMA que el de un admin, y eso
+        // es justo lo que la Fuga 2 (2026-06-17) prohibio — misma forma para todos, contenido vacio.
 
         // El "hoy" del corte es la fecha LOCAL de Argentina: comparar contra UtcNow.Date correria el dia
         // 3h antes (a las 21:00 ART ya seria "mañana"). Lo necesitan los buckets nuevos y las alarmas.
@@ -109,32 +119,18 @@ public class AlertService : IAlertService
         // (2026-06-26): cancelaciones cuyo operador no reembolso (abandonadas por el job o vencidas sin cerrar).
         var abandonedOperatorRefunds = await ComputeAbandonedOperatorRefundsAsync(caller, today, cancellationToken);
 
-        var hasNewAlarms = operatorPaymentDeadlines.Count > 0
-                           || ticketingDeadlines.Count > 0
-                           || passportExpiries.Count > 0
-                           || confirmedWithChanges.Count > 0
-                           || stuckOperatorRefunds.Count > 0
-                           || expiringPreSales.Count > 0
-                           || abandonedOperatorRefunds.Count > 0;
-
-        // CAMINO BYTE-IDENTICO (default historico): si NINGUN bucket nuevo esta activo Y no hay NINGUNA
-        // alarma nueva que mostrar, devolvemos el MISMO objeto anonimo de siempre (3 propiedades, mismo
-        // orden) — /alerts no cambia para los consumidores actuales cuando no hay nada nuevo que avisar.
-        if (!upcomingStartsActive && !costsToConfirmActive && !hasNewAlarms)
-        {
-            return new
-            {
-                UrgentTrips = urgentTrips,
-                SupplierDebts = supplierDebts,
-                TotalCount = financialCount
-            };
-        }
+        // El CAMINO BYTE-IDENTICO historico (devolver el objeto de 3 propiedades cuando no habia nada
+        // nuevo) quedo MUERTO el 2026-08-06: al morir la llave del catalogo, la seccion "Costos a
+        // confirmar" existe siempre, asi que la respuesta siempre es la extendida. Se deja escrito para
+        // que nadie lo busque: el payload extendido es un SUPERCONJUNTO (mismas 3 claves de antes mas las
+        // nuevas), asi que ningun consumidor pierde nada.
 
         var upcomingStarts = upcomingStartsActive
             ? await ComputeUpcomingStartsAsync(caller, settings.ServiceDeadlineAlertDays, today, cancellationToken)
             : new List<object>();
 
-        var costsToConfirm = costsToConfirmActive
+        // Contenido gateado por permiso (la clave viaja igual para todos, ver nota de arriba).
+        var costsToConfirm = caller.CanSeeCost
             ? await ComputeCostsToConfirmAsync(caller, cancellationToken)
             : new List<object>();
 
@@ -155,7 +151,7 @@ public class AlertService : IAlertService
             // D1: la ventana viaja junto al bucket para que la pill por servicio (frontend) use el
             // mismo umbral. NO va en OperationalFlagsResponse (regla dura "solo booleanos").
             upcomingStartsWindowDays: upcomingStartsActive ? settings.ServiceDeadlineAlertDays : null,
-            costsToConfirm: costsToConfirmActive ? costsToConfirm : null,
+            costsToConfirm: costsToConfirm,
             totalCount: totalCount,
             // Alarmas nuevas: se omiten del JSON cuando estan vacias (null), igual presencia condicional.
             operatorPaymentDeadlines: operatorPaymentDeadlines.Count > 0 ? operatorPaymentDeadlines : null,

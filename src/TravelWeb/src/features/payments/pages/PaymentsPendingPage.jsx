@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import CreateInvoiceModal from "../../../components/CreateInvoiceModal";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { WorkItemSection } from "../components/InvoicingTab";
@@ -12,10 +11,11 @@ import RequestApprovalModal from "../../approvals/components/RequestApprovalModa
 // Reorganizada — solo la worklist de reservas que faltan facturar.
 // "Facturas emitidas" se mueven a la pestaña "Movimientos" (filtro kind=invoice).
 //
-// Reusa WorkItemSection y useInvoicing del flow viejo. Cuando Fase D'.D haga
-// cleanup, este componente se queda como la pantalla canónica de pendientes.
+// Spec firmada 2026-08-06 (§4.4, P14=A): la fila ahora es un LINK a la ficha de la
+// reserva (emitir la factura ya vive en línea ahí, EmitirFacturaInline). Murió el uso
+// de CreateInvoiceModal en esta pestaña — sin más consumidores en todo el proyecto,
+// el componente se borró (components/CreateInvoiceModal.jsx).
 export default function PaymentsPendingPage() {
-  const [selectedItem, setSelectedItem] = useState(null);
   const [approvalContext, setApprovalContext] = useState(null);
 
   const {
@@ -72,7 +72,6 @@ export default function PaymentsPendingPage() {
           status={worklistStatus}
           onStatusChange={setWorklistStatus}
           items={workItems}
-          onInvoice={setSelectedItem}
           searchTerm={worklistSearchTerm}
           onSearchTermChange={setWorklistSearchTerm}
           customerFilter={worklistCustomerFilter}
@@ -93,28 +92,6 @@ export default function PaymentsPendingPage() {
           }
         />
       )}
-
-      <CreateInvoiceModal
-        isOpen={Boolean(selectedItem)}
-        onClose={() => setSelectedItem(null)}
-        reservaPublicId={selectedItem?.reservaPublicId}
-        reserva={{
-          publicId: selectedItem?.reservaPublicId,
-          numeroReserva: selectedItem?.numeroReserva,
-          customerName: selectedItem?.customerName,
-          afipStatus: selectedItem?.fiscalStatus,
-          canEmitAfipInvoice: selectedItem?.fiscalStatus === "ready" || selectedItem?.fiscalStatus === "override",
-          isEconomicallySettled: selectedItem?.fiscalStatus === "ready",
-          economicBlockReason: selectedItem?.economicBlockReason,
-        }}
-        initialAmount={selectedItem?.pendingFiscalAmount}
-        clientName={selectedItem?.customerName}
-        clientCuit={null}
-        onSuccess={async () => {
-          setSelectedItem(null);
-          await loadData();
-        }}
-      />
 
       <RequestApprovalModal
         isOpen={Boolean(approvalContext)}

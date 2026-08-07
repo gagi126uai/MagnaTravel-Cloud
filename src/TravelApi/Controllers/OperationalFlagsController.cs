@@ -47,7 +47,11 @@ public class OperationalFlagsController : ControllerBase
         {
             EnableMultiCurrencyInvoicing = settings.EnableMultiCurrencyInvoicing,
             EnableCancellationDebitNote = settings.EnableCancellationDebitNote,
-            EnableCatalogFindOrCreate = settings.EnableCatalogFindOrCreate,
+            // LLAVE DEROGADA (spec firmada 2026-08-06, P8=A / M-10): el buscador que aprende de las
+            // ventas salio para todos. Se devuelve SIEMPRE true, sin mirar la base, para que el front
+            // actual (que todavia pregunta por esta bandera) monte la ficha nueva sin depender de un
+            // valor que ya nadie administra. Se borra del contrato cuando el front deje de leerla.
+            EnableCatalogFindOrCreate = true,
             EnableServiceDeadlineAlerts = settings.EnableServiceDeadlineAlerts,
             EnableDomesticDniExpiryAlert = settings.EnableDomesticDniExpiryAlert
         });

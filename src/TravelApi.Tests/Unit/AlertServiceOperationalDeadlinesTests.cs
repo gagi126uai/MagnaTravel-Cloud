@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -461,10 +461,11 @@ public class AlertServiceOperationalDeadlinesTests
     }
 
     [Fact]
-    public async Task NoAlarmsAndNoNewBuckets_ReturnsHistoricAnonymousObject()
+    public async Task SinAlarmas_ElPayloadConservaLasTresClavesHistoricas()
     {
-        // Reserva viva pero SIN deadlines ni pasaportes: el payload sigue siendo el objeto historico de 3
-        // propiedades (no se cuela ninguna clave nueva). Protege el path byte-identico.
+        // Reserva viva pero SIN deadlines ni pasaportes. Desde que murio la llave del catalogo
+        // (2026-08-06) la respuesta siempre es la extendida, asi que ya no se puede exigir "exactamente 3
+        // propiedades"; lo que si se sigue exigiendo es que las tres historicas esten SIEMPRE.
         await using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(BuildReserva(1));
         context.HotelBookings.Add(Hotel(1, 1, operatorPaymentDeadline: null));
@@ -472,7 +473,9 @@ public class AlertServiceOperationalDeadlinesTests
 
         var payload = await BuildService(context).GetAlertsAsync(Admin, CancellationToken.None);
 
-        var names = payload.GetType().GetProperties().Select(p => p.Name).OrderBy(n => n).ToArray();
-        Assert.Equal(new[] { "SupplierDebts", "TotalCount", "UrgentTrips" }, names);
+        var names = payload.GetType().GetProperties().Select(p => p.Name).ToHashSet();
+        Assert.Contains("UrgentTrips", names);
+        Assert.Contains("SupplierDebts", names);
+        Assert.Contains("TotalCount", names);
     }
 }

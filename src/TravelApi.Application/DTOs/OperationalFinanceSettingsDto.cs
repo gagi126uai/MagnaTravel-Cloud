@@ -130,17 +130,28 @@ public class OperationalFinanceSettingsDto
     public bool? EnableAiCopilot { get; set; }
 
     /// <summary>
-    /// ADR-017 F1.1 (catalogo find-or-create, 2026-06-05): feature flag maestro del catalogo
-    /// find-or-create desde la venta. El admin lo prende/apaga desde el panel de Configuracion.
+    /// DEROGADA el 2026-08-06 (spec firmada de Tarifario, P8=A / M-10): el catalogo que aprende de las
+    /// ventas salio para todos y esta llave dejo de existir como decision del administrador.
     ///
-    /// <para>Es un flag de COMPORTAMIENTO puro: con OFF (default) todo es byte-identico a hoy y NO tiene
-    /// validacion cruzada con otros flags. En F1.1 nadie lo lee todavia (el comportamiento que gobierna
-    /// se construye en F1.2+); solo debe existir, persistir y poder togglearse.</para>
-    ///
-    /// <para>Nullable y patch-like (mismo criterio B-002 que el resto del DTO): enviar null u omitir el
-    /// campo en el PUT = no se modifica el valor actual. Solo se persiste si viene con valor.</para>
+    /// <para>El campo sobrevive SOLO por compatibilidad con clientes viejos que todavia lo mandan en el
+    /// PUT: lo que llegue se IGNORA, y el GET devuelve siempre <c>true</c>. Se elimina del contrato
+    /// cuando el panel de Configuracion deje de dibujarlo.</para>
     /// </summary>
     public bool? EnableCatalogFindOrCreate { get; set; }
+
+    /// <summary>
+    /// Spec firmada 2026-08-06 (P15=A / M-8): "el saldo tiene que estar completo N dias antes de la
+    /// salida". Es el numero que decide, para cada reserva, la FECHA LIMITE de pago = fecha de salida
+    /// menos N dias. Pasada esa fecha con saldo, la reserva figura vencida en la lista de deudores.
+    ///
+    /// <para><b>Ojo, no confundir con <see cref="UpcomingUnpaidReservationAlertDays"/></b> (default 7):
+    /// aquel decide cuando AVISAR que una salida se viene con deuda; este decide cuando la deuda pasa a
+    /// estar VENCIDA. El dueño pidio los dos numeros por separado (detalle abierto D1 de la spec).</para>
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): null u omitido = no se toca. Rango 1..365.</para>
+    /// </summary>
+    [Range(1, 365, ErrorMessage = "Los días deben estar entre 1 y 365.")]
+    public int? FullPaymentDueDaysBeforeDeparture { get; set; }
 
     /// <summary>
     /// Feature flag de los avisos "Proximos inicios" (ADR-019; el nombre interno conserva el de

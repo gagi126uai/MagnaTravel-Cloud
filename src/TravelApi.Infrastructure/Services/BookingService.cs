@@ -1,4 +1,4 @@
-using AutoMapper;
+﻿using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -37,9 +37,9 @@ public partial class BookingService : IBookingService
     // para no romper los tests unitarios que instancian con el ctor de 11 args.
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
-    // ADR-017 F1.3: lo usa SOLO el path del catalogo find-or-create para leer el flag
-    // EnableCatalogFindOrCreate + el setting StaleCostReferenceDays. Opcional para no romper los
-    // ctores de tests existentes (14 args). Si es null -> flag OFF (byte-identico), fail-closed.
+    // ADR-017 F1.3: lo usa el path del catalogo para leer el setting StaleCostReferenceDays (cuando una
+    // referencia de costo se considera vieja). Opcional para no romper los ctores de tests existentes
+    // (14 args). Si es null, se usa el default de 60 dias.
     private readonly IOperationalFinanceSettingsService? _settingsService;
     // ADR-031 v2.1: auditoria de la baja de asignaciones por cascada al borrar un servicio (M1).
     // Opcional para no romper los ctores de tests existentes; si es null, la limpieza igual ocurre
@@ -903,87 +903,10 @@ public partial class BookingService : IBookingService
 
     public async Task<FlightSegmentDto> CreateFlightAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
     {
-        // ADR-017 F1.3: con el catalogo find-or-create prendido, el alta corre por el path nuevo
-        // (transaccion atomica + find-or-create + request-manda + cadena de costo D7 + upsert de
-        // RateSupplierSale). Con el flag APAGADO, sigue EXACTAMENTE el codigo de abajo (byte-identico).
-        if (await IsCatalogFindOrCreateEnabledAsync(ct))
-            return await CreateFlightWithCatalogAsync(reservaId, req, ct);
-
-        ValidateFlightTimes(req.DepartureTime, req.ArrivalTime);
-        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
-        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
-        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
-
-        var flight = _mapper.Map<FlightSegment>(req);
-        flight.ReservaId = reservaId;
-        flight.SupplierId = supplierId;
-
-        // ADR-018 Ronda 7 (2026-06-06): la cabina es OPCIONAL. Vacio/null = "Sin especificar" y se
-        // persiste null (antes se coalesceaba a "Economy"; ese default de negocio quedo derogado).
-        flight.CabinClass = NormalizeOptionalText(flight.CabinClass);
-
-        // B1 (zona horaria): la hora de vuelo es "hora local del aeropuerto" (la que figura
-        // en el ticket), NO un instante UTC. La guardamos tal cual la cargo el usuario para
-        // que el voucher la muestre sin corrimiento. Ver NormalizeAirportWallClock.
-        flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
-        flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
-
-        // Auditoria ERP item 5: los deadlines mapean por convencion en el ALTA; solo falta normalizar a
-        // fecha de pared (Npgsql exige Kind=Utc en timestamptz). Ver NormalizeCalendarDate.
-        flight.TicketingDeadline = NormalizeCalendarDate(flight.TicketingDeadline);
-        flight.OperatorPaymentDeadline = NormalizeCalendarDate(flight.OperatorPaymentDeadline);
-
-        // Snapshot desde tarifario: si viene RateId, congelamos precios del tarifario
-        var rate = await GetRateAsync(req.RateId, ct);
-        if (rate != null)
-        {
-            flight.RateId = rate.Id;
-            flight.NetCost = rate.NetCost;
-            flight.SalePrice = rate.SalePrice;
-            flight.Commission = rate.Commission;
-            flight.Tax = rate.Tax;
-            // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
-            // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
-            flight.Currency = rate.Currency;
-        }
-
-        // En Presupuesto el status siempre es "Solicitado".
-        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
-            flight.Status = "Solicitado";
-
-        // Guard: si la reserva esta en Operativo/Closed, el servicio nuevo debe estar confirmado
-        // ADR-018: la identidad visible se deriva de ServiceDisplayName (ProductName si la ficha
-        // "producto-primero" no cargo aerolinea/numero), para no mostrar "Vuelo " vacio en el mensaje.
-        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}", flight.Status, ct);
-        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-
-        // ADR-031 (bypass B1): el aereo RESUELVE por TicketIssuedAt (que el alta no setea), asi que este
-        // gate es defensivo hoy. Se cablea igual para que ninguna ruta de alta que en el futuro deje el
-        // vuelo resuelto se cuele sin nombre + documento. La emision real tiene su gate efectivo.
-        // El alta nace sin resolver previo -> wasResolved=false.
-        // serviceId: 0 -> el alta no tiene Id propio aun, no puede tener asignaciones; set = toda la reserva.
-        await EnsureNominalCoverageBeforeResolvingAsync(
-            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(flight),
-            PassengerNominalRules.ServiceKind.Flight, AssignmentServiceType.Flight, serviceId: 0, ct);
-
-        await _flightRepo.AddAsync(flight, ct);
-
-        if (flight.SupplierId > 0)
-        {
-            await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
-        }
-
-        await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
-
-        var dto = _mapper.Map<FlightSegmentDto>(flight);
-        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
-        // B1.15: el response de POST exponia el costo del proveedor a usuarios sin
-        // permiso. Enmascaramos NetCost igual que Hotel.
-        await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
-        return dto;
+        // ADR-017 F1.3 (llave derogada el 2026-08-06, P8=A de la spec firmada): el alta SIEMPRE corre
+        // por el camino de catalogo (transaccion atomica + find-or-create del producto + "request manda"
+        // + cadena de costo D7 + memoria de venta por operador). Ya no existe camino legacy alternativo.
+        return await CreateFlightWithCatalogAsync(reservaId, req, ct);
     }
 
     public async Task<FlightSegmentDto> UpdateFlightAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateFlightRequest req, CancellationToken ct)
@@ -1255,73 +1178,10 @@ public partial class BookingService : IBookingService
 
     public async Task<HotelBookingDto> CreateHotelAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
     {
-        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
-        if (await IsCatalogFindOrCreateEnabledAsync(ct))
-            return await CreateHotelWithCatalogAsync(reservaId, req, ct);
-
-        ValidateHotelStay(req.CheckIn, req.CheckOut);
-        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
-        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
-        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-        var rate = await GetRateAsync(req.RateId, ct);
-        var supplierId = rate?.SupplierId ?? await ResolveSupplierIdAsync(req.SupplierId, ct);
-
-        var hotel = _mapper.Map<HotelBooking>(req);
-        hotel.ReservaId = reservaId;
-        hotel.SupplierId = supplierId;
-
-        // Bug 2026-06-06: la ficha inline manda CheckIn/CheckOut como fecha pelada ("2026-08-12") y el
-        // binder los deja con Kind=Unspecified -> Npgsql los rechaza en timestamptz. Normalizamos a
-        // fecha de pared (medianoche Kind=Utc). Ver NormalizeCalendarDate.
-        hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
-        hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
-
-        // Auditoria ERP item 5: el deadline mapea por convencion en el ALTA; normalizamos a fecha de
-        // pared (Kind=Utc). Ver NormalizeCalendarDate.
-        hotel.OperatorPaymentDeadline = NormalizeCalendarDate(hotel.OperatorPaymentDeadline);
-
-        if (rate != null)
-        {
-            ApplyHotelRateSnapshot(hotel, rate);
-
-            // B1 (F1b): si el caller no puede ver costos, el NetCost/Tax del request son el 0
-            // enmascarado rebotado por el form — el costo real lo resuelve el server desde la
-            // tarifa. Con permiso, no hace nada (el request manda, como siempre).
-            await ApplyHotelRateCostsForMaskedCallerAsync(hotel, rate, req, ct);
-        }
-
-        // En Presupuesto el status siempre es "Solicitado" — no es una reserva real.
-        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
-            hotel.Status = "Solicitado";
-
-        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, ServiceLabelHelper.WithPrefix("Hotel", hotel.HotelName, "sin nombre"), hotel.Status, ct);
-        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-
-        // ADR-031 (bypass B1): el alta puede dejar el hotel ya "Confirmado" (request con status resuelto
-        // y reserva fuera de Presupuesto) -> exigir el titular ANTES de persistir, para que el motor
-        // automatico no auto-confirme la reserva sin nombres.
-        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
-        await EnsureNominalCoverageBeforeResolvingAsync(
-            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(hotel),
-            PassengerNominalRules.ServiceKind.Hotel, AssignmentServiceType.Hotel, serviceId: 0, ct);
-
-        await _hotelRepo.AddAsync(hotel, ct);
-
-        if (hotel.SupplierId > 0)
-        {
-            await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
-        }
-
-        await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
-
-        var dto = _mapper.Map<HotelBookingDto>(hotel);
-        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
-        // B1.15 Fase 0.2: enmascarar NetCost si el caller no tiene cobranzas.see_cost.
-        // Antes el response de POST exponia el costo del proveedor a usuarios sin permiso.
-        await CostMasking.MaskHotelAsync(dto, _httpContextAccessor, _permissionResolver, ct);
-        return dto;
+        // ADR-017 F1.3 (llave derogada el 2026-08-06, P8=A de la spec firmada): el alta SIEMPRE corre
+        // por el camino de catalogo (transaccion atomica + find-or-create del producto + "request manda"
+        // + cadena de costo D7 + memoria de venta por operador). Ya no existe camino legacy alternativo.
+        return await CreateHotelWithCatalogAsync(reservaId, req, ct);
     }
 
     public async Task<HotelBookingDto> UpdateHotelAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateHotelRequest req, CancellationToken ct)
@@ -1577,71 +1437,10 @@ public partial class BookingService : IBookingService
 
     public async Task<PackageBookingDto> CreatePackageAsync(int reservaId, CreatePackageRequest req, CancellationToken ct)
     {
-        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
-        if (await IsCatalogFindOrCreateEnabledAsync(ct))
-            return await CreatePackageWithCatalogAsync(reservaId, req, ct);
-
-        ValidatePackageDates(req.StartDate, req.EndDate);
-        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
-        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
-        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
-
-        var package = _mapper.Map<PackageBooking>(req);
-        package.ReservaId = reservaId;
-        package.SupplierId = supplierId;
-
-        // Bug 2026-06-06: la ficha inline manda StartDate/EndDate como fecha pelada (Kind=Unspecified)
-        // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
-        package.StartDate = NormalizeCalendarDate(package.StartDate);
-        package.EndDate = NormalizeCalendarDate(package.EndDate);
-
-        // Auditoria ERP item 5: deadline mapeado por convencion en el ALTA; normalizado a fecha de pared.
-        package.OperatorPaymentDeadline = NormalizeCalendarDate(package.OperatorPaymentDeadline);
-
-        // Snapshot desde tarifario
-        var rate = await GetRateAsync(req.RateId, ct);
-        if (rate != null)
-        {
-            package.RateId = rate.Id;
-            package.NetCost = rate.NetCost;
-            package.SalePrice = rate.SalePrice;
-            package.Commission = rate.Commission;
-            package.Tax = rate.Tax; // impuesto incluido (igual que Flight): se congela del tarifario
-            // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
-            // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
-            package.Currency = rate.Currency;
-        }
-
-        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
-            package.Status = "Solicitado";
-
-        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, $"Paquete {package.PackageName ?? "sin nombre"}", package.Status, ct);
-        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-
-        // ADR-031 (bypass B1): el alta puede dejar el paquete resuelto -> exigir el nombre de TODOS
-        // los declarados ANTES de persistir.
-        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
-        await EnsureNominalCoverageBeforeResolvingAsync(
-            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(package),
-            PassengerNominalRules.ServiceKind.Package, AssignmentServiceType.Package, serviceId: 0, ct);
-
-        await _packageRepo.AddAsync(package, ct);
-
-        if (package.SupplierId > 0)
-        {
-            await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
-        }
-
-        await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
-
-        var dto = _mapper.Map<PackageBookingDto>(package);
-        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
-        // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
-        await CostMasking.MaskPackageAsync(dto, _httpContextAccessor, _permissionResolver, ct);
-        return dto;
+        // ADR-017 F1.3 (llave derogada el 2026-08-06, P8=A de la spec firmada): el alta SIEMPRE corre
+        // por el camino de catalogo (transaccion atomica + find-or-create del producto + "request manda"
+        // + cadena de costo D7 + memoria de venta por operador). Ya no existe camino legacy alternativo.
+        return await CreatePackageWithCatalogAsync(reservaId, req, ct);
     }
 
     public async Task<PackageBookingDto> UpdatePackageAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdatePackageRequest req, CancellationToken ct)
@@ -1864,76 +1663,10 @@ public partial class BookingService : IBookingService
 
     public async Task<TransferBookingDto> CreateTransferAsync(int reservaId, CreateTransferRequest req, CancellationToken ct)
     {
-        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
-        if (await IsCatalogFindOrCreateEnabledAsync(ct))
-            return await CreateTransferWithCatalogAsync(reservaId, req, ct);
-
-        ValidateTransferTimes(req.PickupDateTime, req.ReturnDateTime);
-        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
-        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
-        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-        var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
-
-        var transfer = _mapper.Map<TransferBooking>(req);
-        transfer.ReservaId = reservaId;
-        transfer.SupplierId = supplierId;
-
-        // ADR-018 Ronda 7 (2026-06-06): el tipo de vehiculo es OPCIONAL. Vacio/null = no informado y se
-        // persiste null (antes se coalesceaba a "Sedan"; ese default de negocio quedo derogado).
-        transfer.VehicleType = NormalizeOptionalText(transfer.VehicleType);
-
-        // B1 (zona horaria): la hora del traslado es hora local (la que ve el pasajero en el
-        // itinerario), NO un instante UTC. Se guarda tal cual, sin corrimiento. ReturnDateTime
-        // es opcional (solo round-trip). Ver NormalizeAirportWallClock.
-        transfer.PickupDateTime = NormalizeAirportWallClock(transfer.PickupDateTime);
-        if (transfer.ReturnDateTime.HasValue)
-            transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
-
-        // Auditoria ERP item 5: deadline mapeado por convencion en el ALTA; normalizado a fecha de pared.
-        transfer.OperatorPaymentDeadline = NormalizeCalendarDate(transfer.OperatorPaymentDeadline);
-
-        // Snapshot desde tarifario
-        var rate = await GetRateAsync(req.RateId, ct);
-        if (rate != null)
-        {
-            transfer.RateId = rate.Id;
-            transfer.NetCost = rate.NetCost;
-            transfer.SalePrice = rate.SalePrice;
-            transfer.Commission = rate.Commission;
-            transfer.Tax = rate.Tax; // impuesto incluido (igual que Flight): se congela del tarifario
-            // Trazabilidad: guardamos en que moneda se cotizo (copiada del tarifario).
-            // No afecta saldo/pagos/factura; solo deja registro de la moneda original.
-            transfer.Currency = rate.Currency;
-        }
-
-        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
-            transfer.Status = "Solicitado";
-
-        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, $"Transfer {transfer.VehicleType ?? ""}".Trim(), transfer.Status, ct);
-        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-
-        // ADR-031 (bypass B1): el alta puede dejar el traslado resuelto -> exigir el titular ANTES de persistir.
-        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
-        await EnsureNominalCoverageBeforeResolvingAsync(
-            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(transfer),
-            PassengerNominalRules.ServiceKind.Transfer, AssignmentServiceType.Transfer, serviceId: 0, ct);
-
-        await _transferRepo.AddAsync(transfer, ct);
-
-        if (transfer.SupplierId > 0)
-        {
-            await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
-        }
-
-        await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
-
-        var dto = _mapper.Map<TransferBookingDto>(transfer);
-        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
-        // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
-        await CostMasking.MaskTransferAsync(dto, _httpContextAccessor, _permissionResolver, ct);
-        return dto;
+        // ADR-017 F1.3 (llave derogada el 2026-08-06, P8=A de la spec firmada): el alta SIEMPRE corre
+        // por el camino de catalogo (transaccion atomica + find-or-create del producto + "request manda"
+        // + cadena de costo D7 + memoria de venta por operador). Ya no existe camino legacy alternativo.
+        return await CreateTransferWithCatalogAsync(reservaId, req, ct);
     }
 
     public async Task<TransferBookingDto> UpdateTransferAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateTransferRequest req, CancellationToken ct)
@@ -2202,65 +1935,10 @@ public partial class BookingService : IBookingService
 
     public async Task<AssistanceBookingDto> CreateAssistanceAsync(int reservaId, CreateAssistanceRequest req, CancellationToken ct)
     {
-        // ADR-017 F1.3: ver nota en CreateFlightAsync. Flag OFF = byte-identico al codigo de abajo.
-        if (await IsCatalogFindOrCreateEnabledAsync(ct))
-            return await CreateAssistanceWithCatalogAsync(reservaId, req, ct);
-
-        ValidateAssistanceValidity(req.ValidFrom, req.ValidTo);
-        if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
-        var file = await _fileRepo.GetByIdAsync(reservaId, ct);
-        if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
-        var rate = await GetRateAsync(req.RateId, ct);
-        // Si la tarifa define proveedor lo usa; sino, el del request.
-        var supplierId = rate?.SupplierId ?? await ResolveSupplierIdAsync(req.SupplierId, ct);
-
-        var assistance = _mapper.Map<AssistanceBooking>(req);
-        assistance.ReservaId = reservaId;
-        assistance.SupplierId = supplierId;
-
-        // Bug 2026-06-06: la ficha inline manda ValidFrom/ValidTo como fecha pelada (Kind=Unspecified)
-        // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
-        assistance.ValidFrom = NormalizeCalendarDate(assistance.ValidFrom);
-        assistance.ValidTo = NormalizeCalendarDate(assistance.ValidTo);
-
-        // Auditoria ERP item 5: deadline mapeado por convencion en el ALTA; normalizado a fecha de pared.
-        assistance.OperatorPaymentDeadline = NormalizeCalendarDate(assistance.OperatorPaymentDeadline);
-
-        if (rate != null)
-        {
-            ApplyAssistanceRateSnapshot(assistance, rate);
-        }
-
-        // En Presupuesto el status siempre es "Solicitado" — no es una reserva real.
-        if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
-            assistance.Status = "Solicitado";
-
-        var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, ServiceLabelHelper.WithPrefix("Asistencia", assistance.PlanType, "seguro"), assistance.Status, ct);
-        if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-
-        // ADR-031 (bypass B1): el alta puede dejar la asistencia resuelta -> exigir nombre + documento +
-        // fecha de nacimiento de TODOS los declarados ANTES de persistir (la prima depende de la edad).
-        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
-        await EnsureNominalCoverageBeforeResolvingAsync(
-            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(assistance),
-            PassengerNominalRules.ServiceKind.Assistance, AssignmentServiceType.Assistance, serviceId: 0, ct);
-
-        await _assistanceRepo.AddAsync(assistance, ct);
-
-        if (assistance.SupplierId > 0)
-        {
-            await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
-        }
-
-        await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
-
-        var dto = _mapper.Map<AssistanceBookingDto>(assistance);
-        dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);
-        // B1.15: enmascarar NetCost en el response de POST (igual que Hotel).
-        await CostMasking.MaskAssistanceAsync(dto, _httpContextAccessor, _permissionResolver, ct);
-        return dto;
+        // ADR-017 F1.3 (llave derogada el 2026-08-06, P8=A de la spec firmada): el alta SIEMPRE corre
+        // por el camino de catalogo (transaccion atomica + find-or-create del producto + "request manda"
+        // + cadena de costo D7 + memoria de venta por operador). Ya no existe camino legacy alternativo.
+        return await CreateAssistanceWithCatalogAsync(reservaId, req, ct);
     }
 
     public async Task<AssistanceBookingDto> UpdateAssistanceAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, UpdateAssistanceRequest req, CancellationToken ct)

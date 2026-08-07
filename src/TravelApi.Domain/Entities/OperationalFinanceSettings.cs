@@ -482,9 +482,27 @@ public class OperationalFinanceSettings
     /// upsert de RateSupplierSale. Es un flag de COMPORTAMIENTO puro, sin emision fiscal y sin
     /// dependencias con otros flags, por eso NO tiene validacion cruzada.</para>
     ///
-    /// <para>Default <c>false</c>. Editable desde el panel admin (PUT operational-finance).</para>
+    /// <para><b>DEROGADA el 2026-08-06</b> (spec firmada de Tarifario, P8=A / M-10): el catalogo que
+    /// aprende de las ventas salio para TODOS y esta llave dejo de leerse en ningun lado. La columna
+    /// queda en la base (no se borra: una migracion destructiva no aporta nada) pero es INERTE — si
+    /// aparece un <c>if</c> nuevo sobre este campo, es un bug.</para>
     /// </summary>
     public bool EnableCatalogFindOrCreate { get; set; } = false;
+
+    /// <summary>
+    /// Spec firmada 2026-08-06 (P15=A / M-8): <b>cuantos dias ANTES DE LA SALIDA tiene que estar
+    /// completo el saldo</b> de una reserva. De aca sale la fecha limite de pago de cada reserva
+    /// (fecha de salida - N dias) y el veredicto "el saldo ya se paso de fecha" de la lista de deudores.
+    ///
+    /// <para><b>Es un numero DISTINTO de <see cref="UpcomingUnpaidReservationAlertDays"/></b> (7): ese
+    /// decide cuando se AVISA que una salida se viene con deuda; este decide cuando la deuda esta
+    /// VENCIDA. El dueño pidio los dos por separado (detalle abierto D1 de la spec) — no unificarlos
+    /// sin preguntarle.</para>
+    ///
+    /// <para>Default 21 (firmado). No traba ninguna operacion: solo pinta la fila en rojo y alimenta el
+    /// aviso (P16=A).</para>
+    /// </summary>
+    public int FullPaymentDueDaysBeforeDeparture { get; set; } = 21;
 
     /// <summary>
     /// Feature flag de los avisos "Proximos inicios" (UI: "Proximos inicios" — ADR-019, que reemplazo

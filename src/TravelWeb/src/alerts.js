@@ -123,6 +123,51 @@ export async function showConfirm(input, text, confirmText = "Si, confirmar", co
   return result.isConfirmed;
 }
 
+/**
+ * Cartel con DOS acciones nombradas explícitas (ninguna es "Cancelar") + cualquier
+ * descarte (ESC, la X, click afuera del cartel) como una TERCERA salida, sin ejecutar
+ * ninguna de las dos acciones. Se usa cuando las dos opciones son igual de válidas y
+ * ninguna debería quedar escondida detrás de un botón "Cancelar" genérico — mismo
+ * estilo visual que showConfirm (patrón único), pero sin el botón Cancelar de ahí.
+ *
+ * Fix 2026-08-07 (freno de repetidos del Tarifario): antes se reusaba showConfirm()
+ * con la acción peligrosa puesta en el botón "Cancelar" — que además tenía el foco por
+ * default (focusCancel) — así que ESC, la X o un click afuera terminaban ejecutando la
+ * acción peligrosa. Acá el llamador recibe el resultado CRUDO de SweetAlert2
+ * (isConfirmed/isDenied/isDismissed) para interpretarlo con su propia lógica pura —
+ * nunca se colapsa a un booleano ambiguo. El foco por default queda en "confirmText"
+ * (la opción seteada como más segura), nunca en "denyText".
+ */
+export async function showConfirmWithAlternative({ title, text, confirmText, denyText, confirmColor = "indigo" }) {
+  const palette = confirmPalettes[confirmColor] || confirmPalettes.indigo;
+
+  const result = await Swal.fire({
+    title: title || "Confirmar accion",
+    html: buildConfirmHtml({ text, badgeTone: palette.badgeTone }),
+    showDenyButton: true,
+    showCancelButton: false,
+    showCloseButton: true,
+    confirmButtonText: confirmText,
+    denyButtonText: denyText,
+    customClass: {
+      popup: "w-full max-w-[26rem] rounded-2xl border border-slate-200 bg-white p-0 shadow-[0_24px_64px_-28px_rgba(15,23,42,0.45)]",
+      title: "px-6 pt-6 text-left text-xl font-bold tracking-tight text-slate-950",
+      htmlContainer: "mx-0 mt-0 px-6 pb-0 text-left",
+      actions: "mt-0 flex flex-col-reverse gap-2 px-6 pb-6 pt-4 sm:flex-row sm:justify-end",
+      confirmButton: `inline-flex min-h-10 items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition focus-visible:outline-none focus-visible:ring-4 ${palette.buttonTone}`,
+      denyButton: "inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50",
+      closeButton: "text-slate-300 transition hover:!text-slate-500 focus:!shadow-none focus:!outline-none",
+    },
+    buttonsStyling: false,
+  });
+
+  return {
+    isConfirmed: Boolean(result.isConfirmed),
+    isDenied: Boolean(result.isDenied),
+    isDismissed: Boolean(result.isDismissed),
+  };
+}
+
 export async function showTextPrompt({
   title,
   text,

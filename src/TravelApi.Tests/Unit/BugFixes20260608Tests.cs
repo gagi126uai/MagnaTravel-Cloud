@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Security.Claims;
 using System.Threading;
@@ -283,7 +283,7 @@ public class BugFixes20260608Tests
             CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
             RoomType: "Doble", MealPlan: "Desayuno",
             Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
-            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null);
+            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null, Currency: "ARS");
 
         var dto = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
 
@@ -308,7 +308,7 @@ public class BugFixes20260608Tests
             DepartureTime: new DateTime(2026, 8, 12, 14, 30, 0, DateTimeKind.Unspecified),
             ArrivalTime: null, // vuelo solo de ida: sin hora de llegada
             CabinClass: null, Baggage: null, PNR: null,
-            NetCost: 300m, SalePrice: 500m, Commission: 200m, Tax: 0m, Notes: null);
+            NetCost: 300m, SalePrice: 500m, Commission: 200m, Tax: 0m, Notes: null, Currency: "ARS");
 
         var dto = await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
 

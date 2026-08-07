@@ -70,4 +70,16 @@ public class RateSupplierSale
 
     /// <summary>Cuantas veces se vendio esta combinacion (lo incrementa el upsert atomico en F1.3).</summary>
     public int SalesCount { get; set; }
+
+    /// <summary>
+    /// Reserva de la ULTIMA venta que dejo este precio (spec firmada 2026-08-06, M-1): el Tarifario
+    /// muestra "US$ 48 · 22/05/2026 · F-2026-1042" y ese numero es un enlace a la ficha.
+    ///
+    /// <para>Nullable y FK <c>ON DELETE SET NULL</c>, igual que <see cref="Rate.CreatedFromReservaId"/>:
+    /// si esa reserva desapareciera, el precio aprendido NO se pierde, solo se queda sin enlace. Las filas
+    /// que ya existian antes de esta columna quedan en null (no se puede adivinar de que venta salieron)
+    /// y se completan solas en la proxima venta.</para>
+    /// </summary>
+    public int? LastReservaId { get; set; }
+    public Reserva? LastReserva { get; set; }
 }

@@ -1,9 +1,10 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
@@ -32,7 +33,7 @@ public class RatesController : ControllerBase
         }
         catch (ArgumentException)
         {
-            return NotFound("Proveedor no encontrado.");
+            return NotFound(new { message = "No encontramos ese operador." });
         }
     }
 
@@ -45,7 +46,7 @@ public class RatesController : ControllerBase
         }
         catch (ArgumentException)
         {
-            return NotFound("Proveedor no encontrado.");
+            return NotFound(new { message = "No encontramos ese operador." });
         }
     }
 
@@ -58,7 +59,7 @@ public class RatesController : ControllerBase
         }
         catch (ArgumentException)
         {
-            return NotFound("Proveedor no encontrado.");
+            return NotFound(new { message = "No encontramos ese operador." });
         }
     }
 
@@ -71,7 +72,7 @@ public class RatesController : ControllerBase
         }
         catch (ArgumentException)
         {
-            return NotFound("Proveedor no encontrado.");
+            return NotFound(new { message = "No encontramos ese operador." });
         }
     }
 
@@ -92,7 +93,7 @@ public class RatesController : ControllerBase
     {
         var resolvedSupplierId = await ResolveOptionalSupplierIdAsync(supplierId, ct);
         if (supplierId is not null && resolvedSupplierId is null)
-            return NotFound("Proveedor no encontrado.");
+            return NotFound(new { message = "No encontramos ese operador." });
 
         var rates = await _rateService.SearchAsync(resolvedSupplierId, serviceType, query, ct);
         return Ok(rates);
@@ -104,9 +105,8 @@ public class RatesController : ControllerBase
     /// y deduplica las tarifas legacy del mismo producto. Cada item trae el contexto de la "ultima vez".
     ///
     /// <para>Mismo gate que los creates de bookings (<c>[Authorize]</c> de clase, NO Admin-only). El
-    /// costo se enmascara para callers sin <c>cobranzas.see_cost</c> (R1/D1). Gateado por el flag
-    /// <c>EnableCatalogFindOrCreate</c>: con el flag OFF el service devuelve null y aca respondemos 404,
-    /// como si el endpoint no existiera (ADR §2.3 / R4).</para>
+    /// costo se enmascara para callers sin <c>cobranzas.see_cost</c> (R1/D1). Ya no hay llave que lo
+    /// apague (spec firmada 2026-08-06, P8=A): antes respondia 404 con el interruptor apagado.</para>
     /// </summary>
     [HttpGet("catalog-search")]
     public async Task<IActionResult> CatalogSearch(
@@ -114,14 +114,106 @@ public class RatesController : ControllerBase
         [FromQuery] string? q,
         CancellationToken ct)
     {
-        var results = await _rateService.CatalogSearchAsync(serviceType, q, ct);
-        if (results is null)
+        return Ok(await _rateService.CatalogSearchAsync(serviceType, q, ct));
+    }
+
+    /// <summary>
+    /// "Tarifario que se arma solo" (spec firmada 2026-08-06, M-1/M-2): la lista de productos aprendidos,
+    /// con un renglon por operador (ultimo precio, moneda, unidad, cuando y de que reserva salio).
+    ///
+    /// <para>Mismo permiso que el resto del tarifario (<c>tarifario.view</c> de la clase). Sin permiso de
+    /// ver costos, el precio que viaja es el de VENTA, nunca el costo (F-14).</para>
+    /// </summary>
+    [HttpGet("learned-products")]
+    public async Task<ActionResult<PagedResponse<LearnedProductDto>>> GetLearnedProducts(
+        [FromQuery] LearnedProductsQuery query,
+        CancellationToken ct)
+    {
+        // Un filtro por un operador que ya no existe es un pedido invalido, no una falla del sistema: se
+        // responde con una frase de negocio en vez de dejar que reviente en un error generico.
+        if (!string.IsNullOrWhiteSpace(query.SupplierId)
+            && await ResolveOptionalSupplierIdAsync(query.SupplierId, ct) is null)
         {
-            // El service devuelve null SOLO cuando el flag esta apagado: el endpoint "no existe".
-            return NotFound();
+            return NotFound(new { message = "No encontramos ese operador." });
         }
 
-        return Ok(results);
+        return Ok(await _rateService.GetLearnedProductsAsync(query, ct));
+    }
+
+    /// <summary>
+    /// Alta simple de producto desde el Tarifario (spec firmada 2026-08-06, M-3 + P7 "evitar repetidos a
+    /// toda costa"). Pocos campos y freno de repetidos OBLIGATORIO del lado del servidor.
+    ///
+    /// <para><b>Dos respuestas posibles</b>: 201 con el producto creado, o <b>409</b> con la lista de
+    /// productos parecidos cuando el sistema frena. El cliente vuelve a llamar con
+    /// <c>crearIgual = true</c> (<c>createAnyway</c>) SOLO si el usuario confirmo que no es el mismo.</para>
+    ///
+    /// <para>No es Admin-only a proposito: un vendedor ya puede crear productos al cargar un servicio,
+    /// asi que exigir Admin aca seria una puerta incoherente. El costo se enmascara igual que en el resto
+    /// del tarifario.</para>
+    /// </summary>
+    [HttpPost("simple")]
+    [RequirePermission(Permissions.TarifarioEdit)]
+    public async Task<IActionResult> CreateSimple([FromBody] CreateSimpleProductRequest req, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _rateService.CreateSimpleProductAsync(req, ct);
+
+            if (result.Created is null)
+            {
+                // Freno de repetidos: no se creo nada todavia. 409 = "hay un conflicto que resolver".
+                return Conflict(new
+                {
+                    message = result.Message,
+                    reason = result.Reason,
+                    similarProducts = result.SimilarProducts
+                });
+            }
+
+            return CreatedAtAction(nameof(GetById), new { publicId = result.Created.PublicId }, result.Created);
+        }
+        catch (RateValidationException ex)
+        {
+            // SOLO se devuelve el texto de la excepcion PROPIA del tarifario, que por contrato esta escrita
+            // para una persona. Cualquier otra excepcion sigue de largo al manejador global (generico
+            // amable), para no filtrar nombres de campos ni sufijos tecnicos.
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Renombra un PRODUCTO del Tarifario (spec firmada 2026-08-06, §2.2): corrige el nombre —y la ciudad,
+    /// si es hotel— de TODAS las tarifas que forman ese producto.
+    ///
+    /// <para><b>Por que no alcanza el PUT de una tarifa</b>: un producto de la lista puede estar formado por
+    /// varias tarifas; renombrar una sola parte el grupo en dos productos con nombres distintos, que es
+    /// justo el repetido que hay que evitar.</para>
+    ///
+    /// <para>Respuestas: 200 con la identidad nueva · 404 si el producto no existe · <b>409</b> si el nombre
+    /// nuevo ya lo tiene otro producto (no se fusiona nada: decide el usuario).</para>
+    /// </summary>
+    [HttpPost("learned-products/rename")]
+    [RequirePermission(Permissions.TarifarioEdit)]
+    public async Task<IActionResult> RenameLearnedProduct(
+        [FromBody] RenameLearnedProductRequest req, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _rateService.RenameLearnedProductAsync(req, ct));
+        }
+        catch (RateProductNameTakenException ex)
+        {
+            return Conflict(new { message = ex.Message, reason = LearnedProductRenameReasons.NameAlreadyTaken });
+        }
+        catch (RateValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -143,7 +235,7 @@ public class RatesController : ControllerBase
         catch (ArgumentException)
         {
             // El service tira ArgumentException si el SupplierId no resuelve.
-            return NotFound("Proveedor no encontrado.");
+            return NotFound(new { message = "No encontramos ese operador." });
         }
     }
 
@@ -162,8 +254,13 @@ public class RatesController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Edicion completa de UNA tarifa (el formulario largo). Decision firmada 2026-08-06: pasa de "solo
+    /// Admin" al permiso <c>tarifario.edit</c>, el mismo del alta a mano — quien puede cargar un producto
+    /// puede corregirlo. Los roles default NO cambian: hoy solo el Admin tiene ese permiso.
+    /// </summary>
     [HttpPut("{publicId}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.TarifarioEdit)]
     public async Task<IActionResult> Update(string publicId, [FromBody] RateDto req, CancellationToken ct)
     {
         try

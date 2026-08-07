@@ -2751,6 +2751,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(s => new { s.RateId, s.LastSoldAt })
                   .IsDescending(false, true)
                   .HasDatabaseName("IX_RateSupplierSales_RateId_LastSoldAt");
+
+            // FK a la reserva que dejo el ultimo precio (2026-08-06, M-1): SET NULL, igual criterio que
+            // Rate.CreatedFromReservaId — el precio aprendido sobrevive aunque la reserva ya no este.
+            entity.HasOne(s => s.LastReserva)
+                  .WithMany()
+                  .HasForeignKey(s => s.LastReservaId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
     }
 

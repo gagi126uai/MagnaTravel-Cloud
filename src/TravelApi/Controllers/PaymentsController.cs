@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
@@ -37,6 +37,33 @@ public class PaymentsController : ControllerBase
     public async Task<ActionResult<PagedResponse<CollectionWorkItemDto>>> GetCollectionsWorklist([FromQuery] CollectionWorklistQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _paymentService.GetCollectionsWorklistAsync(query, cancellationToken));
+    }
+
+    /// <summary>
+    /// "Viajan pronto y deben" (spec firmada 2026-08-06, §4.2): a quien le tenes que cobrar, ordenado por
+    /// fecha de salida. Solo informa: no traba ninguna operacion (P16=A).
+    ///
+    /// <para>Mismo alcance que el resto de Cobranzas: con <c>cobranzas.view_all</c> se ven todas las
+    /// reservas; sin ese permiso, el vendedor ve solo las suyas.</para>
+    /// </summary>
+    [HttpGet("debtors-by-departure")]
+    [RequirePermission(Permissions.CobranzasView)]
+    public async Task<ActionResult<DebtorsByDepartureResponse>> GetDebtorsByDeparture(
+        [FromQuery] DebtorsQuery query, CancellationToken cancellationToken)
+    {
+        return Ok(await _paymentService.GetDebtorsByDepartureAsync(query, cancellationToken));
+    }
+
+    /// <summary>
+    /// "Deuda por cliente" (spec firmada 2026-08-06, §4.3): un renglon por cliente que debe, con su total
+    /// separado por moneda. Mismo alcance por permiso que la lista de arriba.
+    /// </summary>
+    [HttpGet("debtors-by-customer")]
+    [RequirePermission(Permissions.CobranzasView)]
+    public async Task<ActionResult<CustomerDebtsResponse>> GetDebtorsByCustomer(
+        [FromQuery] DebtorsQuery query, CancellationToken cancellationToken)
+    {
+        return Ok(await _paymentService.GetCustomerDebtsAsync(query, cancellationToken));
     }
 
     [HttpGet]

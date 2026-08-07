@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
@@ -124,7 +124,7 @@ public class Adr031PassengerNominalGateTests
             CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
             RoomType: "Doble", MealPlan: "Desayuno", Adults: 1, Children: 0, Rooms: 1,
             ConfirmationNumber: null, NetCost: 100m, SalePrice: 200m, Commission: 100m, Notes: null,
-            WorkflowStatus: "Confirmado");
+            WorkflowStatus: "Confirmado", Currency: "ARS");
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => booking.CreateHotelAsync(1, req, CancellationToken.None));
@@ -153,7 +153,7 @@ public class Adr031PassengerNominalGateTests
             CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
             RoomType: "Doble", MealPlan: "Desayuno", Adults: 1, Children: 0, Rooms: 1,
             ConfirmationNumber: null, NetCost: 100m, SalePrice: 200m, Commission: 100m, Notes: null,
-            WorkflowStatus: "Confirmado");
+            WorkflowStatus: "Confirmado", Currency: "ARS");
 
         var dto = await booking.CreateHotelAsync(1, req, CancellationToken.None);
 

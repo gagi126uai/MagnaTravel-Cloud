@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Security.Claims;
 using AutoMapper;
 using Microsoft.AspNetCore.Http;
@@ -143,7 +143,7 @@ public class BookingServiceTests
             null,
             null,
             rate.PublicId.ToString(),
-            "Solicitado");
+            "Solicitado", Currency: "ARS");
 
         var created = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
 
@@ -272,7 +272,7 @@ public class BookingServiceTests
             200m,
             300m,
             100m,
-            null) with { Address = "Av. Colon 1234" };
+            null, Currency: "ARS") with { Address = "Av. Colon 1234" };
 
         await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
 
@@ -340,12 +340,13 @@ public class BookingServiceTests
         Assert.Equal("Direccion nueva 99", storedHotel.Address);
     }
 
-    // === Trazabilidad de moneda (metadato, no afecta saldo) ===
-    // Al crear un servicio desde una tarifa, copiamos rate.Currency al booking para
-    // dejar registro de en que moneda se cotizo. Si no hay tarifa, queda en null.
+    // === Moneda de la venta: MANDA EL REQUEST (ADR-017 D5, unico camino desde 2026-08-06) ===
+    // Antes, si el servicio nacia de una tarifa, se copiaba rate.Currency al booking. Hoy la moneda
+    // de la venta es la que eligio el vendedor: la tarifa NO la pisa (dos operadores pueden vender el
+    // mismo producto en monedas distintas). Y es OBLIGATORIA: sin moneda el alta se rechaza.
 
     [Fact]
-    public async Task CreateHotelAsync_WithRate_CopiesRateCurrencyForTraceability()
+    public async Task CreateHotelAsync_WithRate_UsesRequestCurrencyNotRateCurrency()
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
@@ -393,20 +394,20 @@ public class BookingServiceTests
             null,
             null,
             rate.PublicId.ToString(),
-            "Solicitado");
+            "Solicitado", Currency: "ARS");
 
         var created = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
 
-        // La moneda viaja al DTO y a la entidad persistida.
-        Assert.Equal("USD", created.Currency);
+        // La tarifa esta en USD pero la venta se cargo en ARS: gana la del request.
+        Assert.Equal("ARS", created.Currency);
         var storedHotel = await context.HotelBookings.SingleAsync();
-        Assert.Equal("USD", storedHotel.Currency);
-        // No tocamos los precios: el snapshot de precios sigue igual que antes.
+        Assert.Equal("ARS", storedHotel.Currency);
+        // Los precios los manda el request, no la tarifa.
         Assert.Equal(777m, storedHotel.SalePrice);
     }
 
     [Fact]
-    public async Task CreateHotelAsync_WithoutRate_LeavesCurrencyNull()
+    public async Task CreateHotelAsync_WithoutRate_KeepsRequestCurrency()
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
@@ -439,18 +440,18 @@ public class BookingServiceTests
             null,
             null,
             null,
-            "Solicitado");
+            "Solicitado", Currency: "ARS");
 
         var created = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
 
-        // No inventamos moneda: null = legacy / no informado.
-        Assert.Null(created.Currency);
+        // Carga manual sin tarifa: la moneda es la que eligio el vendedor.
+        Assert.Equal("ARS", created.Currency);
         var storedHotel = await context.HotelBookings.SingleAsync();
-        Assert.Null(storedHotel.Currency);
+        Assert.Equal("ARS", storedHotel.Currency);
     }
 
     [Fact]
-    public async Task CreateTransferAsync_WithRate_CopiesRateCurrencyForTraceability()
+    public async Task CreateTransferAsync_WithRate_UsesRequestCurrencyNotRateCurrency()
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
@@ -490,13 +491,14 @@ public class BookingServiceTests
             null,
             rate.PublicId.ToString(),
             "Solicitado",
-            null);
+            null, Currency: "ARS");
 
         var created = await service.CreateTransferAsync(reserva.Id, request, CancellationToken.None);
 
-        Assert.Equal("USD", created.Currency);
+        // Tarifa en USD, venta cargada en ARS: manda el request.
+        Assert.Equal("ARS", created.Currency);
         var storedTransfer = await context.TransferBookings.SingleAsync();
-        Assert.Equal("USD", storedTransfer.Currency);
+        Assert.Equal("ARS", storedTransfer.Currency);
         Assert.Equal(80m, storedTransfer.SalePrice);
     }
 
@@ -531,7 +533,7 @@ public class BookingServiceTests
             Commission: 30m,
             Notes: "nota real del usuario",
             Direction: "in",
-            ServiceMode: "private");
+            ServiceMode: "private", Currency: "ARS");
 
         var created = await service.CreateTransferAsync(reserva.Id, request, CancellationToken.None);
 
@@ -574,7 +576,7 @@ public class BookingServiceTests
             Commission: 30m,
             Notes: null,
             Direction: "in",
-            ServiceMode: "private"), CancellationToken.None);
+            ServiceMode: "private", Currency: "ARS"), CancellationToken.None);
 
         var stored = await context.TransferBookings.SingleAsync();
 
@@ -635,7 +637,7 @@ public class BookingServiceTests
             SalePrice: 1500m,
             Commission: 500m,
             Notes: "nota real del usuario",
-            OccupancyBase: "double");
+            OccupancyBase: "double", Currency: "ARS");
 
         var created = await service.CreatePackageAsync(reserva.Id, request, CancellationToken.None);
 
@@ -677,7 +679,7 @@ public class BookingServiceTests
             SalePrice: 1500m,
             Commission: 500m,
             Notes: null,
-            OccupancyBase: "double"), CancellationToken.None);
+            OccupancyBase: "double", Currency: "ARS"), CancellationToken.None);
 
         var stored = await context.PackageBookings.SingleAsync();
 
@@ -748,7 +750,7 @@ public class BookingServiceTests
             RateId: null,
             WorkflowStatus: "Solicitado",
             ConfirmationNumber: "CONF-9988",
-            PassengerCount: 3);
+            PassengerCount: 3, Currency: "ARS");
 
         var created = await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
 
@@ -799,7 +801,7 @@ public class BookingServiceTests
             WorkflowStatus: "Solicitado",
             ConfirmationNumber: null,
             PassengerCount: null,
-            TicketNumber: "045-1234567890");
+            TicketNumber: "045-1234567890", Currency: "ARS");
 
         var created = await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
 
@@ -849,7 +851,7 @@ public class BookingServiceTests
             SalePrice: 800m,
             Commission: 300m,
             Tax: 120m,
-            Notes: null);
+            Notes: null, Currency: "ARS");
 
         await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
 
@@ -895,7 +897,7 @@ public class BookingServiceTests
             SalePrice: 200m,
             Commission: 100m,
             Tax: 0m,
-            Notes: null);
+            Notes: null, Currency: "ARS");
 
         var created = await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
 

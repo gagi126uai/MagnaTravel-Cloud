@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
 using AutoMapper;
@@ -51,9 +51,9 @@ public class ServiceCatalogPillsDtoTests
         => new MapperConfiguration(config => config.AddProfile<MappingProfile>()).CreateMapper();
 
     // Construye el BookingService con un caller no-Admin (mismo patron que BookingServiceCostMaskingTests).
-    // catalogFlagOn: con false (default) NO se inyecta settings service -> flag OFF (fail-closed, path
-    // legacy, igual que los tests originales). Con true se inyecta EnableCatalogFindOrCreate=true, que es
-    // requisito de los Confirm*CostAsync (con flag OFF el endpoint "no existe": FeatureNotEnabledException).
+    // catalogFlagOn: hoy la llave del catalogo NO existe mas (derogada el 2026-08-06) y el parametro solo
+    // decide si se inyecta el service de settings. Con false NO se inyecta: el catalogo corre igual, con el
+    // umbral de "costo viejo" en su default de 60 dias.
     private static BookingService CreateServiceForUser(AppDbContext context, IMapper mapper, bool canSeeCost, bool catalogFlagOn = false)
     {
         var reservaService = new Mock<IReservaService>();
@@ -161,7 +161,7 @@ public class ServiceCatalogPillsDtoTests
         SupplierId: supplierPublicId, HotelName: "Hotel test", StarRating: 4, City: "Bariloche", Country: "Argentina",
         CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
         RoomType: "Doble", MealPlan: "Desayuno", Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
-        NetCost: 250m, SalePrice: 400m, Commission: 150m, Notes: null);
+        NetCost: 250m, SalePrice: 400m, Commission: 150m, Notes: null, Currency: "ARS");
 
     private static UpdateHotelRequest BuildUpdateHotel(string supplierPublicId) => new(
         SupplierId: supplierPublicId, HotelName: "Hotel test", StarRating: 4, City: "Bariloche", Country: "Argentina",
@@ -174,26 +174,26 @@ public class ServiceCatalogPillsDtoTests
         Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
         DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
         CabinClass: "Economy", Baggage: null, PNR: null,
-        NetCost: 300m, SalePrice: 500m, Commission: 200m, Tax: 0m, Notes: null);
+        NetCost: 300m, SalePrice: 500m, Commission: 200m, Tax: 0m, Notes: null, Currency: "ARS");
 
     private static CreateTransferRequest BuildCreateTransfer(string supplierPublicId) => new(
         SupplierId: supplierPublicId, PickupLocation: "Aeropuerto", DropoffLocation: "Hotel centro",
         PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: "Sedan", Passengers: 2,
         IsRoundTrip: false, ReturnDateTime: null,
-        NetCost: 70m, SalePrice: 120m, Commission: 50m, Notes: null);
+        NetCost: 70m, SalePrice: 120m, Commission: 50m, Notes: null, Currency: "ARS");
 
     private static CreatePackageRequest BuildCreatePackage(string supplierPublicId) => new(
         SupplierId: supplierPublicId, PackageName: "Paquete Caribe", Destination: "Cancun",
         StartDate: DateTime.UtcNow.Date.AddDays(20), EndDate: DateTime.UtcNow.Date.AddDays(27),
         IncludesHotel: true, IncludesFlight: true, IncludesTransfer: true, IncludesExcursions: false, IncludesMeals: true,
         Adults: 2, Children: 0, Itinerary: null,
-        NetCost: 900m, SalePrice: 1500m, Commission: 600m, Notes: null);
+        NetCost: 900m, SalePrice: 1500m, Commission: 600m, Notes: null, Currency: "ARS");
 
     private static CreateAssistanceRequest BuildCreateAssistance(string supplierPublicId) => new(
         SupplierId: supplierPublicId,
         ValidFrom: DateTime.UtcNow.Date.AddDays(10), ValidTo: DateTime.UtcNow.Date.AddDays(17),
         Adults: 2, Children: 0,
-        NetCost: 50m, SalePrice: 90m, Commission: 40m);
+        NetCost: 50m, SalePrice: 90m, Commission: 40m, Currency: "ARS");
 
     // Updates espejo de los creates: mismos valores, Status "Solicitado" (igual que BuildUpdateHotel).
 
@@ -224,8 +224,8 @@ public class ServiceCatalogPillsDtoTests
         NetCost: 50m, SalePrice: 90m, Commission: 40m, Status: "Solicitado");
 
     // ============================================================ CostToConfirm: masking ============================================================
-    // El flag OFF nunca setea la marca, asi que para probar el masking la seteamos directo en la
-    // entidad (simula un servicio que quedo "a confirmar" con el flag ON).
+    // Para probar SOLO el enmascarado, la marca se siembra directo en la entidad (simula un servicio que
+    // quedo "a confirmar" en una venta anterior) en vez de reproducir toda la cadena de costo.
 
     [Fact]
     public async Task GetHotelsAsync_UserWithoutSeeCost_MasksCostToConfirmInList()
@@ -878,18 +878,18 @@ public class ServiceCatalogPillsDtoTests
         Assert.Null(persisted.CostToConfirmReason);
     }
 
-    // ============================================================ patron de flag (OFF = valor neutro) ============================================================
+    // ============================================================ marca "costo a confirmar": valor neutro ============================================================
 
     [Fact]
-    public async Task CreateHotelAsync_FlagOff_DoesNotSetCostToConfirm()
+    public async Task CreateHotelAsync_CallerQueVeCostos_NoDejaLaMarcaDeCostoAConfirmar()
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
         var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
         var service = CreateServiceForUser(context, mapper, canSeeCost: true);
 
-        // Sin settings sembrados el flag EnableCatalogFindOrCreate esta OFF -> corre el path legacy,
-        // que NUNCA escribe la marca. El campo viaja igual en el DTO, con valor neutro.
+        // Quien VE costos los carga el mismo: no hay nada que confirmar despues. La marca viaja igual en
+        // el DTO, con su valor neutro.
         var created = await service.CreateHotelAsync(reserva.Id, BuildCreateHotel(supplier.PublicId.ToString()), CancellationToken.None);
 
         Assert.False(created.CostToConfirm);
@@ -897,14 +897,13 @@ public class ServiceCatalogPillsDtoTests
     }
 
     [Fact]
-    public async Task CreateHotelAsync_FlagOff_WithRateCreatedInSale_StillDerivesProductCreatedInSale()
+    public async Task CreateHotelAsync_ConRateCreadoEnVenta_DerivaLaMarcaDelProducto()
     {
         await using var context = CreateContext();
         var mapper = CreateMapper();
         var (reserva, supplier) = await SeedReservaAndSupplierAsync(context);
-        // Caso real: el producto nacio en venta mientras el flag estuvo ON; despues alguien apago el
-        // flag y carga un servicio con ese rate desde el modal viejo. La derivacion es independiente
-        // del flag (refleja el dato persistido).
+        // La marca "creado en venta" sale del dato PERSISTIDO en el producto, no de como se cargo este
+        // servicio: si el producto nacio vendiendo, la pill aparece aunque el servicio venga de otro lado.
         var rate = await SeedRateAsync(context, id: 50, createdInSale: true);
         var service = CreateServiceForUser(context, mapper, canSeeCost: true);
 

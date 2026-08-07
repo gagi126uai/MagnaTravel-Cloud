@@ -88,7 +88,9 @@ export const MODULE_DEFS = [
     links: [
       { to: "/customers", label: "Clientes",               icon: Users,       requiredPermission: "clientes.view" },
       { to: "/crm",       label: "Posibles clientes",      icon: UserPlus,    requiredPermission: "crm.view" },
-      { to: "/payments",     label: "Cobranza y Facturación", icon: CreditCard, requiredPermission: "cobranzas.view" },
+      // Spec firmada 2026-08-06 (P17=B): "Cobranza y Facturación" se parte en dos puertas
+      // que no se pisan — "Cobranzas" (a quién le cobro) y "Facturación" (los comprobantes).
+      { to: "/payments",     label: "Cobranzas",              icon: CreditCard, requiredPermission: "cobranzas.view" },
       // Pantalla global de Facturación: todos los comprobantes de la agencia (spec 2026-06-28 §4/P14).
       // Requiere cobranzas.view_all (un vendedor sin ese permiso no la ve aquí; accede a sus propios
       // comprobantes desde la solapa de facturación de cada cliente).

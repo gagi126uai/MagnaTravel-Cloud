@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TravelApi.Application.DTOs;
@@ -87,7 +87,7 @@ public class FlightSegmentsControllerCreateTests : IClassFixture<CustomWebApplic
             SalePrice: 500m,
             Commission: 200m,
             Tax: 0m,
-            Notes: null);
+            Notes: null, Currency: "ARS");
 
         var response = await client.PostAsJsonAsync($"/api/reservas/{reservaPublicId}/flights", request);
 

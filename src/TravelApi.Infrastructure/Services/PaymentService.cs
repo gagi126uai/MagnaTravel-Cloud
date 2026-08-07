@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Security.Claims;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
@@ -21,7 +21,7 @@ using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
-public class PaymentService : IPaymentService
+public partial class PaymentService : IPaymentService
 {
     private readonly AppDbContext _dbContext;
     private readonly IEntityReferenceResolver _entityReferenceResolver;

@@ -809,9 +809,13 @@ export default function ReservaDetailPage() {
   // ADR-020: enableSoldToSettleStates eliminado del ciclo. El ciclo es unico y directo.
   // Solo leemos los flags que siguen vigentes.
   const { flags } = useOperationalFlags();
-  // ADR-017: cuando está ON, la carga de servicios usa la ficha en línea (ServiceInlineCard)
-  // en lugar del modal (ServiceFormModal). Con OFF el comportamiento es idéntico al de hoy.
-  const isCatalogFindOrCreateEnabled = flags.enableCatalogFindOrCreate;
+  // ADR-017 + spec firmada 2026-08-06 (P8=A, M-10): la llave "Tarifario que se arma solo"
+  // MURIÓ — la carga de servicios usa siempre la ficha en línea (ServiceInlineCard), para
+  // todos, sin excepción. Queda esta constante en `true` (en vez de borrar directamente las
+  // ~15 referencias de más abajo) para minimizar el riesgo de esta tanda: el día que se limpie
+  // del todo el camino viejo (ServiceFormModal para los 5 tipos con buscador), se borra junto
+  // con `showServiceModal`/`serviceToEdit` y esta constante.
+  const isCatalogFindOrCreateEnabled = true;
   // F2: flag de avisos de próximos inicios. Cuando está ON, ServiceList muestra la columna "Avisos".
   // Es independiente de isCatalogFindOrCreateEnabled (catálogo OFF + avisos ON → columna visible).
   const isServiceDeadlineAlertsEnabled = flags.enableServiceDeadlineAlerts;

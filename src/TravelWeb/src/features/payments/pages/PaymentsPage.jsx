@@ -7,10 +7,10 @@ export default function PaymentsPage() {
       <div className="space-y-4 pb-6 border-b border-slate-100 dark:border-slate-800/50">
         <div>
           <h1 className="text-3xl font-light tracking-tight text-slate-900 dark:text-white mb-1">
-            Cobranza y Facturacion
+            Cobranzas
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-Lo que cobrás a tus clientes y las facturas que emitís, todo en un mismo lugar.
+            A quién le tenés que cobrar y los cobros que entraron.
           </p>
         </div>
 

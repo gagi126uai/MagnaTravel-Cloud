@@ -1,4 +1,4 @@
-namespace TravelApi.Application.Constants;
+﻿namespace TravelApi.Application.Constants;
 
 /// <summary>
 /// FC1.2.1 v3 (2026-05-17): catalogo de strings de <c>action</c> que se pasan
@@ -733,4 +733,24 @@ public static class AuditActions
     /// (mismo entityName que Parte B: sigue siendo una restauración, solo que de alcance total).
     /// </summary>
     public const string SystemDataTotallyRestored = "SystemDataTotallyRestored";
+
+    // ===== Tarifario (spec firmada 2026-08-06: el tarifario se arma solo) =====
+
+    /// <summary>
+    /// Alguien cargo un producto A MANO en el Tarifario (alta simple). Deja el rastro de QUIEN lo cargo:
+    /// el tarifario es la memoria de precios de la agencia y un producto inventado ensucia las sugerencias
+    /// de todos. EntityName=<see cref="RateEntityName"/>, EntityId = Rate.PublicId. El detail lleva tipo,
+    /// nombre y ciudad — NUNCA costos (el costo es dato gateado por permiso).
+    /// </summary>
+    public const string RateCreatedManually = "RateCreatedManually";
+
+    /// <summary>
+    /// Alguien RENOMBRO un producto del tarifario (nombre y/o ciudad). Cambia como lo encuentran TODOS los
+    /// vendedores y afecta el agrupado de la lista, por eso deja rastro. EntityName=<see cref="RateEntityName"/>,
+    /// EntityId = Rate.PublicId de la tarifa representante. El detail lleva el nombre viejo y el nuevo.
+    /// </summary>
+    public const string RateRenamed = "RateRenamed";
+
+    /// <summary>Tarifario: entityName de los eventos sobre un producto (una fila de Rates).</summary>
+    public const string RateEntityName = "Rate";
 }

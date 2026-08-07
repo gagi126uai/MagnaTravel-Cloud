@@ -36,6 +36,8 @@ import { hasPermission } from "../../../auth";
 import { formatCurrency } from "../../../lib/utils";
 import { ProductSearchField } from "./ProductSearchField";
 import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
+import { buildLastSaleHintText } from "./lastSaleHintLogic";
+import { LastSaleHint } from "./LastSaleHint";
 
 // ─── Helpers de formato ──────────────────────────────────────────────────────
 
@@ -193,6 +195,12 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
         currency: false,
     });
 
+    // Renglón gris "Último precio: operador · precio · fecha" (spec 2026-08-06, §3.2, P9=A):
+    // guarda el resultado elegido del buscador para poder armar el texto del hint. Es solo
+    // informativo — nunca vuelve a escribir en form (P-21).
+    const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
+    const textoUltimoPrecio = buildLastSaleHintText(ultimoPrecioSugerido, { canSeeCost });
+
     // C5: si el operador sugerido (de la última venta del buscador) NO está en la lista
     // de operadores de la reserva, lo agregamos como opción dinámica para que el <select>
     // no quede en amarillo con ninguna fila seleccionable.
@@ -250,6 +258,8 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
             unitSalePrice: Boolean(sale.salePrice),
             currency: Boolean(sale.currency),
         });
+        // Guardamos el resultado completo (no solo `sale`) para el renglón gris de abajo.
+        setUltimoPrecioSugerido(catalogResult);
     };
 
     const handleCreateNew = (searchText) => {
@@ -276,6 +286,8 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
         // Los campos que quedaron limpios dejan de ser "sugeridos"; los preservados ya
         // estaban en false (si no, se habrían limpiado), así que todo queda en false.
         setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+        // "Crear nuevo" no tiene una venta anterior de la cual mostrar el renglón gris.
+        setUltimoPrecioSugerido(null);
     };
 
     // Cuando el usuario escribe en el buscador después de haber elegido un producto,
@@ -291,6 +303,8 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
+        // El vendedor volvió a escribir: el renglón gris de la selección anterior ya no aplica.
+        setUltimoPrecioSugerido(null);
         // Si borra el texto, también limpiamos los sugeridos (no hay producto seleccionado)
         if (!texto) {
             setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
@@ -499,6 +513,7 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                             data-testid="hotel-costo-noche"
                             aria-label="Costo por noche"
                         />
+                        <LastSaleHint text={textoUltimoPrecio} />
                     </div>
                 )}
                 <div>
@@ -519,6 +534,8 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                         data-testid="hotel-venta-noche"
                         aria-label="Precio de venta por noche"
                     />
+                    {/* Sin permiso de costos, el renglón gris va acá (no hay campo de costo a la vista) */}
+                    {!canSeeCost && <LastSaleHint text={textoUltimoPrecio} />}
                 </div>
                 <div>
                     <label className={LABEL_BASE} htmlFor="hotel-moneda">Moneda</label>

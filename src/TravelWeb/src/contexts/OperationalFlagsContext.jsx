@@ -30,8 +30,13 @@ const defaultFlags = {
     enableMultiCurrencyInvoicing: false,
     // ADR-013: emision de Nota de Debito fiscal en cancelaciones con penalidad.
     enableCancellationDebitNote: false,
-    // ADR-017: tarifario find-or-create desde la venta (ficha inline ServiceInlineCard).
-    enableCatalogFindOrCreate: false,
+    // ADR-017 + spec 2026-08-06 (M-10, fix 2026-08-07): la llave "Tarifario que se arma
+    // solo" MURIÓ del todo — el back ya no la tiene, así que /operational-flags puede
+    // dejar de mandar este campo en cualquier momento. Default TRUE (no false): si el
+    // fetch falla o el campo no viene, la ficha de carga de servicio tiene que seguir
+    // siendo la ficha en línea (ServiceInlineCard). Caer a false manda a la ficha VIEJA,
+    // que no manda moneda en el payload → el motor la rechaza con 400.
+    enableCatalogFindOrCreate: true,
     // ADR-019: avisos "Proximos inicios" (campanita + columna en ServiceList).
     enableServiceDeadlineAlerts: false,
     // NOTA: enableSoldToSettleStates fue eliminado en ADR-020.
@@ -64,7 +69,10 @@ export function OperationalFlagsProvider({ children }) {
                     setFlags({
                         enableMultiCurrencyInvoicing: Boolean(data.enableMultiCurrencyInvoicing),
                         enableCancellationDebitNote: Boolean(data.enableCancellationDebitNote),
-                        enableCatalogFindOrCreate: Boolean(data.enableCatalogFindOrCreate),
+                        // Fix 2026-08-07: la llave ya no existe en el back, así que este campo
+                        // puede venir undefined/null (nunca más "apagado a propósito"). Solo un
+                        // `false` EXPLÍCITO lo apagaría; cualquier otra cosa cae en TRUE.
+                        enableCatalogFindOrCreate: data.enableCatalogFindOrCreate === false ? false : true,
                         enableServiceDeadlineAlerts: Boolean(data.enableServiceDeadlineAlerts),
                     });
                 }

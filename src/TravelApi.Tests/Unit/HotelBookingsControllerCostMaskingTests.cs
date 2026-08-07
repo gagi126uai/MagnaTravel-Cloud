@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -143,7 +143,7 @@ public class HotelBookingsControllerCostMaskingTests : IClassFixture<CustomWebAp
             SalePrice: 800m,
             Commission: 300m,
             Notes: null
-        );
+        , Currency: "ARS");
     }
 
     [Fact]

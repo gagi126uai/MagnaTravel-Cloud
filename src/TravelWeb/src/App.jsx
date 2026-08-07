@@ -15,7 +15,8 @@ import CustomerAccountPage from "./features/customers/pages/CustomerAccountPage"
 import ReservasPage from "./features/reservas/pages/ReservasPage";
 import ReservaDetailPage from "./features/reservas/pages/ReservaDetailPage";
 import PaymentsPage from "./features/payments/pages/PaymentsPage";
-import PaymentsByReservaPage from "./features/payments/pages/PaymentsByReservaPage";
+import PaymentsDebtorsByDeparturePage from "./features/payments/pages/PaymentsDebtorsByDeparturePage";
+import PaymentsDebtorsByCustomerPage from "./features/payments/pages/PaymentsDebtorsByCustomerPage";
 import PaymentsMovementsPage from "./features/payments/pages/PaymentsMovementsPage";
 import PaymentsPendingPage from "./features/payments/pages/PaymentsPendingPage";
 import MessagesPage from "./features/messages/pages/MessagesPage";
@@ -25,6 +26,7 @@ import SuppliersPage from "./features/suppliers/pages/SuppliersPage";
 import SupplierAccountPage from "./features/suppliers/pages/SupplierAccountPage";
 import ReportsPage from "./pages/ReportsPage";
 import RatesPage from "./pages/RatesPage";
+import RatesFullFormPage from "./pages/RatesFullFormPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import QuotesPage from "./pages/QuotesPage";
 import CRMPage from "./pages/CRMPage";
@@ -260,14 +262,20 @@ export default function App() {
                     <Route path="/suppliers" element={<SuppliersPage />} />
                     <Route path="/suppliers/:publicId/account" element={<SupplierAccountPage />} />
                     <Route path="/payments" element={<PaymentsPage />}>
-                      <Route index element={<Navigate to="/payments/reservas" replace />} />
-                      {/* B1.15 Fase D'.B: 3 tabs nuevos */}
-                      <Route path="reservas" element={<PaymentsByReservaPage />} />
+                      {/* Spec firmada 2026-08-06 (§4.1, P11=A): "Por reserva" murió (repetía lo
+                          que ya da la ficha) y en su lugar entran "Viajan pronto y deben" (la
+                          pestaña que mira Gastón todos los días, ahora es la puerta de entrada)
+                          y "Deuda por cliente". */}
+                      <Route index element={<Navigate to="/payments/departures" replace />} />
+                      <Route path="departures" element={<PaymentsDebtorsByDeparturePage />} />
+                      <Route path="by-customer" element={<PaymentsDebtorsByCustomerPage />} />
                       <Route path="movements" element={<PaymentsMovementsPage />} />
                       <Route path="pending" element={<PaymentsPendingPage />} />
-                      {/* Rutas viejas: las paginas que resolvian ya no existen (demolicion Tanda B0).
-                          Solo queda el redirect, para que un bookmark viejo caiga en la pantalla nueva y no en un 404. */}
-                      <Route path="collections" element={<Navigate to="/payments/reservas" replace />} />
+                      {/* Rutas viejas: las paginas que resolvian ya no existen (demolicion Tanda B0
+                          y, para "reservas", spec 2026-08-06). Solo queda el redirect, para que un
+                          bookmark viejo caiga en la pantalla nueva y no en un 404. */}
+                      <Route path="reservas" element={<Navigate to="/payments/departures" replace />} />
+                      <Route path="collections" element={<Navigate to="/payments/departures" replace />} />
                       <Route path="cash" element={<Navigate to="/cash" replace />} />
                       <Route path="invoicing" element={<Navigate to="/payments/pending" replace />} />
                       <Route path="history" element={<Navigate to="/payments/movements" replace />} />
@@ -278,6 +286,9 @@ export default function App() {
                       element={hasPermission("messages.view") ? <MessagesPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route path="/rates" element={<RatesPage />} />
+                    {/* "Carga completa" (spec 2026-08-06 §2.2/§2.3): el formulario largo de
+                        siempre, ahora detrás del Tarifario nuevo — nunca puerta de entrada. */}
+                    <Route path="/rates/full" element={<RatesFullFormPage />} />
                     <Route path="/quotes" element={<QuotesPage />} />
                     <Route
                       path="/packages"

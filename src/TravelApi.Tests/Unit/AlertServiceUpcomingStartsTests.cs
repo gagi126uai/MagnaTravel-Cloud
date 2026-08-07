@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -94,7 +94,7 @@ public class AlertServiceUpcomingStartsTests
     // ===================== contrato: flag OFF byte-identico + casing =====================
 
     [Fact]
-    public async Task FlagOff_PayloadIsHistoricAnonymousObject_NoNewKeys()
+    public async Task SinAvisosNuevos_PayloadSigueTrayendoLasTresClavesHistoricas()
     {
         await using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(BuildReserva(1));
@@ -104,18 +104,16 @@ public class AlertServiceUpcomingStartsTests
         var service = BuildService(context, upcomingStarts: false, catalogFlag: false);
         var payload = await service.GetAlertsAsync(new AlertCallerContext("admin", IsAdmin: true, CanSeeCost: true), CancellationToken.None);
 
-        // Con ambos flags OFF el payload es el objeto anonimo historico: exactamente 3 propiedades.
-        var names = payload.GetType().GetProperties().Select(p => p.Name).OrderBy(n => n).ToArray();
-        Assert.Equal(new[] { "SupplierDebts", "TotalCount", "UrgentTrips" }, names);
-
-        // Y el JSON serializado no contiene ninguna clave nueva.
+        // Desde que murio la llave del catalogo (2026-08-06) la respuesta SIEMPRE es la extendida: la
+        // seccion "Costos a confirmar" existe siempre. Lo que se sigue garantizando es que las tres
+        // claves historicas nunca se pierden — el payload nuevo es un superconjunto del viejo.
         var json = SerializeAsApi(payload);
-        Assert.DoesNotContain("upcomingStarts", json);
-        Assert.DoesNotContain("upcomingStartsWindowDays", json);
-        Assert.DoesNotContain("costsToConfirm", json);
         Assert.Contains("\"urgentTrips\"", json);
         Assert.Contains("\"supplierDebts\"", json);
         Assert.Contains("\"totalCount\"", json);
+        Assert.Contains("\"costsToConfirm\"", json);
+        // El aviso de proximos inicios sigue detras de SU propia llave, que aca esta apagada.
+        Assert.DoesNotContain("upcomingStartsWindowDays", json);
     }
 
     [Fact]
@@ -577,9 +575,10 @@ public class AlertServiceUpcomingStartsTests
 
         var service = BuildService(context, upcomingStarts: false, catalogFlag: true);
 
-        // Caller SIN ver-costos: el bucket no aparece (ni siquiera vacio).
+        // Caller SIN ver-costos: la seccion viaja igual (misma forma para todos, Fuga 2) pero VACIA.
         var noCost = await service.GetAlertsAsync(new AlertCallerContext("vendedor-A", IsAdmin: false, CanSeeCost: false), CancellationToken.None);
-        Assert.False(HasKey(noCost, "CostsToConfirm"));
+        Assert.True(HasKey(noCost, "CostsToConfirm"));
+        Assert.Empty(Bucket(noCost, "CostsToConfirm"));
 
         // Caller CON ver-costos: ve su servicio a confirmar, con razon y SIN montos.
         var withCost = await service.GetAlertsAsync(new AlertCallerContext("vendedor-A", IsAdmin: false, CanSeeCost: true), CancellationToken.None);
@@ -594,17 +593,19 @@ public class AlertServiceUpcomingStartsTests
     }
 
     [Fact]
-    public async Task CostsToConfirm_CatalogFlagOff_BucketNotPresent()
+    public async Task CostsToConfirm_SinLlave_SiempreLlegaAlQuePuedeVerCostos()
     {
         await using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(BuildReserva(1, responsible: null));
         context.HotelBookings.Add(new HotelBooking { Id = 1, ReservaId = 1, HotelName = "Maitei", City = "Posadas", CostToConfirm = true, CostToConfirmReason = "NoKnownCost" });
         await context.SaveChangesAsync();
 
-        // Flag de catalogo OFF -> no hay bucket CostsToConfirm aunque el admin vea costos.
+        // Consecuencia firmada de matar la llave (2026-08-06 P8=A / M-10): la seccion "Costos a
+        // confirmar" ya no depende de ningun interruptor. Antes este test verificaba lo contrario.
         var service = BuildService(context, upcomingStarts: false, catalogFlag: false);
         var payload = await service.GetAlertsAsync(new AlertCallerContext("admin", IsAdmin: true, CanSeeCost: true), CancellationToken.None);
 
-        Assert.False(HasKey(payload, "CostsToConfirm"));
+        Assert.True(HasKey(payload, "CostsToConfirm"));
+        Assert.Single(Bucket(payload, "CostsToConfirm"));
     }
 }

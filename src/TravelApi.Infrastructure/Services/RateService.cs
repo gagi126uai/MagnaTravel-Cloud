@@ -1,6 +1,8 @@
-using System.Data;
+﻿using System.Data;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+// GetDbTransaction(): extension que saca la transaccion ADO.NET real de la transaccion de EF.
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using TravelApi.Application.DTOs;
@@ -12,7 +14,7 @@ using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
-public class RateService : IRateService
+public partial class RateService : IRateService
 {
     private readonly AppDbContext _db;
     private readonly ILogger<RateService> _logger;
@@ -26,6 +28,10 @@ public class RateService : IRateService
     // Opcional (default null) para no romper el ctor legacy de los tests de masking; si es null,
     // catalog-search se comporta fail-closed (flag OFF -> 404), igual que el resto del helper.
     private readonly IOperationalFinanceSettingsService? _settingsService;
+    // Rastro de autor de los cambios a mano del tarifario (alta simple / renombrar), 2026-08-06.
+    // Opcional (default null) para no romper los ctores de los tests viejos: sin el, no hay rastro, pero
+    // ninguna operacion se cae.
+    private readonly IAuditService? _auditService;
 
     // ===================================================================
     // Pieza C "tarifario que se llena solo": umbral de similitud difusa.
@@ -49,13 +55,15 @@ public class RateService : IRateService
         ILogger<RateService> logger,
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
-        IOperationalFinanceSettingsService? settingsService = null)
+        IOperationalFinanceSettingsService? settingsService = null,
+        IAuditService? auditService = null)
     {
         _db = db;
         _logger = logger;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
         _settingsService = settingsService;
+        _auditService = auditService;
     }
 
     // ===================================================================
@@ -493,6 +501,12 @@ public class RateService : IRateService
             Itinerary = request.Itinerary
         };
 
+        // P7 "evitar repetidos a toda costa" (2026-08-06): el nombre normalizado se escribe SIEMPRE, en
+        // TODOS los caminos de alta. Antes solo lo escribia el alta desde la venta; un producto cargado
+        // desde el formulario largo nacia sin SearchName y quedaba INVISIBLE para el buscador que aprende
+        // y para el find-or-create -> el mismo hotel terminaba cargado dos veces.
+        rate.SearchName = BuildSearchName(rate.ServiceType, rate.ProductName, rate.HotelName);
+
         _db.Rates.Add(rate);
         await _db.SaveChangesAsync(ct);
 
@@ -510,15 +524,24 @@ public class RateService : IRateService
 
         var supplierId = await ResolveOptionalSupplierIdAsync(request.SupplierId, ct);
 
+        // ANTI-BORRADO DE COSTOS (mismo criterio que la "Fuga 3" de ADR-017 F1b en los servicios): a quien
+        // NO puede ver costos, la pantalla le muestra 0 en costo e impuesto (enmascarado). Si al guardar se
+        // escribiera ese 0, editar el NOMBRE de una tarifa borraria el costo real del proveedor sin que
+        // nadie se entere. Por eso: sin permiso, el costo persistido se CONSERVA y la ganancia se recalcula
+        // con el costo conservado y el precio de venta del request (que ese si lo puede editar).
+        var canSeeCost = await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct);
+        var netCost = canSeeCost ? request.NetCost : rate.NetCost;
+        var tax = canSeeCost ? request.Tax : rate.Tax;
+
         rate.SupplierId = supplierId;
         rate.ServiceType = request.ServiceType;
         rate.ProductName = request.ProductName;
         rate.Description = request.Description;
         rate.PriceUnit = request.PriceUnit ?? "servicio";
-        rate.NetCost = request.NetCost;
-        rate.Tax = request.Tax;
+        rate.NetCost = netCost;
+        rate.Tax = tax;
         rate.SalePrice = request.SalePrice;
-        rate.Commission = request.SalePrice - request.NetCost - request.Tax;
+        rate.Commission = request.SalePrice - netCost - tax;
         rate.Currency = request.Currency ?? "USD";
         rate.ValidFrom = request.ValidFrom;
         rate.ValidTo = request.ValidTo;
@@ -553,6 +576,9 @@ public class RateService : IRateService
         rate.IncludesInsurance = request.IncludesInsurance;
         rate.DurationDays = request.DurationDays;
         rate.Itinerary = request.Itinerary;
+        // Si le corrigen el nombre (o el nombre del hotel), el nombre normalizado tiene que seguirlo:
+        // si no, el buscador seguiria encontrando el producto por el nombre viejo. Ver nota en CreateAsync.
+        rate.SearchName = BuildSearchName(rate.ServiceType, rate.ProductName, rate.HotelName);
 
         await _db.SaveChangesAsync(ct);
 
@@ -901,12 +927,20 @@ public class RateService : IRateService
     /// <summary>
     /// Crea un comando sobre la conexion del DbContext, abriendola si hace falta.
     /// Reutiliza la conexion de EF para respetar la misma transaccion/config.
+    ///
+    /// <para><b>Por que se engancha la transaccion en curso</b>: si el DbContext esta adentro de una
+    /// transaccion (el alta simple corre en una Serializable), un comando crudo SIN
+    /// <c>command.Transaction</c> corre FUERA de ella — Npgsql lo rechaza o lo ejecuta en otro contexto, y
+    /// en el mejor caso el freno de repetidos leeria un estado distinto del que la transaccion esta por
+    /// escribir. Con esta linea, la busqueda difusa ve exactamente lo mismo que el resto de la operacion.
+    /// Si no hay transaccion abierta queda null, que es el comportamiento normal de siempre.</para>
     /// </summary>
     private NpgsqlCommand CreateRatesCommand(string sql)
     {
         var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
         var command = connection.CreateCommand();
         command.CommandText = sql;
+        command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction;
         return command;
     }
 
@@ -981,17 +1015,14 @@ public class RateService : IRateService
     // dropdown casi vacio. A escala single-tenant (pocos miles de Rates) es barato.
     private const int CatalogSearchCandidateFetchLimit = 50;
 
-    public async Task<IReadOnlyList<CatalogSearchItemDto>?> CatalogSearchAsync(
+    public async Task<IReadOnlyList<CatalogSearchItemDto>> CatalogSearchAsync(
         string? serviceType, string? query, CancellationToken ct)
     {
-        // 1. Gate por flag. Si esta OFF (o no podemos leerlo -> fail-closed), devolvemos null:
-        //    el controller traduce null a 404, asi el endpoint "no existe" hasta prender el flag.
-        if (!await IsCatalogFindOrCreateEnabledAsync(ct))
-        {
-            return null;
-        }
+        // (2026-08-06, spec firmada P8=A) Ya no hay llave: el buscador que aprende de las ventas esta
+        // disponible para todos. Antes este metodo devolvia null con la llave apagada y el controller
+        // respondia 404 "como si el endpoint no existiera"; eso murio.
 
-        // 2. Validacion de entrada. Normalizamos q con la MISMA funcion que escribe SearchName
+        // 1. Validacion de entrada. Normalizamos q con la MISMA funcion que escribe SearchName
         //    (NormalizeForCatalog), para que "Maitei" / "MAITEI " / "maitei--" se comporten igual
         //    (cierra la nota NB-1 de los reviewers de F1.1). q con menos de 2 chars utiles o sin
         //    tipo de servicio -> lista vacia (no es un error: todavia no hay nada que buscar).
@@ -1005,7 +1036,7 @@ public class RateService : IRateService
         var isHotel = string.Equals(
             TextNormalizer.NormalizeForMatch(serviceTypeFilter), "hotel", StringComparison.Ordinal);
 
-        // 3. Candidatos difusos (RateId + score). En Postgres usa pg_trgm; en motores no
+        // 2. Candidatos difusos (RateId + score). En Postgres usa pg_trgm; en motores no
         //    relacionales (tests InMemory) cae a un fallback LINQ por substring.
         var candidates = await FetchCatalogCandidatesAsync(serviceTypeFilter, normalizedQuery, isHotel, ct);
         if (candidates.Count == 0)
@@ -1013,7 +1044,7 @@ public class RateService : IRateService
             return Array.Empty<CatalogSearchItemDto>();
         }
 
-        // 4. Detalle de cada Rate candidato + su ultima venta (RateSupplierSale).
+        // 3. Detalle de cada Rate candidato + su ultima venta (RateSupplierSale).
         var scoreByRateId = candidates
             .GroupBy(candidate => candidate.RateId)
             .ToDictionary(group => group.Key, group => group.Max(candidate => candidate.Score));
@@ -1022,7 +1053,7 @@ public class RateService : IRateService
         var rates = await LoadCandidateRatesAsync(rateIds, ct);
         var latestSaleByRateId = await LoadLatestSalesAsync(rateIds, ct);
 
-        // 5. Enmascarado de costo: lo resolvemos UNA vez (mismo resolver que F1b / CostMasking).
+        // 4. Enmascarado de costo: lo resolvemos UNA vez (mismo resolver que F1b / CostMasking).
         var canSeeCost = await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct);
 
         var items = rates
@@ -1033,32 +1064,17 @@ public class RateService : IRateService
                 canSeeCost))
             .ToList();
 
-        // 6. Dedupe (ADR §2.4 / m1): el mismo producto cargado N veces aparece UNA vez. Para Hotel
+        // 5. Dedupe (ADR §2.4 / m1): el mismo producto cargado N veces aparece UNA vez. Para Hotel
         //    la clave incluye la City normalizada (homonimos de 2 ciudades = 2 productos distintos).
         //    Lo hacemos en memoria con NormalizeForCatalog (autoritativo) sobre los pocos candidatos.
         var deduped = DedupeCatalogItems(items, isHotel);
 
-        // 7. Orden final (ADR §2.3.a): mas parecido primero; a igual score, la venta mas reciente.
+        // 6. Orden final (ADR §2.3.a): mas parecido primero; a igual score, la venta mas reciente.
         return deduped
             .OrderByDescending(item => item.Score ?? -1d)
             .ThenByDescending(item => item.LastSale?.SoldAt ?? DateTime.MinValue)
             .Take(CatalogSearchResultLimit)
             .ToList();
-    }
-
-    /// <summary>
-    /// Lee el flag <c>EnableCatalogFindOrCreate</c>. Fail-closed: si no hay service de settings
-    /// inyectado (ctor legacy de tests), se considera apagado -> catalog-search devuelve 404.
-    /// </summary>
-    private async Task<bool> IsCatalogFindOrCreateEnabledAsync(CancellationToken ct)
-    {
-        if (_settingsService is null)
-        {
-            return false;
-        }
-
-        var settings = await _settingsService.GetEntityAsync(ct);
-        return settings.EnableCatalogFindOrCreate;
     }
 
     /// <summary>

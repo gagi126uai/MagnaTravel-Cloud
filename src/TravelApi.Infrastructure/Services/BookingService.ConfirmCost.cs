@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Exceptions;
 using TravelApi.Domain.Entities;
@@ -31,7 +31,6 @@ public partial class BookingService
     // esta obra, sin cambios.
     public async Task<HotelBookingDto> ConfirmHotelCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
-        await EnsureCatalogEnabledForConfirmAsync(ct);
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var id = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
 
@@ -55,7 +54,7 @@ public partial class BookingService
 
                 var divisor = CatalogUnitization.HotelDivisor(hotel.Nights, hotel.Rooms);
                 var unit = CatalogUnitization.ForHotel(hotel.NetCost, hotel.Tax, hotel.SalePrice, hotel.Nights, hotel.Rooms);
-                await UpsertConfirmedSaleAsync(hotel.RateId, hotel.SupplierId, unit, hotel.Currency, hotel.CreatedAt, ct);
+                await UpsertConfirmedSaleAsync(hotel.RateId, hotel.SupplierId, unit, hotel.Currency, hotel.CreatedAt, reservaId, ct);
             }
 
             var dto = _mapper.Map<HotelBookingDto>(hotel);
@@ -73,7 +72,6 @@ public partial class BookingService
     // estado ADR-035 (fuera de esta obra).
     public async Task<FlightSegmentDto> ConfirmFlightCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
-        await EnsureCatalogEnabledForConfirmAsync(ct);
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var id = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
 
@@ -93,7 +91,7 @@ public partial class BookingService
                 await RefreshBalancesAfterCostConfirmAsync(flight.SupplierId, reservaId, ct);
 
                 var unit = CatalogUnitization.ForFlight(flight.NetCost, flight.Tax, flight.SalePrice, flight.PassengerCount ?? 1);
-                await UpsertConfirmedSaleAsync(flight.RateId, flight.SupplierId, unit, flight.Currency, flight.CreatedAt, ct);
+                await UpsertConfirmedSaleAsync(flight.RateId, flight.SupplierId, unit, flight.Currency, flight.CreatedAt, reservaId, ct);
             }
 
             var dto = _mapper.Map<FlightSegmentDto>(flight);
@@ -109,7 +107,6 @@ public partial class BookingService
     // estado ADR-035 (fuera de esta obra).
     public async Task<TransferBookingDto> ConfirmTransferCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
-        await EnsureCatalogEnabledForConfirmAsync(ct);
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var id = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
 
@@ -129,7 +126,7 @@ public partial class BookingService
                 await RefreshBalancesAfterCostConfirmAsync(transfer.SupplierId, reservaId, ct);
 
                 var unit = CatalogUnitization.ForTransfer(transfer.NetCost, transfer.Tax, transfer.SalePrice);
-                await UpsertConfirmedSaleAsync(transfer.RateId, transfer.SupplierId, unit, transfer.Currency, transfer.CreatedAt, ct);
+                await UpsertConfirmedSaleAsync(transfer.RateId, transfer.SupplierId, unit, transfer.Currency, transfer.CreatedAt, reservaId, ct);
             }
 
             var dto = _mapper.Map<TransferBookingDto>(transfer);
@@ -145,7 +142,6 @@ public partial class BookingService
     // estado ADR-035 (fuera de esta obra).
     public async Task<PackageBookingDto> ConfirmPackageCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
-        await EnsureCatalogEnabledForConfirmAsync(ct);
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var id = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
 
@@ -165,7 +161,7 @@ public partial class BookingService
                 await RefreshBalancesAfterCostConfirmAsync(package.SupplierId, reservaId, ct);
 
                 var unit = CatalogUnitization.ForPackage(package.NetCost, package.Tax, package.SalePrice, package.Adults, package.Children);
-                await UpsertConfirmedSaleAsync(package.RateId, package.SupplierId, unit, package.Currency, package.CreatedAt, ct);
+                await UpsertConfirmedSaleAsync(package.RateId, package.SupplierId, unit, package.Currency, package.CreatedAt, reservaId, ct);
             }
 
             var dto = _mapper.Map<PackageBookingDto>(package);
@@ -181,7 +177,6 @@ public partial class BookingService
     // estado ADR-035 (fuera de esta obra).
     public async Task<AssistanceBookingDto> ConfirmAssistanceCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
-        await EnsureCatalogEnabledForConfirmAsync(ct);
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var id = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
 
@@ -202,7 +197,7 @@ public partial class BookingService
 
                 var days = CatalogUnitization.AssistanceDays(assistance.ValidFrom, assistance.ValidTo);
                 var unit = CatalogUnitization.ForAssistance(assistance.NetCost, assistance.Tax, assistance.SalePrice, assistance.Adults, assistance.Children, days);
-                await UpsertConfirmedSaleAsync(assistance.RateId, assistance.SupplierId, unit, assistance.Currency, assistance.CreatedAt, ct);
+                await UpsertConfirmedSaleAsync(assistance.RateId, assistance.SupplierId, unit, assistance.Currency, assistance.CreatedAt, reservaId, ct);
             }
 
             var dto = _mapper.Map<AssistanceBookingDto>(assistance);
@@ -213,13 +208,6 @@ public partial class BookingService
     }
 
     // ============================================================ helpers ============================================================
-
-    /// <summary>Flag OFF -> el endpoint "no existe" (404). Mismo criterio que catalog-search.</summary>
-    private async Task EnsureCatalogEnabledForConfirmAsync(CancellationToken ct)
-    {
-        if (!await IsCatalogFindOrCreateEnabledAsync(ct))
-            throw new FeatureNotEnabledException("El catalogo find-or-create no esta habilitado.");
-    }
 
     /// <summary>
     /// Aplica el costo confirmado al servicio: si el body trae correccion la usa, si no conserva el costo
@@ -255,9 +243,10 @@ public partial class BookingService
     /// <summary>Upsert diferido tras confirmar: solo si el servicio tiene producto y operador real.</summary>
     private async Task UpsertConfirmedSaleAsync(
         int? rateId, int supplierId, CatalogUnitization.Unitized unit, string? currency, DateTime soldAt,
-        CancellationToken ct)
+        int reservaId, CancellationToken ct)
     {
         if (!rateId.HasValue || supplierId <= 0) return;
-        await UpsertRateSupplierSaleAsync(rateId.Value, supplierId, unit, NormalizeCurrency(currency), soldAt, ct);
+        await UpsertRateSupplierSaleAsync(
+            rateId.Value, supplierId, unit, NormalizeCurrency(currency), soldAt, reservaId, ct);
     }
 }

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Security.Claims;
 using AutoMapper;
 using Microsoft.AspNetCore.Http;
@@ -116,7 +116,7 @@ public class ReservaDatesManuallySetTests
         NetCost: 500m,
         SalePrice: 800m,
         Commission: 300m,
-        Notes: null);
+        Notes: null, Currency: "ARS");
 
     private static CreateFlightRequest BuildFlightRequest(Supplier supplier, DateTime departure) => new(
         SupplierId: supplier.PublicId.ToString(),
@@ -136,7 +136,7 @@ public class ReservaDatesManuallySetTests
         SalePrice: 500m,
         Commission: 200m,
         Tax: 0m,
-        Notes: null);
+        Notes: null, Currency: "ARS");
 
     /// <summary>
     /// REGRESION (comportamiento de SIEMPRE, no debe romperse): reserva SIN correccion manual — el

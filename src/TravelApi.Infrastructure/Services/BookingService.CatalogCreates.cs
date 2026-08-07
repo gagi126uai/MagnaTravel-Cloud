@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
@@ -162,7 +162,7 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, hotel.CreatedAt, ct);
+            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, hotel.CreatedAt, reservaId, ct);
 
             var dto = _mapper.Map<HotelBookingDto>(hotel);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (recien creado o existente),
@@ -272,7 +272,7 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, flight.CreatedAt, ct);
+            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, flight.CreatedAt, reservaId, ct);
 
             var dto = _mapper.Map<FlightSegmentDto>(flight);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -356,7 +356,7 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, transfer.CreatedAt, ct);
+            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, transfer.CreatedAt, reservaId, ct);
 
             var dto = _mapper.Map<TransferBookingDto>(transfer);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -436,7 +436,7 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, package.CreatedAt, ct);
+            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, package.CreatedAt, reservaId, ct);
 
             var dto = _mapper.Map<PackageBookingDto>(package);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -518,7 +518,7 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, assistance.CreatedAt, ct);
+            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, assistance.CreatedAt, reservaId, ct);
 
             var dto = _mapper.Map<AssistanceBookingDto>(assistance);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -535,9 +535,10 @@ public partial class BookingService
     /// </summary>
     private async Task UpsertSaleIfRecordableAsync(
         Rate? rate, int supplierId, bool costToConfirm, CatalogUnitization.Unitized unit, string currency,
-        DateTime soldAt, CancellationToken ct)
+        DateTime soldAt, int reservaId, CancellationToken ct)
     {
         if (rate == null || supplierId <= 0 || costToConfirm) return;
-        await UpsertRateSupplierSaleAsync(rate.Id, supplierId, unit, currency, soldAt, ct);
+        // La reserva viaja para que el Tarifario pueda mostrar de que venta salio este precio (M-1).
+        await UpsertRateSupplierSaleAsync(rate.Id, supplierId, unit, currency, soldAt, reservaId, ct);
     }
 }

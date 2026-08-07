@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -173,7 +173,7 @@ public class Adr035ServiceStateGateTests
         SupplierId: "1", HotelName: "Hotel Nuevo", StarRating: 3, City: "BA", Country: "AR",
         CheckIn: DateTime.UtcNow.AddDays(10), CheckOut: DateTime.UtcNow.AddDays(13),
         RoomType: "DBL", MealPlan: "BB", Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
-        NetCost: 100m, SalePrice: 120m, Commission: 0m, Notes: null, WorkflowStatus: "Solicitado");
+        NetCost: 100m, SalePrice: 120m, Commission: 0m, Notes: null, WorkflowStatus: "Solicitado", Currency: "ARS");
 
     // =====================================================================================================
     // GRUPO CERRADOS: hard block. NINGUNA autorizacion viva lo desbloquea.

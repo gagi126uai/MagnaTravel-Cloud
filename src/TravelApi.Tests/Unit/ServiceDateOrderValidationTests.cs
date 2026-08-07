@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Security.Claims;
 using AutoMapper;
 using Microsoft.AspNetCore.Http;
@@ -108,7 +108,7 @@ public class ServiceDateOrderValidationTests
             SupplierId: supplierPublicId, AirlineCode: "AR", AirlineName: "Aerolineas", FlightNumber: "1234",
             Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
             DepartureTime: departure, ArrivalTime: arrival, CabinClass: null, Baggage: null, PNR: null,
-            NetCost: 300m, SalePrice: 500m, Commission: 200m, Tax: 0m, Notes: null, Currency: null);
+            NetCost: 300m, SalePrice: 500m, Commission: 200m, Tax: 0m, Notes: null, Currency: "ARS");
 
     [Fact]
     public async Task CreateFlight_ArrivalBeforeDeparture_Throws()
@@ -170,7 +170,7 @@ public class ServiceDateOrderValidationTests
             SupplierId: supplierPublicId, PickupLocation: "Aeropuerto EZE", DropoffLocation: "Hotel Centro",
             PickupDateTime: pickup, FlightNumber: null, VehicleType: null, Passengers: 2,
             IsRoundTrip: ret.HasValue, ReturnDateTime: ret,
-            NetCost: 50m, SalePrice: 80m, Commission: 30m, Notes: null, Currency: null);
+            NetCost: 50m, SalePrice: 80m, Commission: 30m, Notes: null, Currency: "ARS");
 
     [Fact]
     public async Task CreateTransfer_ReturnBeforePickup_Throws()
@@ -230,7 +230,7 @@ public class ServiceDateOrderValidationTests
             StartDate: start, EndDate: end,
             IncludesHotel: true, IncludesFlight: true, IncludesTransfer: false, IncludesExcursions: false, IncludesMeals: false,
             Adults: 2, Children: 0, Itinerary: null,
-            NetCost: 800m, SalePrice: 1000m, Commission: 200m, Notes: null, Currency: null);
+            NetCost: 800m, SalePrice: 1000m, Commission: 200m, Notes: null, Currency: "ARS");
 
     [Fact]
     public async Task CreatePackage_EndBeforeStart_Throws()

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -220,7 +220,7 @@ public class Adr018ProductFirstReconciliationTests
             DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
             CabinClass: "Economy", Baggage: null, PNR: null,
             NetCost: 500m, SalePrice: 900m, Commission: 400m, Tax: 0m, Notes: null,
-            ProductName: "Vuelo directo");
+            ProductName: "Vuelo directo", Currency: "ARS");
 
         await service.CreateFlightAsync(reserva.Id, request, CancellationToken.None);
 
@@ -368,7 +368,7 @@ public class Adr018ProductFirstReconciliationTests
             Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
             DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
             CabinClass: cabinClass, Baggage: null, PNR: null,
-            NetCost: 500m, SalePrice: 900m, Commission: 400m, Tax: 0m, Notes: null), CancellationToken.None);
+            NetCost: 500m, SalePrice: 900m, Commission: 400m, Tax: 0m, Notes: null, Currency: "ARS"), CancellationToken.None);
 
         var stored = await context.FlightSegments.SingleAsync();
         Assert.Null(stored.CabinClass); // ""/null => "Sin especificar" (null); ya no se inventa "Economy"
@@ -389,7 +389,7 @@ public class Adr018ProductFirstReconciliationTests
             PickupLocation: "Aeropuerto", DropoffLocation: "Hotel",
             PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: vehicleType,
             Passengers: 2, IsRoundTrip: false, ReturnDateTime: null,
-            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null), CancellationToken.None);
+            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null, Currency: "ARS"), CancellationToken.None);
 
         var stored = await context.TransferBookings.SingleAsync();
         Assert.Null(stored.VehicleType); // ""/null => no informado (null); ya no se inventa "Sedan"
@@ -410,7 +410,7 @@ public class Adr018ProductFirstReconciliationTests
             Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
             DepartureTime: DateTime.UtcNow.Date.AddDays(10), ArrivalTime: DateTime.UtcNow.Date.AddDays(10).AddHours(2),
             CabinClass: "Business", Baggage: null, PNR: null,
-            NetCost: 500m, SalePrice: 900m, Commission: 400m, Tax: 0m, Notes: null), CancellationToken.None);
+            NetCost: 500m, SalePrice: 900m, Commission: 400m, Tax: 0m, Notes: null, Currency: "ARS"), CancellationToken.None);
 
         await service.UpdateFlightAsync(
             reserva.Id.ToString(), created.PublicId.ToString(),
@@ -434,7 +434,7 @@ public class Adr018ProductFirstReconciliationTests
             PickupLocation: "Aeropuerto", DropoffLocation: "Hotel",
             PickupDateTime: DateTime.UtcNow.Date.AddDays(10), FlightNumber: null, VehicleType: "Van",
             Passengers: 2, IsRoundTrip: false, ReturnDateTime: null,
-            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null), CancellationToken.None);
+            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null, Currency: "ARS"), CancellationToken.None);
 
         await service.UpdateTransferAsync(
             reserva.Id.ToString(), created.PublicId.ToString(),

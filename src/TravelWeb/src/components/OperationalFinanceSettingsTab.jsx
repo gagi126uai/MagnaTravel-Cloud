@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, BookOpen, CalendarClock, DollarSign, FileWarning, GitBranch, IdCard, Settings2, ShieldAlert, TrendingUp, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, DollarSign, FileWarning, GitBranch, IdCard, Settings2, ShieldAlert, TrendingUp, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { Button } from "./ui/button";
@@ -11,8 +11,12 @@ const defaultSettings = {
   afipInvoiceControlMode: "AllowAgentOverrideWithReason",
   enableUpcomingUnpaidReservationNotifications: true,
   upcomingUnpaidReservationAlertDays: 7,
+  // Spec firmada 2026-08-06 (§4.5, M-8): "el saldo tiene que estar completo N días antes de
+  // la salida". Default 21, un solo número para todas las reservas — nadie carga fechas a
+  // mano en ninguna reserva (mismo endpoint de configuración operativa, contrato E).
+  fullPaymentDueDaysBeforeDeparture: 21,
   // OFF por defecto: el sistema factura solo en pesos hasta que el dueño lo active manualmente.
-  // Ver: CreateInvoiceModal.jsx — el selector ARS/USD solo aparece cuando este flag es true.
+  // Ver: EmitirFacturaInline.jsx — el selector ARS/USD solo aparece cuando este flag es true.
   enableMultiCurrencyInvoicing: false,
   // ADR-020: enableSoldToSettleStates fue eliminado. El ciclo nuevo es directo y sin flags.
   // OFF por defecto: ZONA FISCAL. Cuando se prende, el sistema emite una Nota de Débito real
@@ -20,10 +24,6 @@ const defaultSettings = {
   // cancelación nuevo (EnableNewCancellationFlow) ya esté activo en la base de datos.
   // Si no está activo, el backend responde con un error 400 explicando la pre-condición.
   enableCancellationDebitNote: false,
-  // OFF por defecto: el tarifario se arma de forma manual. Con ON, el vendedor puede buscar un
-  // producto al cargar un servicio y, si no existe, crearlo en el acto (find-or-create).
-  // Ver: ServiceInlineCard + ADR-017.
-  enableCatalogFindOrCreate: false,
   // OFF por defecto: la campanita no muestra avisos de fechas límite. Con ON, cada vendedor
   // recibe avisos de señas y emisión pendientes de sus reservas; los admins ven todos.
   enableServiceDeadlineAlerts: false,
@@ -136,9 +136,16 @@ export default function OperationalFinanceSettingsTab() {
     }
     setSaving(true);
     try {
+      // Fix 2026-08-07: `enableCatalogFindOrCreate` ya no existe en el backend (M-10). Si
+      // `form` todavía lo arrastra de una carga vieja, lo sacamos ANTES de mandar el PUT
+      // en vez de perpetuarlo en cada guardado.
+      const { enableCatalogFindOrCreate: _llaveTarifarioMuerta, ...formSinLlaveMuerta } = form;
       await api.put("/settings/operational-finance", {
-        ...form,
+        ...formSinLlaveMuerta,
         upcomingUnpaidReservationAlertDays: Number(form.upcomingUnpaidReservationAlertDays || 0),
+        // M-8: mismo criterio que el resto de los campos numéricos de este form — se manda
+        // como número entero, el backend valida el rango (ver contrato E del brief).
+        fullPaymentDueDaysBeforeDeparture: Number(form.fullPaymentDueDaysBeforeDeparture || 21),
         // serviceDeadlineAlertDays: convertido a número. Ojo: el DTO valida [Range(1,60)] →
         // fuera de rango el server devuelve 400 con mensaje (no clamp silencioso); el
         // min/max del input cubre el caso típico.
@@ -257,31 +264,13 @@ export default function OperationalFinanceSettingsTab() {
                 es el UNICO ciclo y no tiene flag. Quedo el estado "A liquidar" como desvio
                 opcional sin necesidad de activacion. */}
 
-            {/* Tarifario find-or-create.
-                Flag de catálogo (ADR-017): con ON el vendedor puede buscar un producto al cargar un
-                servicio y crearlo si no existe. Comportamiento puro de UI, sin impacto fiscal directo. */}
-            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
-              <input
-                type="checkbox"
-                checked={form.enableCatalogFindOrCreate}
-                onChange={(event) => updateField("enableCatalogFindOrCreate", event.target.checked)}
-                className="mt-1 rounded border-slate-300"
-                disabled={loading}
-                data-testid="toggle-catalog-find-or-create"
-                aria-label="Tarifario que se arma solo desde las ventas"
-              />
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
-                  <BookOpen className="w-4 h-4 text-indigo-500" aria-hidden="true" />
-                  Tarifario que se arma solo desde las ventas
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Al cargar un servicio, el vendedor busca el producto y, si no existe, lo crea ahí mismo.
-                  Queda guardado con su operador y un precio de referencia para la próxima venta.
-                  Apagado, todo sigue como hasta ahora.
-                </div>
-              </div>
-            </label>
+            {/* Tarifario find-or-create: la llave DESAPARECIÓ de acá (spec firmada 2026-08-06,
+                P8=A / M-10) Y del backend. El buscador que aprende de las ventas ya no se
+                apaga para nadie: sale directo para todos los que pueden ver el Tarifario.
+                Fix 2026-08-07: el submit YA NO manda `enableCatalogFindOrCreate` (el campo
+                puede seguir viviendo en `form` si el GET inicial todavía lo trae de una
+                config vieja, pero no lo reenviamos) — ver handleSubmit más abajo y
+                ReservaDetailPage.jsx (ya no lee este flag en ningún lado). */}
 
             {/* Avisos de próximos inicios.
                 Con ON, la campanita avisa unos días antes de que arranque cada reserva.
@@ -604,36 +593,66 @@ export default function OperationalFinanceSettingsTab() {
               </select>
             </div>
 
+            {/* Spec firmada 2026-08-06 (§4.5, M-8): "El saldo tiene que estar completo N días
+                antes de la salida" (default 21) decide cuándo una reserva aparece VENCIDA en
+                la lista de deudores + el aviso de la campanita. Es un número DISTINTO del de
+                abajo (días para el aviso de "Debe — no viaja", ya firmado el 2026-06-21 y que
+                no se toca): quedan separados a propósito, con etiquetas bien distintas, para
+                que no se lean como la misma cosa (detalle abierto D1 de la spec). */}
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4">
-              <label className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={form.enableUpcomingUnpaidReservationNotifications}
-                  onChange={(event) => updateField("enableUpcomingUnpaidReservationNotifications", event.target.checked)}
-                  className="mt-1 rounded border-slate-300"
-                  disabled={loading}
-                />
-                <div>
-                  <div className="text-sm font-semibold text-slate-900 dark:text-white">Alertas por reservas próximas con deuda</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    Notifica al responsable de la reserva y a los administradores.
-                  </div>
-                </div>
-              </label>
-
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
-                  Días previos para alertar
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">Cobranzas</p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <label htmlFor="full-payment-due-days" className="text-sm text-slate-700 dark:text-slate-300">
+                  El saldo tiene que estar completo
                 </label>
                 <input
+                  id="full-payment-due-days"
                   type="number"
                   min="1"
-                  max="60"
-                  value={form.upcomingUnpaidReservationAlertDays}
-                  onChange={(event) => updateField("upcomingUnpaidReservationAlertDays", event.target.value)}
-                  className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
+                  max="365"
+                  value={form.fullPaymentDueDaysBeforeDeparture}
+                  onChange={(event) => updateField("fullPaymentDueDaysBeforeDeparture", event.target.value)}
+                  className="w-20 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
                   disabled={loading}
+                  data-testid="input-full-payment-due-days"
                 />
+                <span className="text-sm text-slate-700 dark:text-slate-300">días antes de la salida.</span>
+              </div>
+
+              <div className="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-3">
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={form.enableUpcomingUnpaidReservationNotifications}
+                    onChange={(event) => updateField("enableUpcomingUnpaidReservationNotifications", event.target.checked)}
+                    className="mt-1 rounded border-slate-300"
+                    disabled={loading}
+                  />
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-white">Alertas por reservas próximas con deuda</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      Notifica al responsable de la reserva y a los administradores.
+                    </div>
+                  </div>
+                </label>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                    Días previos para alertar
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    value={form.upcomingUnpaidReservationAlertDays}
+                    onChange={(event) => updateField("upcomingUnpaidReservationAlertDays", event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
+                    disabled={loading}
+                  />
+                </div>
               </div>
             </div>
           </div>

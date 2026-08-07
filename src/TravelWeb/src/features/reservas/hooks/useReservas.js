@@ -84,8 +84,8 @@ export function useReservas() {
         // Reservas) manda esta bandera — es la que le dice al motor "ignorá la
         // pestaña y el mes, buscá en todo". El motor la respeta únicamente cuando
         // además hay texto en "search"; sin texto no cambia nada, así que es seguro
-        // mandarla siempre. Ninguna otra pantalla (ej. PaymentsByReservaPage, que
-        // necesita que la pestaña SÍ filtre) debe copiar esta línea.
+        // mandarla siempre. Ninguna otra pantalla que necesite que la pestaña SÍ
+        // filtre debe copiar esta línea.
         globalSearch: "true",
       });
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
@@ -119,20 +119,6 @@ public class RateServiceCatalogSearchTests
     // ============================= R4 — gate por flag =============================
 
     [Fact]
-    public async Task CatalogSearch_FlagOff_ReturnsNull()
-    {
-        await using var context = CreateContext();
-        context.Rates.Add(BuildHotelRate(1, "Hotel Maitei", "Posadas"));
-        await context.SaveChangesAsync();
-        var service = CreateService(context, catalogEnabled: false);
-
-        var result = await service.CatalogSearchAsync("Hotel", "maitei", CancellationToken.None);
-
-        // null = "el endpoint no existe" -> el controller responde 404 (R4).
-        Assert.Null(result);
-    }
-
-    [Fact]
     public async Task CatalogSearch_FlagOn_ReturnsResults()
     {
         await using var context = CreateContext();
@@ -146,20 +132,6 @@ public class RateServiceCatalogSearchTests
         var item = Assert.Single(result!);
         Assert.Equal("Hotel Maitei", item.Name);
         Assert.Equal("Posadas", item.Subtitle);
-    }
-
-    [Fact]
-    public async Task CatalogSearch_NoSettingsService_FailClosed_ReturnsNull()
-    {
-        await using var context = CreateContext();
-        context.Rates.Add(BuildHotelRate(1, "Hotel Maitei", "Posadas"));
-        await context.SaveChangesAsync();
-        // Ctor legacy SIN settings service: no hay forma de leer el flag -> fail-closed (404).
-        var service = new RateService(context, NullLogger<RateService>.Instance);
-
-        var result = await service.CatalogSearchAsync("Hotel", "maitei", CancellationToken.None);
-
-        Assert.Null(result);
     }
 
     [Fact]

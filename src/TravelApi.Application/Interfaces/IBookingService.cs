@@ -1,4 +1,4 @@
-using TravelApi.Application.Contracts.Reservations;
+﻿using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 
 namespace TravelApi.Application.Interfaces;
@@ -57,9 +57,9 @@ public interface IBookingService
 
     // ADR-017 F1.3 (§2.8, D8c): boton "Confirmar costo". Limpia la marca "costo a confirmar" de un
     // servicio (confirma el costo resuelto o lo corrige con el body) y dispara el upsert diferido de
-    // RateSupplierSale con LastSoldAt = fecha de la venta. Gateado por flag EnableCatalogFindOrCreate
-    // (OFF -> FeatureNotEnabledException -> 404) + cobranzas.see_cost (en el controller). Idempotente:
-    // confirmar un servicio sin marca es no-op.
+    // RateSupplierSale con LastSoldAt = fecha de la venta. Unico gate: cobranzas.see_cost (en el
+    // controller) — la llave del catalogo se derogo el 2026-08-06. Idempotente: confirmar un servicio
+    // sin marca es no-op.
     Task<HotelBookingDto> ConfirmHotelCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
     Task<FlightSegmentDto> ConfirmFlightCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);
     Task<TransferBookingDto> ConfirmTransferCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct);

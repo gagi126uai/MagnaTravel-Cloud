@@ -39,6 +39,16 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             : request.AfipInvoiceControlMode;
         entity.EnableUpcomingUnpaidReservationNotifications = request.EnableUpcomingUnpaidReservationNotifications;
         entity.UpcomingUnpaidReservationAlertDays = Math.Clamp(request.UpcomingUnpaidReservationAlertDays, 1, 60);
+
+        // Spec firmada 2026-08-06 (P15=A): "el saldo tiene que estar completo N dias antes de la salida".
+        // Patch-like (criterio B-002): si el PUT no lo trae, no se toca. El clamp 1..365 es defensa extra
+        // al [Range] del DTO, por si entra por un camino que no pasa por el binder (seed/test).
+        // OJO: es un numero DISTINTO del de arriba (dias para avisar); ver el docstring de la entidad.
+        if (request.FullPaymentDueDaysBeforeDeparture.HasValue)
+        {
+            entity.FullPaymentDueDaysBeforeDeparture =
+                Math.Clamp(request.FullPaymentDueDaysBeforeDeparture.Value, 1, 365);
+        }
         entity.MaxDiscountPercentWithoutOverride = request.MaxDiscountPercentWithoutOverride;
 
         // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.0, 2026-05-22): persistimos
@@ -100,10 +110,8 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
         // nuevos + el setting StaleCostReferenceDays. Update CONDICIONAL (patch-like, criterio B-002):
         // solo se aplica si el request trae valor. Son flags/setting de comportamiento puro, sin
         // dependencias con otros flags, por eso NO hay validacion cruzada para ellos mas abajo.
-        if (request.EnableCatalogFindOrCreate.HasValue)
-        {
-            entity.EnableCatalogFindOrCreate = request.EnableCatalogFindOrCreate.Value;
-        }
+        // EnableCatalogFindOrCreate: DEROGADA el 2026-08-06 (P8=A). Si un cliente viejo todavia la manda,
+        // se ignora a proposito — el catalogo que aprende de las ventas ya no se puede apagar.
         if (request.EnableServiceDeadlineAlerts.HasValue)
         {
             entity.EnableServiceDeadlineAlerts = request.EnableServiceDeadlineAlerts.Value;
@@ -315,6 +323,9 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             AfipInvoiceControlMode = entity.AfipInvoiceControlMode,
             EnableUpcomingUnpaidReservationNotifications = entity.EnableUpcomingUnpaidReservationNotifications,
             UpcomingUnpaidReservationAlertDays = entity.UpcomingUnpaidReservationAlertDays,
+            // Spec firmada 2026-08-06 (P15=A): el segundo numero de Cobranzas, el que decide cuando el
+            // saldo queda vencido. Va al lado del de arriba en la misma pantalla de Configuracion.
+            FullPaymentDueDaysBeforeDeparture = entity.FullPaymentDueDaysBeforeDeparture,
             MaxDiscountPercentWithoutOverride = entity.MaxDiscountPercentWithoutOverride,
             // FC1.3 Fase 2: tres settings configurables visibles en el panel admin.
             IvaProrrateoMode = entity.IvaProrrateoMode,
@@ -327,8 +338,10 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             EnableCancellationDebitNote = entity.EnableCancellationDebitNote,
             // ADR-016 F0a: el GET expone el flag maestro del copiloto de IA.
             EnableAiCopilot = entity.EnableAiCopilot,
-            // ADR-017 F1.1: el GET expone los 2 flags nuevos + el umbral, para que el panel los muestre.
-            EnableCatalogFindOrCreate = entity.EnableCatalogFindOrCreate,
+            // Llave DEROGADA (2026-08-06, P8=A): el catalogo que aprende de las ventas no se puede
+            // apagar. Se devuelve true fijo para no confundir al panel viejo; se saca del contrato
+            // cuando la pantalla de Configuracion deje de dibujar el interruptor.
+            EnableCatalogFindOrCreate = true,
             EnableServiceDeadlineAlerts = entity.EnableServiceDeadlineAlerts,
             StaleCostReferenceDays = entity.StaleCostReferenceDays,
             // ADR-017 F1.4: el GET expone la ventana de alertas para que el panel la muestre/edite.

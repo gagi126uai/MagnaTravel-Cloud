@@ -1,1300 +1,258 @@
-import { Fragment, useEffect, useState, useCallback } from "react";
+/**
+ * Tarifario — "la memoria de lo que ya vendiste" (spec firmada 2026-08-06).
+ *
+ * Lista de productos aprendidos de las ventas, con un renglón por operador (último
+ * precio, moneda, fecha). Reemplaza al viejo Tarifario de 20 campos: el alta a mano
+ * pasa a ser una fichita de pocos campos ("+ Agregar producto"), y el formulario largo
+ * de siempre queda vivo solo detrás de "Carga completa" (vigencias, variaciones de
+ * habitación) — ver RatesFullFormPage.jsx.
+ */
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { DollarSign, Plus, Search } from "lucide-react";
 import { api } from "../api";
-import { showError, showSuccess } from "../alerts";
-import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator, Plane, Hotel, Car, Package, Star, ChevronDown, ChevronRight, BedDouble } from "lucide-react";
-import Swal from "sweetalert2";
-import { getPublicId } from "../lib/publicIds";
-import { formatDate, formatCurrency } from "../lib/utils";
-import { PaginationFooter } from "../components/ui/PaginationFooter";
 import { useDebounce } from "../hooks/useDebounce";
+import { PaginationFooter } from "../components/ui/PaginationFooter";
+import { SkeletonTableRow } from "../components/ui/skeleton";
+import { ListEmptyState } from "../components/ui/ListEmptyState";
+import { ListLoadErrorState } from "../components/ui/ListLoadErrorState";
+import { hasPermission } from "../auth";
+import { AddProductInlineForm } from "../features/rates/components/AddProductInlineForm";
+import { ProductInlineEditForm } from "../features/rates/components/ProductInlineEditForm";
+import { LearnedProductRow } from "../features/rates/components/LearnedProductRow";
 
-const serviceTypes = [
-    { value: "Aereo", label: "Aéreo", icon: Plane },
-    { value: "Hotel", label: "Hotel", icon: Hotel },
-    { value: "Traslado", label: "Traslado", icon: Car },
-    { value: "Paquete", label: "Paquete", icon: Package },
+const SERVICE_TYPE_FILTER_OPTIONS = [
+    { value: "", label: "Todos" },
+    { value: "Hotel", label: "Hotel" },
+    { value: "Aereo", label: "Aéreo" },
+    { value: "Traslado", label: "Traslado" },
+    { value: "Paquete", label: "Paquete" },
     { value: "Asistencia", label: "Asistencia" },
     { value: "Excursion", label: "Excursión" },
     { value: "Otro", label: "Otro" },
 ];
 
-const priceUnits = [
-    { value: "servicio", label: "Por servicio" },
-    { value: "noche", label: "Por noche" },
-    { value: "pasajero", label: "Por pasajero" },
-    { value: "trayecto", label: "Por trayecto" },
-];
-
-const mealPlans = [
-    { value: "RO", label: "Solo habitación (RO)" },
-    { value: "BB", label: "Desayuno (BB)" },
-    { value: "HB", label: "Media pensión (HB)" },
-    { value: "FB", label: "Pensión completa (FB)" },
-    { value: "AI", label: "All Inclusive (AI)" },
-];
-
-const cabinClasses = [
-    { value: "Economy", label: "Economy" },
-    { value: "Premium Economy", label: "Premium Economy" },
-    { value: "Business", label: "Business" },
-    { value: "First", label: "First Class" },
-];
-
-const Modal = ({ isOpen, onClose, title, children, className }) => {
-    if (!isOpen) return null;
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm overflow-y-auto">
-            <div className={`w-full overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900 my-8 ${className || "max-w-2xl"}`}>
-                <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
-                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h3>
-                    <button onClick={onClose} className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white">
-                        <X className="h-5 w-5" />
-                    </button>
-                </div>
-                <div className="p-6 max-h-[70vh] overflow-y-auto">{children}</div>
-            </div>
-        </div>
-    );
-};
-
-// Clase base para inputs
-const inputClass = "mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:border-indigo-400 dark:focus:bg-slate-700";
-const labelClass = "block text-sm font-medium text-slate-700 dark:text-slate-300";
+const SELECT_CLASS = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
 
 export default function RatesPage() {
-    const [rateGroups, setRateGroups] = useState([]);
-    const [summary, setSummary] = useState(null);
-    const [suppliers, setSuppliers] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [showModal, setShowModal] = useState(false);
-    const [searchTerm, setSearchTerm] = useState("");
+    const navigate = useNavigate();
+    // Fix 2026-08-07 (review P-9): crear un producto (POST /rates/simple) pide
+    // tarifario.edit en el servidor — igual que renombrar. Sin este permiso, cualquier
+    // disparador del alta (botón de cabecera o el del estado vacío) queda escondido,
+    // en vez de dejar que el usuario llene la fichita y coma un 403.
+    const puedeAgregarProducto = hasPermission("tarifario.edit");
+
+    const [search, setSearch] = useState("");
+    const debouncedSearch = useDebounce(search, 300);
     const [filterType, setFilterType] = useState("");
-    const [supplierFilter, setSupplierFilter] = useState("");
-    const [activeOnly, setActiveOnly] = useState(false);
+    const [filterSupplierId, setFilterSupplierId] = useState("");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
-    const [pageState, setPageState] = useState({
-        page: 1,
-        pageSize: 25,
-        totalCount: 0,
-        totalPages: 0,
-        hasPreviousPage: false,
-        hasNextPage: false,
-    });
-    const debouncedSearch = useDebounce(searchTerm, 300);
 
-    // Grouping State
-    const [expandedGroups, setExpandedGroups] = useState({});
+    const [items, setItems] = useState([]);
+    const [pageState, setPageState] = useState({ totalCount: 0, totalPages: 0, hasPreviousPage: false, hasNextPage: false });
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
 
-    const emptyForm = {
-        id: null, supplierId: "", serviceType: "Aereo", productName: "", description: "",
-        priceUnit: "servicio", netCost: 0, tax: 0, salePrice: 0, currency: "USD",
-        validFrom: "", validTo: "", internalNotes: "",
-        // Aéreo
-        airline: "", airlineCode: "", origin: "", destination: "", cabinClass: "", baggageIncluded: "",
-        // Hotel
-        hotelName: "", city: "", starRating: "", roomType: "Doble", roomCategory: "Standard", roomFeatures: "", mealPlan: "",
-        hotelPriceType: "base_doble", childrenPayPercent: 0, childMaxAge: 12,
-        // Traslado
-        pickupLocation: "", dropoffLocation: "", vehicleType: "", maxPassengers: "", isRoundTrip: false,
-        // Paquete
-        includesFlight: false, includesHotel: false, includesTransfer: false, includesExcursions: false, includesInsurance: false,
-        durationDays: "", itinerary: ""
-    };
+    const [suppliers, setSuppliers] = useState([]);
+    const [showAddForm, setShowAddForm] = useState(false);
+    const [expandedProductId, setExpandedProductId] = useState(null);
 
-    const [form, setForm] = useState(emptyForm);
-    const [roomVariations, setRoomVariations] = useState([]); // Array para carga masiva de habitaciones
-    const [commissionPercent, setCommissionPercent] = useState(10);
-    const [isCalculating, setIsCalculating] = useState(false);
-
-    const loadRates = useCallback(async () => {
+    const loadProducts = useCallback(async () => {
         setLoading(true);
+        setLoadError(false);
         try {
-            const summaryParams = new URLSearchParams();
-            const listParams = new URLSearchParams({
-                page: String(page),
-                pageSize: String(pageSize),
-                sortBy: "groupName",
-                sortDir: "asc",
-            });
-
-            if (debouncedSearch.trim()) {
-                summaryParams.set("search", debouncedSearch.trim());
-                listParams.set("search", debouncedSearch.trim());
-            }
-
-            if (supplierFilter) {
-                summaryParams.set("supplierId", supplierFilter);
-                listParams.set("supplierId", supplierFilter);
-            }
-
-            if (activeOnly) {
-                summaryParams.set("activeOnly", "true");
-                listParams.set("activeOnly", "true");
-            }
-
-            if (filterType) {
-                summaryParams.set("serviceType", filterType);
-                listParams.set("serviceType", filterType);
-            }
-
-            const [summaryData, groupsResponse] = await Promise.all([
-                api.get(`/rates/summary?${summaryParams.toString()}`),
-                api.get(`/rates/groups?${listParams.toString()}`),
-            ]);
-
-            setSummary(summaryData || null);
-            setRateGroups(groupsResponse?.items || []);
+            const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+            if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+            if (filterType) params.set("serviceType", filterType);
+            if (filterSupplierId) params.set("supplierId", filterSupplierId);
+            const response = await api.get(`/rates/learned-products?${params.toString()}`);
+            setItems(Array.isArray(response?.items) ? response.items : []);
             setPageState({
-                page: groupsResponse?.page || page,
-                pageSize: groupsResponse?.pageSize || pageSize,
-                totalCount: groupsResponse?.totalCount || 0,
-                totalPages: groupsResponse?.totalPages || 0,
-                hasPreviousPage: Boolean(groupsResponse?.hasPreviousPage),
-                hasNextPage: Boolean(groupsResponse?.hasNextPage),
+                totalCount: response?.totalCount ?? 0,
+                totalPages: response?.totalPages ?? 0,
+                hasPreviousPage: Boolean(response?.hasPreviousPage),
+                hasNextPage: Boolean(response?.hasNextPage),
             });
-        } catch (error) {
-            console.error("Error loading rates:", error);
-            setRateGroups([]);
-            setSummary(null);
-            setPageState({
-                page: 1,
-                pageSize,
-                totalCount: 0,
-                totalPages: 0,
-                hasPreviousPage: false,
-                hasNextPage: false,
-            });
+        } catch {
+            setItems([]);
+            setLoadError(true);
         } finally {
             setLoading(false);
         }
-    }, [activeOnly, debouncedSearch, filterType, page, pageSize, supplierFilter]);
+    }, [debouncedSearch, filterType, filterSupplierId, page, pageSize]);
 
     useEffect(() => {
-        loadSuppliers();
+        loadProducts();
+    }, [loadProducts]);
+
+    // Deps []: la lista de operadores es de catálogo (para el filtro y la fichita), no
+    // depende de la búsqueda/paginado — se carga una sola vez al montar la pantalla.
+    useEffect(() => {
+        api.get("/suppliers?page=1&pageSize=100&includeInactive=true")
+            .then((data) => setSuppliers(data?.items || []))
+            .catch(() => setSuppliers([]));
     }, []);
-
-    useEffect(() => {
-        loadRates();
-    }, [loadRates]);
 
     useEffect(() => {
         setPage(1);
-    }, [debouncedSearch, filterType, supplierFilter, activeOnly, pageSize]);
+    }, [debouncedSearch, filterType, filterSupplierId]);
 
-    async function loadSuppliers() {
-        try {
-            const data = await api.get("/suppliers?page=1&pageSize=100&includeInactive=true");
-            setSuppliers(data?.items || []);
-        } catch { }
-    }
-
-    const fetchCommission = useCallback(async (supplierId, serviceType) => {
-        try {
-            setIsCalculating(true);
-            const params = new URLSearchParams();
-            if (supplierId) params.append("supplierId", supplierId);
-            if (serviceType) params.append("serviceType", serviceType);
-            const result = await api.get(`/commissions/calculate?${params}`);
-            setCommissionPercent(result.commissionPercent || 10);
-            return result.commissionPercent || 10;
-        } catch {
-            return 10;
-        } finally {
-            setIsCalculating(false);
-        }
-    }, []);
-
-    const calculateSalePrice = (netCost, tax, commission) => {
-        const cost = parseFloat(netCost) || 0;
-        const taxVal = parseFloat(tax) || 0;
-        const commissionAmount = cost * (commission / 100);
-        return Math.round((cost + taxVal + commissionAmount) * 100) / 100;
+    const abrirCargaCompleta = (prefill) => {
+        navigate("/rates/full", { state: { prefillFromRates: prefill } });
     };
 
-    const handleSupplierChange = async (e) => {
-        const supplierId = e.target.value;
-        setForm(prev => ({ ...prev, supplierId }));
-        const newCommission = await fetchCommission(supplierId, form.serviceType);
-        if (form.netCost > 0) {
-            setForm(prev => ({ ...prev, supplierId, salePrice: calculateSalePrice(prev.netCost, prev.tax, newCommission) }));
-        }
+    const handleProductoCreado = () => {
+        setShowAddForm(false);
+        loadProducts();
     };
 
-    const handleServiceTypeChange = async (e) => {
-        const serviceType = e.target.value;
-        setForm(prev => ({ ...prev, serviceType }));
-        const newCommission = await fetchCommission(form.supplierId, serviceType);
-        if (form.netCost > 0) {
-            setForm(prev => ({ ...prev, serviceType, salePrice: calculateSalePrice(prev.netCost, prev.tax, newCommission) }));
-        }
-    };
-
-    const handleNetCostChange = (e) => {
-        const netCost = e.target.value;
-        const suggestedSale = calculateSalePrice(netCost, form.tax, commissionPercent);
-        setForm(prev => ({ ...prev, netCost, salePrice: suggestedSale }));
-    };
-
-    const handleTaxChange = (e) => {
-        const tax = e.target.value;
-        const suggestedSale = calculateSalePrice(form.netCost, tax, commissionPercent);
-        setForm(prev => ({ ...prev, tax, salePrice: suggestedSale }));
-    };
-
-    const applyCommission = () => {
-        setForm(prev => ({ ...prev, salePrice: calculateSalePrice(prev.netCost, prev.tax, commissionPercent) }));
-    };
-
-    const addRoomVariation = () => {
-        if (!form.roomType || !form.netCost) {
-            showError("Complete tipo de habitación y costo");
-            return;
-        }
-        const variation = {
-            id: Date.now(), // Temp ID
-            roomType: form.roomType,
-            roomCategory: form.roomCategory,
-            roomFeatures: form.roomFeatures,
-            mealPlan: form.mealPlan,
-            netCost: parseFloat(form.netCost) || 0,
-            salePrice: parseFloat(form.salePrice) || 0,
-            hotelPriceType: form.hotelPriceType,
-            childrenPayPercent: parseInt(form.childrenPayPercent) || 0,
-            childMaxAge: parseInt(form.childMaxAge) || 12
-        };
-        setRoomVariations([...roomVariations, variation]);
-        // Reset solo campos de habitación/precio
-        setForm(prev => ({
-            ...prev,
-            roomType: "Doble", roomCategory: "Standard", roomFeatures: "",
-            netCost: 0, salePrice: 0,
-            // Mantener mealPlan y policies si se desea, o resetear
-        }));
-    };
-
-    const removeRoomVariation = (id) => {
-        setRoomVariations(prev => prev.filter(v => v.id !== id));
-    };
-
-    const saveRate = async (e) => {
-        e.preventDefault();
-
-        // Validaciones básicas
-        if (!form.supplierId) {
-            showError("Por favor, seleccione un Proveedor");
-            document.getElementById("supplierId")?.focus();
-            return;
-        }
-        if (!form.validFrom) {
-            showError("Debe completar la fecha de inicio");
-            document.getElementById("validFrom")?.focus();
-            return;
-        }
-        if (!form.validTo) {
-            showError("Debe completar la fecha de fin");
-            document.getElementById("validTo")?.focus();
-            return;
-        }
-
-        try {
-            const basePayload = {
-                ...form,
-                supplierId: form.supplierId || null,
-                tax: parseFloat(form.tax) || 0,
-                // Valid dates
-                validFrom: form.validFrom ? new Date(form.validFrom).toISOString() : null,
-                validTo: form.validTo ? new Date(form.validTo).toISOString() : null,
-                // Hotel common fields
-                hotelName: form.hotelName,
-                city: form.city,
-                starRating: form.starRating ? parseInt(form.starRating) : null,
-            };
-
-            const requests = [];
-
-            if (form.serviceType === "Hotel" && roomVariations.length > 0) {
-                // Batch save for Hotel variations
-                for (const variation of roomVariations) {
-                    const payload = {
-                        ...basePayload,
-                        // Override with variation specific data
-                        roomType: variation.roomType,
-                        roomCategory: variation.roomCategory,
-                        roomFeatures: variation.roomFeatures,
-                        mealPlan: variation.mealPlan,
-                        netCost: variation.netCost,
-                        salePrice: variation.salePrice,
-                        hotelPriceType: variation.hotelPriceType,
-                        childrenPayPercent: variation.childrenPayPercent,
-                        childMaxAge: variation.childMaxAge,
-                        productName: `${form.hotelName} - ${variation.roomType} ${variation.roomCategory}`,
-                        serviceType: "Hotel",
-                        // Explicitly nullify incompatible fields to prevent JSON conversion errors
-                        maxPassengers: null,
-                        durationDays: null,
-                        airline: null, airlineCode: null,
-                        origin: null, destination: null,
-                        pickupLocation: null, dropoffLocation: null, vehicleType: null
-                    };
-                    if (form.id) {
-                        requests.push(api.post("/rates", payload));
-                    } else {
-                        requests.push(api.post("/rates", payload));
-                    }
-                }
-            } else {
-                // Single save (Aereo, Traslado, Paquete, or Hotel Edit single)
-                const payload = {
-                    ...basePayload,
-                    netCost: parseFloat(form.netCost) || 0,
-                    salePrice: parseFloat(form.salePrice) || 0,
-                    maxPassengers: form.maxPassengers ? parseInt(form.maxPassengers) : null,
-                    durationDays: form.durationDays ? parseInt(form.durationDays) : null,
-                    // Hotel fields null if not hotel (single edit)
-                    roomType: form.serviceType === "Hotel" ? form.roomType : null,
-                    roomCategory: form.serviceType === "Hotel" ? form.roomCategory : null,
-                    roomFeatures: form.serviceType === "Hotel" ? form.roomFeatures : null,
-                    hotelPriceType: form.serviceType === "Hotel" ? form.hotelPriceType : null,
-                    childrenPayPercent: form.serviceType === "Hotel" ? (parseInt(form.childrenPayPercent) || 0) : null,
-                    childMaxAge: form.serviceType === "Hotel" ? (parseInt(form.childMaxAge) || 12) : null
-                };
-
-                if (form.id) {
-                    requests.push(api.put(`/rates/${form.id}`, payload));
-                } else {
-                    requests.push(api.post("/rates", payload));
-                }
-            }
-
-            await Promise.all(requests);
-            showSuccess(roomVariations.length > 0 ? "Tarifas guardadas correctamente" : form.id ? "Tarifa actualizada" : "Tarifa creada");
-
-            setShowModal(false);
-            setForm(emptyForm);
-            setRoomVariations([]);
-            loadRates();
-        } catch (error) {
-            console.error("Save Rate Error:", error);
-            if (error.response?.data?.errors) {
-                // Filter out 'req' generic errors and map JSON errors to friendly text
-                const validationErrors = Object.entries(error.response.data.errors)
-                    .filter(([key]) => key !== "req") // Ignore 'req' field error
-                    .map(([key, msgs]) => {
-                        const fieldName = key.replace('$.', '');
-                        if (msgs[0].includes("could not be converted")) {
-                            return `Formato inválido en campo: ${fieldName}`;
-                        }
-                        return msgs[0];
-                    });
-
-                if (validationErrors.length > 0) {
-                    showError(`Error: ${validationErrors[0]}`);
-                } else {
-                    showError("Error de validación. Verifique los campos obligatorios.");
-                }
-            } else {
-                showError(error.message || "Error al guardar tarifa");
-            }
-        }
-    };
-
-    const deleteRate = async (rateId) => {
-        const result = await Swal.fire({
-            title: "¿Eliminar tarifa?",
-            text: "Esta acción no se puede deshacer",
-            icon: "warning",
-            showCancelButton: true,
-            confirmButtonColor: "#ef4444",
-            confirmButtonText: "Sí, eliminar",
-            cancelButtonText: "Cancelar"
-        });
-        if (result.isConfirmed) {
-            try {
-                await api.delete(`/rates/${rateId}`);
-                showSuccess("Tarifa eliminada");
-                loadRates();
-            } catch {
-                showError("Error al eliminar tarifa");
-            }
-        }
-    };
-
-    const editRate = (rate) => {
-        setRoomVariations([]); // Al editar una individual, limpiamos variaciones
-        setForm({
-            id: getPublicId(rate),
-            supplierId: rate.supplierPublicId?.toString() || "",
-            serviceType: rate.serviceType || "Aereo",
-            productName: rate.productName || "",
-            description: rate.description || "",
-            priceUnit: rate.priceUnit || "servicio",
-            netCost: rate.netCost || 0,
-            tax: rate.tax || 0,
-            salePrice: rate.salePrice || 0,
-            currency: rate.currency || "USD",
-            validFrom: rate.validFrom ? rate.validFrom.split("T")[0] : "",
-            validTo: rate.validTo ? rate.validTo.split("T")[0] : "",
-            internalNotes: rate.internalNotes || "",
-            airline: rate.airline || "", airlineCode: rate.airlineCode || "",
-            origin: rate.origin || "", destination: rate.destination || "",
-            cabinClass: rate.cabinClass || "", baggageIncluded: rate.baggageIncluded || "",
-            hotelName: rate.hotelName || "", city: rate.city || "",
-            starRating: rate.starRating?.toString() || "",
-            roomType: rate.roomType || "Doble",
-            roomCategory: rate.roomCategory || "Standard",
-            roomFeatures: rate.roomFeatures || "",
-            mealPlan: rate.mealPlan || "",
-            hotelPriceType: rate.hotelPriceType || "base_doble",
-            childrenPayPercent: rate.childrenPayPercent ?? 0,
-            childMaxAge: rate.childMaxAge ?? 12,
-            pickupLocation: rate.pickupLocation || "", dropoffLocation: rate.dropoffLocation || "",
-            vehicleType: rate.vehicleType || "", maxPassengers: rate.maxPassengers?.toString() || "", isRoundTrip: rate.isRoundTrip || false,
-            includesFlight: rate.includesFlight || false, includesHotel: rate.includesHotel || false,
-            includesTransfer: rate.includesTransfer || false, includesExcursions: rate.includesExcursions || false,
-            includesInsurance: rate.includesInsurance || false,
-            durationDays: rate.durationDays?.toString() || "", itinerary: rate.itinerary || ""
-        });
-        setShowModal(true);
-    };
-
-    const openNewModal = async () => {
-        setForm(emptyForm);
-        setRoomVariations([]);
-        setShowModal(true);
-        await fetchCommission("", "Aereo");
-    };
-
-    const toggleGroup = (groupKey) => {
-        setExpandedGroups(prev => ({
-            ...prev,
-            [groupKey]: !prev[groupKey]
-        }));
-    };
-    const getServiceTypeIcon = (serviceType) => {
-        switch (serviceType) {
-            case "Aereo":
-                return Plane;
-            case "Hotel":
-                return Hotel;
-            case "Traslado":
-                return Car;
-            case "Paquete":
-                return Package;
-            default:
-                return DollarSign;
-        }
-    };
-
-    const getServiceTypeBadgeClass = (serviceType) => {
-        switch (serviceType) {
-            case "Aereo":
-                return "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400";
-            case "Hotel":
-                return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
-            case "Traslado":
-                return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
-            case "Paquete":
-                return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400";
-            default:
-                return "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
-        }
-    };
-
-    const getGroupMeta = (group) => {
-        if (group.serviceType === "Hotel") {
-            return `${group.itemCount} habitaciones`;
-        }
-
-        return `${group.itemCount} variante${group.itemCount === 1 ? "" : "s"}`;
-    };
-
-    const getGroupSubtitle = (group) => {
-        if (group.serviceType === "Hotel") {
-            const city = group.subtitle || "";
-            const stars = group.starRating ? ` • ${group.starRating} estrellas` : "";
-            return `${city}${stars}`.trim();
-        }
-
-        const firstItem = group.items?.[0];
-        return getTypeDescription(firstItem ?? { serviceType: group.serviceType, description: "" });
-    };
-    const hotelGroups = rateGroups.map(group => ({
-        key: group.groupKey,
-        name: group.groupName,
-        city: group.subtitle,
-        supplierName: group.supplierName,
-        starRating: group.starRating,
-        items: (group.items || []).map(item => ({
-            ...item,
-            roomType: item.serviceType === "Hotel" ? item.roomType : item.productName,
-            roomCategory: item.serviceType === "Hotel" ? item.roomCategory : item.serviceType,
-            mealPlan: item.serviceType === "Hotel" ? item.mealPlan : (item.description || item.productName),
-            hotelPriceType: item.serviceType === "Hotel" ? item.hotelPriceType : null,
-        })),
-        fromPrice: group.fromPrice,
-        hasExpired: group.hasExpiredRates,
-        badgeLabel: `${group.serviceType} • ${getGroupMeta(group)}`,
-        description: getGroupSubtitle(group),
-        icon: getServiceTypeIcon(group.serviceType),
-    }));
-    const expandedHotels = expandedGroups;
-    const toggleHotel = toggleGroup;
-    const isHotelView = true;
-    const filteredRates = [];
-    const otherRates = [];
-
-    // Renderizar descripción resumida según tipo.
-    // Declarada como `function` (hoisted) a propósito: se usa más arriba, dentro
-    // del map de `hotelGroups`, vía getGroupSubtitle. Si fuera `const` daría
-    // "Cannot access before initialization" al renderizar tarifas que no son hotel.
-    function getTypeDescription(rate) {
-        switch (rate.serviceType) {
-            case "Aereo":
-                return `${rate.airline || ""} ${rate.origin ? `${rate.origin} → ${rate.destination}` : ""} ${rate.cabinClass || ""}`.trim() || rate.description;
-            case "Hotel":
-                return `${rate.hotelName || ""} ${rate.city ? `- ${rate.city}` : ""} ${rate.starRating ? `★${rate.starRating}` : ""} ${rate.mealPlan || ""}`.trim() || rate.description;
-            case "Traslado":
-                return `${rate.pickupLocation || ""} → ${rate.dropoffLocation || ""} ${rate.vehicleType || ""} ${rate.isRoundTrip ? "(I/V)" : ""}`.trim() || rate.description;
-            case "Paquete":
-                return `${rate.durationDays ? `${rate.durationDays} días` : ""} ${rate.destination || ""}`.trim() || rate.description;
-            default:
-                return rate.description;
-        }
+    const handleExistenteElegido = (nombre) => {
+        setShowAddForm(false);
+        setSearch(nombre);
     };
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <header className="flex items-center justify-between">
+            <header className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
+                    <h1 className="flex items-center gap-3 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
                         <div className="rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 p-2.5 text-white shadow-lg shadow-emerald-500/20">
                             <DollarSign className="h-6 w-6" />
                         </div>
                         Tarifario
                     </h1>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                        Cargá y mantené al día las tarifas de tus operadores y mayoristas.
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                        Los productos que ya vendiste, con el último precio de cada operador.
                     </p>
                 </div>
-                <button onClick={openNewModal}
-                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-500 transition-colors">
-                    <Plus className="h-4 w-4" />
-                    Nueva Tarifa
-                </button>
+                {puedeAgregarProducto && (
+                    <button
+                        type="button"
+                        onClick={() => setShowAddForm((prev) => !prev)}
+                        className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-500"
+                        data-testid="add-product-button"
+                    >
+                        <Plus className="h-4 w-4" />
+                        Agregar producto
+                    </button>
+                )}
             </header>
 
-            {/* Filters */}
-            <div className="flex flex-col sm:flex-row gap-4">
-                <div className="relative flex-1 max-w-md">
+            {puedeAgregarProducto && showAddForm && (
+                <AddProductInlineForm
+                    suppliers={suppliers}
+                    onCancel={() => setShowAddForm(false)}
+                    onCreated={handleProductoCreado}
+                    onExistingChosen={handleExistenteElegido}
+                    onOpenCargaCompleta={abrirCargaCompleta}
+                />
+            )}
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="relative flex-1 sm:max-w-md">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <input type="text" placeholder="Buscar..." className={`${inputClass} pl-10`}
-                        value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Buscar hotel, vuelo, paquete…"
+                        className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
                 </div>
-                <select className={inputClass} style={{ width: 'auto' }} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-                    <option value="">Todos los tipos</option>
-                    {serviceTypes.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className={SELECT_CLASS}>
+                    {SERVICE_TYPE_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
-                <select className={inputClass} style={{ width: 'auto' }} value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
-                    <option value="">Todos los proveedores</option>
+                <select value={filterSupplierId} onChange={(event) => setFilterSupplierId(event.target.value)} className={SELECT_CLASS}>
+                    <option value="">Todos los operadores</option>
                     {suppliers.map((supplier) => (
-                        <option key={getPublicId(supplier)} value={getPublicId(supplier)}>
-                            {supplier.name}
-                        </option>
+                        <option key={supplier.publicId || supplier.PublicId} value={supplier.publicId || supplier.PublicId}>{supplier.name}</option>
                     ))}
                 </select>
-                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                    <input
-                        type="checkbox"
-                        checked={activeOnly}
-                        onChange={(e) => setActiveOnly(e.target.checked)}
-                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    Solo vigentes
-                </label>
             </div>
 
-            {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-                    <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Total</div>
-                    <div className="text-2xl font-bold mt-1 text-slate-900 dark:text-white">{summary?.totalCount || 0}</div>
+            <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                <div className="grid grid-cols-[minmax(0,2fr)_88px_minmax(0,1.2fr)_minmax(0,1fr)_104px] gap-3 border-b border-slate-100 px-6 py-3 text-xs font-bold uppercase tracking-wider text-slate-400 dark:border-slate-800">
+                    <div>Producto</div>
+                    <div>Tipo</div>
+                    <div>Operador</div>
+                    <div>Último precio</div>
+                    <div>Cuándo</div>
                 </div>
-                {["Aereo", "Traslado", "Paquete"].map(type => (
-                    <div key={type} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-                        <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">{type === "Aereo" ? "Aéreo" : type}</div>
-                        <div className={`text-2xl font-bold mt-1 ${type === "Aereo" ? "text-sky-600" : type === "Traslado" ? "text-green-600" : "text-violet-600"}`}>
-                            {type === "Aereo"
-                                ? summary?.aereoCount || 0
-                                : type === "Traslado"
-                                    ? summary?.trasladoCount || 0
-                                    : summary?.paqueteCount || 0}
-                        </div>
+
+                {loading ? (
+                    // Renglones sueltos, SIN el wrapper con borde propio de <SkeletonTable>:
+                    // este contenedor ya tiene su propia tarjeta (rounded-2xl border más
+                    // arriba) — usar el componente completo dibujaba una tarjeta adentro de
+                    // otra tarjeta (hallazgo de review 2026-08-07).
+                    Array.from({ length: 5 }).map((_, index) => <SkeletonTableRow key={index} cols={5} />)
+                ) : loadError ? (
+                    <div className="p-6">
+                        <ListLoadErrorState message="No se pudo cargar el tarifario." onRetry={loadProducts} />
                     </div>
-                ))}
-                {/* Hotel stat: count unique hotels, not individual room rates */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-                    <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Hoteles</div>
-                    <div className="text-2xl font-bold mt-1 text-amber-600">{summary?.hotelGroupCount || 0}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">
-                        {summary?.hotelRateCount || 0} hab.
-                    </div>
-                </div>
-                {(summary?.expiredCount || 0) > 0 && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/30 dark:bg-red-900/10">
-                        <div className="text-xs text-red-600 dark:text-red-400 uppercase font-bold">Vencidas</div>
-                        <div className="text-lg font-bold mt-1 text-red-700 dark:text-red-300">
-                            {summary?.expiredCount || 0} <span className="text-xs font-normal">Acción requerida</span>
-                        </div>
+                ) : items.length === 0 ? (
+                    <ListEmptyState
+                        title={debouncedSearch.trim() ? `No encontramos "${debouncedSearch.trim()}" en tu tarifario.` : "Todavía no hay productos."}
+                        description={debouncedSearch.trim() ? null : "El tarifario se arma solo: la primera vez que cargues un servicio, el producto queda guardado acá."}
+                        action={
+                            puedeAgregarProducto ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddForm(true)}
+                                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                    Agregar producto
+                                </button>
+                            ) : null
+                        }
+                    />
+                ) : (
+                    <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {items.map((product) => {
+                            // Id estable para el link ARIA botón↔panel (disclosure pattern):
+                            // el botón dice QUÉ región controla aunque esa región todavía no
+                            // esté montada (colapsada).
+                            const panelId = `product-edit-panel-${product.productPublicId}`;
+                            const isExpanded = expandedProductId === product.productPublicId;
+                            return (
+                                <div key={product.productPublicId}>
+                                    <LearnedProductRow
+                                        product={product}
+                                        isExpanded={isExpanded}
+                                        panelId={panelId}
+                                        onToggle={() => setExpandedProductId((current) => (current === product.productPublicId ? null : product.productPublicId))}
+                                    />
+                                    {isExpanded && (
+                                        <ProductInlineEditForm
+                                            product={product}
+                                            panelId={panelId}
+                                            onCancel={() => setExpandedProductId(null)}
+                                            onSaved={() => {
+                                                setExpandedProductId(null);
+                                                loadProducts();
+                                            }}
+                                        />
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
             </div>
 
-            {/* Table / Cards Container */}
-            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden dark:border-slate-700 dark:bg-slate-800">
-
-                {/* Desktop Table View */}
-                <div className="hidden md:block overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-slate-50 dark:bg-slate-700">
-                            <tr>
-                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Producto / Hotel</th>
-                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Tipo</th>
-                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Proveedor</th>
-                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Detalles</th>
-                                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300">Vigencia</th>
-                                <th className="px-4 py-3 text-center font-medium text-slate-600 dark:text-slate-300">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                            {loading ? (
-                                <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">Cargando...</td></tr>
-                            ) : (isHotelView ? hotelGroups.length === 0 : filteredRates.length === 0) ? (
-                                <tr><td colSpan="6" className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
-                                    {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas. Cree una nueva para comenzar."}
-                                </td></tr>
-                            ) : (
-                                <>
-                                    {/* 1. Render Hotel Groups */}
-                                    {isHotelView && hotelGroups.map(group => {
-                                        const isExpanded = expandedHotels[group.key];
-                                        const minPrice = Math.min(...group.items.map(i => i.salePrice));
-                                        const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
-
-                                        return (
-                                            <div key={group.key} className="contents">
-                                                {/* Parent Row */}
-                                                <tr
-                                                    onClick={() => toggleHotel(group.key)}
-                                                    className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 ${hasExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : 'bg-slate-50/50 dark:bg-slate-800/50'}`}
-                                                >
-                                                    <td className="px-4 py-3">
-                                                        <div className="flex items-center gap-2">
-                                                            {isExpanded ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
-                                                            <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                                                                <group.icon className="h-4 w-4 text-slate-500" />
-                                                                {group.name}
-                                                            </div>
-                                                        </div>
-                                                        <div className="text-xs text-slate-500 pl-6">{group.description}</div>
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getServiceTypeBadgeClass(group.items[0]?.serviceType || "Otro")}`}>
-                                                            {group.badgeLabel}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{group.supplierName}</td>
-                                                    <td className="px-4 py-3 text-slate-500 text-xs">
-                                                        Desde <span className="font-semibold text-slate-700 dark:text-slate-300">${minPrice}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        {hasExpired && <span className="text-xs font-bold text-red-600">⚠ Contiene tarifas vencidas</span>}
-                                                    </td>
-                                                    <td className="px-4 py-3 text-center text-xs text-slate-400">
-                                                        Click para ver detalles
-                                                    </td>
-                                                </tr>
-
-                                                {/* Child Rows (Expanded) */}
-                                                {isExpanded && group.items.map(rate => {
-                                                    const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
-                                                    return (
-                                                        <tr key={getPublicId(rate)} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-indigo-400'} animate-in fade-in slide-in-from-top-1 duration-200`}>
-                                                            <td className="px-4 py-2 pl-8">
-                                                                <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
-                                                                    <BedDouble className="h-3 w-3 text-slate-400" />
-                                                                    {rate.roomType} <span className="text-slate-400 ml-1 font-normal">{rate.roomCategory}</span>
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-4 py-2"></td>
-                                                            <td className="px-4 py-2"></td>
-                                                            <td className="px-4 py-2">
-                                                                <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded inline-block">
-                                                                    {rate.hotelPriceType
-                                                                        ? `${rate.mealPlan} • ${rate.hotelPriceType === 'por_persona' ? 'Por Persona' : 'Base Doble'}`
-                                                                        : rate.mealPlan}
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-4 py-2 text-xs">
-                                                                <div className={`flex flex-col ${isExpired ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
-                                                                    <span>{formatDate(rate.validFrom)} - {formatDate(rate.validTo)}</span>
-                                                                    {isExpired && <span>Vencida</span>}
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-4 py-2 text-center">
-                                                                <div className="flex justify-center gap-1">
-                                                                    <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg"><Pencil className="h-4 w-4" /></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg"><Trash2 className="h-4 w-4" /></button>
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })}
-                                            </div>
-                                        );
-                                    })}
-
-                                    {/* 2. Render Other Rates (Flat) */}
-                                    {!isHotelView && otherRates.map(rate => {
-                                        const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
-                                        return (
-                                            <tr key={getPublicId(rate)} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 ${isExpired ? 'border-l-4 border-l-red-500 bg-red-50/10' : ''}`}>
-                                                <td className="px-4 py-3">
-                                                    <div className="font-medium text-slate-900 dark:text-white">{rate.productName}</div>
-                                                    <div className="text-xs text-slate-500 dark:text-slate-400">{getTypeDescription(rate)}</div>
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
-                                                        rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                                                            rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
-                                                                "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
-                                                        }`}>
-                                                        {rate.serviceType}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{rate.supplierName || <span className="text-slate-400">-</span>}</td>
-                                                <td className="px-4 py-3">
-                                                    <div className="text-sm text-slate-700 dark:text-slate-300 text-left">
-                                                        {rate.serviceType === "Aereo" && (
-                                                            <div className="flex flex-col">
-                                                                <span>{rate.airline} ({rate.airlineCode})</span>
-                                                                <span className="text-xs text-slate-500">{rate.cabinClass}</span>
-                                                            </div>
-                                                        )}
-                                                        {rate.serviceType === "Traslado" && (
-                                                            <div className="flex flex-col">
-                                                                <span>{rate.vehicleType}</span>
-                                                                <span className="text-xs text-slate-500">Max: {rate.maxPassengers} pax</span>
-                                                            </div>
-                                                        )}
-                                                        {rate.serviceType === "Paquete" && (
-                                                            <div className="flex flex-col">
-                                                                <span>{rate.destination}</span>
-                                                                <span className="text-xs text-slate-500">{rate.durationDays} días</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <div className="flex flex-col text-xs">
-                                                        <span className="text-slate-700 dark:text-slate-300">
-                                                            Desde: {formatDate(rate.validFrom)}
-                                                        </span>
-                                                        <span className="text-slate-500 dark:text-slate-400">
-                                                            Hasta: {formatDate(rate.validTo)}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-4 py-3 text-center">
-                                                    <div className="flex justify-center gap-2">
-                                                        <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
-                                                        <button onClick={() => deleteRate(getPublicId(rate))} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-
-                {/* Mobile Cards View */}
-                <div className="md:hidden divide-y divide-gray-200 dark:divide-slate-700">
-                    {loading ? (
-                        <div className="p-8 text-center text-slate-500">Cargando...</div>
-                    ) : (isHotelView ? hotelGroups.length === 0 : filteredRates.length === 0) ? (
-                        <div className="p-8 text-center text-slate-500">
-                            {searchTerm || filterType ? "No se encontraron tarifas" : "No hay tarifas."}
-                        </div>
-                    ) : (
-                        <>
-                            {/* Mobile: Hotel Groups */}
-                            {isHotelView && hotelGroups.map(group => {
-                                const isExpanded = expandedHotels[group.key];
-                                const minPrice = Math.min(...group.items.map(i => i.salePrice));
-                                const hasExpired = group.items.some(r => r.validTo && new Date(r.validTo) < new Date());
-
-                                return (
-                                    <div key={group.key} className={`bg-white dark:bg-slate-800 ${hasExpired ? 'bg-red-50/20' : ''}`}>
-                                        <div
-                                            onClick={() => toggleHotel(group.key)}
-                                            className="p-4 cursor-pointer"
-                                        >
-                                            <div className="flex justify-between items-start">
-                                                <div className="flex items-center gap-2">
-                                                    <group.icon className="h-5 w-5 text-slate-500" />
-                                                    <div>
-                                                        <div className="font-semibold text-slate-900 dark:text-white">{group.name}</div>
-                                                        <div className="text-xs text-slate-500">{group.description}</div>
-                                                    </div>
-                                                </div>
-                                                {isExpanded ? <ChevronDown className="h-5 w-5 text-slate-400" /> : <ChevronRight className="h-5 w-5 text-slate-400" />}
-                                            </div>
-                                            <div className="mt-2 flex justify-between items-center text-sm">
-                                                <span className="text-slate-600 dark:text-slate-400">{group.badgeLabel}</span>
-                                                <div className="font-medium text-slate-900 dark:text-white">Desde ${minPrice}</div>
-                                            </div>
-                                        </div>
-
-                                        {isExpanded && (
-                                            <div className="bg-slate-50 dark:bg-slate-900/50 divide-y divide-slate-100 dark:divide-slate-700 border-t border-slate-100 dark:border-slate-800">
-                                                {group.items.map(rate => {
-                                                    const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
-                                                    return (
-                                                        <div key={getPublicId(rate)} className="p-4 pl-8 relative">
-                                                            {isExpired && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />}
-                                                            <div className="flex justify-between items-start">
-                                                                <div>
-                                                                    <div className="font-medium text-slate-800 dark:text-slate-200">
-                                                                        {rate.roomType} <span className="text-slate-500 font-normal">{rate.roomCategory}</span>
-                                                                    </div>
-                                                                    <div className="text-xs text-slate-500 mt-0.5">{rate.mealPlan}</div>
-                                                                </div>
-                                                                <div className="text-right">
-                                                                    <div className="font-bold text-slate-900 dark:text-white">${rate.salePrice}</div>
-                                                                    <div className="text-xs text-slate-400">{rate.hotelPriceType ? (rate.hotelPriceType === 'por_persona' ? 'p/pax' : 'base dbl') : ''}</div>
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex justify-between items-center mt-3 pt-2 border-t border-slate-200 dark:border-slate-700 border-dashed">
-                                                                <div className={`text-xs ${isExpired ? 'text-red-500 font-medium' : 'text-slate-400'}`}>
-                                                                    {isExpired ? 'Vencida: ' : 'Vence: '}{formatDate(rate.validTo)}
-                                                                </div>
-                                                                <div className="flex gap-2">
-                                                                    <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1 text-indigo-600 bg-indigo-50 rounded dark:bg-indigo-900/30 dark:text-indigo-400"><Pencil className="h-4 w-4" /></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }} className="p-1 text-rose-600 bg-rose-50 rounded dark:bg-rose-900/30 dark:text-rose-400"><Trash2 className="h-4 w-4" /></button>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-
-                            {/* Mobile: Other Rates */}
-                            {!isHotelView && otherRates.map(rate => {
-                                const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
-                                return (
-                                    <div key={getPublicId(rate)} className="p-4 bg-white dark:bg-slate-800 space-y-3">
-                                        <div className="flex justify-between items-start">
-                                            <div>
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase mb-1 ${rate.serviceType === "Aereo" ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
-                                                    rate.serviceType === "Traslado" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                                                        rate.serviceType === "Paquete" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" :
-                                                            "bg-slate-100 text-slate-700 dark:bg-slate-600 dark:text-slate-300"
-                                                    }`}>
-                                                    {rate.serviceType}
-                                                </span>
-                                                <div className="font-bold text-slate-900 dark:text-white">{rate.productName}</div>
-                                            </div>
-                                            <div className="font-bold text-lg text-slate-900 dark:text-white">${rate.salePrice}</div>
-                                        </div>
-
-                                        <div className="text-sm text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg">
-                                            {getTypeDescription(rate)}
-                                        </div>
-
-                                        <div className="flex justify-between items-center text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-700">
-                                            <div>
-                                                Prov: <span className="font-medium text-slate-700 dark:text-slate-300">{rate.supplierName || "-"}</span>
-                                            </div>
-                                            <div className={`${isExpired ? 'text-red-500 font-bold' : ''}`}>
-                                                {isExpired ? 'Vencida' : `Vence: ${formatDate(rate.validTo)}`}
-                                            </div>
-                                        </div>
-
-                                        <div className="flex justify-end gap-3 pt-2">
-                                            <button onClick={() => editRate(rate)} className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg dark:bg-indigo-900/20 dark:text-indigo-400">
-                                                <Pencil className="h-3.5 w-3.5" /> Editar
-                                            </button>
-                                            <button onClick={() => deleteRate(getPublicId(rate))} className="flex items-center gap-1 text-xs font-medium text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg dark:bg-rose-900/20 dark:text-rose-400">
-                                                <Trash2 className="h-3.5 w-3.5" /> Eliminar
-                                            </button>
-                                        </div>
-                                    </div>
-                                )
-                            })}
-                        </>
-                    )}
-                </div>
-            </div>
-
-            <PaginationFooter
-                page={pageState.page || page}
-                pageSize={pageState.pageSize || pageSize}
-                totalCount={pageState.totalCount || 0}
-                totalPages={pageState.totalPages || 0}
-                hasPreviousPage={Boolean(pageState.hasPreviousPage)}
-                hasNextPage={Boolean(pageState.hasNextPage)}
-                onPageChange={setPage}
-                onPageSizeChange={setPageSize}
-            />
-
-            {/* Modal */}
-            <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={form.id ? "Editar Tarifa" : "Nueva Tarifa"} className="max-w-4xl">
-                <form onSubmit={saveRate} className="space-y-5">
-                    {/* Tipo de Servicio - Tabs visuales */}
-                    <div>
-                        <label className={labelClass}>Tipo de Servicio *</label>
-                        <div className="grid grid-cols-4 gap-2 mt-2">
-                            {serviceTypes.slice(0, 4).map(type => (
-                                <button key={type.value} type="button"
-                                    onClick={() => handleServiceTypeChange({ target: { value: type.value } })}
-                                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all
-                                        ${form.serviceType === type.value
-                                            ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
-                                            : "border-slate-200 hover:border-slate-300 dark:border-slate-600 dark:hover:border-slate-500 text-slate-600 dark:text-slate-400"
-                                        }`}>
-                                    {type.icon && <type.icon className="h-5 w-5" />}
-                                    <span className="text-xs font-medium">{type.label}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Información básica */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="col-span-2">
-                            <label className={labelClass}>Nombre del Producto *</label>
-                            <input type="text" required className={inputClass} value={form.productName}
-                                onChange={e => setForm({ ...form, productName: e.target.value })}
-                                placeholder={form.serviceType === "Aereo" ? "Vuelo Buenos Aires - Miami" : form.serviceType === "Hotel" ? "Estadía Hotel Marriott" : "Nombre del servicio"} />
-                        </div>
-                        <div>
-                            <label className={labelClass}>Proveedor</label>
-                            <select id="supplierId" className={inputClass} value={form.supplierId} onChange={handleSupplierChange}>
-                                <option value="">Seleccionar proveedor</option>
-                                {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className={labelClass}>Unidad de Precio</label>
-                            <select className={inputClass} value={form.priceUnit} onChange={e => setForm({ ...form, priceUnit: e.target.value })}>
-                                {priceUnits.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
-                            </select>
-                        </div>
-                    </div>
-
-                    {/* Campos dinámicos según tipo */}
-                    {form.serviceType === "Aereo" && (
-                        <div className="p-4 rounded-xl bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-800 space-y-4">
-                            <div className="flex items-center gap-2 text-sky-700 dark:text-sky-400 font-medium text-sm">
-                                <Plane className="h-4 w-4" /> Datos del Vuelo
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className={labelClass}>Aerolínea</label>
-                                    <input type="text" className={inputClass} value={form.airline}
-                                        onChange={e => setForm({ ...form, airline: e.target.value })} placeholder="Aerolíneas Argentinas" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Código IATA</label>
-                                    <input type="text" className={inputClass} value={form.airlineCode} maxLength={3}
-                                        onChange={e => setForm({ ...form, airlineCode: e.target.value.toUpperCase() })} placeholder="AR" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Origen</label>
-                                    <input type="text" className={inputClass} value={form.origin}
-                                        onChange={e => setForm({ ...form, origin: e.target.value })} placeholder="Buenos Aires (EZE)" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Destino</label>
-                                    <input type="text" className={inputClass} value={form.destination}
-                                        onChange={e => setForm({ ...form, destination: e.target.value })} placeholder="Miami (MIA)" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Clase</label>
-                                    <select className={inputClass} value={form.cabinClass} onChange={e => setForm({ ...form, cabinClass: e.target.value })}>
-                                        <option value="">Seleccionar</option>
-                                        {cabinClasses.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Equipaje Incluido</label>
-                                    <input type="text" className={inputClass} value={form.baggageIncluded}
-                                        onChange={e => setForm({ ...form, baggageIncluded: e.target.value })} placeholder="23kg + carry-on" />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {form.serviceType === "Hotel" && (
-                        <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 space-y-4">
-                            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-medium text-sm">
-                                <Hotel className="h-4 w-4" /> Datos del Hotel
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2">
-                                    <label className={labelClass}>Nombre del Hotel</label>
-                                    <input type="text" className={inputClass} value={form.hotelName}
-                                        onChange={e => setForm({ ...form, hotelName: e.target.value })} placeholder="Marriott Resort & Spa" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Ciudad</label>
-                                    <input type="text" className={inputClass} value={form.city}
-                                        onChange={e => setForm({ ...form, city: e.target.value })} placeholder="Cancún" />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Categoría</label>
-                                    <select className={inputClass} value={form.starRating} onChange={e => setForm({ ...form, starRating: e.target.value })}>
-                                        <option value="">Seleccionar</option>
-                                        {[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{"★".repeat(n)} {n} estrellas</option>)}
-                                    </select>
-                                </div>
-                            </div>
-
-                            {/* Separator */}
-                            <div className="border-t border-slate-200 dark:border-slate-700 my-4 pt-4">
-                                <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
-                                    <Plus className="h-4 w-4" /> Variaciones de Habitación
-                                </h4>
-
-                                {/* Lista de variaciones agregadas */}
-                                {roomVariations.length > 0 && (
-                                    <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-                                        <table className="w-full text-xs">
-                                            <thead className="bg-slate-50 dark:bg-slate-800">
-                                                <tr>
-                                                    <th className="px-3 py-2 text-left text-slate-500">Tipo</th>
-                                                    <th className="px-3 py-2 text-left text-slate-500">Categ.</th>
-                                                    <th className="px-3 py-2 text-left text-slate-500">Régimen</th>
-                                                    <th className="px-3 py-2 text-right text-slate-500">Costo</th>
-                                                    <th className="px-3 py-2 text-right text-slate-500">Venta</th>
-                                                    <th className="w-8"></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                                                {roomVariations.map(v => (
-                                                    <tr key={v.id} className="bg-slate-50/50 dark:bg-slate-800/30">
-                                                        <td className="px-3 py-2">{v.roomType}</td>
-                                                        <td className="px-3 py-2">{v.roomCategory}</td>
-                                                        <td className="px-3 py-2">{v.mealPlan}</td>
-                                                        {/* Bug #26 (Tanda 4, 2026-07-24): antes mostraba el número crudo sin
-                                                            miles ni decimales ("48000" en vez de "$48.000,00"). Las variaciones
-                                                            no tienen moneda propia: comparten la del formulario (form.currency) —
-                                                            se la pasamos explícita para no caer en el default legacy (USD) de
-                                                            formatCurrency() cuando no se pasa moneda. */}
-                                                        <td className="px-3 py-2 text-right">{formatCurrency(v.netCost, form.currency)}</td>
-                                                        <td className="px-3 py-2 text-right">{formatCurrency(v.salePrice, form.currency)}</td>
-                                                        <td className="px-3 py-2 text-center">
-                                                            <button type="button" onClick={() => removeRoomVariation(v.id)} className="text-rose-500 hover:text-rose-700">
-                                                                <X className="h-4 w-4" />
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-
-                                {/* Formulario de Variación */}
-                                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className={labelClass}>Capacidad</label>
-                                            <select className={inputClass} value={form.roomType} onChange={e => setForm({ ...form, roomType: e.target.value })}>
-                                                <option value="Single">Individual (Single)</option>
-                                                <option value="Doble">Doble</option>
-                                                <option value="Triple">Triple</option>
-                                                <option value="Cuadruple">Cuádruple</option>
-                                                <option value="Familiar">Familiar</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className={labelClass}>Categoría Habitación</label>
-                                            <select className={inputClass} value={form.roomCategory} onChange={e => setForm({ ...form, roomCategory: e.target.value })}>
-                                                <option value="Standard">Estándar</option>
-                                                <option value="Superior">Superior</option>
-                                                <option value="Executive">Ejecutiva</option>
-                                                <option value="Suite">Suite</option>
-                                            </select>
-                                        </div>
-                                        <div className="col-span-2">
-                                            <label className={labelClass}>Características Especiales</label>
-                                            <div className="grid grid-cols-3 gap-2 mt-2">
-                                                {[
-                                                    { id: "SeaView", label: "Vista al Mar" },
-                                                    { id: "CityView", label: "Vista Ciudad" },
-                                                    { id: "Connecting", label: "Conectadas" },
-                                                    { id: "Balcony", label: "Balcón" },
-                                                    { id: "Jacuzzi", label: "Jacuzzi" },
-                                                    { id: "Kitchen", label: "Cocina" }
-                                                ].map(feature => (
-                                                    <label key={feature.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                                                        <input type="checkbox"
-                                                            checked={form.roomFeatures?.split(",").includes(feature.id)}
-                                                            onChange={e => {
-                                                                const current = form.roomFeatures ? form.roomFeatures.split(",") : [];
-                                                                const updated = e.target.checked
-                                                                    ? [...current, feature.id]
-                                                                    : current.filter(f => f !== feature.id);
-                                                                setForm({ ...form, roomFeatures: updated.join(",") });
-                                                            }}
-                                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                                                        <span className="text-sm text-slate-700 dark:text-slate-300">{feature.label}</span>
-                                                    </label>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className={labelClass}>Régimen</label>
-                                            <select className={inputClass} value={form.mealPlan} onChange={e => setForm({ ...form, mealPlan: e.target.value })}>
-                                                <option value="">Seleccionar</option>
-                                                {mealPlans.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className={labelClass}>Tipo de Precio</label>
-                                            <select className={inputClass} value={form.hotelPriceType || "base_doble"} onChange={e => setForm({ ...form, hotelPriceType: e.target.value })}>
-                                                <option value="base_doble">Por Habitación (Base Doble)</option>
-                                                <option value="por_persona">Por Persona</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className={labelClass}>% Pago Niños</label>
-                                            <div className="relative">
-                                                <input type="number" min="0" max="100" className={inputClass} value={form.childrenPayPercent}
-                                                    onChange={e => setForm({ ...form, childrenPayPercent: e.target.value })} placeholder="0" />
-                                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                                                    <span className="text-slate-500 sm:text-sm">%</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className={labelClass}>Edad Máx Niño</label>
-                                            <input type="number" min="0" className={inputClass} value={form.childMaxAge}
-                                                onChange={e => setForm({ ...form, childMaxAge: e.target.value })} placeholder="12" />
-                                        </div>
-                                        <div className="col-span-2 pt-2">
-                                            <button type="button" onClick={addRoomVariation} className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50/50 p-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400 transition-colors">
-                                                <Plus className="h-4 w-4" /> Agregar esta variante a la lista
-                                            </button>
-                                        </div>
-                                        <div className="col-span-2 border-t border-slate-200 dark:border-slate-700 pt-4 mt-2">
-                                            <div className="grid grid-cols-3 gap-4">
-                                                <div>
-                                                    <label className={labelClass}>Costo Neto *</label>
-                                                    <div className="relative">
-                                                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                                                        <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.netCost} onChange={handleNetCostChange} />
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className={labelClass}>Impuestos</label>
-                                                    <div className="relative">
-                                                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                                                        <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.tax || ""} onChange={handleTaxChange} />
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className={labelClass}>Precio Venta</label>
-                                                    <div className="relative">
-                                                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                                                        <input type="number" step="0.01" className={`${inputClass} pl-6 font-bold text-emerald-600`} value={form.salePrice}
-                                                            onChange={e => setForm({ ...form, salePrice: e.target.value })} />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Common Fields */}
-                    {form.serviceType !== "Hotel" && (
-                        <>
-                            <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700">
-                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Valores Económicos</h4>
-                                <div className="grid grid-cols-3 gap-4">
-                                    <div>
-                                        <label className={labelClass}>Costo Neto *</label>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                                            <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.netCost} onChange={handleNetCostChange} required />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className={labelClass}>Impuestos</label>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                                            <input type="number" step="0.01" className={`${inputClass} pl-6`} value={form.tax || ""} onChange={handleTaxChange} />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className={labelClass}>Precio Venta *</label>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                                            <input type="number" step="0.01" className={`${inputClass} pl-6 font-bold text-emerald-600`} value={form.salePrice}
-                                                onChange={e => setForm({ ...form, salePrice: e.target.value })} required />
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2 mt-3">
-                                    <button type="button" onClick={applyCommission} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800">
-                                        <Calculator className="h-3 w-3" /> Aplicar {commissionPercent}% de comisión sugerida
-                                    </button>
-                                </div>
-                            </div>
-                        </>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className={labelClass}>Válido Desde *</label>
-                            <input type="date" required className={inputClass} id="validFrom" value={form.validFrom}
-                                onChange={e => setForm({ ...form, validFrom: e.target.value })} />
-                        </div>
-                        <div>
-                            <label className={labelClass}>Válido Hasta *</label>
-                            <input type="date" required className={inputClass} id="validTo" value={form.validTo}
-                                onChange={e => setForm({ ...form, validTo: e.target.value })} />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className={labelClass}>Notas Internas</label>
-                        <textarea className={inputClass} rows="2" value={form.internalNotes}
-                            onChange={e => setForm({ ...form, internalNotes: e.target.value })} placeholder="Solo visible por la agencia..." />
-                    </div>
-
-                    <div className="pt-4 flex justify-end gap-3 border-t dark:border-slate-700">
-                        <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg transition-colors dark:text-slate-300 dark:hover:bg-slate-800">
-                            Cancelar
-                        </button>
-                        <button type="submit" className="px-6 py-2 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-500 shadow-lg shadow-indigo-500/30 transition-all">
-                            {form.id ? "Guardar Cambios" : "Crear Tarifa"}
-                        </button>
-                    </div>
-                </form>
-            </Modal>
+            {!loading && !loadError && items.length > 0 && (
+                <PaginationFooter
+                    page={page}
+                    pageSize={pageSize}
+                    totalCount={pageState.totalCount}
+                    totalPages={pageState.totalPages}
+                    hasPreviousPage={pageState.hasPreviousPage}
+                    hasNextPage={pageState.hasNextPage}
+                    onPageChange={setPage}
+                    onPageSizeChange={setPageSize}
+                />
+            )}
         </div>
     );
 }

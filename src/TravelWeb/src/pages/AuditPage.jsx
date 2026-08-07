@@ -61,6 +61,9 @@ const actionTranslations = {
   InvoiceIssued: "Emitió factura", InvoiceForced: "Forzó factura",
   ReportExported: "Exportó reporte", UserCreated: "Creó usuario",
   PermissionsChanged: "Cambió permisos", WhatsAppSent: "Envió WhatsApp",
+  // Tarifario nuevo (spec 2026-08-06, fix 2026-08-07): sin estas dos, el evento caía al
+  // fallback crudo (el nombre técnico del action en inglés, sin traducir).
+  RateRenamed: "Renombró tarifa", RateCreatedManually: "Cargó tarifa a mano",
 };
 
 const actionColors = {
@@ -71,6 +74,7 @@ const actionColors = {
   InvoiceIssued: "bg-emerald-500", InvoiceForced: "bg-amber-500",
   ReportExported: "bg-cyan-500", UserCreated: "bg-emerald-500",
   PermissionsChanged: "bg-violet-500", WhatsAppSent: "bg-green-500",
+  RateRenamed: "bg-blue-500", RateCreatedManually: "bg-emerald-500",
 };
 
 const actionBadgeColors = {
@@ -82,6 +86,8 @@ const actionBadgeColors = {
   LoginFailed: "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",
   Logout: "bg-slate-50 text-slate-700 dark:bg-slate-800/50 dark:text-slate-300",
   ChangePassword: "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",
+  RateRenamed: "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+  RateCreatedManually: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
 };
 
 // Mapa EXHAUSTIVO de campos de entidad â†’ español legible
@@ -300,7 +306,7 @@ function ActionIcon({ action, className = "" }) {
   if (action === "LoginFailed") return <span className={base}><LogIn className={iconClass} /></span>;
   if (action === "Logout") return <span className={base}><LogOut className={iconClass} /></span>;
   if (action === "ChangePassword") return <span className={base}><KeyRound className={iconClass} /></span>;
-  if (action === "Create" || action === "UserCreated") return <span className={base}><Plus className={iconClass} /></span>;
+  if (action === "Create" || action === "UserCreated" || action === "RateCreatedManually") return <span className={base}><Plus className={iconClass} /></span>;
   if (action === "Delete" || action === "SoftDelete") return <span className={base}><Trash2 className={iconClass} /></span>;
   return <span className={base}><Pencil className={iconClass} /></span>;
 }
@@ -330,6 +336,10 @@ function NarrativeSummary({ log }) {
     summary = `eliminó ${entity}`;
   } else if (log.action === "SoftDelete") {
     summary = `envió a papelera ${entity}`;
+  } else if (log.action === "RateRenamed") {
+    summary = `renombró ${entity}`;
+  } else if (log.action === "RateCreatedManually") {
+    summary = `cargó ${entity} a mano`;
   } else if (log.action === "Update") {
     if (fieldCount === 0) {
       summary = `modificó ${entity}`;

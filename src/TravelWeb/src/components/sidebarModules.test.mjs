@@ -32,7 +32,7 @@ const MODULE_DEFS = [
     links: [
       { to: "/customers", label: "Clientes",               requiredPermission: "clientes.view" },
       { to: "/crm",       label: "Posibles clientes",      requiredPermission: "crm.view" },
-      { to: "/payments",  label: "Cobranza y Facturación", requiredPermission: "cobranzas.view" },
+      { to: "/payments",  label: "Cobranzas", requiredPermission: "cobranzas.view" },
       // "NC por revisar" y "Reconciliación NC" se sacaron de acá — ahora viven unificadas en
       // /pendientes-afip, dentro del módulo GESTIÓN (spec "fin de las bandejas", 2026-07-08).
     ],

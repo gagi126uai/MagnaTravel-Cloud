@@ -32,11 +32,33 @@ public interface IRateService
     /// pg_trgm). Es supplier-AGNOSTICO (el producto manda, no el operador) y deduplica las N tarifas
     /// legacy del mismo producto en un solo resultado. Cada item trae el contexto de la "ultima vez".
     ///
-    /// <para><b>Gateado por el flag <c>EnableCatalogFindOrCreate</c></b>: si esta OFF (o no hay forma de
-    /// leerlo — fail-closed), devuelve <c>null</c> para que el controller responda 404, como si el
-    /// endpoint no existiera (ADR §2.3 / R4). Si esta ON, devuelve la lista (puede ser vacia).</para>
+    /// <para><b>Sin llave desde el 2026-08-06</b> (spec firmada de Tarifario, P8=A): el buscador esta
+    /// disponible para todos los que pueden ver el tarifario. Devuelve siempre una lista (puede ser vacia).</para>
     /// </summary>
-    Task<IReadOnlyList<CatalogSearchItemDto>?> CatalogSearchAsync(string? serviceType, string? query, CancellationToken ct);
+    Task<IReadOnlyList<CatalogSearchItemDto>> CatalogSearchAsync(string? serviceType, string? query, CancellationToken ct);
+
+    /// <summary>
+    /// "Tarifario que se arma solo" (spec firmada 2026-08-06, M-1/M-2): lista de PRODUCTOS aprendidos,
+    /// con un renglon por operador que trae el ultimo precio conocido, su moneda, su unidad, cuando fue y
+    /// (si vino de una venta) el numero de reserva que lo dejo. Incluye tambien las tarifas viejas
+    /// cargadas a mano, como un producto mas (P2=A).
+    /// </summary>
+    Task<PagedResponse<LearnedProductDto>> GetLearnedProductsAsync(LearnedProductsQuery query, CancellationToken ct);
+
+    /// <summary>
+    /// Alta simple de producto desde el Tarifario (spec firmada 2026-08-06, M-3 + P7): pocos campos y
+    /// freno de repetidos OBLIGATORIO en el servidor. Si encuentra productos muy parecidos y el pedido no
+    /// trae la confirmacion explicita del usuario, NO crea nada y devuelve los parecidos para que elija.
+    /// </summary>
+    Task<SimpleProductCreationResult> CreateSimpleProductAsync(CreateSimpleProductRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// Renombra un PRODUCTO del Tarifario (spec firmada 2026-08-06, §2.2): corrige el nombre (y la ciudad,
+    /// en hotel) de TODAS las tarifas que forman ese producto, en una sola transaccion. Si el nombre nuevo
+    /// ya lo tiene otro producto, NO fusiona: lanza
+    /// <see cref="Domain.Exceptions.RateProductNameTakenException"/> para que el usuario decida.
+    /// </summary>
+    Task<RenameLearnedProductResult> RenameLearnedProductAsync(RenameLearnedProductRequest request, CancellationToken ct);
 }
 
 // Moving RateDto from controllers namespace to application layer

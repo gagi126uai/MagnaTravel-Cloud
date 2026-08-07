@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel.DataAnnotations;
 
 namespace TravelApi.Application.DTOs;
@@ -6,8 +6,7 @@ namespace TravelApi.Application.DTOs;
 /// <summary>
 /// ADR-017 F1.3 (§2.3.b): sub-objeto OPCIONAL para crear un producto del catalogo "en linea", en la
 /// misma operacion que el servicio. Mutuamente excluyente con <c>RateId</c> (400 si vienen ambos).
-/// Solo tiene efecto con el flag <c>EnableCatalogFindOrCreate</c> ON; con OFF se ignora (o 400 segun
-/// el create). Campos minimos: el resto del producto se enriquece despues desde el back-office.
+/// Campos minimos: el resto del producto se enriquece despues desde el back-office.
 /// </summary>
 public record NewCatalogProductRequest(
     // Nombre del producto tal como lo escribio el vendedor (hotel, ruta, plan...). De aca sale el

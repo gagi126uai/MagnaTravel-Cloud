@@ -1,4 +1,4 @@
-namespace TravelApi.Application.DTOs;
+﻿namespace TravelApi.Application.DTOs;
 
 public class HotelBookingDto
 {
@@ -40,8 +40,6 @@ public class HotelBookingDto
     /// confirmacion (producto nuevo sin costo conocido o costo de referencia viejo). SEGURIDAD: es una
     /// MARCA de costo — para callers sin cobranzas.see_cost se enmascara a false (guia UX linea 81:
     /// quien no ve costos no ve montos NI marcas de costo). CostToConfirmReason NO se expone (interno).
-    /// Con flag EnableCatalogFindOrCreate OFF nadie la setea -> false (patron aditivo: el campo viaja
-    /// siempre, el valor es neutro con flag OFF).
     /// </summary>
     public bool CostToConfirm { get; set; }
     /// <summary>

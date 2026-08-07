@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Security.Claims;
 using AutoMapper;
@@ -100,7 +100,7 @@ public class FlightSegmentGeographicScopeTests
         Notes: null,
         RateId: null,
         WorkflowStatus: "Solicitado",
-        GeographicScope: geographicScope);
+        GeographicScope: geographicScope, Currency: "ARS");
 
     [Fact]
     public async Task CreateFlightAsync_ConNacional_QuedaGuardadoComoDomestic()

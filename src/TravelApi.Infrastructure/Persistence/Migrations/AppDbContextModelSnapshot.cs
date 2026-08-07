@@ -3749,6 +3749,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("Fc13DeployDate")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("FullPaymentDueDaysBeforeDeparture")
+                        .HasColumnType("integer");
+
                     b.Property<string>("GenericDescriptionPatterns")
                         .IsRequired()
                         .HasMaxLength(1000)
@@ -4928,6 +4931,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<int?>("LastReservaId")
+                        .HasColumnType("integer");
+
                     b.Property<decimal>("LastSalePrice")
                         .HasColumnType("decimal(18,2)");
 
@@ -4947,6 +4953,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("LastReservaId");
 
                     b.HasIndex("SupplierId");
 
@@ -7879,6 +7887,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TravelApi.Domain.Entities.RateSupplierSale", b =>
                 {
+                    b.HasOne("TravelApi.Domain.Entities.Reserva", "LastReserva")
+                        .WithMany()
+                        .HasForeignKey("LastReservaId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TravelApi.Domain.Entities.Rate", "Rate")
                         .WithMany()
                         .HasForeignKey("RateId")
@@ -7890,6 +7903,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasForeignKey("SupplierId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("LastReserva");
 
                     b.Navigation("Rate");
 

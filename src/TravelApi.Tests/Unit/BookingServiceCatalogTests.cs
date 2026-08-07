@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Security.Claims;
 using AutoMapper;
 using Microsoft.AspNetCore.Http;
@@ -257,40 +257,7 @@ public class BookingServiceCatalogTests
         Assert.Equal(rate.Id, stored.RateId);   // identidad del rate igual queda vinculada
     }
 
-    [Fact]
-    public async Task Flight_WithRate_FlagOff_SnapshotWins()
-    {
-        await using var context = CreateContext();
-        var mapper = CreateMapper();
-        var (reserva, supplierA, supplierB) = await SeedAsync(context);
-        var rate = await SeedFlightRateAsync(context, supplierA.Id);
-        var service = CreateService(context, mapper, flagOn: false, canSeeCost: true);
-
-        await service.CreateFlightAsync(reserva.Id, FlightWithRate(supplierB.PublicId.ToString(), rate.PublicId.ToString(), net: 700m, sale: 900m, tax: 40m), CancellationToken.None);
-
-        var stored = await context.FlightSegments.SingleAsync();
-        Assert.Equal(300m, stored.NetCost);     // flag OFF: el snapshot del rate PISA (comportamiento historico)
-        Assert.Equal(30m, stored.Tax);
-        Assert.Equal(0, await context.RateSupplierSales.CountAsync()); // OFF nunca escribe RateSupplierSale
-    }
-
     // ===================== R4 — flag OFF byte-identico =====================
-
-    [Fact]
-    public async Task FlagOff_NewProductIgnored_NoRateNoSale()
-    {
-        await using var context = CreateContext();
-        var mapper = CreateMapper();
-        var (reserva, supplierA, _) = await SeedAsync(context);
-        var service = CreateService(context, mapper, flagOn: false, canSeeCost: true);
-
-        await service.CreateHotelAsync(reserva.Id, HotelWithNewProduct(supplierA.PublicId.ToString(), "Hotel Maitei", "Posadas", 200m, 300m), CancellationToken.None);
-
-        Assert.Equal(0, await context.Rates.CountAsync());            // NewCatalogProduct se ignora con flag OFF
-        Assert.Equal(0, await context.RateSupplierSales.CountAsync());
-        var hotel = await context.HotelBookings.SingleAsync();
-        Assert.Null(hotel.Currency); // Currency null ignorada (el map la ignora y OFF no la asigna sin rate)
-    }
 
     // ===================== validaciones de entrada (flag ON) =====================
 
@@ -522,23 +489,6 @@ public class BookingServiceCatalogTests
         Assert.Equal(1, after.SalesCount); // idempotente: no se duplica el upsert
     }
 
-    [Fact]
-    public async Task ConfirmCost_FlagOff_Throws404Signal()
-    {
-        await using var context = CreateContext();
-        var mapper = CreateMapper();
-        var (reserva, supplierA, _) = await SeedAsync(context);
-        // Creamos un hotel marcado con flag ON, luego intentamos confirmar con flag OFF.
-        var masked = CreateService(context, mapper, flagOn: true, canSeeCost: false);
-        var created = await masked.CreateHotelAsync(reserva.Id,
-            HotelWithNewProduct(supplierA.PublicId.ToString(), "Hotel Maitei", "Posadas", net: 0m, sale: 400m) with { Commission = 400m },
-            CancellationToken.None);
-
-        var offService = CreateService(context, mapper, flagOn: false, canSeeCost: true);
-        await Assert.ThrowsAsync<FeatureNotEnabledException>(() =>
-            offService.ConfirmHotelCostAsync(reserva.Id.ToString(), created.PublicId.ToString(), new ConfirmCostRequest(), CancellationToken.None));
-    }
-
     // ===================== B1 — confirm-cost refresca los saldos cacheados =====================
 
     [Fact]
@@ -617,6 +567,92 @@ public class BookingServiceCatalogTests
     }
 
     // ===================== confirm-cost por tipo NO-Hotel (los 5 son casi-duplicados) =====================
+
+    // ===================== La moneda de la venta es OBLIGATORIA (D5) =====================
+    // Desde que murio la llave del catalogo (2026-08-06) los CINCO tipos de servicio corren por el mismo
+    // camino, y ese camino exige la moneda: sin ella no se puede saber en que plata se vendio, y todo el
+    // circuito multimoneda (saldo por moneda, deuda al operador, memoria de precios) queda envenenado.
+    // El mensaje del rechazo es el que ve el vendedor; el controller lo devuelve como 400.
+
+    [Fact]
+    public async Task CreateHotel_SinMoneda_Rechaza()
+    {
+        await using var context = CreateContext();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var service = CreateService(context, CreateMapper(), flagOn: true, canSeeCost: true);
+
+        var request = HotelWithNewProduct(supplierA.PublicId.ToString(), "Hotel sin moneda", "Posadas", 200m, 300m)
+            with { Currency = null };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateHotelAsync(reserva.Id, request, CancellationToken.None));
+        Assert.Equal("La moneda de la venta es obligatoria.", error.Message);
+        Assert.Equal(0, await context.HotelBookings.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateFlight_SinMoneda_Rechaza()
+    {
+        await using var context = CreateContext();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var service = CreateService(context, CreateMapper(), flagOn: true, canSeeCost: true);
+
+        var request = FlightWithNewProduct(supplierA.PublicId.ToString(), "Vuelo sin moneda", 200m, 300m)
+            with { Currency = "  " };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateFlightAsync(reserva.Id, request, CancellationToken.None));
+        Assert.Equal("La moneda de la venta es obligatoria.", error.Message);
+        Assert.Equal(0, await context.FlightSegments.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateTransfer_SinMoneda_Rechaza()
+    {
+        await using var context = CreateContext();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var service = CreateService(context, CreateMapper(), flagOn: true, canSeeCost: true);
+
+        var request = TransferWithNewProduct(supplierA.PublicId.ToString(), "Traslado sin moneda", 50m, 80m)
+            with { Currency = null };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateTransferAsync(reserva.Id, request, CancellationToken.None));
+        Assert.Equal("La moneda de la venta es obligatoria.", error.Message);
+        Assert.Equal(0, await context.TransferBookings.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreatePackage_SinMoneda_Rechaza()
+    {
+        await using var context = CreateContext();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var service = CreateService(context, CreateMapper(), flagOn: true, canSeeCost: true);
+
+        var request = PackageWithNewProduct(supplierA.PublicId.ToString(), "Paquete sin moneda", 800m, 1000m)
+            with { Currency = null };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreatePackageAsync(reserva.Id, request, CancellationToken.None));
+        Assert.Equal("La moneda de la venta es obligatoria.", error.Message);
+        Assert.Equal(0, await context.PackageBookings.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAssistance_SinMoneda_Rechaza()
+    {
+        await using var context = CreateContext();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var service = CreateService(context, CreateMapper(), flagOn: true, canSeeCost: true);
+
+        var request = AssistanceWithNewProduct(supplierA.PublicId.ToString(), "Asistencia sin moneda", 50m, 90m)
+            with { Currency = null };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateAssistanceAsync(reserva.Id, request, CancellationToken.None));
+        Assert.Equal("La moneda de la venta es obligatoria.", error.Message);
+        Assert.Equal(0, await context.AssistanceBookings.CountAsync());
+    }
 
     private static CreateFlightRequest FlightWithNewProduct(string supplierPublicId, string name, decimal net, decimal sale, decimal tax = 0m)
         => new(

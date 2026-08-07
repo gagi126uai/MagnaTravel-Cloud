@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Security.Claims;
 using AutoMapper;
 using Microsoft.AspNetCore.Http;
@@ -129,20 +129,6 @@ public class BookingServiceDateKindNormalizationTests
             Currency: currency);
 
     [Fact]
-    public async Task CreateHotel_LegacyPath_UnspecifiedDates_PersistsKindUtc()
-    {
-        await using var context = CreateContext();
-        var (reserva, supplier) = await SeedAsync(context);
-        var service = CreateService(context, CreateMapper(), catalogFlagOn: false);
-
-        await service.CreateHotelAsync(reserva.Id, BuildCreateHotelRequest(supplier.PublicId.ToString()), CancellationToken.None);
-
-        var stored = await context.HotelBookings.SingleAsync();
-        AssertCalendarDateUtc(stored.CheckIn, BareStart);
-        AssertCalendarDateUtc(stored.CheckOut, BareEnd);
-    }
-
-    [Fact]
     public async Task CreateHotel_CatalogPath_UnspecifiedDates_PersistsKindUtc()
     {
         await using var context = CreateContext();
@@ -193,21 +179,6 @@ public class BookingServiceDateKindNormalizationTests
             Adults: 2, Children: 0, Itinerary: null,
             NetCost: 800m, SalePrice: 1000m, Commission: 200m, Notes: null,
             Currency: currency);
-
-    [Fact]
-    public async Task CreatePackage_LegacyPath_UnspecifiedDates_PersistsKindUtc()
-    {
-        await using var context = CreateContext();
-        var (reserva, supplier) = await SeedAsync(context);
-        var service = CreateService(context, CreateMapper(), catalogFlagOn: false);
-
-        await service.CreatePackageAsync(reserva.Id, BuildCreatePackageRequest(supplier.PublicId.ToString()), CancellationToken.None);
-
-        var stored = await context.PackageBookings.SingleAsync();
-        AssertCalendarDateUtc(stored.StartDate, BareStart);
-        Assert.NotNull(stored.EndDate);
-        AssertCalendarDateUtc(stored.EndDate!.Value, BareEnd);
-    }
 
     [Fact]
     public async Task CreatePackage_CatalogPath_UnspecifiedDates_PersistsKindUtc()
@@ -263,20 +234,6 @@ public class BookingServiceDateKindNormalizationTests
             Currency: currency);
 
     [Fact]
-    public async Task CreateAssistance_LegacyPath_UnspecifiedDates_PersistsKindUtc()
-    {
-        await using var context = CreateContext();
-        var (reserva, supplier) = await SeedAsync(context);
-        var service = CreateService(context, CreateMapper(), catalogFlagOn: false);
-
-        await service.CreateAssistanceAsync(reserva.Id, BuildCreateAssistanceRequest(supplier.PublicId.ToString()), CancellationToken.None);
-
-        var stored = await context.AssistanceBookings.SingleAsync();
-        AssertCalendarDateUtc(stored.ValidFrom, BareStart);
-        AssertCalendarDateUtc(stored.ValidTo, BareEnd);
-    }
-
-    [Fact]
     public async Task CreateAssistance_CatalogPath_UnspecifiedDates_PersistsKindUtc()
     {
         await using var context = CreateContext();
@@ -330,21 +287,6 @@ public class BookingServiceDateKindNormalizationTests
             Currency: currency);
 
     [Fact]
-    public async Task CreateFlight_LegacyPath_UnspecifiedTimes_PersistsKindUtcWallClock()
-    {
-        await using var context = CreateContext();
-        var (reserva, supplier) = await SeedAsync(context);
-        var service = CreateService(context, CreateMapper(), catalogFlagOn: false);
-
-        await service.CreateFlightAsync(reserva.Id, BuildCreateFlightRequest(supplier.PublicId.ToString()), CancellationToken.None);
-
-        var stored = await context.FlightSegments.SingleAsync();
-        AssertWallClockUtc(stored.DepartureTime, DateTime.SpecifyKind(BareWallClock, DateTimeKind.Utc));
-        // BUG 2: ArrivalTime es nullable; aca siempre viene con valor (vuelo ida+vuelta de un segmento).
-        AssertWallClockUtc(stored.ArrivalTime!.Value, DateTime.SpecifyKind(BareWallClock.AddHours(2), DateTimeKind.Utc));
-    }
-
-    [Fact]
     public async Task CreateFlight_CatalogPath_UnspecifiedTimes_PersistsKindUtcWallClock()
     {
         await using var context = CreateContext();
@@ -395,21 +337,6 @@ public class BookingServiceDateKindNormalizationTests
             IsRoundTrip: true, ReturnDateTime: BareWallClock.AddDays(7),
             NetCost: 50m, SalePrice: 80m, Commission: 30m, Notes: null,
             Currency: currency);
-
-    [Fact]
-    public async Task CreateTransfer_LegacyPath_UnspecifiedTimes_PersistsKindUtcWallClock()
-    {
-        await using var context = CreateContext();
-        var (reserva, supplier) = await SeedAsync(context);
-        var service = CreateService(context, CreateMapper(), catalogFlagOn: false);
-
-        await service.CreateTransferAsync(reserva.Id, BuildCreateTransferRequest(supplier.PublicId.ToString()), CancellationToken.None);
-
-        var stored = await context.TransferBookings.SingleAsync();
-        AssertWallClockUtc(stored.PickupDateTime, DateTime.SpecifyKind(BareWallClock, DateTimeKind.Utc));
-        Assert.NotNull(stored.ReturnDateTime);
-        AssertWallClockUtc(stored.ReturnDateTime!.Value, DateTime.SpecifyKind(BareWallClock.AddDays(7), DateTimeKind.Utc));
-    }
 
     [Fact]
     public async Task CreateTransfer_CatalogPath_UnspecifiedTimes_PersistsKindUtcWallClock()

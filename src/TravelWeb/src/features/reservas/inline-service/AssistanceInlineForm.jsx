@@ -26,6 +26,8 @@ import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
+import { buildLastSaleHintText } from "./lastSaleHintLogic";
+import { LastSaleHint } from "./LastSaleHint";
 
 // ─── Clases CSS ───────────────────────────────────────────────────────────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -139,6 +141,10 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
         currency: false,
     });
 
+    // Renglón gris "Último precio" (spec 2026-08-06, §3.2, P9=A) — ver HotelInlineForm.
+    const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
+    const textoUltimoPrecio = buildLastSaleHintText(ultimoPrecioSugerido, { canSeeCost });
+
     // C5: operador sugerido que no está en la lista de la reserva
     const supplierListaIds = new Set(suppliers.map((s) => s.publicId || s.PublicId));
     const supplierSugeridoFuera =
@@ -183,6 +189,7 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
             unitSalePrice: Boolean(sale.salePrice),
             currency: Boolean(sale.currency),
         });
+        setUltimoPrecioSugerido(catalogResult);
     };
 
     const handleCreateNew = (searchText) => {
@@ -202,6 +209,7 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
             ...camposLimpios,
         }));
         setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+        setUltimoPrecioSugerido(null);
     };
 
     const handleSearchChange = (texto) => {
@@ -214,6 +222,7 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
         if (!texto) {
             setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
         }
+        setUltimoPrecioSugerido(null);
     };
 
     return (
@@ -353,6 +362,7 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
                             data-testid="assistance-costo"
                             aria-label="Costo por persona por día"
                         />
+                        <LastSaleHint text={textoUltimoPrecio} />
                     </div>
                 )}
                 <div>
@@ -373,6 +383,7 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
                         data-testid="assistance-venta"
                         aria-label="Precio de venta por persona por día"
                     />
+                    {!canSeeCost && <LastSaleHint text={textoUltimoPrecio} />}
                 </div>
                 <div>
                     <label className={LABEL_BASE} htmlFor="assistance-moneda">Moneda</label>

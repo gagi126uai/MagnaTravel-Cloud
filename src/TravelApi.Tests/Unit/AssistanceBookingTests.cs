@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
@@ -149,7 +149,7 @@ public class AssistanceBookingTests
             ConfirmationNumber: "CONF-AC-1",
             Notes: "Cobertura COVID incluida",
             RateId: rateId,
-            WorkflowStatus: "Solicitado");
+            WorkflowStatus: "Solicitado", Currency: "ARS");
 
     // === 6. CRUD basico (espejo de Hotel) ===
 

@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
@@ -11,10 +11,11 @@ namespace TravelApi.Infrastructure.Services;
 /// <summary>
 /// ADR-017 F1.3 (catalogo find-or-create desde la venta, 2026-06-05): "corazon" del find-or-create.
 ///
-/// <para>TODO lo de este archivo vive detras del flag <c>EnableCatalogFindOrCreate</c>. Con el flag
-/// APAGADO nada de aca se ejecuta y los <c>Create*Async</c> de <c>BookingService.cs</c> corren su codigo
-/// historico (byte-identico). Con el flag PRENDIDO, los <c>Create*</c> derivan a los <c>Create*WithCatalogAsync</c>
-/// de este archivo, que envuelven el alta en UNA transaccion atomica e incorporan:</para>
+/// <para><b>2026-08-06 (spec firmada de Tarifario, P8=A): la llave murio.</b> Antes esto vivia detras del
+/// interruptor <c>EnableCatalogFindOrCreate</c> y convivia con un camino legacy. Hoy los 5
+/// <c>Create*Async</c> de <c>BookingService.cs</c> derivan SIEMPRE a los <c>Create*WithCatalogAsync</c> de
+/// este archivo (el camino legacy se borro), que envuelven el alta en UNA transaccion atomica e
+/// incorporan:</para>
 /// <list type="number">
 ///   <item>Creacion inline del producto (<c>NewCatalogProduct</c>) o reuso de un producto existente
 ///   (find-or-create defensivo, §2.4).</item>
@@ -29,19 +30,8 @@ namespace TravelApi.Infrastructure.Services;
 public partial class BookingService
 {
     // ============================================================
-    // Lectura de flag + settings del catalogo
+    // Settings del catalogo
     // ============================================================
-
-    /// <summary>
-    /// Lee el flag <c>EnableCatalogFindOrCreate</c>. Fail-closed: sin service de settings inyectado
-    /// (ctores de tests legacy) se considera APAGADO -> el create corre el path historico (byte-identico).
-    /// </summary>
-    private async Task<bool> IsCatalogFindOrCreateEnabledAsync(CancellationToken ct)
-    {
-        if (_settingsService is null) return false;
-        var settings = await _settingsService.GetEntityAsync(ct);
-        return settings.EnableCatalogFindOrCreate;
-    }
 
     /// <summary>Dias a partir de los cuales una referencia de costo se considera "vieja" (D7). Default 60.</summary>
     private async Task<int> GetStaleCostReferenceDaysAsync(CancellationToken ct)
@@ -298,6 +288,6 @@ public partial class BookingService
     /// </summary>
     private Task UpsertRateSupplierSaleAsync(
         int rateId, int supplierId, CatalogUnitization.Unitized unit, string currency, DateTime soldAt,
-        CancellationToken ct)
-        => CatalogSaleUpsert.UpsertAsync(_db, rateId, supplierId, unit, currency, soldAt, ct);
+        int? reservaId, CancellationToken ct)
+        => CatalogSaleUpsert.UpsertAsync(_db, rateId, supplierId, unit, currency, soldAt, reservaId, ct);
 }

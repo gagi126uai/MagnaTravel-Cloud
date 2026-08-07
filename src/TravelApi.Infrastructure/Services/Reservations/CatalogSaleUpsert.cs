@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
@@ -30,6 +30,7 @@ public static class CatalogSaleUpsert
         CatalogUnitization.Unitized unit,
         string? currency,
         DateTime soldAt,
+        int? reservaId,
         CancellationToken ct)
     {
         if (supplierId <= 0) return;
@@ -47,16 +48,16 @@ public static class CatalogSaleUpsert
 
         if (!db.Database.IsRelational())
         {
-            await UpsertInMemoryAsync(db, rateId, supplierId, unit, currency, soldAtUtc, ct);
+            await UpsertInMemoryAsync(db, rateId, supplierId, unit, currency, soldAtUtc, reservaId, ct);
             return;
         }
 
         const string sql = @"
             INSERT INTO ""RateSupplierSales""
                 (""RateId"", ""SupplierId"", ""LastSoldAt"", ""LastNetCost"", ""LastTax"",
-                 ""LastSalePrice"", ""LastCurrency"", ""LastPriceUnit"", ""SalesCount"")
+                 ""LastSalePrice"", ""LastCurrency"", ""LastPriceUnit"", ""SalesCount"", ""LastReservaId"")
             VALUES
-                ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, 1)
+                ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, 1, {8})
             ON CONFLICT (""RateId"", ""SupplierId"") DO UPDATE SET
                 ""LastSoldAt""    = EXCLUDED.""LastSoldAt"",
                 ""LastNetCost""   = EXCLUDED.""LastNetCost"",
@@ -64,20 +65,24 @@ public static class CatalogSaleUpsert
                 ""LastSalePrice"" = EXCLUDED.""LastSalePrice"",
                 ""LastCurrency""  = EXCLUDED.""LastCurrency"",
                 ""LastPriceUnit"" = EXCLUDED.""LastPriceUnit"",
-                ""SalesCount""    = ""RateSupplierSales"".""SalesCount"" + 1;";
+                ""SalesCount""    = ""RateSupplierSales"".""SalesCount"" + 1,
+                -- La reserva de origen se pisa con la de la venta nueva SOLO si vino; si el caller no la
+                -- sabe, se conserva la anterior (mejor un enlace viejo que ninguno).
+                ""LastReservaId"" = COALESCE(EXCLUDED.""LastReservaId"", ""RateSupplierSales"".""LastReservaId"");";
 
         await db.Database.ExecuteSqlRawAsync(
             sql, new object[]
             {
                 rateId, supplierId, soldAtUtc, unit.UnitNetCost, unit.UnitTax,
-                unit.UnitSalePrice, (object?)currency ?? DBNull.Value, unit.PriceUnit
+                unit.UnitSalePrice, (object?)currency ?? DBNull.Value, unit.PriceUnit,
+                (object?)reservaId ?? DBNull.Value
             }, ct);
     }
 
     // Solo para tests InMemory (no concurrency-safe). En prod corre el ON CONFLICT atomico de arriba.
     private static async Task UpsertInMemoryAsync(
         AppDbContext db, int rateId, int supplierId, CatalogUnitization.Unitized unit, string? currency,
-        DateTime soldAtUtc, CancellationToken ct)
+        DateTime soldAtUtc, int? reservaId, CancellationToken ct)
     {
         var row = await db.RateSupplierSales
             .FirstOrDefaultAsync(s => s.RateId == rateId && s.SupplierId == supplierId, ct);
@@ -94,7 +99,8 @@ public static class CatalogSaleUpsert
                 LastSalePrice = unit.UnitSalePrice,
                 LastCurrency = currency,
                 LastPriceUnit = unit.PriceUnit,
-                SalesCount = 1
+                SalesCount = 1,
+                LastReservaId = reservaId
             }, ct);
         }
         else
@@ -106,6 +112,9 @@ public static class CatalogSaleUpsert
             row.LastCurrency = currency;
             row.LastPriceUnit = unit.PriceUnit;
             row.SalesCount += 1;
+            // Mismo criterio que el ON CONFLICT de Postgres: si el caller no sabe la reserva, no se borra
+            // el enlace que ya habia.
+            row.LastReservaId = reservaId ?? row.LastReservaId;
         }
 
         await db.SaveChangesAsync(ct);

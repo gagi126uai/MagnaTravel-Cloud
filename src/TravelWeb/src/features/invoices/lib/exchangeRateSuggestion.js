@@ -22,9 +22,10 @@
  * cuenta que hace el backend para decidir si una factura quedó "a mano" o no (T-13:
  * la comparación es NÚMERO contra NÚMERO, nunca "tocó la tecla").
  *
- * Se usa desde DOS pantallas (EmitirFacturaInline.jsx en la ficha de la reserva y
- * CreateInvoiceModal.jsx en Pagos) — la regla vive acá, en un solo lugar, para que
- * "cuándo pedir justificación" no pueda divergir entre las dos.
+ * Se usa desde EmitirFacturaInline.jsx (ficha de la reserva) — la regla vive acá, en
+ * un solo lugar, para no reimplementarla si en el futuro aparece otra pantalla que
+ * facture en USD. (Hasta 2026-08-06 también la usaba CreateInvoiceModal.jsx en Pagos,
+ * borrado esa fecha al morir "Pendientes de facturar" como puerta de facturación.)
  */
 
 /**
@@ -239,8 +240,8 @@ export function faltaJustificacionTC({ mostrar, texto }) {
  * fecha del TC — eso lo resuelve el servidor solo, comparando el número (bug V8:
  * antes el front mandaba SIEMPRE una fuente fija falsa).
  *
- * Se centraliza acá (no repetida en cada pantalla) para que el payload no pueda
- * divergir entre EmitirFacturaInline.jsx y CreateInvoiceModal.jsx.
+ * Se centraliza acá (no repetida en cada pantalla) para que, si mañana aparece otra
+ * pantalla que facture en USD, el payload no pueda divergir del de EmitirFacturaInline.jsx.
  *
  * "Ayuda invisible" (spec 2026-08-06, A3): cuando `loCompletaElSistema` es `true`
  * no hubo casillero que el vendedor haya llenado — el número que viajaría en

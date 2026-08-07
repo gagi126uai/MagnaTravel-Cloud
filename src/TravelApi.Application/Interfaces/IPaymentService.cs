@@ -1,4 +1,4 @@
-using TravelApi.Application.DTOs;
+﻿using TravelApi.Application.DTOs;
 
 namespace TravelApi.Application.Interfaces;
 
@@ -6,6 +6,19 @@ public interface IPaymentService
 {
     Task<CollectionsSummaryDto> GetCollectionsSummaryAsync(CancellationToken cancellationToken);
     Task<PagedResponse<CollectionWorkItemDto>> GetCollectionsWorklistAsync(CollectionWorklistQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// "Viajan pronto y deben" (spec firmada 2026-08-06, §4.2 / M-6): las reservas con saldo pendiente,
+    /// de la que sale primero a la que sale ultimo, con lo que falta cobrar SEPARADO POR MONEDA y el
+    /// veredicto de si el saldo ya se paso de la fecha en que tenia que estar completo.
+    /// </summary>
+    Task<DebtorsByDepartureResponse> GetDebtorsByDepartureAsync(DebtorsQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// "Deuda por cliente" (spec firmada 2026-08-06, §4.3 / M-7): un renglon por cliente que debe,
+    /// cruzando TODAS sus reservas vivas, con el total separado por moneda y su primera salida.
+    /// </summary>
+    Task<CustomerDebtsResponse> GetCustomerDebtsAsync(DebtorsQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<PaymentDto>> GetAllPaymentsAsync(PaymentsListQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<FinanceHistoryItemDto>> GetHistoryAsync(FinanceHistoryQuery query, CancellationToken cancellationToken);
     Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(string reservaPublicIdOrLegacyId, CancellationToken cancellationToken);
