@@ -246,9 +246,14 @@ public partial class BookingService
         var now = DateTime.UtcNow;
 
         // (1) RateSupplierSale del (Rate, supplier elegido).
+        // Filtro de filas ESCONDIDAS (2026-08-07): la que perdio un choque al unir dos productos sigue en la
+        // base pero ya no es un precio vigente. Reponer un costo desde ella seria reponer un precio que el
+        // tarifario dejo de mostrar.
         var sale = await _db.RateSupplierSales
             .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.RateId == rateId && s.SupplierId == supplierId, ct);
+            .FirstOrDefaultAsync(
+                s => s.RateId == rateId && s.SupplierId == supplierId && s.AbsorbedByTidyUpActionId == null,
+                ct);
 
         if (sale != null && CurrencyMatches(sale.LastCurrency, currency))
         {
@@ -288,6 +293,7 @@ public partial class BookingService
     /// </summary>
     private Task UpsertRateSupplierSaleAsync(
         int rateId, int supplierId, CatalogUnitization.Unitized unit, string currency, DateTime soldAt,
-        int? reservaId, CancellationToken ct)
-        => CatalogSaleUpsert.UpsertAsync(_db, rateId, supplierId, unit, currency, soldAt, reservaId, ct);
+        int? reservaId, (string Key, string Label) variant, CancellationToken ct)
+        => CatalogSaleUpsert.UpsertAsync(
+            _db, rateId, supplierId, unit, currency, soldAt, reservaId, variant, ct);
 }

@@ -15,6 +15,10 @@ import { formatCurrency, formatDate } from "../../../lib/utils.js";
  *   5. Interpretar el resultado del cartel de repetidos (Usar existente / Crear nuevo /
  *      descartado) — fix 2026-08-07: antes CUALQUIER descarte (ESC, X, click afuera)
  *      caía por error en la rama de "crear igual" y duplicaba el producto.
+ *   6. Armar el payload de "Corregir" una habitación/cabina/vehículo (spec 2026-08-07,
+ *      §7 / M-18, POST /rates/learned-products/variants/rename).
+ *   7. Precargar la sub-ficha de "Corregir" con la variante que se está corrigiendo
+ *      (fix ronda 2 de review, P-21) — antes arrancaba siempre en "Doble/Desayuno".
  */
 
 // Unidad que el motor espera para hotel ("por noche"); el resto de los tipos no manda
@@ -25,9 +29,16 @@ const UNIDAD_PRECIO_HOTEL = "noche";
  * Arma el payload de POST /rates/simple a partir de los valores de la fichita.
  * `createAnyway` se manda en true solo en el segundo intento, después de que el
  * usuario confirmó "Crear uno nuevo igual" ante el freno de repetidos (P7).
+ *
+ * La VARIANTE del alta a mano (spec 2026-08-07, §8 / V16=A): Hotel manda
+ * roomType/mealPlan/roomCategory, Aéreo manda cabinClass, Traslado manda vehicleType.
+ * Paquete y Asistencia no mandan ninguno (V2: sin variante natural) — el motor los
+ * acepta igual como `null` sin que eso cambie nada del alta.
  */
 export function buildCreateSimpleProductPayload(form, { createAnyway = false } = {}) {
   const esHotel = form.serviceType === "Hotel";
+  const esAereo = form.serviceType === "Aereo";
+  const esTraslado = form.serviceType === "Traslado";
   return {
     serviceType: form.serviceType,
     name: (form.name || "").trim(),
@@ -37,6 +48,14 @@ export function buildCreateSimpleProductPayload(form, { createAnyway = false } =
     currency: form.currency || "ARS",
     priceUnit: esHotel ? UNIDAD_PRECIO_HOTEL : null,
     createAnyway,
+    roomType: esHotel ? (form.roomType || null) : null,
+    mealPlan: esHotel ? (form.mealPlan || null) : null,
+    // roomCategory/vehicleType son texto libre CON MEMORIA (§5.2): se manda tal cual lo
+    // escribió el vendedor — la unificación de variaciones de tipeo ("sup"/"SUPERIOR")
+    // la hace el servidor (M-19), el front nunca adivina similitud de texto.
+    roomCategory: esHotel ? ((form.roomCategory || "").trim() || null) : null,
+    cabinClass: esAereo ? (form.cabinClass || null) : null,
+    vehicleType: esTraslado ? ((form.vehicleType || "").trim() || null) : null,
   };
 }
 
@@ -115,4 +134,52 @@ export function resolveSimilarProductDialogDecision(dialogResult) {
   if (dialogResult?.isConfirmed) return SIMILAR_PRODUCT_DIALOG_DECISION.UseExisting;
   if (dialogResult?.isDenied) return SIMILAR_PRODUCT_DIALOG_DECISION.CreateNewAnyway;
   return SIMILAR_PRODUCT_DIALOG_DECISION.Dismissed;
+}
+
+/**
+ * Arma el payload de POST /rates/learned-products/variants/rename ("Corregir" una
+ * habitación/cabina/vehículo, spec 2026-08-07, §7 / M-18). Solo manda los campos que
+ * corresponden al tipo de servicio: hotel manda roomType/mealPlan/roomCategory, aéreo
+ * manda cabinClass, traslado manda vehicleType — el resto queda en null (RenameVariantRequest
+ * los acepta todos como opcionales, pero mandar de más solo confunde al leer el payload).
+ */
+export function buildRenameVariantPayload({ serviceType, productPublicId, currentVariantKey, roomType, mealPlan, roomCategory, cabinClass, vehicleType }) {
+  const payload = {
+    productPublicId,
+    currentVariantKey,
+    roomType: null, mealPlan: null, roomCategory: null, cabinClass: null, vehicleType: null,
+  };
+  if (serviceType === "Hotel") {
+    payload.roomType = roomType || null;
+    payload.mealPlan = mealPlan || null;
+    payload.roomCategory = (roomCategory || "").trim() || null;
+  } else if (serviceType === "Aereo") {
+    payload.cabinClass = cabinClass || null;
+  } else if (serviceType === "Traslado") {
+    payload.vehicleType = (vehicleType || "").trim() || null;
+  }
+  return payload;
+}
+
+/**
+ * Arma los valores INICIALES de la sub-ficha "Corregir" a partir de la variante que se
+ * está corrigiendo (fix ronda 2 de review, P-21 / M-18). El bug que corrige: antes el
+ * formulario arrancaba siempre en "Doble / Desayuno" sin mirar la variante real, así que
+ * corregir el nombre fino de una TRIPLE (sin tocar el resto) la reclasificaba como DOBLE
+ * sin que nadie lo hubiera pedido.
+ *
+ * Cuando una pieza puntual no vino cargada (variante vieja, sin ese dato desglosado), cae
+ * al mismo default que ya usan el alta a mano y la venta (Doble/Desayuno) — nunca se deja
+ * un desplegable "roto" sin ninguna opción elegida.
+ *
+ * @param {{roomType?:string, mealPlan?:string, roomCategory?:string, cabinClass?:string, vehicleType?:string}|null} variant
+ */
+export function buildInitialVariantCorrectionFields(variant) {
+  return {
+    roomType: variant?.roomType || "Doble",
+    mealPlan: variant?.mealPlan || "Desayuno",
+    roomCategory: variant?.roomCategory || "",
+    cabinClass: variant?.cabinClass || "",
+    vehicleType: variant?.vehicleType || "",
+  };
 }

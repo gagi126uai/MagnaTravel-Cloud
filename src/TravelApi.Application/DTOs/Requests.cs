@@ -152,7 +152,10 @@ public record CreateHotelRequest(
     // Auditoria ERP 2026-06-12 (item 5): VUELVE la fecha limite de pago al operador (la carga el
     // operador por servicio). Opcional al final (null = no informada). En el ALTA se mapea por
     // convencion contra HotelBooking.OperatorPaymentDeadline. Ver HotelBooking.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Tarifario inteligente (2026-08-07, §5.2): nombre FINO de la habitacion ("Superior", "Vista al
+    // mar"). Opcional al final. Junto con RoomType y MealPlan arma la variante que recuerda el precio.
+    string? RoomCategory = null
 );
 
 public record UpdateHotelRequest(
@@ -181,7 +184,9 @@ public record UpdateHotelRequest(
     // fecha cargada; el service la asigna a mano solo cuando viene con valor (ver UpdateHotelAsync).
     DateTime? OperatorPaymentDeadline = null,
     // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
-    bool ConfirmCostBelowPaid = false
+    bool ConfirmCostBelowPaid = false,
+    // Tarifario inteligente (2026-08-07, §5.2): nombre FINO de la habitacion. Ver CreateHotelRequest.
+    string? RoomCategory = null
 );
 
 public record CreateTransferRequest(

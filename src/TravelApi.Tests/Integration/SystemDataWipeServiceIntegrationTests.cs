@@ -1185,7 +1185,14 @@ public sealed class SystemDataWipeServiceIntegrationTests : IClassFixture<Postgr
             .Concat(SystemDataWipeService.TarifarioTables)
             .Concat(SystemDataWipeService.PaisesYDestinosTables)
             .Concat(SystemDataWipeService.PosiblesClientesTables)
-            .Concat(new[] { SystemDataWipeService.CommissionRulesTable, SystemDataWipeService.RateSupplierSalesTable });
+            .Concat(new[]
+            {
+                SystemDataWipeService.CommissionRulesTable,
+                SystemDataWipeService.RateSupplierSalesTable,
+                // Las fotos del bibliotecario van con la memoria de precios (caso especial, igual que las
+                // dos de arriba): no viven en la lista de ningun grupo.
+                SystemDataWipeService.CatalogTidyUpSaleChangesTable
+            });
 
         var configTables = WipeGroups.ConfiguracionTables;
 

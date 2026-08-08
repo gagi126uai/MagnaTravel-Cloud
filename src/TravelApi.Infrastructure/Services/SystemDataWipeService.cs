@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -252,6 +252,7 @@ public class SystemDataWipeService : ISystemDataWipeService
                 ct);
 
             await TruncateTablesAsync(tablesToDelete, ct);
+            await InvalidatePendingTidyUpUndosAsync(tablesToDelete, ct);
             await DeleteBankAccountsAsync(gruposResueltos, ct);
 
             // Repone las foreign keys dropeadas ANTES de truncar, ya con las columnas del lado sobreviviente
@@ -496,6 +497,18 @@ public class SystemDataWipeService : ISystemDataWipeService
     internal const string RateSupplierSalesTable = "RateSupplierSales";
 
     /// <summary>
+    /// Las FOTOS que el bibliotecario saca de cada precio antes de tocarlo (2026-08-07). Es un caso especial
+    /// por el MISMO motivo que <see cref="RateSupplierSalesTable"/>: sus dos foreign keys son OBLIGATORIAS
+    /// (una al rastro de la union, otra a la fila de precio), asi que muere apenas cualquiera de las dos
+    /// muere — y la memoria de precios se va tanto con "tarifario" como con "operadores".
+    ///
+    /// <para>Si faltara de la lista, la red fail-closed encontraria una foreign key cruzada sin contemplar y
+    /// ABORTARIA cualquier borrado que incluya tarifario u operadores (incluido "borrar todo"). Misma
+    /// leccion Func-B1 del 2026-08-06.</para>
+    /// </summary>
+    internal const string CatalogTidyUpSaleChangesTable = "CatalogTidyUpSaleChanges";
+
+    /// <summary>
     /// Tablas propias del grupo "reservas y plata". Expuestas <c>internal</c> (con
     /// <c>InternalsVisibleTo("TravelApi.Tests")</c>) para que el test guardián
     /// "InformationSchemaTables_CoincideExactamenteConListaBlancaMasSupervivientes" DERIVE la lista esperada de
@@ -546,7 +559,24 @@ public class SystemDataWipeService : ISystemDataWipeService
     /// </summary>
     internal static readonly string[] OperadoresTables = { "Suppliers" };
 
-    internal static readonly string[] TarifarioTables = { "Rates", "CatalogPackageDepartures", "CatalogPackages" };
+    /// <summary>
+    /// Tarifario. El ORDEN importa: primero las hijas, despues <c>Rates</c>.
+    ///
+    /// <para>2026-08-07: se suman las dos tablas del bibliotecario. <c>CatalogTidyUpActions</c> (el rastro
+    /// de lo que el sistema unio, con su Deshacer) y <c>CatalogNotDuplicatePairs</c> ("estos dos son
+    /// distintos") cuelgan de <c>Rates</c> con foreign keys OBLIGATORIAS: no se pueden "desenganchar", asi
+    /// que mueren con el tarifario, igual que <c>RateSupplierSales</c>. Si faltaran de esta lista, borrar
+    /// el tarifario abortaria por foreign key (leccion Func-B1 del 2026-08-06).</para>
+    ///
+    /// <para>La tercera tabla del bibliotecario (<see cref="CatalogTidyUpSaleChangesTable"/>, las fotos de
+    /// cada precio) NO esta aca a proposito: se maneja como caso especial junto a <c>RateSupplierSales</c>
+    /// porque tambien tiene que morir cuando se borran solo los "operadores".</para>
+    /// </summary>
+    internal static readonly string[] TarifarioTables =
+    {
+        "CatalogTidyUpActions", "CatalogNotDuplicatePairs",
+        "Rates", "CatalogPackageDepartures", "CatalogPackages"
+    };
 
     internal static readonly string[] PaisesYDestinosTables = { "Countries", "DestinationDepartures", "Destinations" };
 
@@ -758,8 +788,13 @@ public class SystemDataWipeService : ISystemDataWipeService
         // RateSupplierSales es una cache de estadisticas de venta (Rate<->Supplier) sin valor de negocio
         // propio: sus dos FK (RateId, SupplierId) son OBLIGATORIAS (no nullable), asi que no se puede
         // "desenganchar" — muere entera apenas CUALQUIERA de sus dos padres muere.
+        //
+        // Las FOTOS del bibliotecario (CatalogTidyUpSaleChanges) cuelgan de esa misma tabla con una FK
+        // obligatoria: van SIEMPRE juntas. Van ACA y no en TarifarioTables porque tienen que morir tambien
+        // cuando se borran solo los "operadores" (ahi RateSupplierSales se va, pero Rates y el rastro no).
         if (incluyeOperadores || grupos.Contains(WipeGroups.Tarifario))
         {
+            tables.Add(CatalogTidyUpSaleChangesTable);
             tables.Add(RateSupplierSalesTable);
         }
 
@@ -1110,6 +1145,33 @@ public class SystemDataWipeService : ISystemDataWipeService
     /// afuera del conjunto, asi que el CASCADE de Postgres ya no tiene forma de alcanzar una tabla de un grupo
     /// no pedido (esas tablas ya no tienen ningún constraint que las conecte a las que se van a truncar).
     /// </summary>
+    /// <summary>
+    /// Si el borrado se llevo la MEMORIA DE PRECIOS pero NO el rastro del bibliotecario (pasa al borrar
+    /// solo "operadores"), las uniones pendientes dejan de ser reversibles: sus fotos apuntan a filas que
+    /// ya no existen, y peor todavia, Postgres reinicia los numeros al truncar, asi que ESE mismo numero
+    /// se lo puede quedar otra fila distinta. Deshacer ahi movería plata ajena.
+    ///
+    /// <para>Antes que arriesgar eso, se marcan como no reversibles con un motivo en criollo. La linea del
+    /// rastro NO se borra (nada se borra): queda visible, sin boton.</para>
+    ///
+    /// <para><b>Sigue haciendo falta —mas que antes— desde que las FOTOS se borran junto con la memoria de
+    /// precios</b> (<see cref="CatalogTidyUpSaleChangesTable"/>): sin fotos, el chequeo de "¿se puede
+    /// deshacer?" no encuentra NADA que revisar y diria que si. Esta marca es la que lo frena.</para>
+    /// </summary>
+    private async Task InvalidatePendingTidyUpUndosAsync(HashSet<string> truncatedTables, CancellationToken ct)
+    {
+        var borroLaMemoriaDePrecios = truncatedTables.Contains(RateSupplierSalesTable);
+        var borroElRastro = truncatedTables.Contains("CatalogTidyUpActions");
+        if (!borroLaMemoriaDePrecios || borroElRastro) return;
+
+        await _context.Database.ExecuteSqlRawAsync(
+            """
+            UPDATE "CatalogTidyUpActions"
+            SET "UndoBlockedReason" = 'Se borró la memoria de precios del sistema; este movimiento ya no se puede deshacer solo.'
+            WHERE "UndoneAt" IS NULL AND "UndoBlockedReason" IS NULL;
+            """, ct);
+    }
+
     private async Task TruncateTablesAsync(HashSet<string> tables, CancellationToken ct)
     {
         if (tables.Count == 0)

@@ -584,9 +584,12 @@ public class QuoteService : IQuoteService
             {
                 try
                 {
+                    // El presupuesto no guarda habitacion/cabina/vehiculo por item, asi que su memoria
+                    // de precio va SIN variante (M-12): queda en la fila generica del producto+operador,
+                    // que es exactamente lo que era antes de esta obra.
                     await CatalogSaleUpsert.UpsertAsync(
                         _db, sale.RateId, sale.SupplierId, sale.Unit, sale.Currency, DateTime.UtcNow,
-                        reservaId: file.Id, cancellationToken);
+                        reservaId: file.Id, variant: CatalogVariant.None, cancellationToken);
                 }
                 catch (Exception ex)
                 {

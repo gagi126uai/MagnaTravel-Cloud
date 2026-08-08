@@ -16,6 +16,12 @@ public class HotelBookingDto
     public int Children { get; set; } = 0;
     public string RoomType { get; set; } = "Standard";
     public string? MealPlan { get; set; }
+
+    /// <summary>
+    /// Nombre fino de la habitacion ("Superior", "Vista al mar"). Vacio en la mayoria de las ventas.
+    /// No es dato de costo: viaja siempre (spec 2026-08-07, §5.2).
+    /// </summary>
+    public string? RoomCategory { get; set; }
     public string Status { get; set; } = "Pendiente";
     public string? ConfirmationNumber { get; set; }
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Se expone para que la ficha

@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Net;
 using Microsoft.AspNetCore.Builder;
@@ -269,6 +270,164 @@ public class TarifarioEdicionAuthorizationTests : IClassFixture<CustomWebApplica
 
         Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ----------------------------------------------------------------------
+    // Ordenar el tarifario (unir repetidos, deshacer, corregir habitación): tarifario.edit
+    // ----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("/api/rates/duplicates/merge")]
+    [InlineData("/api/rates/duplicates/not-duplicates")]
+    [InlineData("/api/rates/librarian/tidy-up")]
+    [InlineData("/api/rates/learned-products/variants/rename")]
+    [InlineData("/api/rates/tidy-up-log/11111111-1111-1111-1111-111111111111/undo")]
+    public async Task POST_OrdenarElTarifario_SinTarifarioEdit_Devuelve403(string url)
+    {
+        var role = "TarOrdenSoloVer-" + Guid.NewGuid().ToString("N")[..8];
+        var userId = "tar-orden-deny-" + Guid.NewGuid().ToString("N")[..8];
+        await SeedUserWithPermissionsAsync(role, userId, Permissions.TarifarioView);
+        var client = CreateClientAs(userId, role);
+
+        // El cuerpo da igual: el permiso se chequea ANTES de mirar nada del contenido.
+        var response = await client.PostAsJsonAsync(url, new { });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_PasadaDelBibliotecario_ConTarifarioEdit_AtraviesaElGate()
+    {
+        var role = "TarOrdenEdita-" + Guid.NewGuid().ToString("N")[..8];
+        var userId = "tar-orden-allow-" + Guid.NewGuid().ToString("N")[..8];
+        await SeedUserWithPermissionsAsync(role, userId, Permissions.TarifarioView, Permissions.TarifarioEdit);
+        var client = CreateClientAs(userId, role);
+
+        var response = await client.PostAsync("/api/rates/librarian/tidy-up", content: null);
+
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Un movimiento que no existe responde "no lo encontramos" (404), NUNCA un error técnico.
+    /// </summary>
+    [Fact]
+    public async Task POST_Deshacer_DeUnMovimientoQueNoExiste_Devuelve404Criollo()
+    {
+        var role = "TarUndo404-" + Guid.NewGuid().ToString("N")[..8];
+        var userId = "tar-undo-404-" + Guid.NewGuid().ToString("N")[..8];
+        await SeedUserWithPermissionsAsync(role, userId, Permissions.TarifarioView, Permissions.TarifarioEdit);
+        var client = CreateClientAs(userId, role);
+
+        var response = await client.PostAsync($"/api/rates/tidy-up-log/{Guid.NewGuid()}/undo", content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<MensajeDeRespuesta>();
+        Assert.Equal("No encontramos ese movimiento para deshacer.", body?.Message);
+    }
+
+    /// <summary>
+    /// Un movimiento que YA no se puede deshacer (hubo ventas nuevas encima) tiene que responder 409 con la
+    /// frase en criollo — no un 500 genérico, que dejaba al usuario sin saber qué pasó.
+    /// </summary>
+    [Fact]
+    public async Task POST_Deshacer_CuandoYaNoSePuede_Devuelve409ConElMotivoEnCriollo()
+    {
+        var role = "TarUndo409-" + Guid.NewGuid().ToString("N")[..8];
+        var userId = "tar-undo-409-" + Guid.NewGuid().ToString("N")[..8];
+        await SeedUserWithPermissionsAsync(role, userId, Permissions.TarifarioView, Permissions.TarifarioEdit);
+        var client = CreateClientAs(userId, role);
+
+        var actionPublicId = await SeedUnionConVentaNuevaEncimaAsync();
+
+        var response = await client.PostAsync($"/api/rates/tidy-up-log/{actionPublicId}/undo", content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<MensajeDeRespuesta>();
+        Assert.Equal("Después de esto hubo ventas nuevas; ya no se puede deshacer solo.", body?.Message);
+    }
+
+    /// <summary>El cuerpo que devuelven los endpoints del tarifario cuando algo no se puede hacer.</summary>
+    private sealed record MensajeDeRespuesta(string Message);
+
+    /// <summary>
+    /// Siembra dos hoteles repetidos, los une, y después hace que entre una venta nueva sobre el precio
+    /// que la unión movió: ese es el escenario en el que deshacer deja de ser fiel.
+    /// </summary>
+    private async Task<Guid> SeedUnionConVentaNuevaEncimaAsync()
+    {
+        var sufijo = Guid.NewGuid().ToString("N")[..6];
+        using var scope = _baseFactory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var librarian = scope.ServiceProvider.GetRequiredService<ICatalogLibrarianService>();
+
+        var supplier = new Supplier { Name = "Ola " + sufijo };
+        db.Suppliers.Add(supplier);
+        await db.SaveChangesAsync();
+
+        var survivor = HotelDePrueba($"Sheraton {sufijo}", "Puerto Iguazú");
+        var absorbed = HotelDePrueba($"Sheraton {sufijo} - Doble Superior", "Puerto Iguazú");
+        db.Rates.AddRange(survivor, absorbed);
+        await db.SaveChangesAsync();
+
+        db.RateSupplierSales.Add(new RateSupplierSale
+        {
+            RateId = absorbed.Id,
+            SupplierId = supplier.Id,
+            LastSoldAt = DateTime.UtcNow.AddDays(-3),
+            LastNetCost = 55m,
+            LastSalePrice = 75m,
+            LastCurrency = "USD",
+            LastPriceUnit = "noche_habitacion",
+            SalesCount = 1
+        });
+        await db.SaveChangesAsync();
+
+        var merge = await librarian.MergeProductsAsync(new MergeProductsRequest
+        {
+            SurvivorPublicId = survivor.PublicId,
+            AbsorbedPublicId = absorbed.PublicId
+        }, CancellationToken.None);
+
+        // Venta nueva encima de la fila que la unión movió.
+        var movida = await db.RateSupplierSales.SingleAsync(sale => sale.RateId == survivor.Id);
+        movida.LastSoldAt = DateTime.UtcNow.AddMinutes(5);
+        movida.LastNetCost = 60m;
+        await db.SaveChangesAsync();
+
+        return merge.TidyUpActionPublicId;
+    }
+
+    private static Rate HotelDePrueba(string name, string city) => new()
+    {
+        ServiceType = "Hotel",
+        ProductName = name,
+        HotelName = name,
+        City = city,
+        MealPlan = "Desayuno",
+        NetCost = 100m,
+        SalePrice = 160m,
+        Currency = "USD",
+        PriceUnit = "noche_habitacion",
+        IsActive = true,
+        CreatedAt = DateTime.UtcNow.AddDays(-60)
+    };
+
+    [Theory]
+    [InlineData("/api/rates/duplicates")]
+    [InlineData("/api/rates/tidy-up-log")]
+    [InlineData("/api/rates/variant-names?serviceType=Hotel")]
+    public async Task GET_LasPantallasDeRevision_ConSoloTarifarioView_Funcionan(string url)
+    {
+        var role = "TarRevisaVer-" + Guid.NewGuid().ToString("N")[..8];
+        var userId = "tar-revisa-" + Guid.NewGuid().ToString("N")[..8];
+        await SeedUserWithPermissionsAsync(role, userId, Permissions.TarifarioView);
+        var client = CreateClientAs(userId, role);
+
+        var response = await client.GetAsync(url);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     // ----------------------------------------------------------------------

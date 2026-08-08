@@ -1,14 +1,14 @@
 /**
- * Ficha en línea de un producto del Tarifario (spec firmada 2026-08-06, §2.2): se abre
- * debajo del renglón al tocarlo. Permite corregir nombre y ciudad, muestra la memoria de
- * precios que aprendió de las ventas, y ofrece "Carga completa" para el formulario largo.
+ * Ficha en línea de un producto del Tarifario (spec firmada 2026-08-06 §2.2, ampliada
+ * 2026-08-07 §7): se abre debajo del renglón al tocarlo. Permite corregir nombre/ciudad,
+ * muestra TODOS los precios que aprendió (sin el tope de 3 de la lista — trae la ficha
+ * completa por su cuenta), y deja corregir la etiqueta de cada habitación con [Corregir].
  *
- * Los precios NO se editan acá (son la memoria de lo que pasó, se cambian vendiendo).
+ * Los precios NUNCA se editan acá (son la memoria de lo que pasó, se cambian vendiendo);
+ * [Corregir] solo toca TEXTOS (habitación/cabina/vehículo), nunca importes.
  *
- * Permiso (fix 2026-08-07, decisión firmada del dueño): renombrar un producto pide
- * `tarifario.edit` — el mismo mecanismo que gatea el resto de las pantallas (no
- * Admin-only; el backend dejó de exigir rol Admin acá). Sin ese permiso, nombre/ciudad
- * se muestran de solo lectura y no aparece el botón Guardar.
+ * Permiso: renombrar pide `tarifario.edit` (mismo mecanismo que el resto del tarifario).
+ * Sin ese permiso, todo queda de solo lectura y no aparecen los botones de edición.
  */
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -18,8 +18,10 @@ import { hasPermission } from "../../../auth";
 import {
     buildSupplierPriceLineText,
     buildRenameLearnedProductPayload,
+    buildRenameVariantPayload,
     validateProductNameAndCity,
 } from "../lib/ratesLearnedProductsLogic";
+import { VariantCorrectionInlineForm } from "./VariantCorrectionInlineForm";
 
 const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
 const LABEL_CLASS = "block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1";
@@ -36,10 +38,31 @@ export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
     const [guardando, setGuardando] = useState(false);
     const [errorGuardar, setErrorGuardar] = useState(null);
 
-    // Foco al primer campo apenas se abre la ficha (a11y: el usuario no tiene que
-    // buscarlo con el mouse/tab). Deps []: solo nos interesa el momento del montaje,
-    // no cada vez que puedeEditar/nombre cambian.
+    // La ficha completa (TODAS las variantes, sin el tope de 3 de la lista — spec §7)
+    // se trae aparte de lo que ya vino en `product` (que puede venir recortado).
+    const [detalle, setDetalle] = useState(null);
+    const [cargandoDetalle, setCargandoDetalle] = useState(true);
+    const [errorDetalle, setErrorDetalle] = useState(false);
+    // Qué variante tiene abierto su [Corregir] ahora mismo (una sola por vez).
+    const [variantKeyEnCorreccion, setVariantKeyEnCorreccion] = useState(null);
+
+    const cargarDetalle = async () => {
+        setCargandoDetalle(true);
+        setErrorDetalle(false);
+        try {
+            const data = await api.get(`/rates/learned-products/${product.productPublicId}`);
+            setDetalle(data);
+        } catch {
+            setErrorDetalle(true);
+        } finally {
+            setCargandoDetalle(false);
+        }
+    };
+
+    // Deps []: la ficha completa se trae UNA vez al abrir el panel, no en cada
+    // renderizado — es la misma regla que ya usa este componente para el foco inicial.
     useEffect(() => {
+        cargarDetalle();
         primerCampoRef.current?.focus();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -73,10 +96,25 @@ export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
         }
     };
 
+    const handleGuardarVariante = async (camposNuevos) => {
+        const payload = buildRenameVariantPayload({
+            serviceType: product.serviceType,
+            productPublicId: product.productPublicId,
+            currentVariantKey: variantKeyEnCorreccion,
+            ...camposNuevos,
+        });
+        await api.post("/rates/learned-products/variants/rename", payload);
+        showSuccess("Habitación corregida.");
+        setVariantKeyEnCorreccion(null);
+        // La corrección puede haber unido dos habitaciones en una sola: se vuelve a
+        // pedir la ficha completa para que la lista de precios refleje el estado real.
+        await cargarDetalle();
+    };
+
     const irACargaCompleta = () => {
-        // El precio más nuevo (primer elemento, ya vienen ordenados) sirve de punto de
+        // El precio más nuevo (primera variante, primer operador) sirve de punto de
         // partida para el formulario largo — "sin perder nada de lo tipeado" (§2.3).
-        const referencia = product.suppliers?.[0];
+        const referencia = detalle?.variants?.[0]?.suppliers?.[0];
         navigate("/rates/full", {
             state: {
                 prefillFromRates: {
@@ -137,24 +175,71 @@ export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
                     Precios que aprendió de tus ventas
                 </p>
-                <div className="space-y-1.5">
-                    {(product.suppliers || []).map((supplierPrice, index) => (
-                        <div
-                            key={`${supplierPrice.supplierPublicId ?? "sin-operador"}-${index}`}
-                            className="flex items-center justify-between gap-3 text-sm text-slate-600 dark:text-slate-300"
-                        >
-                            <span>{buildSupplierPriceLineText(supplierPrice)}</span>
-                            {supplierPrice.numeroReserva && supplierPrice.reservaPublicId && (
-                                <Link
-                                    to={`/reservas/${supplierPrice.reservaPublicId}`}
-                                    className="shrink-0 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
-                                >
-                                    {supplierPrice.numeroReserva}
-                                </Link>
-                            )}
-                        </div>
-                    ))}
-                </div>
+
+                {cargandoDetalle && (
+                    <p className="text-sm text-slate-400" data-testid="product-detail-loading">Cargando…</p>
+                )}
+
+                {!cargandoDetalle && errorDetalle && (
+                    <p className="text-sm text-rose-600">
+                        No se pudo traer la lista completa de precios.{" "}
+                        <button type="button" onClick={cargarDetalle} className="font-semibold underline">
+                            Probar de nuevo
+                        </button>
+                    </p>
+                )}
+
+                {!cargandoDetalle && !errorDetalle && detalle && (
+                    <div className="space-y-3">
+                        {detalle.variants.map((variant) => (
+                            <div key={variant.variantKey || "sin-variante"}>
+                                <div className="flex items-center justify-between gap-2">
+                                    {/* V3=A: variante sin nombre cargado no escribe "Sin especificar". */}
+                                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                                        {variant.variantLabel || <span className="text-slate-400">Sin habitación cargada</span>}
+                                    </p>
+                                    {puedeEditar && variant.variantLabel && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setVariantKeyEnCorreccion(
+                                                variantKeyEnCorreccion === variant.variantKey ? null : variant.variantKey
+                                            )}
+                                            className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+                                        >
+                                            Corregir
+                                        </button>
+                                    )}
+                                </div>
+                                {variantKeyEnCorreccion === variant.variantKey && (
+                                    <VariantCorrectionInlineForm
+                                        serviceType={product.serviceType}
+                                        variant={variant}
+                                        onCancel={() => setVariantKeyEnCorreccion(null)}
+                                        onSave={handleGuardarVariante}
+                                    />
+                                )}
+                                <div className="mt-1.5 space-y-1.5 pl-3">
+                                    {variant.suppliers.map((supplierPrice, index) => (
+                                        <div
+                                            key={`${supplierPrice.supplierPublicId ?? "sin-operador"}-${index}`}
+                                            className="flex items-center justify-between gap-3 text-sm text-slate-600 dark:text-slate-300"
+                                        >
+                                            <span>{buildSupplierPriceLineText(supplierPrice)}</span>
+                                            {supplierPrice.numeroReserva && supplierPrice.reservaPublicId && (
+                                                <Link
+                                                    to={`/reservas/${supplierPrice.reservaPublicId}`}
+                                                    className="shrink-0 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+                                                >
+                                                    {supplierPrice.numeroReserva}
+                                                </Link>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {errorGuardar && (

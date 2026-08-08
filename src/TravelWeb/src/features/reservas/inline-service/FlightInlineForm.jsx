@@ -17,14 +17,15 @@
  * usamos precio total de venta directo (como el modal viejo) para no asumir unitarización.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plane, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
-import { buildLastSaleHintText } from "./lastSaleHintLogic";
-import { LastSaleHint } from "./LastSaleHint";
+import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
+import { resolverCamposAlCambiarVariante } from "./variantPriceSuggestionLogic";
+import { VariantSuggestionHint } from "./VariantSuggestionHint";
 
 // ─── Clases CSS (mismas que HotelInlineForm para coherencia visual) ──────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -116,9 +117,55 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
         currency: false,
     });
 
-    // Renglón gris "Último precio" (spec 2026-08-06, §3.2, P9=A) — ver HotelInlineForm.
-    const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
-    const textoUltimoPrecio = buildLastSaleHintText(ultimoPrecioSugerido, { canSeeCost });
+    // ─── Sugerencia POR CABINA (spec 2026-08-07, §3.3 / M-15 / V9=A / V10=A) ──────────
+    // En Aéreo la variante es la cabina — ver HotelInlineForm para la explicación
+    // completa del patrón "se acomoda sola mientras no la toques".
+    const campoPrecioVariante = canSeeCost ? "netCost" : "salePrice";
+    const { suggestion: sugerenciaVariante } = useVariantPriceSuggestion({
+        ratePublicId: form.rateId,
+        supplierId: form.supplierId,
+        cabinClass: form.cabinClass,
+    });
+    const [hintVariante, setHintVariante] = useState(null);
+
+    // Flags EXPLÍCITOS de "el vendedor escribió acá a mano" (fix ronda 2 de review —
+    // hallazgos #4 y #5, ver HotelInlineForm para la explicación completa). Reemplazan a
+    // derivar el touch-status de `camposSugeridos`, que confundía "vacío y nunca tocado"
+    // con "tocado" y trataba precio+moneda como un solo territorio.
+    //
+    // Fix ronda 3 (BLOQUEANTE, ver HotelInlineForm): en modo edición arrancan en `true` —
+    // el precio/moneda de un servicio YA GUARDADO no es una sugerencia del sistema, es un
+    // dato del vendedor. Sin este seed, el efecto de abajo corría en el MONTAJE con
+    // `sugerenciaVariante` todavía en null (la consulta recién se disparó) y borraba el
+    // costo/venta cargado del servicio.
+    const [precioTocadoPorElUsuario, setPrecioTocadoPorElUsuario] = useState(isEditing);
+    const [monedaTocadaPorElUsuario, setMonedaTocadaPorElUsuario] = useState(isEditing);
+
+    useEffect(() => {
+        if (!form.rateId) {
+            // Fix ronda 3: sin producto elegido todavía no hay nada que sugerir ni que
+            // limpiar — evita pintar de amarillo un casillero vacío que nadie sugirió.
+            setHintVariante(null);
+            return;
+        }
+        const resultado = resolverCamposAlCambiarVariante({
+            estaPrecioTocado: precioTocadoPorElUsuario,
+            estaMonedaTocada: monedaTocadaPorElUsuario,
+            suggestion: sugerenciaVariante,
+        });
+        setHintVariante(resultado.hintText);
+        if (resultado.debeActualizarPrecio || resultado.debeActualizarMoneda) {
+            setForm((prev) => ({
+                ...prev,
+                ...(resultado.debeActualizarPrecio ? { [campoPrecioVariante]: resultado.price } : {}),
+                ...(resultado.debeActualizarMoneda ? { currency: resultado.currency || prev.currency } : {}),
+            }));
+        }
+        if (resultado.debeActualizarPrecio) {
+            setCamposSugeridos((prev) => ({ ...prev, [campoPrecioVariante]: true }));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sugerenciaVariante]);
 
     // C5: si el operador sugerido no está en la lista de operadores de la reserva,
     // lo agregamos dinámicamente para que el <select> no quede con nada seleccionado
@@ -165,7 +212,12 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
             salePrice: Boolean(sale.salePrice),
             currency: Boolean(sale.currency),
         });
-        setUltimoPrecioSugerido(catalogResult);
+        // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
+        // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
+        setPrecioTocadoPorElUsuario(false);
+        setMonedaTocadaPorElUsuario(false);
+        // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR CABINA
+        // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
     };
 
     const handleCreateNew = (searchText) => {
@@ -185,7 +237,8 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
             ...camposLimpios,
         }));
         setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
-        setUltimoPrecioSugerido(null);
+        setPrecioTocadoPorElUsuario(false);
+        setMonedaTocadaPorElUsuario(false);
     };
 
     const handleSearchChange = (texto) => {
@@ -197,8 +250,9 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
         }));
         if (!texto) {
             setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
+            setPrecioTocadoPorElUsuario(false);
+            setMonedaTocadaPorElUsuario(false);
         }
-        setUltimoPrecioSugerido(null);
     };
 
     return (
@@ -340,12 +394,17 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, netCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, netCost: false }));
+                                // Con permiso de costos, "costo" ES el campo que la variante
+                                // sigue (campoPrecioVariante === "netCost").
+                                setPrecioTocadoPorElUsuario(true);
                             }}
                             placeholder="0,00"
                             data-testid="flight-costo"
                             aria-label="Costo total del vuelo"
                         />
-                        <LastSaleHint text={textoUltimoPrecio} />
+                        {/* Renglón gris POR CABINA (spec 2026-08-07, §3.3): dice si el precio
+                            es de esta cabina o de una parecida (V9=A). */}
+                        <VariantSuggestionHint text={hintVariante} />
                     </div>
                 )}
                 <div>
@@ -360,13 +419,17 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, salePrice: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, salePrice: false }));
+                            // "Venta" solo es la variante rastreada para quien NO ve costos
+                            // (campoPrecioVariante === "salePrice"); con permiso de costos
+                            // es un campo aparte, ajeno a la sugerencia.
+                            if (!canSeeCost) setPrecioTocadoPorElUsuario(true);
                         }}
                         placeholder="0,00"
                         required
                         data-testid="flight-venta"
                         aria-label="Precio de venta total"
                     />
-                    {!canSeeCost && <LastSaleHint text={textoUltimoPrecio} />}
+                    {!canSeeCost && <VariantSuggestionHint text={hintVariante} />}
                 </div>
                 <div>
                     <label className={LABEL_BASE} htmlFor="flight-moneda">Moneda</label>
@@ -377,6 +440,7 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
+                            setMonedaTocadaPorElUsuario(true);
                         }}
                         data-testid="flight-moneda"
                         aria-label="Moneda"

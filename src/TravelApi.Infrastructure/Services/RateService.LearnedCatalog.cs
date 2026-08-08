@@ -37,7 +37,10 @@ public partial class RateService
     /// <summary>Cuantos parecidos como maximo se le muestran al usuario cuando el sistema frena un alta.</summary>
     private const int SimilarProductsLimit = 5;
 
-    public async Task<PagedResponse<LearnedProductDto>> GetLearnedProductsAsync(
+    /// <summary>Tope de renglones de precio que muestra la LISTA por producto (V7=A). La ficha los trae todos.</summary>
+    private const int PriceRowsShownInList = 3;
+
+    public async Task<LearnedProductsResponse> GetLearnedProductsAsync(
         LearnedProductsQuery query, CancellationToken ct)
     {
         var supplierFilterId = await ResolveOptionalSupplierIdAsync(query.SupplierId, ct);
@@ -46,39 +49,37 @@ public partial class RateService
         var stalePriceDays = await GetStalePriceDaysAsync(ct);
         var today = DateTime.UtcNow;
 
-        var rates = await LoadTarifarioRowsAsync(serviceTypeFilter, query.Search, ct);
+        // Las solapas cuentan TODO el tarifario, no la pagina ni el filtro de tipo: si contaran lo
+        // filtrado, la solapa "Aéreos (12)" mostraria 0 mientras estas parado en Hoteles.
+        // UNA sola lectura para las dos cosas: las solapas cuentan TODO lo que matchea el buscador y la
+        // lista muestra solo el tipo elegido. Antes se consultaba la base dos veces por pantalla.
+        var allMatching = await LoadTarifarioRowsAsync(serviceType: null, query.Search, ct);
+        var tabs = BuildTypeTabs(allMatching);
+
+        var rates = string.IsNullOrWhiteSpace(serviceTypeFilter)
+            ? allMatching
+            : allMatching
+                .Where(rate => TextNormalizer.NormalizeForMatch(rate.ServiceType)
+                    == TextNormalizer.NormalizeForMatch(serviceTypeFilter))
+                .ToList();
         if (rates.Count == 0)
         {
-            return PagedResponse<LearnedProductDto>.Create(
-                Array.Empty<LearnedProductDto>(), query.GetNormalizedPage(), query.GetNormalizedPageSize(), 0);
+            return LearnedProductsResponse.Empty(
+                query.GetNormalizedPage(), query.GetNormalizedPageSize(), tabs);
         }
 
         var salesByRateId = await LoadLearnedSalesAsync(rates.Select(rate => rate.Id).ToList(), ct);
 
-        // Agrupamos las N tarifas del mismo producto en un solo renglon (ver nota de la clase).
         var products = new List<LearnedProductDto>();
         foreach (var group in rates.GroupBy(BuildProductKey))
         {
-            var supplierRows = BuildSupplierRows(
-                group.ToList(), salesByRateId, supplierFilterId, canSeeCost, stalePriceDays, today);
+            var product = BuildProduct(
+                group.ToList(), salesByRateId, supplierFilterId, canSeeCost, stalePriceDays, today,
+                capRows: true);
 
             // Filtrando por operador, un producto que ese operador nunca toco no tiene nada que mostrar.
-            if (supplierRows.Count == 0) continue;
-
-            // Representante del grupo = la tarifa del precio mas nuevo: es la que abre la ficha.
-            var representative = group
-                .OrderByDescending(rate => LastKnownDateOf(rate, salesByRateId) ?? DateTime.MinValue)
-                .First();
-
-            products.Add(new LearnedProductDto
-            {
-                ProductPublicId = representative.PublicId,
-                Name = representative.DisplayName,
-                Subtitle = representative.Subtitle,
-                ServiceType = representative.ServiceType,
-                ServiceTypeLabel = CatalogDisplayLabels.ServiceType(representative.ServiceType),
-                Suppliers = supplierRows
-            });
+            if (product is null) continue;
+            products.Add(product);
         }
 
         var ordered = products
@@ -90,12 +91,196 @@ public partial class RateService
         var pageSize = query.GetNormalizedPageSize();
         var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
-        return PagedResponse<LearnedProductDto>.Create(pageItems, page, pageSize, ordered.Count);
+        return LearnedProductsResponse.Create(pageItems, page, pageSize, ordered.Count, tabs);
     }
 
     /// <summary>
-    /// Arma los renglones por operador de UN producto. Cada operador aparece una sola vez: si vendio el
-    /// producto, manda la memoria de venta; si nunca lo vendio, se usa el precio cargado en la tarifa.
+    /// La ficha del producto (§7): el MISMO producto pero con TODOS sus precios, sin el tope de 3.
+    /// </summary>
+    public async Task<LearnedProductDto?> GetLearnedProductAsync(Guid ratePublicId, CancellationToken ct)
+    {
+        var canSeeCost = await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct);
+        var stalePriceDays = await GetStalePriceDaysAsync(ct);
+
+        var anchor = await _db.Rates.AsNoTracking()
+            .FirstOrDefaultAsync(rate => rate.PublicId == ratePublicId, ct);
+        if (anchor is null) return null;
+
+        // Se traen TODAS las tarifas del mismo tipo y se queda con las del mismo producto: es la misma
+        // regla de agrupado de la lista, para que la ficha muestre exactamente el grupo que se toco.
+        var rates = await LoadTarifarioRowsAsync(anchor.ServiceType, search: null, ct);
+        var anchorRow = rates.FirstOrDefault(row => row.Id == anchor.Id);
+        if (anchorRow is null) return null;
+
+        var key = BuildProductKey(anchorRow);
+        var groupRates = rates.Where(row => BuildProductKey(row) == key).ToList();
+        var salesByRateId = await LoadLearnedSalesAsync(groupRates.Select(row => row.Id).ToList(), ct);
+
+        return BuildProduct(
+            groupRates, salesByRateId, supplierFilterId: null, canSeeCost, stalePriceDays,
+            DateTime.UtcNow, capRows: false);
+    }
+
+    /// <summary>
+    /// Arma UN producto de la lista: sus variantes (habitacion / cabina / vehiculo) y, adentro de cada
+    /// una, un renglon por operador. Devuelve null si con el filtro de operador no queda nada que mostrar.
+    /// </summary>
+    private static LearnedProductDto? BuildProduct(
+        List<TarifarioRow> ratesOfProduct,
+        IReadOnlyDictionary<int, List<LearnedSaleRow>> salesByRateId,
+        int? supplierFilterId,
+        bool canSeeCost,
+        int stalePriceDays,
+        DateTime today,
+        bool capRows)
+    {
+        var rows = BuildSupplierRows(
+            ratesOfProduct, salesByRateId, supplierFilterId, canSeeCost, stalePriceDays, today);
+        if (rows.Count == 0) return null;
+
+        var representative = ratesOfProduct
+            .OrderByDescending(rate => LastKnownDateOf(rate, salesByRateId) ?? DateTime.MinValue)
+            .First();
+
+        // Agrupado por VARIANTE y, adentro, los operadores (V5=A: primero la habitacion, despues quien la vende).
+        var variants = rows
+            .GroupBy(row => row.VariantKey ?? string.Empty, StringComparer.Ordinal)
+            .Select(group => BuildVariant(
+                representative.ServiceType,
+                group.Key,
+                group.First().VariantLabel ?? string.Empty,
+                group
+                    .OrderByDescending(row => row.PriceDate ?? DateTime.MinValue)
+                    .ThenBy(row => row.SupplierName, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList()))
+            // Los grupos, por su precio mas nuevo arriba.
+            .OrderByDescending(variant => variant.Suppliers.Max(row => row.PriceDate ?? DateTime.MinValue))
+            .ToList();
+
+        var totalRows = variants.Sum(variant => variant.Suppliers.Count);
+        var shownRows = totalRows;
+
+        if (capRows && totalRows > PriceRowsShownInList)
+        {
+            variants = TrimToFirstRows(variants, PriceRowsShownInList);
+            shownRows = PriceRowsShownInList;
+        }
+
+        var hiddenRows = totalRows - shownRows;
+
+        return new LearnedProductDto
+        {
+            ProductPublicId = representative.PublicId,
+            Name = representative.DisplayName,
+            Subtitle = representative.Subtitle,
+            ServiceType = representative.ServiceType,
+            ServiceTypeLabel = CatalogDisplayLabels.ServiceType(representative.ServiceType),
+            Variants = variants,
+            TotalPriceRows = totalRows,
+            HiddenPriceRows = hiddenRows,
+            MorePricesText = hiddenRows > 0
+                ? $"+ {hiddenRows} {(hiddenRows == 1 ? "precio más" : "precios más")} — " +
+                  $"tocá {CatalogDisplayLabels.TheProduct(representative.ServiceType)} para verlos"
+                : string.Empty
+        };
+    }
+
+    /// <summary>
+    /// Arma UNA variante del producto con sus operadores adentro. Además de la etiqueta que se muestra,
+    /// manda las PIEZAS sueltas (habitación, régimen, nombre fino / cabina / vehículo) para que el
+    /// formulario de "Corregir" arranque con lo que hay cargado y no con los valores por defecto.
+    /// </summary>
+    private static LearnedProductVariantDto BuildVariant(
+        string serviceType, string variantKey, string variantLabel, List<LearnedProductPriceDto> suppliers)
+    {
+        var parts = CatalogVariant.PartsOf(serviceType, variantKey);
+
+        return new LearnedProductVariantDto
+        {
+            VariantKey = variantKey,
+            VariantLabel = variantLabel,
+            Suppliers = suppliers,
+            RoomType = parts.RoomType,
+            MealPlan = parts.MealPlan,
+            RoomCategory = parts.FineName,
+            CabinClass = parts.CabinClass,
+            VehicleType = parts.VehicleType
+        };
+    }
+
+    /// <summary>Deja solo los primeros N renglones de precio, respetando el orden de las variantes.</summary>
+    private static List<LearnedProductVariantDto> TrimToFirstRows(
+        List<LearnedProductVariantDto> variants, int maxRows)
+    {
+        var trimmed = new List<LearnedProductVariantDto>();
+        var remaining = maxRows;
+
+        foreach (var variant in variants)
+        {
+            if (remaining <= 0) break;
+
+            var take = Math.Min(remaining, variant.Suppliers.Count);
+            trimmed.Add(new LearnedProductVariantDto
+            {
+                VariantKey = variant.VariantKey,
+                VariantLabel = variant.VariantLabel,
+                Suppliers = variant.Suppliers.Take(take).ToList(),
+                // Las piezas viajan igual en la lista recortada: la ficha y la lista muestran el mismo
+                // formulario de correccion.
+                RoomType = variant.RoomType,
+                MealPlan = variant.MealPlan,
+                RoomCategory = variant.RoomCategory,
+                CabinClass = variant.CabinClass,
+                VehicleType = variant.VehicleType
+            });
+            remaining -= take;
+        }
+
+        return trimmed;
+    }
+
+    /// <summary>
+    /// Cuenta cuantos PRODUCTOS hay de cada tipo, para las solapas de arriba (V8=A). Cuenta productos ya
+    /// agrupados (el mismo hotel cargado tres veces cuenta UNO), que es lo que el usuario ve.
+    /// </summary>
+    private static List<LearnedProductTypeTabDto> BuildTypeTabs(List<TarifarioRow> rates)
+    {
+        var byType = rates
+            .GroupBy(rate => TextNormalizer.NormalizeForMatch(rate.ServiceType), StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(BuildProductKey).Distinct(StringComparer.Ordinal).Count(),
+                StringComparer.Ordinal);
+
+        // Las solapas viajan SIEMPRE todas, aunque esten en cero: la pantalla las muestra apagadas
+        // (criterio de solapas en cero, 2026-08-03) y no tiene que adivinar cuales existen.
+        //
+        // 2026-08-08 (V17=C, addendum firmado): son SEIS. "Excursiones" se sumo porque una excursion se
+        // podia cargar pero despues no aparecia en ninguna solapa: quedaba invisible. "Otro" NO tiene
+        // solapa a proposito — quedo afuera del tarifario (no se carga a mano ni se lista).
+        var tabs = new List<LearnedProductTypeTabDto>();
+        foreach (var serviceType in new[]
+                 {
+                     CatalogServiceTypes.Hotel, CatalogServiceTypes.Aereo, CatalogServiceTypes.Paquete,
+                     CatalogServiceTypes.Traslado, CatalogServiceTypes.Asistencia,
+                     CatalogServiceTypes.Excursion
+                 })
+        {
+            var key = TextNormalizer.NormalizeForMatch(serviceType);
+            tabs.Add(new LearnedProductTypeTabDto
+            {
+                ServiceType = serviceType,
+                Label = CatalogDisplayLabels.ServiceTypePlural(serviceType),
+                Count = byType.TryGetValue(key, out var count) ? count : 0
+            });
+        }
+
+        return tabs;
+    }
+
+    /// <summary>
+    /// Arma los renglones de precio de UN producto: uno por (variante, operador). Cada operador puede
+    /// tener varias habitaciones, y cada habitacion varios operadores.
     /// </summary>
     private static List<LearnedProductPriceDto> BuildSupplierRows(
         List<TarifarioRow> ratesOfProduct,
@@ -105,26 +290,28 @@ public partial class RateService
         int stalePriceDays,
         DateTime today)
     {
-        // Clave del renglon = el operador. 0 = "sin operador" (tarifa vieja que no tenia ninguno).
-        var rowBySupplier = new Dictionary<int, LearnedProductPriceDto>();
-        var dateBySupplier = new Dictionary<int, DateTime?>();
+        // Clave del renglon = (variante, operador). 0 = "sin operador" (tarifa vieja sin ninguno).
+        var rowByKey = new Dictionary<string, LearnedProductPriceDto>(StringComparer.Ordinal);
+        var dateByKey = new Dictionary<string, DateTime?>(StringComparer.Ordinal);
 
-        void Put(int supplierId, LearnedProductPriceDto row, DateTime? date, bool comesFromSale)
+        void Put(int supplierId, string variantKey, LearnedProductPriceDto row, DateTime? date, bool comesFromSale)
         {
             if (supplierFilterId.HasValue && supplierId != supplierFilterId.Value) return;
 
+            var key = $"{variantKey}|{supplierId}";
+
             // Gana el dato mas nuevo; a igualdad de fecha, gana el que viene de una venta real.
-            if (rowBySupplier.TryGetValue(supplierId, out var existing))
+            if (rowByKey.TryGetValue(key, out var existing))
             {
-                var existingDate = dateBySupplier[supplierId] ?? DateTime.MinValue;
+                var existingDate = dateByKey[key] ?? DateTime.MinValue;
                 var candidateDate = date ?? DateTime.MinValue;
                 var keepExisting = candidateDate < existingDate
                     || (candidateDate == existingDate && !comesFromSale && existing.ReservaPublicId != null);
                 if (keepExisting) return;
             }
 
-            rowBySupplier[supplierId] = row;
-            dateBySupplier[supplierId] = date;
+            rowByKey[key] = row;
+            dateByKey[key] = date;
         }
 
         foreach (var rate in ratesOfProduct)
@@ -134,7 +321,7 @@ public partial class RateService
             foreach (var sale in sales)
             {
                 var price = canSeeCost ? sale.NetCost : sale.SalePrice;
-                Put(sale.SupplierId, new LearnedProductPriceDto
+                Put(sale.SupplierId, sale.VariantKey, new LearnedProductPriceDto
                 {
                     SupplierPublicId = sale.SupplierPublicId,
                     SupplierName = sale.SupplierName ?? "Sin operador",
@@ -147,20 +334,32 @@ public partial class RateService
                     PriceAgeText = RelativeDateText.Age(today, sale.SoldAt),
                     IsOldPrice = IsOldPrice(sale.SoldAt, today, stalePriceDays),
                     ReservaPublicId = sale.ReservaPublicId,
-                    NumeroReserva = sale.NumeroReserva
+                    NumeroReserva = sale.NumeroReserva,
+                    VariantKey = sale.VariantKey,
+                    VariantLabel = sale.VariantLabel
                 }, sale.SoldAt, comesFromSale: true);
             }
 
             if (sales.Count > 0) continue;
 
-            // Tarifa que nunca se vendio: el "ultimo precio" es el que alguien cargo a mano.
+            // Tarifa que nunca se vendio: el "ultimo precio" es el que alguien cargo a mano. Su variante
+            // sale de los campos del propio producto (habitacion/cabina/vehiculo cargados en la ficha).
             var manualDate = rate.UpdatedAt ?? rate.CreatedAt;
-            Put(rate.SupplierId ?? 0, new LearnedProductPriceDto
+            // El alta a mano guarda UN precio y lo guarda como VENTA (el costo real recien se conoce
+            // vendiendo). Si el caller ve costos pero no hay costo cargado, se muestra la venta y se dice
+            // que es venta: nunca un 0 disfrazado de costo.
+            var showManualCost = canSeeCost && rate.NetCost > 0m;
+            var variant = CatalogVariant.For(
+                rate.ServiceType,
+                roomType: rate.RoomType, mealPlan: rate.MealPlan, fineName: rate.RoomCategory,
+                cabinClass: rate.CabinClass, vehicleType: rate.VehicleType);
+
+            Put(rate.SupplierId ?? 0, variant.Key, new LearnedProductPriceDto
             {
                 SupplierPublicId = rate.SupplierPublicId,
                 SupplierName = rate.SupplierName ?? "Sin operador",
-                Price = canSeeCost ? rate.NetCost : rate.SalePrice,
-                PriceKind = canSeeCost ? "Costo" : "Venta",
+                Price = showManualCost ? rate.NetCost : rate.SalePrice,
+                PriceKind = showManualCost ? "Costo" : "Venta",
                 Currency = rate.Currency,
                 PriceUnit = rate.PriceUnit,
                 PriceUnitLabel = CatalogDisplayLabels.PriceUnit(rate.PriceUnit),
@@ -168,14 +367,13 @@ public partial class RateService
                 PriceAgeText = RelativeDateText.Age(today, manualDate),
                 IsOldPrice = IsOldPrice(manualDate, today, stalePriceDays),
                 ReservaPublicId = null,
-                NumeroReserva = null
+                NumeroReserva = null,
+                VariantKey = variant.Key,
+                VariantLabel = variant.Label
             }, manualDate, comesFromSale: false);
         }
 
-        return rowBySupplier.Values
-            .OrderByDescending(row => row.PriceDate ?? DateTime.MinValue)
-            .ThenBy(row => row.SupplierName, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
+        return rowByKey.Values.ToList();
     }
 
     private static bool IsOldPrice(DateTime? date, DateTime today, int stalePriceDays)
@@ -220,11 +418,21 @@ public partial class RateService
     private async Task<List<TarifarioRow>> LoadTarifarioRowsAsync(
         string? serviceType, string? search, CancellationToken ct)
     {
+        // IsActive deja afuera tanto lo desactivado a mano como lo ABSORBIDO por una union (M-17): el
+        // producto sigue existiendo en la base, pero deja de listarse.
         var ratesQuery = _db.Rates.AsNoTracking().Where(rate => rate.IsActive);
+
+        // "Otro" queda AFUERA del tarifario (addendum firmado 2026-08-08, V17=C): es el cajon de sastre de
+        // la venta, no un producto con precio comparable. Se sigue vendiendo normal en la reserva y sigue
+        // visible en el listado completo de tarifas; lo que no hace es ensuciar la memoria de precios.
+        var cajonDeSastre = CatalogServiceTypes.Otro.ToLowerInvariant();
+        ratesQuery = ratesQuery.Where(rate => rate.ServiceType.ToLower() != cajonDeSastre);
 
         if (!string.IsNullOrWhiteSpace(serviceType))
         {
-            ratesQuery = ratesQuery.Where(rate => rate.ServiceType == serviceType);
+            // Func-N10: el tipo se compara sin importar mayusculas ("hotel" y "Hotel" son lo mismo).
+            var typeFilter = serviceType.Trim().ToLowerInvariant();
+            ratesQuery = ratesQuery.Where(rate => rate.ServiceType.ToLower() == typeFilter);
         }
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -262,7 +470,12 @@ public partial class RateService
                 UpdatedAt = rate.UpdatedAt,
                 SupplierId = rate.SupplierId,
                 SupplierPublicId = rate.Supplier != null ? (Guid?)rate.Supplier.PublicId : null,
-                SupplierName = rate.Supplier != null ? rate.Supplier.Name : null
+                SupplierName = rate.Supplier != null ? rate.Supplier.Name : null,
+                RoomType = rate.RoomType,
+                MealPlan = rate.MealPlan,
+                RoomCategory = rate.RoomCategory,
+                CabinClass = rate.CabinClass,
+                VehicleType = rate.VehicleType
             })
             .ToListAsync(ct);
     }
@@ -276,7 +489,8 @@ public partial class RateService
     {
         var sales = await _db.RateSupplierSales
             .AsNoTracking()
-            .Where(sale => rateIds.Contains(sale.RateId))
+            // Las filas ESCONDIDAS por una union (nada se borra) no se muestran en ningun lado.
+            .Where(sale => rateIds.Contains(sale.RateId) && sale.AbsorbedByTidyUpActionId == null)
             .Select(sale => new LearnedSaleRow
             {
                 RateId = sale.RateId,
@@ -289,7 +503,9 @@ public partial class RateService
                 Currency = sale.LastCurrency,
                 PriceUnit = sale.LastPriceUnit,
                 ReservaPublicId = sale.LastReserva != null ? (Guid?)sale.LastReserva.PublicId : null,
-                NumeroReserva = sale.LastReserva != null ? sale.LastReserva.NumeroReserva : null
+                NumeroReserva = sale.LastReserva != null ? sale.LastReserva.NumeroReserva : null,
+                VariantKey = sale.VariantKey,
+                VariantLabel = sale.VariantLabel
             })
             .ToListAsync(ct);
 
@@ -381,6 +597,11 @@ public partial class RateService
         // el texto de un ArgumentException es apto para una persona o es una fuga tecnica).
         if (serviceType.Length == 0)
             throw new RateValidationException("Elegí qué tipo de producto es.");
+        // "Otro" queda afuera del tarifario (addendum firmado 2026-08-08, V17=C). El freno vive en el
+        // SERVIDOR aunque la pantalla ya no ofrezca la opcion: cualquier otro cliente podria mandarlo igual.
+        if (string.Equals(TextNormalizer.NormalizeForMatch(serviceType), "otro", StringComparison.Ordinal))
+            throw new RateValidationException(
+                "\"Otro\" no se carga en el tarifario. Elegí el tipo que corresponda, o cargalo directo en la reserva.");
         if (name.Length == 0)
             throw new RateValidationException("El nombre del producto es obligatorio.");
         if (isHotel && city is null)
@@ -451,6 +672,17 @@ public partial class RateService
                 ? DefaultPriceUnitFor(serviceType)
                 : request.PriceUnit.Trim();
 
+            // El nombre fino pasa por la MEMORIA (§5.2 / M-19): si en la agencia ya se escribió
+            // "Superior", cargar "sup" o "SUPERIOR" no crea una habitación nueva — se unifica con la que
+            // ya existe. Eso NO es duda grande: se resuelve solo, sin preguntar.
+            var fineName = await ResolveVariantNameAsync(serviceType, request.RoomCategory, ct);
+            var vehicleName = await ResolveVariantNameAsync(serviceType, request.VehicleType, ct);
+
+            var variant = CatalogVariant.For(
+                serviceType,
+                roomType: request.RoomType, mealPlan: request.MealPlan, fineName: fineName,
+                cabinClass: request.CabinClass, vehicleType: vehicleName);
+
             var rate = new Rate
             {
                 ServiceType = serviceType,
@@ -458,6 +690,14 @@ public partial class RateService
                 SupplierId = supplierId,
                 Currency = currency,
                 PriceUnit = priceUnit,
+                // La variante se guarda en los campos propios del producto. Así el precio cargado a mano
+                // queda en la MISMA habitación que los que el sistema aprende vendiendo (V16=A): la lista
+                // los muestra juntos y la sugerencia de la venta los encuentra.
+                RoomType = NormalizeOptional(request.RoomType),
+                MealPlan = NormalizeOptional(request.MealPlan),
+                RoomCategory = NormalizeOptional(fineName),
+                CabinClass = NormalizeOptional(request.CabinClass),
+                VehicleType = NormalizeOptional(vehicleName),
                 // El alta simple carga UN precio. Lo tomamos como precio de venta de referencia y dejamos el
                 // costo en 0: quien no ve costos no puede cargar un costo, y el costo real lo va a aprender
                 // el sistema en la primera venta (ADR-017 §2.1).
@@ -491,7 +731,8 @@ public partial class RateService
             StageProductAudit(
                 AuditActions.RateCreatedManually, rate,
                 $"Alta a mano desde el Tarifario. Tipo: {rate.ServiceType}. " +
-                $"Nombre: {rate.ProductName}. Ciudad: {city ?? "(sin ciudad)"}.");
+                $"Nombre: {rate.ProductName}. Ciudad: {city ?? "(sin ciudad)"}. " +
+                $"Habitación: {(variant.Label.Length > 0 ? variant.Label : "(sin variante)")}.");
             await _db.SaveChangesAsync(ct);
 
             var created = await GetByIdAsync(rate.Id, ct)
@@ -624,11 +865,18 @@ public partial class RateService
             var groupKey = BuildProductKey(serviceType, currentName, currentCity);
             var destinationKey = BuildProductKey(serviceType, newName, isHotel ? newCity : currentCity);
 
-            // Se traen SOLO las tarifas activas del tipo: en un tarifario de agencia son pocas, y la
-            // comparacion final se hace con el normalizador de la app (Postgres no normaliza igual).
-            var rates = await _db.Rates
-                .Where(rate => rate.IsActive && rate.ServiceType == serviceType)
-                .ToListAsync(ct);
+            // Se traen las tarifas del tipo (en un tarifario de agencia son pocas) y la comparacion fina
+            // se hace con el normalizador de la app, que Postgres no sabe replicar.
+            //
+            // Func-N10: el tipo se compara SIN importar como este escrito. Antes se comparaba tal cual, y
+            // un cliente que mandara "hotel" en minuscula contra un "Hotel" guardado no encontraba nada y
+            // recibia un "no existe" mentiroso.
+            var typeKey = TextNormalizer.NormalizeForMatch(serviceType);
+            var allOfType = (await _db.Rates.ToListAsync(ct))
+                .Where(rate => TextNormalizer.NormalizeForMatch(rate.ServiceType) == typeKey)
+                .ToList();
+
+            var rates = allOfType.Where(rate => rate.IsActive).ToList();
 
             var group = rates.Where(rate => KeyOf(rate) == groupKey).ToList();
             if (group.Count == 0)
@@ -637,8 +885,19 @@ public partial class RateService
             }
 
             // Colision: el nombre nuevo ya lo tiene OTRO producto. NO se fusiona nada (unir dos productos
-            // es otra obra, con su propia pantalla): se avisa y se deja todo como estaba.
-            if (destinationKey != groupKey && rates.Any(rate => KeyOf(rate) == destinationKey))
+            // tiene su propia pantalla): se avisa y se deja todo como estaba.
+            //
+            // Sec-R3: tambien cuentan los productos APAGADOS. Uno apagado se puede volver a prender, y si
+            // mientras tanto otro le robo el nombre, quedarian dos productos identicos — justo lo que P7
+            // manda evitar. La UNICA excepcion son los que este mismo producto absorbio al unirse: esos
+            // apuntan aca y su nombre es historia propia, no un choque.
+            var groupIds = group.Select(rate => rate.Id).ToHashSet();
+            var collisionCandidates = allOfType
+                .Where(rate => !groupIds.Contains(rate.Id))
+                .Where(rate => rate.MergedIntoRateId is null || !groupIds.Contains(rate.MergedIntoRateId.Value))
+                .ToList();
+
+            if (destinationKey != groupKey && collisionCandidates.Any(rate => KeyOf(rate) == destinationKey))
             {
                 var donde = isHotel && newCity is not null ? $" en {newCity}" : string.Empty;
                 throw new RateProductNameTakenException(
@@ -774,12 +1033,17 @@ public partial class RateService
         return TextNormalizer.NormalizeForCatalog(source);
     }
 
+    /// <summary>Vacio y solo-espacios se guardan como null: "no cargado" es null, nunca "".</summary>
+    private static string? NormalizeOptional(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     /// <summary>Unidad de precio que corresponde al tipo cuando el alta simple no la aclara.</summary>
     private static string DefaultPriceUnitFor(string serviceType)
         => TextNormalizer.NormalizeForMatch(serviceType) switch
         {
             "hotel" => CatalogPriceUnits.NocheHabitacion,
-            "aereo" or "paquete" => CatalogPriceUnits.Pasajero,
+            // La excursion se cobra por persona, igual que el aereo y el paquete (V17=C).
+            "aereo" or "paquete" or "excursion" => CatalogPriceUnits.Pasajero,
             "asistencia" => CatalogPriceUnits.PasajeroDia,
             _ => CatalogPriceUnits.Servicio
         };
@@ -810,6 +1074,13 @@ public partial class RateService
         public int? SupplierId { get; set; }
         public Guid? SupplierPublicId { get; set; }
         public string? SupplierName { get; set; }
+
+        // Campos de los que sale la VARIANTE de una tarifa cargada a mano (que todavia no se vendio).
+        public string? RoomType { get; set; }
+        public string? MealPlan { get; set; }
+        public string? RoomCategory { get; set; }
+        public string? CabinClass { get; set; }
+        public string? VehicleType { get; set; }
 
         /// <summary>Nombre lindo: el del hotel si es hotel y esta cargado, si no el del producto.</summary>
         public string DisplayName =>
@@ -854,5 +1125,7 @@ public partial class RateService
         public string? PriceUnit { get; set; }
         public Guid? ReservaPublicId { get; set; }
         public string? NumeroReserva { get; set; }
+        public string VariantKey { get; set; } = string.Empty;
+        public string VariantLabel { get; set; } = string.Empty;
     }
 }

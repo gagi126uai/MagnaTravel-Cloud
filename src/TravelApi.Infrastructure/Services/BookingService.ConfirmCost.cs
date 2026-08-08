@@ -54,7 +54,13 @@ public partial class BookingService
 
                 var divisor = CatalogUnitization.HotelDivisor(hotel.Nights, hotel.Rooms);
                 var unit = CatalogUnitization.ForHotel(hotel.NetCost, hotel.Tax, hotel.SalePrice, hotel.Nights, hotel.Rooms);
-                await UpsertConfirmedSaleAsync(hotel.RateId, hotel.SupplierId, unit, hotel.Currency, hotel.CreatedAt, reservaId, ct);
+                // M-19: la habitacion se arma con el nombre fino YA unificado, para que confirmar un costo
+                // no cree una variante paralela ("Sup" vs "Superior") de la misma habitacion.
+                var hotelFineName = await CatalogVariantNameMemory.ResolveAsync(
+                    _db, CatalogServiceTypes.Hotel, hotel.RoomCategory, ct);
+                await UpsertConfirmedSaleAsync(
+                    hotel.RateId, hotel.SupplierId, unit, hotel.Currency, hotel.CreatedAt, reservaId,
+                    CatalogVariant.ForHotel(hotel.RoomType, hotel.MealPlan, hotelFineName), ct);
             }
 
             var dto = _mapper.Map<HotelBookingDto>(hotel);
@@ -91,7 +97,9 @@ public partial class BookingService
                 await RefreshBalancesAfterCostConfirmAsync(flight.SupplierId, reservaId, ct);
 
                 var unit = CatalogUnitization.ForFlight(flight.NetCost, flight.Tax, flight.SalePrice, flight.PassengerCount ?? 1);
-                await UpsertConfirmedSaleAsync(flight.RateId, flight.SupplierId, unit, flight.Currency, flight.CreatedAt, reservaId, ct);
+                await UpsertConfirmedSaleAsync(
+                    flight.RateId, flight.SupplierId, unit, flight.Currency, flight.CreatedAt, reservaId,
+                    CatalogVariant.ForFlight(flight.CabinClass), ct);
             }
 
             var dto = _mapper.Map<FlightSegmentDto>(flight);
@@ -126,7 +134,11 @@ public partial class BookingService
                 await RefreshBalancesAfterCostConfirmAsync(transfer.SupplierId, reservaId, ct);
 
                 var unit = CatalogUnitization.ForTransfer(transfer.NetCost, transfer.Tax, transfer.SalePrice);
-                await UpsertConfirmedSaleAsync(transfer.RateId, transfer.SupplierId, unit, transfer.Currency, transfer.CreatedAt, reservaId, ct);
+                var vehicleName = await CatalogVariantNameMemory.ResolveAsync(
+                    _db, CatalogServiceTypes.Traslado, transfer.VehicleType, ct);
+                await UpsertConfirmedSaleAsync(
+                    transfer.RateId, transfer.SupplierId, unit, transfer.Currency, transfer.CreatedAt, reservaId,
+                    CatalogVariant.ForTransfer(vehicleName), ct);
             }
 
             var dto = _mapper.Map<TransferBookingDto>(transfer);
@@ -161,7 +173,9 @@ public partial class BookingService
                 await RefreshBalancesAfterCostConfirmAsync(package.SupplierId, reservaId, ct);
 
                 var unit = CatalogUnitization.ForPackage(package.NetCost, package.Tax, package.SalePrice, package.Adults, package.Children);
-                await UpsertConfirmedSaleAsync(package.RateId, package.SupplierId, unit, package.Currency, package.CreatedAt, reservaId, ct);
+                await UpsertConfirmedSaleAsync(
+                    package.RateId, package.SupplierId, unit, package.Currency, package.CreatedAt, reservaId,
+                    CatalogVariant.None, ct);
             }
 
             var dto = _mapper.Map<PackageBookingDto>(package);
@@ -197,7 +211,9 @@ public partial class BookingService
 
                 var days = CatalogUnitization.AssistanceDays(assistance.ValidFrom, assistance.ValidTo);
                 var unit = CatalogUnitization.ForAssistance(assistance.NetCost, assistance.Tax, assistance.SalePrice, assistance.Adults, assistance.Children, days);
-                await UpsertConfirmedSaleAsync(assistance.RateId, assistance.SupplierId, unit, assistance.Currency, assistance.CreatedAt, reservaId, ct);
+                await UpsertConfirmedSaleAsync(
+                    assistance.RateId, assistance.SupplierId, unit, assistance.Currency, assistance.CreatedAt, reservaId,
+                    CatalogVariant.None, ct);
             }
 
             var dto = _mapper.Map<AssistanceBookingDto>(assistance);
@@ -243,10 +259,10 @@ public partial class BookingService
     /// <summary>Upsert diferido tras confirmar: solo si el servicio tiene producto y operador real.</summary>
     private async Task UpsertConfirmedSaleAsync(
         int? rateId, int supplierId, CatalogUnitization.Unitized unit, string? currency, DateTime soldAt,
-        int reservaId, CancellationToken ct)
+        int reservaId, (string Key, string Label) variant, CancellationToken ct)
     {
         if (!rateId.HasValue || supplierId <= 0) return;
         await UpsertRateSupplierSaleAsync(
-            rateId.Value, supplierId, unit, NormalizeCurrency(currency), soldAt, reservaId, ct);
+            rateId.Value, supplierId, unit, NormalizeCurrency(currency), soldAt, reservaId, variant, ct);
     }
 }

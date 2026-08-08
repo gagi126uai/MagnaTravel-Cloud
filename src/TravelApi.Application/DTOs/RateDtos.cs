@@ -1,8 +1,19 @@
-namespace TravelApi.Application.DTOs;
+﻿namespace TravelApi.Application.DTOs;
 
 public class RateListItemDto
 {
     public Guid PublicId { get; set; }
+
+    /// <summary>
+    /// La VARIANTE del producto ya armada por el motor: clave para comparar y etiqueta para mostrar
+    /// ("Doble Superior con desayuno"). Salen de los campos de abajo (habitación/régimen/cabina/vehículo);
+    /// viajan resueltas para que la pantalla no tenga que concatenar ni traducir códigos (T-13).
+    /// Vacías cuando el producto no tiene variante (paquete, asistencia) o no la tiene cargada.
+    /// </summary>
+    public string VariantKey { get; set; } = string.Empty;
+
+    /// <inheritdoc cref="VariantKey"/>
+    public string VariantLabel { get; set; } = string.Empty;
     public string ServiceType { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
     public string? Description { get; set; }

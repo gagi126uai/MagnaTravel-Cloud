@@ -195,4 +195,17 @@ public class Rate : IHasPublicId
     /// esa Reserva se borro — la FK es ON DELETE SET NULL para no bloquear el borrado de reservas).
     /// </summary>
     public int? CreatedFromReservaId { get; set; }
+
+    /// <summary>
+    /// Cuando este producto resulto ser EL MISMO que otro y se unieron, aca queda en cual quedo
+    /// (spec 2026-08-07, M-17). NADA SE BORRA (regla del 2026-08-03): el absorbido conserva su fila,
+    /// se apaga con <c>IsActive=false</c> y apunta al sobreviviente. Deshacer lo vuelve a prender.
+    ///
+    /// <para>Null = este producto nunca fue absorbido (el caso normal).</para>
+    /// </summary>
+    public int? MergedIntoRateId { get; set; }
+    public Rate? MergedIntoRate { get; set; }
+
+    /// <summary>Cuando se unio. Null si nunca se unio (o si se deshizo la union).</summary>
+    public DateTime? MergedAt { get; set; }
 }

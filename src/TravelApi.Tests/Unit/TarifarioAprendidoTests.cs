@@ -324,13 +324,13 @@ public class TarifarioAprendidoTests
 
         var product = Assert.Single(page.Items);
         Assert.Equal("Hotel", product.ServiceType);
-        Assert.Equal(2, product.Suppliers.Count);
+        Assert.Equal(2, Rows(product).Count);
         // El precio mas nuevo va arriba.
-        Assert.Equal("Julia Tours", product.Suppliers[0].SupplierName);
-        Assert.Equal(52m, product.Suppliers[0].Price);
-        Assert.Equal("Ola Mayorista", product.Suppliers[1].SupplierName);
-        Assert.Equal("F-2026-1042", product.Suppliers[1].NumeroReserva);
-        Assert.Equal("por noche", product.Suppliers[1].PriceUnitLabel);
+        Assert.Equal("Julia Tours", Rows(product)[0].SupplierName);
+        Assert.Equal(52m, Rows(product)[0].Price);
+        Assert.Equal("Ola Mayorista", Rows(product)[1].SupplierName);
+        Assert.Equal("F-2026-1042", Rows(product)[1].NumeroReserva);
+        Assert.Equal("por noche", Rows(product)[1].PriceUnitLabel);
     }
 
     /// <summary>F-14: sin permiso de costos NUNCA viaja el costo; en su lugar viaja el precio de venta.</summary>
@@ -348,10 +348,10 @@ public class TarifarioAprendidoTests
         var conCostos = CreateRateService(context, canSeeCost: true);
         var sinCostos = CreateRateService(context, canSeeCost: false);
 
-        var visto = (await conCostos.GetLearnedProductsAsync(new LearnedProductsQuery(), CancellationToken.None))
-            .Items.Single().Suppliers.Single();
-        var enmascarado = (await sinCostos.GetLearnedProductsAsync(new LearnedProductsQuery(), CancellationToken.None))
-            .Items.Single().Suppliers.Single();
+        var visto = Rows((await conCostos.GetLearnedProductsAsync(new LearnedProductsQuery(), CancellationToken.None))
+            .Items.Single()).Single();
+        var enmascarado = Rows((await sinCostos.GetLearnedProductsAsync(new LearnedProductsQuery(), CancellationToken.None))
+            .Items.Single()).Single();
 
         Assert.Equal(48m, visto.Price);
         Assert.Equal("Costo", visto.PriceKind);
@@ -378,7 +378,7 @@ public class TarifarioAprendidoTests
         var product = Assert.Single(
             (await service.GetLearnedProductsAsync(new LearnedProductsQuery(), CancellationToken.None)).Items);
 
-        var row = Assert.Single(product.Suppliers);
+        var row = Assert.Single(Rows(product));
         Assert.Equal("Ola Mayorista", row.SupplierName);
         Assert.True(row.IsOldPrice);
         Assert.Contains("hace", row.PriceAgeText);
@@ -765,6 +765,92 @@ public class TarifarioAprendidoTests
     }
 
     // =====================================================================================
+    // (7) Dos agujeros que quedaron anotados en la revision anterior
+    // =====================================================================================
+
+    /// <summary>
+    /// Func-N10: el tipo de producto se compara SIN importar como este escrito. Antes, un cliente que
+    /// mandara "hotel" en minuscula contra un "Hotel" guardado recibia un "no existe" mentiroso.
+    /// </summary>
+    [Theory]
+    [InlineData("hotel")]
+    [InlineData("HOTEL")]
+    [InlineData("Hotel")]
+    public async Task Renombrar_ElTipoSeComparaSinImportarComoEsteEscrito(string serviceTypeAsSent)
+    {
+        await using var context = CreateContext();
+        context.Rates.Add(BuildHotelRate(1, "Maitei Posadas", "Posadas"));
+        await context.SaveChangesAsync();
+        var service = CreateRateService(context);
+
+        var result = await service.RenameLearnedProductAsync(new RenameLearnedProductRequest
+        {
+            ServiceType = serviceTypeAsSent,
+            Name = "Maitei Posadas",
+            City = "Posadas",
+            NewName = "Hotel Maitei",
+            NewCity = "Posadas"
+        }, CancellationToken.None);
+
+        Assert.Equal(1, result.RenamedRates);
+    }
+
+    /// <summary>
+    /// Sec-R3: un producto APAGADO tambien ocupa el nombre. Si no contara, se podria dejar dos productos
+    /// identicos esperando a que alguien vuelva a prender el viejo — justo lo que P7 manda evitar.
+    /// </summary>
+    [Fact]
+    public async Task Renombrar_ChocaTambienConUnProductoApagado()
+    {
+        await using var context = CreateContext();
+        var vivo = BuildHotelRate(1, "Maitei Posadas", "Posadas");
+        var apagado = BuildHotelRate(2, "Hotel Maitei", "Posadas");
+        apagado.IsActive = false;
+        context.Rates.AddRange(vivo, apagado);
+        await context.SaveChangesAsync();
+        var service = CreateRateService(context);
+
+        await Assert.ThrowsAsync<RateProductNameTakenException>(() =>
+            service.RenameLearnedProductAsync(new RenameLearnedProductRequest
+            {
+                ServiceType = "Hotel",
+                Name = "Maitei Posadas",
+                City = "Posadas",
+                NewName = "Hotel Maitei",
+                NewCity = "Posadas"
+            }, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// La excepcion de Sec-R3: el producto que ESTE MISMO absorbio al unirse no choca. Su nombre es
+    /// historia propia, no un producto compitiendo por el mismo lugar.
+    /// </summary>
+    [Fact]
+    public async Task Renombrar_NoChocaConLoQueElMismoProductoAbsorbio()
+    {
+        await using var context = CreateContext();
+        var vivo = BuildHotelRate(1, "Maitei Posadas", "Posadas");
+        var absorbido = BuildHotelRate(2, "Hotel Maitei", "Posadas");
+        absorbido.IsActive = false;
+        absorbido.MergedIntoRateId = vivo.Id;
+        absorbido.MergedAt = DateTime.UtcNow;
+        context.Rates.AddRange(vivo, absorbido);
+        await context.SaveChangesAsync();
+        var service = CreateRateService(context);
+
+        var result = await service.RenameLearnedProductAsync(new RenameLearnedProductRequest
+        {
+            ServiceType = "Hotel",
+            Name = "Maitei Posadas",
+            City = "Posadas",
+            NewName = "Hotel Maitei",
+            NewCity = "Posadas"
+        }, CancellationToken.None);
+
+        Assert.Equal(1, result.RenamedRates);
+    }
+
+    // =====================================================================================
     // (6) Nada de codigos internos en pantalla: las etiquetas SIEMPRE vienen escritas
     // =====================================================================================
 
@@ -798,7 +884,7 @@ public class TarifarioAprendidoTests
 
         Assert.Equal(expectedLabel, product.ServiceTypeLabel);
         // La unidad tambien llega escrita: nunca "pasajero_dia" en la pantalla.
-        var row = Assert.Single(product.Suppliers);
+        var row = Assert.Single(Rows(product));
         Assert.Equal("por pasajero por día", row.PriceUnitLabel);
         Assert.DoesNotContain("_", row.PriceUnitLabel);
     }
@@ -806,6 +892,13 @@ public class TarifarioAprendidoTests
     // =====================================================================================
     // Helpers de siembra
     // =====================================================================================
+
+    /// <summary>
+    /// Aplana los renglones de precio de un producto (ahora vienen agrupados por habitacion). Los tests
+    /// que no miran la habitacion en si usan esto para seguir mirando "los precios del producto".
+    /// </summary>
+    private static IReadOnlyList<LearnedProductPriceDto> Rows(LearnedProductDto product)
+        => product.Variants.SelectMany(variant => variant.Suppliers).ToList();
 
     private static Rate BuildHotelRate(int id, string hotelName, string city)
         => new()

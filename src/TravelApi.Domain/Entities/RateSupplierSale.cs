@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
@@ -70,6 +70,45 @@ public class RateSupplierSale
 
     /// <summary>Cuantas veces se vendio esta combinacion (lo incrementa el upsert atomico en F1.3).</summary>
     public int SalesCount { get; set; }
+
+    /// <summary>
+    /// VARIANTE de esta memoria de precio, normalizada para comparar (spec 2026-08-07, M-12):
+    /// <c>"doble|desayuno|superior"</c> en hotel, <c>"economica"</c> en aereo, <c>"van"</c> en traslado,
+    /// y <b>vacia</b> en paquete/asistencia (no tienen variante) o cuando el dato no vino cargado.
+    ///
+    /// <para><b>Por que se sumo a la clave unica</b>: antes la memoria era por (producto, operador) y
+    /// vender una TRIPLE pisaba el precio de la DOBLE del mismo hotel — la proxima venta sugeria un
+    /// precio equivocado. Ahora la fila unica es (producto, operador, variante). Las filas viejas quedan
+    /// con variante vacia: siguen funcionando igual, y se van completando solas al vender.</para>
+    ///
+    /// <para>NUNCA se muestra: es para comparar. Lo que se muestra es <see cref="VariantLabel"/>.</para>
+    /// </summary>
+    [MaxLength(120)]
+    public string VariantKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// La misma variante escrita para una persona ("Doble Superior con desayuno"). La arma el motor
+    /// (T-13) al guardar la venta, asi la pantalla no tiene que concatenar habitacion + regimen.
+    /// Vacia cuando no hay variante.
+    /// </summary>
+    [MaxLength(200)]
+    public string VariantLabel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Cuando esta fila perdio contra otra igual al unir dos productos, queda ESCONDIDA en vez de
+    /// borrarse (orden del dueño 2026-08-03: nada se borra). Guarda cual fue la union que la escondio,
+    /// para que el Deshacer de ESA union la vuelva a mostrar.
+    ///
+    /// <para>Null = fila normal, visible. Todas las lecturas del tarifario filtran por null.</para>
+    /// </summary>
+    public int? AbsorbedByTidyUpActionId { get; set; }
+
+    /// <summary>
+    /// True cuando este precio NO viene de una venta sino de una carga A MANO en el tarifario que se
+    /// mudo aca al unir dos productos (spec 2026-08-07, §8). Importa para no mentir: un precio cargado a
+    /// mano no tiene reserva de origen y no cuenta como venta (<see cref="SalesCount"/> queda en 0).
+    /// </summary>
+    public bool FromManualLoad { get; set; }
 
     /// <summary>
     /// Reserva de la ULTIMA venta que dejo este precio (spec firmada 2026-08-06, M-1): el Tarifario

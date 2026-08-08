@@ -36,8 +36,10 @@ import { hasPermission } from "../../../auth";
 import { formatCurrency } from "../../../lib/utils";
 import { ProductSearchField } from "./ProductSearchField";
 import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
-import { buildLastSaleHintText } from "./lastSaleHintLogic";
-import { LastSaleHint } from "./LastSaleHint";
+import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemoryField";
+import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
+import { resolverCamposAlCambiarVariante } from "./variantPriceSuggestionLogic";
+import { VariantSuggestionHint } from "./VariantSuggestionHint";
 
 // ─── Helpers de formato ──────────────────────────────────────────────────────
 
@@ -195,11 +197,78 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
         currency: false,
     });
 
-    // Renglón gris "Último precio: operador · precio · fecha" (spec 2026-08-06, §3.2, P9=A):
-    // guarda el resultado elegido del buscador para poder armar el texto del hint. Es solo
-    // informativo — nunca vuelve a escribir en form (P-21).
-    const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
-    const textoUltimoPrecio = buildLastSaleHintText(ultimoPrecioSugerido, { canSeeCost });
+    // ─── Sugerencia POR HABITACIÓN (spec 2026-08-07, §3.3 / M-15 / V9=A / V10=A) ───────
+    // El campo de precio que este usuario ve y edita: costo para quien tiene permiso de
+    // verlo, venta para el resto (misma regla que F-14 en el resto de la pantalla).
+    const campoPrecioVariante = canSeeCost ? "unitNetCost" : "unitSalePrice";
+
+    // Se re-consulta cada vez que cambia el producto elegido O la combinación que define
+    // la variante (habitación, régimen, nombre fino) — es EXACTAMENTE lo que dispara el
+    // "se acomoda sola" de V10=A.
+    const { suggestion: sugerenciaVariante } = useVariantPriceSuggestion({
+        ratePublicId: form.rateId,
+        supplierId: form.supplierId,
+        roomType: form.roomType,
+        mealPlan: form.mealPlan,
+        roomCategory: form.roomCategory,
+    });
+    const [hintVariante, setHintVariante] = useState(null);
+
+    // Flags EXPLÍCITOS de "el vendedor escribió acá a mano" (fix ronda 2 de review —
+    // hallazgos #4 y #5). Antes se derivaban de `camposSugeridos`, que también da "no
+    // sugerido" para un casillero vacío que NUNCA se tocó (bloqueaba la precarga amarilla
+    // de V9=A) y no distinguía precio de moneda como territorios separados (elegir la
+    // moneda a mano se pisaba solo con volver a acomodar el precio, V10=A).
+    //
+    // Fix ronda 3 (BLOQUEANTE): en modo edición arrancan en `true`, NO en `false`. El
+    // precio/moneda que trae un servicio YA GUARDADO no es una sugerencia del sistema —
+    // es un dato del vendedor (de esta sesión o de una anterior), y por V10=A "lo que
+    // escribiste vos no se toca nunca". Sin este seed, el efecto de abajo corría en el
+    // MONTAJE con `sugerenciaVariante` todavía en null (la consulta real recién se acaba
+    // de disparar y no resolvió) y lo interpretaba como "no hay precio para esta
+    // habitación", BORRANDO el costo/venta que `buildHotelFormInitial` ya había cargado.
+    // Solo se apagan de nuevo al elegir OTRO producto (nuevo contexto, nueva decisión —
+    // ver handleSelectExisting/handleCreateNew/handleSearchChange más abajo); un cambio
+    // de habitación DURANTE la edición no las reactiva a propósito — mover el precio de
+    // un servicio ya guardado sin que el vendedor lo pida sigue siendo territorio
+    // prohibido, edite lo que edite después.
+    const [precioTocadoPorElUsuario, setPrecioTocadoPorElUsuario] = useState(isEditing);
+    const [monedaTocadaPorElUsuario, setMonedaTocadaPorElUsuario] = useState(isEditing);
+
+    // useEffect con dependencia en `sugerenciaVariante`: corre cada vez que llega una
+    // respuesta nueva del hook (que ya viene debounced). NO se agregan los flags de
+    // "tocado" ni campoPrecioVariante a las deps a propósito (eslint-disable): si el
+    // usuario tipea en OTRO campo mientras tanto, no queremos relanzar este efecto — solo
+    // nos importa reaccionar cuando cambia la sugerencia en sí.
+    useEffect(() => {
+        if (!form.rateId) {
+            // Fix ronda 3: sin producto elegido todavía no hay NADA que sugerir ni que
+            // limpiar. Cortamos acá para no pintar de amarillo (más abajo, vía
+            // camposSugeridos) un casillero vacío que nadie sugirió — pasaba en TODA
+            // ficha de servicio nueva, apenas se montaba, antes de elegir nada.
+            setHintVariante(null);
+            return;
+        }
+        const resultado = resolverCamposAlCambiarVariante({
+            estaPrecioTocado: precioTocadoPorElUsuario,
+            estaMonedaTocada: monedaTocadaPorElUsuario,
+            suggestion: sugerenciaVariante,
+        });
+        setHintVariante(resultado.hintText);
+        if (resultado.debeActualizarPrecio || resultado.debeActualizarMoneda) {
+            setForm((prev) => ({
+                ...prev,
+                ...(resultado.debeActualizarPrecio ? { [campoPrecioVariante]: resultado.price } : {}),
+                ...(resultado.debeActualizarMoneda ? { currency: resultado.currency || prev.currency } : {}),
+            }));
+        }
+        if (resultado.debeActualizarPrecio) {
+            // Sigue siendo territorio del sistema (recién se acomodó solo): la próxima vez
+            // que cambie la habitación, se puede volver a acomodar.
+            setCamposSugeridos((prev) => ({ ...prev, [campoPrecioVariante]: true }));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sugerenciaVariante]);
 
     // C5: si el operador sugerido (de la última venta del buscador) NO está en la lista
     // de operadores de la reserva, lo agregamos como opción dinámica para que el <select>
@@ -258,8 +327,12 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
             unitSalePrice: Boolean(sale.salePrice),
             currency: Boolean(sale.currency),
         });
-        // Guardamos el resultado completo (no solo `sale`) para el renglón gris de abajo.
-        setUltimoPrecioSugerido(catalogResult);
+        // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
+        // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
+        setPrecioTocadoPorElUsuario(false);
+        setMonedaTocadaPorElUsuario(false);
+        // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR HABITACIÓN
+        // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
     };
 
     const handleCreateNew = (searchText) => {
@@ -286,8 +359,10 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
         // Los campos que quedaron limpios dejan de ser "sugeridos"; los preservados ya
         // estaban en false (si no, se habrían limpiado), así que todo queda en false.
         setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
-        // "Crear nuevo" no tiene una venta anterior de la cual mostrar el renglón gris.
-        setUltimoPrecioSugerido(null);
+        setPrecioTocadoPorElUsuario(false);
+        setMonedaTocadaPorElUsuario(false);
+        // "Crear nuevo" no tiene rateId: la sugerencia por habitación se apaga sola (el hook
+        // no consulta sin producto elegido).
     };
 
     // Cuando el usuario escribe en el buscador después de haber elegido un producto,
@@ -303,11 +378,11 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        // El vendedor volvió a escribir: el renglón gris de la selección anterior ya no aplica.
-        setUltimoPrecioSugerido(null);
         // Si borra el texto, también limpiamos los sugeridos (no hay producto seleccionado)
         if (!texto) {
             setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+            setPrecioTocadoPorElUsuario(false);
+            setMonedaTocadaPorElUsuario(false);
         }
     };
 
@@ -445,11 +520,14 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                 </div>
             </div>
 
-            {/* === RÉGIMEN + TIPO DE HABITACIÓN (obligatorios — a la vista, no en "Más detalles") === */}
+            {/* === RÉGIMEN + TIPO DE HABITACIÓN + CATEGORÍA (obligatorios los dos primeros) === */}
             {/* Razón: CreateHotelRequest/UpdateHotelRequest tienen RoomType y MealPlan como
                 string no-nullable. Con null o vacío el backend responde 400. Los selects con
-                default garantizan que SIEMPRE se envíe un valor válido. Decisión Gastón 2026-06-06. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                default garantizan que SIEMPRE se envíe un valor válido. Decisión Gastón 2026-06-06.
+                Categoría (roomCategory) es OPCIONAL: es el nombre fino ("Superior", "Vista al
+                mar") que junto con Régimen y Tipo arma la variante que el tarifario recuerda
+                por separado (spec 2026-08-07, §5.2 — texto libre CON MEMORIA). */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                     <label className={LABEL_BASE} htmlFor="hotel-regimen">
                         Régimen *
@@ -485,10 +563,22 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                     >
                         <option value="Single">Single</option>
                         <option value="Doble">Doble</option>
+                        <option value="Twin">Twin</option>
                         <option value="Triple">Triple</option>
                         <option value="Cuadruple">Cuádruple</option>
                         <option value="Familiar">Familiar</option>
+                        <option value="Suite">Suite</option>
                     </select>
+                </div>
+                <div>
+                    <FreeTextWithMemoryField
+                        id="hotel-categoria"
+                        serviceType="Hotel"
+                        label="Categoría"
+                        placeholder="Ej: Superior, Vista al mar"
+                        value={form.roomCategory}
+                        onChange={(texto) => setForm((prev) => ({ ...prev, roomCategory: texto }))}
+                    />
                 </div>
             </div>
 
@@ -508,12 +598,19 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
+                                // Con permiso de costos, "costo" ES el campo que la variante
+                                // sigue (campoPrecioVariante === "unitNetCost") — tocarlo a
+                                // mano lo saca del territorio del sistema para siempre.
+                                setPrecioTocadoPorElUsuario(true);
                             }}
                             placeholder="0,00"
                             data-testid="hotel-costo-noche"
                             aria-label="Costo por noche"
                         />
-                        <LastSaleHint text={textoUltimoPrecio} />
+                        {/* Renglón gris POR HABITACIÓN (spec 2026-08-07, §3.3): reemplaza al
+                            genérico "Último precio" de la venta del producto — este SÍ sabe
+                            si el precio es de esta habitación o de una parecida (V9=A). */}
+                        <VariantSuggestionHint text={hintVariante} />
                     </div>
                 )}
                 <div>
@@ -528,14 +625,18 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, unitSalePrice: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, unitSalePrice: false }));
+                            // "Venta" solo es la variante rastreada por el sistema para quien
+                            // NO ve costos (campoPrecioVariante === "unitSalePrice"); con
+                            // permiso de costos es un campo aparte, ajeno a la sugerencia.
+                            if (!canSeeCost) setPrecioTocadoPorElUsuario(true);
                         }}
                         placeholder="0,00"
                         required
                         data-testid="hotel-venta-noche"
                         aria-label="Precio de venta por noche"
                     />
-                    {/* Sin permiso de costos, el renglón gris va acá (no hay campo de costo a la vista) */}
-                    {!canSeeCost && <LastSaleHint text={textoUltimoPrecio} />}
+                    {/* Sin permiso de costos, el renglón gris POR HABITACIÓN va acá (no hay campo de costo a la vista) */}
+                    {!canSeeCost && <VariantSuggestionHint text={hintVariante} />}
                 </div>
                 <div>
                     <label className={LABEL_BASE} htmlFor="hotel-moneda">Moneda</label>
@@ -546,6 +647,7 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
+                            setMonedaTocadaPorElUsuario(true);
                         }}
                         data-testid="hotel-moneda"
                         aria-label="Moneda"

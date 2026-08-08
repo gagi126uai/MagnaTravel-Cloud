@@ -17,7 +17,12 @@ import {
     resolveSimilarProductDialogDecision,
     SIMILAR_PRODUCT_DIALOG_DECISION,
 } from "../lib/ratesLearnedProductsLogic";
+import { FreeTextWithMemoryField } from "./FreeTextWithMemoryField";
 
+// "Otro" NO se ofrece acá (addendum firmado 2026-08-08, V17=C): el servidor lo rechaza
+// con un mensaje pensado para el usuario — es el cajón de sastre de la venta libre, no
+// un producto con precio comparable en el tarifario. Sigue existiendo al cargar un
+// servicio en la reserva, solo que no se aprende acá.
 const SERVICE_TYPES = [
     { value: "Hotel", label: "Hotel" },
     { value: "Aereo", label: "Aéreo" },
@@ -25,21 +30,40 @@ const SERVICE_TYPES = [
     { value: "Paquete", label: "Paquete" },
     { value: "Asistencia", label: "Asistencia" },
     { value: "Excursion", label: "Excursión" },
-    { value: "Otro", label: "Otro" },
 ];
 
 const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
 const LABEL_CLASS = "block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1";
 
-const FORM_INICIAL = { serviceType: "Hotel", name: "", city: "", supplierId: "", price: "", currency: "ARS" };
+const SERVICE_TYPE_VALUES = new Set(SERVICE_TYPES.map((tipo) => tipo.value));
 
-export function AddProductInlineForm({ suppliers, onCancel, onCreated, onExistingChosen, onOpenCargaCompleta }) {
-    const [form, setForm] = useState(FORM_INICIAL);
+function armarFormInicial(defaultServiceType) {
+    // Si la pantalla está parada en una solapa de tipo real (Hotel/Aereo/...), la
+    // fichita arranca en ESE tipo — evita que el vendedor tenga que volver a elegirlo
+    // si ya estaba mirando, por ejemplo, la solapa de Traslados.
+    const tipoInicial = SERVICE_TYPE_VALUES.has(defaultServiceType) ? defaultServiceType : "Hotel";
+    return {
+        serviceType: tipoInicial, name: "", city: "", supplierId: "", price: "", currency: "ARS",
+        // La VARIANTE del alta a mano (spec 2026-08-07, §8 / V16=A). Habitación y Régimen
+        // arrancan con Doble/Desayuno ya puestos (mismos defaults de la venta, 2026-06-06
+        // Ronda 7) — sin asterisco: vienen completos, el vendedor no tiene que tocarlos.
+        roomType: "Doble",
+        mealPlan: "Desayuno",
+        roomCategory: "",
+        cabinClass: "",
+        vehicleType: "",
+    };
+}
+
+export function AddProductInlineForm({ suppliers, defaultServiceType, onCancel, onCreated, onExistingChosen, onOpenCargaCompleta }) {
+    const [form, setForm] = useState(() => armarFormInicial(defaultServiceType));
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState(null);
 
     const esHotel = form.serviceType === "Hotel";
+    const esAereo = form.serviceType === "Aereo";
+    const esTraslado = form.serviceType === "Traslado";
 
     // Manda el alta al servidor. `createAnyway` solo va en true en el reintento,
     // después de que el usuario elige "Crear uno nuevo" en el cartel de repetidos.
@@ -49,7 +73,10 @@ export function AddProductInlineForm({ suppliers, onCancel, onCreated, onExistin
         try {
             const payload = buildCreateSimpleProductPayload(form, { createAnyway });
             const creado = await api.post("/rates/simple", payload);
-            showSuccess("Producto guardado.");
+            // El 201 devuelve la variante ya resuelta (variantLabel en criollo, "Doble con
+            // desayuno") — si el producto nació con variante, se lo confirmamos al vendedor
+            // en la misma línea de éxito, en vez de dejarlo adivinar qué quedó guardado.
+            showSuccess(creado.variantLabel ? `Producto guardado. ${creado.variantLabel}.` : "Producto guardado.");
             onCreated(creado);
         } catch (err) {
             if (err.status === 409 && err.payload?.reason === "ProductoParecido") {
@@ -151,6 +178,86 @@ export function AddProductInlineForm({ suppliers, onCancel, onCreated, onExistin
                         </select>
                     </div>
                 </div>
+
+                {/* === LA VARIANTE (spec 2026-08-07, §8 / V16=A) ===
+                    Hotel: Habitación + Régimen (con Doble/Desayuno ya puestos) + Categoría.
+                    Aéreo: Cabina, opcional. Traslado: Vehículo, texto libre con memoria.
+                    Paquete/Asistencia: ninguno (V2 — sin variante natural). */}
+                {(esHotel || esAereo || esTraslado) && (
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        {esHotel && (
+                            <>
+                                <div>
+                                    <label className={LABEL_CLASS} htmlFor="add-product-room-type">Habitación</label>
+                                    <select
+                                        id="add-product-room-type"
+                                        className={INPUT_CLASS}
+                                        value={form.roomType}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, roomType: event.target.value }))}
+                                    >
+                                        <option value="Single">Single</option>
+                                        <option value="Doble">Doble</option>
+                                        <option value="Twin">Twin</option>
+                                        <option value="Triple">Triple</option>
+                                        <option value="Cuadruple">Cuádruple</option>
+                                        <option value="Familiar">Familiar</option>
+                                        <option value="Suite">Suite</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className={LABEL_CLASS} htmlFor="add-product-meal-plan">Régimen</label>
+                                    <select
+                                        id="add-product-meal-plan"
+                                        className={INPUT_CLASS}
+                                        value={form.mealPlan}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, mealPlan: event.target.value }))}
+                                    >
+                                        <option value="Solo Alojamiento">Solo alojamiento</option>
+                                        <option value="Desayuno">Desayuno</option>
+                                        <option value="Media Pension">Media pensión</option>
+                                        <option value="Pension Completa">Pensión completa</option>
+                                        <option value="All Inclusive">All inclusive</option>
+                                    </select>
+                                </div>
+                                <FreeTextWithMemoryField
+                                    id="add-product-room-category"
+                                    serviceType="Hotel"
+                                    label="Categoría"
+                                    placeholder="Ej: Superior"
+                                    value={form.roomCategory}
+                                    onChange={(texto) => setForm((prev) => ({ ...prev, roomCategory: texto }))}
+                                />
+                            </>
+                        )}
+                        {esAereo && (
+                            <div>
+                                <label className={LABEL_CLASS} htmlFor="add-product-cabin-class">Cabina</label>
+                                <select
+                                    id="add-product-cabin-class"
+                                    className={INPUT_CLASS}
+                                    value={form.cabinClass}
+                                    onChange={(event) => setForm((prev) => ({ ...prev, cabinClass: event.target.value }))}
+                                >
+                                    <option value="">Sin especificar</option>
+                                    <option value="Economy">Economy</option>
+                                    <option value="Premium">Premium Economy</option>
+                                    <option value="Business">Business</option>
+                                    <option value="First">Primera Clase</option>
+                                </select>
+                            </div>
+                        )}
+                        {esTraslado && (
+                            <FreeTextWithMemoryField
+                                id="add-product-vehicle-type"
+                                serviceType="Traslado"
+                                label="Vehículo"
+                                placeholder="Van, sedán, microbús..."
+                                value={form.vehicleType}
+                                onChange={(texto) => setForm((prev) => ({ ...prev, vehicleType: texto }))}
+                            />
+                        )}
+                    </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div>

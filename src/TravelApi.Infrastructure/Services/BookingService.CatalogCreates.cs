@@ -120,6 +120,10 @@ public partial class BookingService
             hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
             // Auditoria ERP item 5: deadline mapeado por convencion desde el request; normalizado a pared.
             hotel.OperatorPaymentDeadline = NormalizeCalendarDate(hotel.OperatorPaymentDeadline);
+            // M-19: el nombre fino de la habitacion pasa por la MEMORIA antes de guardarse. Si en la
+            // agencia ya se escribio "Superior", vender "sup" NO fabrica una habitacion nueva.
+            hotel.RoomCategory = await CatalogVariantNameMemory.ResolveAsync(
+                _db, CatalogServiceTypes.Hotel, hotel.RoomCategory, ct);
 
             var divisor = CatalogUnitization.HotelDivisor(hotel.Nights, hotel.Rooms);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -162,7 +166,9 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, hotel.CreatedAt, reservaId, ct);
+            await UpsertSaleIfRecordableAsync(
+                rate, supplierId, toConfirm, unit, currency, hotel.CreatedAt, reservaId,
+                CatalogVariant.ForHotel(hotel.RoomType, hotel.MealPlan, hotel.RoomCategory), ct);
 
             var dto = _mapper.Map<HotelBookingDto>(hotel);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (recien creado o existente),
@@ -272,7 +278,9 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, flight.CreatedAt, reservaId, ct);
+            await UpsertSaleIfRecordableAsync(
+                rate, supplierId, toConfirm, unit, currency, flight.CreatedAt, reservaId,
+                CatalogVariant.ForFlight(flight.CabinClass), ct);
 
             var dto = _mapper.Map<FlightSegmentDto>(flight);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -320,6 +328,9 @@ public partial class BookingService
             // ADR-018 Ronda 7 (2026-06-06): el tipo de vehiculo es OPCIONAL — vacio/null se persiste
             // null (no informado). Derogado el coalesce a "Sedan" de ADR-018 §2.
             transfer.VehicleType = NormalizeOptionalText(transfer.VehicleType);
+            // M-19: el vehiculo tambien es texto libre CON memoria ("van" y "Van" son el mismo).
+            transfer.VehicleType = await CatalogVariantNameMemory.ResolveAsync(
+                _db, CatalogServiceTypes.Traslado, transfer.VehicleType, ct);
 
             var divisor = CatalogUnitization.TransferDivisor();
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -356,7 +367,9 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, transfer.CreatedAt, reservaId, ct);
+            await UpsertSaleIfRecordableAsync(
+                rate, supplierId, toConfirm, unit, currency, transfer.CreatedAt, reservaId,
+                CatalogVariant.ForTransfer(transfer.VehicleType), ct);
 
             var dto = _mapper.Map<TransferBookingDto>(transfer);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -436,7 +449,9 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, package.CreatedAt, reservaId, ct);
+            await UpsertSaleIfRecordableAsync(
+                rate, supplierId, toConfirm, unit, currency, package.CreatedAt, reservaId,
+                CatalogVariant.None, ct);
 
             var dto = _mapper.Map<PackageBookingDto>(package);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -518,7 +533,9 @@ public partial class BookingService
             await RecalculateReservationScheduleAsync(reservaId, ct);
             await _reservaService.UpdateBalanceAsync(reservaId);
 
-            await UpsertSaleIfRecordableAsync(rate, supplierId, toConfirm, unit, currency, assistance.CreatedAt, reservaId, ct);
+            await UpsertSaleIfRecordableAsync(
+                rate, supplierId, toConfirm, unit, currency, assistance.CreatedAt, reservaId,
+                CatalogVariant.None, ct);
 
             var dto = _mapper.Map<AssistanceBookingDto>(assistance);
             // Pill "creado en esta venta": el rate vinculado ya esta en memoria (ver nota en Hotel).
@@ -535,10 +552,11 @@ public partial class BookingService
     /// </summary>
     private async Task UpsertSaleIfRecordableAsync(
         Rate? rate, int supplierId, bool costToConfirm, CatalogUnitization.Unitized unit, string currency,
-        DateTime soldAt, int reservaId, CancellationToken ct)
+        DateTime soldAt, int reservaId, (string Key, string Label) variant, CancellationToken ct)
     {
         if (rate == null || supplierId <= 0 || costToConfirm) return;
-        // La reserva viaja para que el Tarifario pueda mostrar de que venta salio este precio (M-1).
-        await UpsertRateSupplierSaleAsync(rate.Id, supplierId, unit, currency, soldAt, reservaId, ct);
+        // Viajan dos cosas mas que el precio: la reserva (para mostrar de que venta salio, M-1) y la
+        // VARIANTE (para que la triple no pise a la doble, M-12/M-13).
+        await UpsertRateSupplierSaleAsync(rate.Id, supplierId, unit, currency, soldAt, reservaId, variant, ct);
     }
 }

@@ -1837,6 +1837,38 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogNotDuplicatePair", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("HighRateId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("LowRateId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("MarkedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MarkedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HighRateId");
+
+                    b.HasIndex("LowRateId", "HighRateId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CatalogNotDuplicatePairs_LowRateId_HighRateId");
+
+                    b.ToTable("CatalogNotDuplicatePairs");
+                });
+
             modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackage", b =>
                 {
                     b.Property<int>("Id")
@@ -1992,6 +2024,158 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("CatalogPackageId", "StartDate");
 
                     b.ToTable("CatalogPackageDepartures", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogTidyUpAction", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AbsorbedName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("AbsorbedProductName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("AbsorbedRateId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("DecidedByTheSystem")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<DateTime>("PerformedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PerformedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SurvivingName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("SurvivingRateId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("UndoBlockedReason")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime?>("UndoneAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UndoneByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("VariantKeyRescued")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("VariantLabelRescued")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AbsorbedRateId");
+
+                    b.HasIndex("SurvivingRateId");
+
+                    b.HasIndex("UndoneAt", "PerformedAt")
+                        .HasDatabaseName("IX_CatalogTidyUpActions_UndoneAt_PerformedAt");
+
+                    b.ToTable("CatalogTidyUpActions");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogTidyUpSaleChange", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("PreviousCurrency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<decimal>("PreviousNetCost")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("PreviousPriceUnit")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<int>("PreviousRateId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PreviousReservaId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("PreviousSalePrice")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("PreviousSalesCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("PreviousSoldAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("PreviousSupplierId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("PreviousTax")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("PreviousVariantKey")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("PreviousVariantLabel")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("RateSupplierSaleId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TidyUpActionId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RateSupplierSaleId");
+
+                    b.HasIndex("TidyUpActionId")
+                        .HasDatabaseName("IX_CatalogTidyUpSaleChanges_TidyUpActionId");
+
+                    b.ToTable("CatalogTidyUpSaleChanges");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ClientCreditEntry", b =>
@@ -2970,6 +3154,10 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<int>("ReservaId")
                         .HasColumnType("integer")
                         .HasColumnName("TravelFileId");
+
+                    b.Property<string>("RoomCategory")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("RoomType")
                         .IsRequired()
@@ -4829,6 +5017,12 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<DateTime?>("MergedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("MergedIntoRateId")
+                        .HasColumnType("integer");
+
                     b.Property<decimal>("NetCost")
                         .HasColumnType("decimal(18,2)");
 
@@ -4903,6 +5097,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CreatedFromReservaId");
 
+                    b.HasIndex("MergedIntoRateId");
+
                     b.HasIndex("PublicId")
                         .IsUnique();
 
@@ -4918,6 +5114,12 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("AbsorbedByTidyUpActionId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("FromManualLoad")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("LastCurrency")
                         .HasMaxLength(3)
@@ -4952,7 +5154,20 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<int>("SupplierId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("VariantKey")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("VariantLabel")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("AbsorbedByTidyUpActionId")
+                        .HasDatabaseName("IX_RateSupplierSales_AbsorbedByTidyUpActionId");
 
                     b.HasIndex("LastReservaId");
 
@@ -4962,9 +5177,10 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .IsDescending(false, true)
                         .HasDatabaseName("IX_RateSupplierSales_RateId_LastSoldAt");
 
-                    b.HasIndex("RateId", "SupplierId")
+                    b.HasIndex("RateId", "SupplierId", "VariantKey")
                         .IsUnique()
-                        .HasDatabaseName("IX_RateSupplierSales_RateId_SupplierId");
+                        .HasDatabaseName("IX_RateSupplierSales_RateId_SupplierId_VariantKey")
+                        .HasFilter("\"AbsorbedByTidyUpActionId\" IS NULL");
 
                     b.ToTable("RateSupplierSales");
                 });
@@ -7266,6 +7482,25 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("SupplierPayment");
                 });
 
+            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogNotDuplicatePair", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.Rate", "HighRate")
+                        .WithMany()
+                        .HasForeignKey("HighRateId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("TravelApi.Domain.Entities.Rate", "LowRate")
+                        .WithMany()
+                        .HasForeignKey("LowRateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("HighRate");
+
+                    b.Navigation("LowRate");
+                });
+
             modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackageDeparture", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.CatalogPackage", "CatalogPackage")
@@ -7275,6 +7510,44 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("CatalogPackage");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogTidyUpAction", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.Rate", "AbsorbedRate")
+                        .WithMany()
+                        .HasForeignKey("AbsorbedRateId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("TravelApi.Domain.Entities.Rate", "SurvivingRate")
+                        .WithMany()
+                        .HasForeignKey("SurvivingRateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AbsorbedRate");
+
+                    b.Navigation("SurvivingRate");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogTidyUpSaleChange", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.RateSupplierSale", "RateSupplierSale")
+                        .WithMany()
+                        .HasForeignKey("RateSupplierSaleId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("TravelApi.Domain.Entities.CatalogTidyUpAction", "TidyUpAction")
+                        .WithMany("SaleChanges")
+                        .HasForeignKey("TidyUpActionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("RateSupplierSale");
+
+                    b.Navigation("TidyUpAction");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ClientCreditEntry", b =>
@@ -7878,9 +8151,16 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CreatedFromReservaId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("TravelApi.Domain.Entities.Rate", "MergedIntoRate")
+                        .WithMany()
+                        .HasForeignKey("MergedIntoRateId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("TravelApi.Domain.Entities.Supplier", "Supplier")
                         .WithMany()
                         .HasForeignKey("SupplierId");
+
+                    b.Navigation("MergedIntoRate");
 
                     b.Navigation("Supplier");
                 });
@@ -8307,6 +8587,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackage", b =>
                 {
                     b.Navigation("Departures");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.CatalogTidyUpAction", b =>
+                {
+                    b.Navigation("SaleChanges");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ClientCreditEntry", b =>

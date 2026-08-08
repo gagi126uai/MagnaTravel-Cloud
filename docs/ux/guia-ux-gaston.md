@@ -2464,3 +2464,165 @@ del producto.
 
 **Consecuencia sobre la sección Navegación:** la entrada de menú "Cobranza y Facturación" pasa a
 llamarse **"Cobranzas"**; "Facturación" queda igual. El resto del árbol no se toca en esta tanda.
+
+## El Tarifario inteligente: recuerda por habitación y ENTIENDE lo que escribís (2026-08-07, respuestas V1..V11 + pivote de visión)
+
+> **Origen:** Gastón miró el Tarifario nuevo en producción y dijo que la información **"se presenta
+> rara"**. El diagnóstico se verificó en el código: la memoria guardaba **un solo** último precio por
+> hotel + operador, así que vender una triple **pisaba** el precio de la doble, y la lista mostraba
+> precios de habitaciones distintas como si fueran comparables. Al responder, **pivoteó la visión**
+> con esta orden textual: *"quiero que el tarifario sea una especie de IA: el que carga
+> (probablemente desde la reserva) no se preocupa por NADA, siempre consistente, un buscador donde
+> escribís cualquier producto del rubro y el sistema lo acepta y lo organiza automáticamente"*.
+> Spec completa: `docs/ux/specs/2026-08-07-tarifario-inteligente-FIRMADA.md`. **NO reabrir.**
+
+**Los cuatro principios del Tarifario inteligente (mandan sobre todo lo que sigue):**
+
+- **(2026-08-07) Se acepta cualquier texto.** Nunca se le dice al vendedor "así no se escribe": el
+  sistema guarda lo que escribió y lo ordena por detrás. La consistencia es problema del sistema.
+- **(2026-08-07) El sistema organiza solo.** Normaliza mayúsculas, acentos y abreviaturas, une lo que
+  es obviamente el mismo producto y elige el nombre limpio, con rastro. (Por adentro le decimos "el
+  bibliotecario"; **esa palabra no aparece nunca en pantalla**.)
+- **(2026-08-07) Solo pregunta cuando la duda es GRANDE, y pregunta en UNA LÍNEA, sí o no**, dentro
+  de la ficha. Nunca un formulario, nunca una ventana en medio del trabajo, nunca dos dudas a la vez.
+- **(2026-08-07) Nada se confirma solo.** Todo lo que arma el sistema queda **precargado en amarillo
+  y editable**; el servicio se crea recién cuando el vendedor toca Guardar (P-21, patrón de
+  sugerencias del 2026-06-05).
+
+**La memoria del precio, por habitación:**
+
+- **(2026-08-07, V1=A) El precio se recuerda por COMBINACIÓN: producto + operador + habitación.**
+  Vender una triple ya **no pisa** el precio de la doble. Un precio sin decir de qué habitación es no
+  sirve para cotizar (mismo motivo por el que P6 pedía el operador). Razón que dio Gastón: *"depende
+  del operador, del cliente y de la disponibilidad"*.
+- **(2026-08-07, V2) Todos los tipos tienen su dato natural:** hotel = habitación + régimen; aéreo =
+  cabina; traslado = vehículo; paquete y asistencia, ninguno.
+- **(2026-08-07, V3=A) Si ese dato no está cargado, el precio se muestra sin nada al lado.** No se
+  escribe "Sin especificar" (P-15).
+- **(2026-08-07, V4=B ajustada) TEXTO LIBRE CON MEMORIA** para el nombre fino de la habitación
+  ("Superior", "Vista al mar") y para el vehículo del traslado: la primera vez se escribe libre;
+  después **el sistema lo ofrece** y **unifica solo las variaciones de tipeo** ("dbl sup", "SUPERIOR",
+  "superio" → lo ya escrito). El ajuste de la memoria es lo que hace que esto **no** contradiga P7
+  ("evitar repetidos a toda costa"): sin memoria, un casillero libre sería una fábrica de repetidos.
+
+**Cómo se ve el Tarifario:**
+
+- **(2026-08-07, V8=A) SOLAPAS POR TIPO DE SERVICIO** arriba (Hoteles / Aéreos / Paquetes / Traslados
+  / Asistencias), con el conteo al lado y la solapa en cero apagada. **Muere el desplegable "Tipo"** y
+  **muere la columna "Tipo"** (P-16: la solapa ya lo dice). Origen: a Gastón le molestaba la mezcla de
+  tipos en una sola lista.
+- **(2026-08-07, V5=A) ⚠️ DEROGACIÓN QUIRÚRGICA de P6=A (2026-08-06):** la lista se agrupa **por
+  habitación, y adentro los operadores** — no "un renglón por operador debajo del producto". **Lo que
+  motivaba P6 queda intacto:** el operador se sigue viendo en TODOS los renglones de precio. Cambia el
+  orden de los niveles, no la información.
+- **(2026-08-07, V6=A) La habitación va en una columna propia**, en criollo y en una sola frase:
+  "Doble Superior con desayuno". Las columnas cambian por solapa (HABITACIÓN en hoteles, CABINA en
+  aéreos, VEHÍCULO en traslados; paquetes y asistencias sin columna del medio).
+- **(2026-08-07, V7=A) Tope de 3 renglones de precio por producto** + línea gris **"+ N precios más —
+  tocá el hotel para verlos"**. Un hotel con 3 operadores × 2 habitaciones no se come la pantalla.
+- **(2026-08-07, V15) En la ficha del producto se corrigen TEXTOS** (nombre, ciudad, etiqueta de la
+  habitación). **Los importes JAMÁS se editan a mano**: son la memoria de lo que pasó (reafirma
+  2026-08-06). Si al corregir dos habitaciones quedan iguales, se juntan solas y queda el precio más
+  nuevo (eso no es duda grande).
+- **(2026-08-07, V16) El alta a mano de un hotel pide habitación y régimen, con Doble / Desayuno ya
+  puestos** (mismos desplegables y defaults de la venta, Ronda 7 del 2026-06-06), más el nombre fino
+  con memoria. En aéreo aparece Cabina; en traslado, Vehículo.
+
+**La sugerencia al vender, con la habitación adelante:**
+
+- **(2026-08-07, V9=A) Si de esa habitación nunca vendiste, el casillero del precio QUEDA VACÍO** y
+  abajo va el renglón gris diciendo de qué habitación es el precio que sí tenés ("De esta habitación
+  no tenés precio. La doble con desayuno la vendiste a US$ 48 — Ola Mayorista, 22/05/2026"). **Nunca
+  se precarga un número de otra habitación**: se cuela en la cotización sin que nadie lo mire.
+- **(2026-08-07, V10=A) Si cambiás la habitación después, la sugerencia se acomoda sola mientras vos
+  no hayas tocado el número. Si lo escribiste a mano, no se toca nunca** (P-21).
+
+**LA LÍNEA INTELIGENTE (lo nuevo más grande):**
+
+- **(2026-08-07) En la ficha de carga de servicio, UNA SOLA CAJA entiende todo y arma el servicio
+  completo.** Se escribe como se habla — *"sheraton iguazu doble desayuno ola 48 usd del 12 al 15/9"*
+  — y el sistema precarga producto, operador, habitación, régimen, fechas y precio **en amarillo**,
+  editable. Es **el mismo casillero del buscador de producto de hoy, agrandado** (sujeto a la
+  pregunta puntual Q1 de la spec).
+- **(2026-08-07) El AMARILLO es el que habla: no se escribe ningún cartelito "Entendí esto"** ni
+  "armado automáticamente" (P-15, P-16). **Lo que no entendió queda vacío, sin explicación.**
+- **(2026-08-07) Mientras piensa se reusa el "Buscando…" sutil que ya existe** (Ronda 2, 2026-06-06):
+  **nunca traba la ficha**, se puede seguir escribiendo o cargar a mano.
+- **(2026-08-07) El producto nuevo NO se crea solo:** se ofrece como **última opción** de la lista,
+  con los parecidos arriba (P7). Si se elige un parecido, el resto de la frase (operador, precio,
+  fechas) **igual se aprovecha**.
+- **(2026-08-07) DEGRADACIÓN: sin IA la pantalla es EXACTAMENTE la de hoy.** Sin clave configurada, IA
+  caída, respuesta incoherente o demora: queda **el buscador tolerante de siempre**, sin una sola
+  palabra distinta. **Jamás aparece un texto técnico** ni las palabras "IA", "modelo", "token",
+  "timeout", "servicio no disponible" ni un código de error (P-17 + gate de exposición de datos).
+- **(2026-08-07) La DUDA GRANDE es una línea con Sí / No**, debajo del campo del que habla, dentro de
+  la ficha ("¿'48' es el precio por noche?" · "¿'del 12 al 15/9' es septiembre de 2026?" · "¿'ola' es
+  Ola Mayorista?"). "No" vacía ese campo y deja el cursor ahí. **No traba el Guardar**, y **no va al
+  Cartel emergente**: esa regla (2026-07-22) excluye a propósito las fichas de trabajo. **No son duda
+  grande** la escritura de la habitación, mayúsculas/acentos, el orden de los datos ni el redondeo:
+  eso lo decide el sistema solo.
+
+**Los repetidos y el rastro de lo que ordenó el sistema:**
+
+- **(2026-08-07, V11=B) La bandeja "Repetidos" se ve AGRUPADA:** el producto que se queda arriba y
+  debajo todos los que se le parecen, cada uno con **[ Es el mismo ] [ Es otro ]**. Reemplaza al par
+  lado a lado.
+- **(2026-08-07, V12) El sistema elige solo el nombre limpio al unir** (no se le hace elegir a
+  Gastón), y **(V13)** lo que no puede unir solo cae en esa misma bandeja agrupada.
+- **(2026-08-07, V14) La habitación que el formulario viejo había metido DENTRO del nombre
+  ("Sheraton Iguazú - Doble Superior") se conserva como habitación** del producto limpio: nada se
+  pierde. Ese sufijo lo generó nuestro propio formulario, así que la migración lo reconoce y lo
+  convierte sola, con rastro y reversible.
+- **(2026-08-07) Al unir nada se borra** (2026-08-03): el que queda absorbe precios y habitaciones; si
+  los dos tenían la misma habitación, queda el precio más nuevo; el absorbido deja de listarse.
+- **(2026-08-07) El rastro de lo que hizo el sistema vive SOLO en la bandeja de repetidos**, en una
+  línea al pie ("Ordenados y unidos por el sistema esta semana: 12 · [Ver qué ordenó]") con
+  **Deshacer**. **En la lista normal del Tarifario no se muestra ninguna etiqueta de origen**
+  (derogación del 2026-06-08, "creado en venta").
+
+**Base técnica ya existente (verificada el 2026-08-07, no hay que inventar plomería):**
+`IAiAssistantService.CompleteStructuredAsync<T>` (ADR-016 F0a) ya hace salida estructurada con
+deserialización estricta, un reintento y **degradación elegante que nunca lanza**. La IA recibe
+**contexto acotado**: solo el tarifario de esa agencia y sus operadores; **nunca** datos de
+pasajeros, clientes ni importes de otras reservas.
+
+**Tres preguntas puntuales quedaron abiertas** (§13 de la spec; ninguna frena la obra, cada una tiene
+su recomendación): **Q1** ¿la línea inteligente es el mismo casillero del buscador o una caja aparte?
+**Q2** ante una duda grande, ¿precarga igual y pregunta abajo, o deja el campo vacío? **Q3** ¿el
+sistema une solo lo idéntico, o también los "casi seguros" avisando con Deshacer?
+
+**Configuración → Inteligencia artificial (adenda del mismo día, pedido textual de Gastón: *"que en
+Configuración haya un lugar para configurar la IA, universal para cualquier tipo de IA"*):**
+
+- **(2026-08-07) Solapa nueva "Inteligencia artificial" en Configuración, SOLO ADMIN**, al lado de
+  Facturación y WhatsApp Bot. Un vendedor común **no la ve** (ni apagada).
+- **(2026-08-07) Se elige de una lista con nombres de la calle y una línea que dice qué es cada una:**
+  **Groq** (recomendada y marcada por defecto: gratis para arrancar) · OpenAI (la de ChatGPT) ·
+  Claude (Anthropic) · Gemini (Google) · Grok (X) · OpenRouter · **Otra** (dirección y modelo a
+  mano). Elegir una **precarga sola la dirección y el modelo**; esos dos datos viven en **"Ajustes
+  avanzados", cerrados por defecto**. **NO se ofrecen GitHub Copilot ni Codex: no se pueden
+  conectar** (ofrecerlos sería prometer algo que no funciona).
+- **(2026-08-07) La clave es de una sola dirección: entra y no sale.** Se guarda **cifrada** con el
+  mismo mecanismo que ya protege los datos de ARCA. La pantalla muestra **"Configurada ✓" + los
+  primeros 4 caracteres** y nunca más la clave; cambiarla es **pegar una nueva encima**. Sin ojito,
+  sin botón de copiar.
+- **(2026-08-07) Botón "Probar conexión"** que manda un saludo mínimo y contesta **en criollo, en la
+  misma línea**: "Funciona ✓ (contestó en 0,8 s)" · "La clave no sirve o venció." · "No hay conexión
+  con el proveedor. Probá de nuevo en un rato." · "Esa dirección no responde." · "Ese modelo no
+  existe para este proveedor." **Probar no guarda**, y una prueba fallida **no impide guardar** (el
+  proveedor puede estar caído en ese momento).
+- **(2026-08-07) Arriba, la foto en una línea:** 🟢 "Funcionando con Groq" · ⚪ "Sin configurar — el
+  sistema funciona igual, sin las ayudas inteligentes." · 🟠 "Configurada con Claude, pero la última
+  prueba no anduvo." **Cero palabras técnicas** en toda la pantalla: nada de "endpoint", "API key",
+  "token", "timeout", "modelo LLM", ni códigos de error.
+- **(2026-08-07) MUERE la llave `EnableAiCopilot`.** La regla pasa a ser una sola: **si hay una IA
+  configurada, las ayudas inteligentes funcionan; si no hay, el sistema anda igual sin ellas.** Es la
+  orden general "basta de llaves", la misma que mató `enableCatalogFindOrCreate` (P8=A).
+- **(2026-08-07) Excepción de P-15 acotada a esta pantalla:** se permite **una línea de ayuda por
+  campo** (la clave la da el proveedor en su página), igual que en la solapa Facturación con los
+  certificados de ARCA. **No habilita cartelitos en el resto de la app.**
+- **(2026-08-07) Adenda a ADR-016:** ese ADR decía que la conexión al cerebro vivía **solo** en
+  variables de entorno y que la clave "nunca va a la DB". **Gastón lo derogó para este caso**: la
+  clave va a la base **cifrada**, porque el dueño de una agencia tiene que poder configurar su IA
+  desde la pantalla, sin técnico. **Lo cargado en la pantalla manda; el entorno queda de respaldo**
+  cuando no hay nada cargado.

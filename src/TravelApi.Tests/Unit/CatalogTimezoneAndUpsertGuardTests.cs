@@ -71,7 +71,7 @@ public class CatalogTimezoneAndUpsertGuardTests
         var unit = new CatalogUnitization.Unitized(
             UnitNetCost: -5m, UnitTax: 0m, UnitSalePrice: 100m, Divisor: 1, PriceUnit: CatalogPriceUnits.Servicio);
 
-        await CatalogSaleUpsert.UpsertAsync(context, rateId: 1, supplierId: 1, unit, "ARS", DateTime.UtcNow, reservaId: null, CancellationToken.None);
+        await CatalogSaleUpsert.UpsertAsync(context, rateId: 1, supplierId: 1, unit, "ARS", DateTime.UtcNow, reservaId: null, CatalogVariant.None, CancellationToken.None);
 
         Assert.Empty(context.RateSupplierSales.ToList());
     }
@@ -83,7 +83,7 @@ public class CatalogTimezoneAndUpsertGuardTests
         var unit = new CatalogUnitization.Unitized(
             UnitNetCost: 10m, UnitTax: -1m, UnitSalePrice: 100m, Divisor: 1, PriceUnit: CatalogPriceUnits.Servicio);
 
-        await CatalogSaleUpsert.UpsertAsync(context, rateId: 1, supplierId: 1, unit, "ARS", DateTime.UtcNow, reservaId: null, CancellationToken.None);
+        await CatalogSaleUpsert.UpsertAsync(context, rateId: 1, supplierId: 1, unit, "ARS", DateTime.UtcNow, reservaId: null, CatalogVariant.None, CancellationToken.None);
 
         Assert.Empty(context.RateSupplierSales.ToList());
     }
@@ -96,7 +96,7 @@ public class CatalogTimezoneAndUpsertGuardTests
         var unit = new CatalogUnitization.Unitized(
             UnitNetCost: 0m, UnitTax: 0m, UnitSalePrice: 100m, Divisor: 1, PriceUnit: CatalogPriceUnits.Servicio);
 
-        await CatalogSaleUpsert.UpsertAsync(context, rateId: 1, supplierId: 1, unit, "ARS", DateTime.UtcNow, reservaId: null, CancellationToken.None);
+        await CatalogSaleUpsert.UpsertAsync(context, rateId: 1, supplierId: 1, unit, "ARS", DateTime.UtcNow, reservaId: null, CatalogVariant.None, CancellationToken.None);
 
         var row = Assert.Single(context.RateSupplierSales.ToList());
         Assert.Equal(0m, row.LastNetCost);

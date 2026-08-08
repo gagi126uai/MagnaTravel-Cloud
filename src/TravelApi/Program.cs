@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using MassTransit;
 using Minio.AspNetCore;
@@ -659,6 +659,9 @@ builder.Services.AddScoped<TravelApi.Infrastructure.Services.ZeroReceivableCance
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.TotalCreditNoteBridgeReconciliationJob>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
+// El bibliotecario del tarifario (2026-08-07): ordena repetidos y rescata habitaciones escondidas en el
+// nombre. Version determinística; cuando llegue la de IA implementa la MISMA interfaz y no se toca nada mas.
+builder.Services.AddScoped<ICatalogLibrarianService, CatalogLibrarianService>();
 builder.Services.AddScoped<ICountryService, CountryService>();
 builder.Services.AddScoped<IDestinationService, DestinationService>();
 builder.Services.AddScoped<ICatalogCacheInvalidator, CatalogCacheInvalidator>();

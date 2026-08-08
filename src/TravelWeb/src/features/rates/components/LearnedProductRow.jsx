@@ -1,16 +1,23 @@
 /**
- * Un producto del Tarifario nuevo, con un renglón por operador debajo (spec firmada
- * 2026-08-06, §2.1/§2.6). El nombre, la ciudad/subtítulo y el tipo se escriben UNA sola
- * vez, en el primer renglón — los siguientes solo agregan operador/precio/fecha.
+ * Un producto del Tarifario nuevo, agrupado por HABITACIÓN y, adentro, por operador
+ * (spec firmada 2026-08-07, §5.1 / V5=A / V6=A / V7=A). El nombre del producto se
+ * escribe UNA sola vez (primer renglón); la etiqueta de la habitación se repite solo al
+ * cambiar de grupo — el resto de los renglones solo agregan operador/precio/fecha.
  *
- * Tocar cualquier parte de la fila abre la ficha en línea para editar nombre/ciudad
- * (§2.2). No hay botón de borrar: nada se borra, se une o se archiva (2026-08-03).
+ * Tocar cualquier parte de la fila abre la ficha en línea para editar nombre/ciudad/
+ * habitaciones (§7). No hay botón de borrar: nada se borra, se une o se archiva (2026-08-03).
  */
 import { formatCurrency, formatDate } from "../../../lib/utils";
-
-const GRID_COLUMNS = "grid grid-cols-[minmax(0,2fr)_88px_minmax(0,1.2fr)_minmax(0,1fr)_104px]";
+import { buildLearnedProductDisplayRows, columnLabelsForServiceType } from "../lib/learnedProductVariantsLogic";
 
 export function LearnedProductRow({ product, isExpanded, panelId, onToggle }) {
+    const filas = buildLearnedProductDisplayRows(product);
+    const { variantColumnLabel } = columnLabelsForServiceType(product.serviceType);
+    // Sin columna del medio (Paquete/Asistencia): la grilla pasa de 5 a 4 columnas.
+    const gridColumns = variantColumnLabel
+        ? "grid grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1fr)_104px]"
+        : "grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1fr)_104px]";
+
     return (
         <button
             type="button"
@@ -21,9 +28,9 @@ export function LearnedProductRow({ product, isExpanded, panelId, onToggle }) {
             aria-controls={panelId}
         >
             <div className="divide-y divide-slate-50 dark:divide-slate-800/60">
-                {(product.suppliers.length > 0 ? product.suppliers : [null]).map((supplierPrice, index) => (
-                    <div key={supplierPrice?.supplierPublicId ?? `${product.productPublicId}-sin-precio-${index}`} className={`${GRID_COLUMNS} items-start gap-3 px-6 py-3`}>
-                        {index === 0 ? (
+                {filas.map((fila) => (
+                    <div key={fila.key} className={`${gridColumns} items-start gap-3 px-6 py-3`}>
+                        {fila.showProductHeader ? (
                             <div className="min-w-0">
                                 <div className="truncate font-semibold text-slate-900 dark:text-white">{product.name}</div>
                                 {product.subtitle && (
@@ -31,22 +38,32 @@ export function LearnedProductRow({ product, isExpanded, panelId, onToggle }) {
                                 )}
                             </div>
                         ) : <div />}
-                        {index === 0 ? (
-                            <div className="text-sm text-slate-600 dark:text-slate-300">{product.serviceTypeLabel}</div>
-                        ) : <div />}
+                        {/* Columna de variante (HABITACIÓN/CABINA/VEHÍCULO): vacía si no hay
+                            dato cargado — V3=A, nunca se escribe "Sin especificar". */}
+                        {variantColumnLabel && (
+                            fila.showVariantLabel
+                                ? <div className="text-sm text-slate-700 dark:text-slate-300">{fila.variantLabel}</div>
+                                : <div />
+                        )}
                         <div className="truncate text-sm text-slate-600 dark:text-slate-300">
-                            {supplierPrice?.supplierName || <span className="text-slate-400">Sin operador</span>}
+                            {fila.supplierPrice?.supplierName || <span className="text-slate-400">Sin operador</span>}
                         </div>
                         <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                            {supplierPrice
-                                ? `${formatCurrency(supplierPrice.price, supplierPrice.currency)}${supplierPrice.priceUnitLabel ? ` ${supplierPrice.priceUnitLabel}` : ""}`
+                            {fila.supplierPrice
+                                ? `${formatCurrency(fila.supplierPrice.price, fila.supplierPrice.currency)}${fila.supplierPrice.priceUnitLabel ? ` ${fila.supplierPrice.priceUnitLabel}` : ""}`
                                 : <span className="text-slate-400">Sin precios cargados</span>}
                         </div>
-                        <div className={`text-sm ${supplierPrice?.isOldPrice ? "font-semibold text-amber-600 dark:text-amber-400" : "text-slate-500 dark:text-slate-400"}`}>
-                            {supplierPrice?.priceDate ? formatDate(supplierPrice.priceDate) : ""}
+                        <div className={`text-sm ${fila.supplierPrice?.isOldPrice ? "font-semibold text-amber-600 dark:text-amber-400" : "text-slate-500 dark:text-slate-400"}`}>
+                            {fila.supplierPrice?.priceDate ? formatDate(fila.supplierPrice.priceDate) : ""}
                         </div>
                     </div>
                 ))}
+                {/* Tope de 3 renglones + el total, ya armado por el motor (V7=A). */}
+                {product.morePricesText && (
+                    <div className="px-6 py-2 text-xs text-slate-400 dark:text-slate-500">
+                        {product.morePricesText}
+                    </div>
+                )}
             </div>
         </button>
     );

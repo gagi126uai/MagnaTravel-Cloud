@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -303,6 +303,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // ADR-017 F1.1 (catalogo find-or-create, 2026-06-05): memoria "ultima venta por producto y
     // operador". En F1.1 nace vacia (el upsert que la llena es F1.3). Config en OnModelCreating.
     public DbSet<RateSupplierSale> RateSupplierSales => Set<RateSupplierSale>();
+    // Tarifario inteligente (2026-08-07): rastro de lo que el sistema ordeno solo (con Deshacer) y los
+    // pares que una persona ya marco como "son distintos" para que la bandeja no los vuelva a proponer.
+    public DbSet<CatalogTidyUpAction> CatalogTidyUpActions => Set<CatalogTidyUpAction>();
+    public DbSet<CatalogNotDuplicatePair> CatalogNotDuplicatePairs => Set<CatalogNotDuplicatePair>();
+    public DbSet<CatalogTidyUpSaleChange> CatalogTidyUpSaleChanges => Set<CatalogTidyUpSaleChange>();
     public DbSet<CatalogPackage> CatalogPackages => Set<CatalogPackage>();
     public DbSet<CatalogPackageDeparture> CatalogPackageDepartures => Set<CatalogPackageDeparture>();
 
@@ -2741,11 +2746,26 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(s => s.SupplierId)
                   .OnDelete(DeleteBehavior.Restrict);
 
-            // Una sola fila por combinacion (producto, operador): el corazon del upsert ON CONFLICT
-            // que la llena en F1.3. Sin este UNIQUE el upsert no tendria contra que hacer conflicto.
-            entity.HasIndex(s => new { s.RateId, s.SupplierId })
+            entity.Property(s => s.VariantKey).IsRequired().HasMaxLength(120);
+            entity.Property(s => s.VariantLabel).IsRequired().HasMaxLength(200);
+
+            // Una sola fila por combinacion (producto, operador, VARIANTE): el corazon del upsert
+            // ON CONFLICT. Sin este UNIQUE el upsert no tendria contra que hacer conflicto.
+            //
+            // 2026-08-07 (M-12): la variante ENTRA a la clave. Antes era (producto, operador) y vender
+            // una triple pisaba el precio de la doble. Las filas viejas tienen variante vacia, asi que
+            // el cambio de indice no puede chocar: '' es un valor mas.
+            //
+            // PARCIAL (WHERE ... IS NULL): las filas ESCONDIDAS por una union quedan FUERA del indice.
+            // Sin esto pasaban dos cosas feas: (1) volver a unir dos productos que ya se habian unido y
+            // deshecho chocaba contra la fila escondida y explotaba; (2) una venta nueva caia en el
+            // ON CONFLICT contra esa fila invisible y el precio se aprendia donde nadie lo ve.
+            // Invariante: una fila escondida JAMAS ocupa el casillero, y una venta nueva JAMAS se aprende
+            // en una fila invisible.
+            entity.HasIndex(s => new { s.RateId, s.SupplierId, s.VariantKey })
                   .IsUnique()
-                  .HasDatabaseName("IX_RateSupplierSales_RateId_SupplierId");
+                  .HasFilter("\"AbsorbedByTidyUpActionId\" IS NULL")
+                  .HasDatabaseName("IX_RateSupplierSales_RateId_SupplierId_VariantKey");
 
             // Indice para sacar rapido el "ultimo precio" de un producto: por RateId y LastSoldAt DESC.
             entity.HasIndex(s => new { s.RateId, s.LastSoldAt })
@@ -2758,6 +2778,83 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(s => s.LastReservaId)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            // Fila ESCONDIDA por una union (nada se borra). Sin FK real a proposito: si el rastro se
+            // fuera en un borrado selectivo, la fila no debe caerse con el — como mucho queda visible.
+            entity.HasIndex(s => s.AbsorbedByTidyUpActionId)
+                  .HasDatabaseName("IX_RateSupplierSales_AbsorbedByTidyUpActionId");
+        });
+
+        // Tarifario inteligente (2026-08-07): al unir dos productos, el absorbido NO se borra —
+        // se apaga y apunta al que quedo. RESTRICT a proposito: si alguien intentara borrar el
+        // sobreviviente, la base lo frena antes de dejar productos apuntando al vacio.
+        modelBuilder.Entity<Rate>(entity =>
+        {
+            entity.HasOne(rate => rate.MergedIntoRate)
+                  .WithMany()
+                  .HasForeignKey(rate => rate.MergedIntoRateId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CatalogTidyUpAction>(entity =>
+        {
+            entity.Property(action => action.Kind).IsRequired().HasMaxLength(60);
+
+            // CASCADE por el sobreviviente y NoAction por el absorbido: el rastro de una union no tiene
+            // sentido sin el producto que quedo, pero si se pusiera CASCADE en las DOS puntas Postgres
+            // rechazaria el modelo (dos caminos de borrado hacia la misma tabla).
+            entity.HasOne(action => action.SurvivingRate)
+                  .WithMany()
+                  .HasForeignKey(action => action.SurvivingRateId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(action => action.AbsorbedRate)
+                  .WithMany()
+                  .HasForeignKey(action => action.AbsorbedRateId)
+                  .OnDelete(DeleteBehavior.NoAction);
+
+            // La bandeja pregunta siempre por "lo que sigue vigente, lo mas nuevo arriba".
+            entity.HasIndex(action => new { action.UndoneAt, action.PerformedAt })
+                  .HasDatabaseName("IX_CatalogTidyUpActions_UndoneAt_PerformedAt");
+        });
+
+        modelBuilder.Entity<CatalogTidyUpSaleChange>(entity =>
+        {
+            entity.Property(change => change.Kind).IsRequired().HasMaxLength(40);
+
+            // La foto vive y muere con su union.
+            entity.HasOne(change => change.TidyUpAction)
+                  .WithMany(action => action.SaleChanges)
+                  .HasForeignKey(change => change.TidyUpActionId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // A la fila de precio se apunta SIN cascada: si la fila desapareciera (por un borrado
+            // selectivo), la foto queda igual y el Deshacer sabe avisar que ya no se puede.
+            entity.HasOne(change => change.RateSupplierSale)
+                  .WithMany()
+                  .HasForeignKey(change => change.RateSupplierSaleId)
+                  .OnDelete(DeleteBehavior.NoAction);
+
+            entity.HasIndex(change => change.TidyUpActionId)
+                  .HasDatabaseName("IX_CatalogTidyUpSaleChanges_TidyUpActionId");
+        });
+
+        modelBuilder.Entity<CatalogNotDuplicatePair>(entity =>
+        {
+            entity.HasOne(pair => pair.LowRate)
+                  .WithMany()
+                  .HasForeignKey(pair => pair.LowRateId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(pair => pair.HighRate)
+                  .WithMany()
+                  .HasForeignKey(pair => pair.HighRateId)
+                  .OnDelete(DeleteBehavior.NoAction);
+
+            // Un par, una fila (ver el truco del par ordenado en la entidad).
+            entity.HasIndex(pair => new { pair.LowRateId, pair.HighRateId })
+                  .IsUnique()
+                  .HasDatabaseName("IX_CatalogNotDuplicatePairs_LowRateId_HighRateId");
         });
     }
 

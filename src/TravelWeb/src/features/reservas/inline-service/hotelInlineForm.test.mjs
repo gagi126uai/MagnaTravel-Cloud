@@ -119,7 +119,9 @@ const MEAL_PLAN_LEGACY = {
     PensionCompleta: "Pension Completa",
     TodoIncluido: "All Inclusive",
 };
-const ROOM_TYPE_CANONICOS = ["Single", "Doble", "Triple", "Cuadruple", "Familiar"];
+// Fix ronda 4: "Twin" y "Suite" faltaban acá (y en la fuente real, ServiceInlineCard.jsx)
+// — la réplica vieja hacía que este test CERTIFICARA el bug en vez de agarrarlo.
+const ROOM_TYPE_CANONICOS = ["Single", "Doble", "Twin", "Triple", "Cuadruple", "Familiar", "Suite"];
 const ROOM_TYPE_LEGACY = {
     Simple: "Single",
 };
@@ -629,8 +631,14 @@ test("buildHotelFormInitial: valores legacy de la ficha anterior se normalizan a
     // Valores canónicos pasan tal cual (no se tocan)
     assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Media Pension", roomType: "Triple" }).mealPlan, "Media Pension");
     assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "Triple" }).roomType, "Triple");
-    // Desconocidos sin equivalencia inequívoca caen al default (Suite no es Familiar: decisión del dueño si importara)
-    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "Suite" }).roomType, "Doble");
+    // Fix ronda 4 (BLOQUEANTE): "Suite" es un valor CANÓNICO real del catálogo (ver
+    // RoomTypeValue en CatalogVariant.cs) — antes esta lista lo trataba como legacy
+    // desconocido y lo pisaba con "Doble", así que editar un hotel guardado como Suite
+    // reescribía la habitación del pasajero sola. Pasa tal cual, como el resto de los
+    // canónicos.
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "Suite" }).roomType, "Suite");
+    assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "Twin" }).roomType, "Twin");
+    // Desconocidos sin equivalencia inequívoca caen al default (decisión del dueño si algún día importara)
     assert.equal(buildHotelFormInitial({ ...base, mealPlan: "Desayuno", roomType: "FamiliarCuadruple" }).roomType, "Doble");
 });
 

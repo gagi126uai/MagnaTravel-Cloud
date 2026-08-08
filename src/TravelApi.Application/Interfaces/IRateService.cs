@@ -1,4 +1,4 @@
-
+﻿
 using TravelApi.Application.DTOs;
 
 namespace TravelApi.Application.Interfaces;
@@ -43,7 +43,39 @@ public interface IRateService
     /// (si vino de una venta) el numero de reserva que lo dejo. Incluye tambien las tarifas viejas
     /// cargadas a mano, como un producto mas (P2=A).
     /// </summary>
-    Task<PagedResponse<LearnedProductDto>> GetLearnedProductsAsync(LearnedProductsQuery query, CancellationToken ct);
+    Task<LearnedProductsResponse> GetLearnedProductsAsync(LearnedProductsQuery query, CancellationToken ct);
+
+    /// <summary>
+    /// La ficha de UN producto (spec 2026-08-07, §7): lo mismo que trae la lista pero con TODOS sus
+    /// precios, sin el tope de 3 renglones. Null si ese producto no existe.
+    /// </summary>
+    Task<LearnedProductDto?> GetLearnedProductAsync(Guid ratePublicId, CancellationToken ct);
+
+    /// <summary>
+    /// Que precio sugerir al vender ESTA habitacion (M-15 / V9=A): el de la misma variante si existe, o el
+    /// de la mas parecida marcado para NO precargarlo. Null si el producto no tiene precios aprendidos.
+    /// </summary>
+    Task<VariantPriceSuggestionDto?> GetVariantPriceSuggestionAsync(
+        VariantPriceSuggestionQuery query, CancellationToken ct);
+
+    /// <summary>
+    /// Los nombres finos de habitacion (o vehiculos) que ya se usaron alguna vez, para ofrecerlos antes de
+    /// que alguien invente una variacion nueva (M-19, texto libre CON memoria).
+    /// </summary>
+    Task<IReadOnlyList<string>> GetVariantNameSuggestionsAsync(
+        string? serviceType, string? search, CancellationToken ct);
+
+    /// <summary>
+    /// Unifica una variacion de tipeo con el nombre que ya existe ("SUPERIOR" -> "Superior"). Si no se
+    /// parece a nada conocido, devuelve lo escrito tal cual (M-19).
+    /// </summary>
+    Task<string?> ResolveVariantNameAsync(string? serviceType, string? writtenName, CancellationToken ct);
+
+    /// <summary>
+    /// Corrige como se llama una habitacion del producto; si queda igual que otra, las junta y deja el
+    /// precio mas nuevo (M-18). NUNCA toca importes.
+    /// </summary>
+    Task<RenameVariantResult> RenameVariantAsync(RenameVariantRequest request, CancellationToken ct);
 
     /// <summary>
     /// Alta simple de producto desde el Tarifario (spec firmada 2026-08-06, M-3 + P7): pocos campos y

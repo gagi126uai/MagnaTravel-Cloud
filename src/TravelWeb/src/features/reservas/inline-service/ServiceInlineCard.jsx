@@ -90,10 +90,16 @@ const MEAL_PLAN_LEGACY = {
     PensionCompleta: "Pension Completa",
     TodoIncluido: "All Inclusive",
 };
-const ROOM_TYPE_CANONICOS = ["Single", "Doble", "Triple", "Cuadruple", "Familiar"];
-// Solo equivalencias INEQUIVOCAS. "Suite" y "FamiliarCuadruple" no tienen equivalente claro
-// en la lista canonica -> caen al default (son datos de prueba pre-lanzamiento; si algun dia
-// importara, la decision de equivalencia es del dueño, no nuestra).
+// Fix ronda 4 (BLOQUEANTE): "Twin" y "Suite" SÍ son valores canónicos del catálogo real
+// (ver RoomTypeValue en CatalogVariant.cs, backend) — faltaban acá. Sin ellos, abrir a
+// editar un hotel guardado como Twin/Suite mostraba "Doble" en el select (por el default
+// de normalizarRoomType) y el PUT siguiente reescribía roomType:"Doble" aunque el
+// vendedor solo hubiera tocado un campo ajeno (ej. el número de confirmación) — la
+// habitación del pasajero cambiaba sola, y la venta quedaba archivada bajo otra variante.
+const ROOM_TYPE_CANONICOS = ["Single", "Doble", "Twin", "Triple", "Cuadruple", "Familiar", "Suite"];
+// Solo equivalencias INEQUIVOCAS. "FamiliarCuadruple" no tiene equivalente claro en la
+// lista canónica -> cae al default (dato de prueba pre-lanzamiento; si algún día
+// importara, la decisión de equivalencia es del dueño, no nuestra).
 const ROOM_TYPE_LEGACY = {
     Simple: "Single",
 };
@@ -120,6 +126,11 @@ function buildHotelFormInitial(serviceToEdit) {
             // Los selects siempre muestran un valor, así que estos nunca quedan vacíos.
             mealPlan: "Desayuno",
             roomType: "Doble",
+            // Nombre fino de la habitación ("Superior", "Vista al mar"), texto libre CON
+            // MEMORIA (spec 2026-08-07, §5.2). Junto con roomType/mealPlan arma la variante
+            // que el tarifario recuerda por separado (V1=A: vender una triple ya no pisa
+            // el precio de la doble).
+            roomCategory: "",
             confirmationNumber: "",
             // operatorPaymentDeadline eliminado en F2: el aviso de campanita viene del backend (firstStartDate).
             address: "",
@@ -145,6 +156,8 @@ function buildHotelFormInitial(serviceToEdit) {
         // que dejarian el select controlado en blanco). Fallback al default del modal viejo.
         mealPlan: normalizarMealPlan(serviceToEdit.mealPlan),
         roomType: normalizarRoomType(serviceToEdit.roomType),
+        // Round-trip: el backend devuelve roomCategory en HotelBookingDto; fallback "" (sin nombre fino cargado).
+        roomCategory: serviceToEdit.roomCategory || "",
         confirmationNumber: serviceToEdit.confirmationNumber || "",
         // operatorPaymentDeadline no se carga en la UI (campo eliminado en F2)
         address: serviceToEdit.address || "",
@@ -531,6 +544,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 // seleccionado, así que || "X" es solo un fallback de seguridad extra.
                 mealPlan: formHotel.mealPlan || "Desayuno",
                 roomType: formHotel.roomType || "Doble",
+                // roomCategory es opcional (a diferencia de mealPlan/roomType): "" -> null,
+                // el backend la acepta como el nombre fino de la variante (spec 2026-08-07).
+                roomCategory: formHotel.roomCategory?.trim() || null,
                 confirmationNumber: formHotel.confirmationNumber || null,
                 address: formHotel.address || null,
                 // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).

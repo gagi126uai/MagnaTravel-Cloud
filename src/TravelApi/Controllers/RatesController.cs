@@ -17,11 +17,16 @@ public class RatesController : ControllerBase
 {
     private readonly IRateService _rateService;
     private readonly IEntityReferenceResolver _entityReferenceResolver;
+    private readonly ICatalogLibrarianService _librarian;
 
-    public RatesController(IRateService rateService, IEntityReferenceResolver entityReferenceResolver)
+    public RatesController(
+        IRateService rateService,
+        IEntityReferenceResolver entityReferenceResolver,
+        ICatalogLibrarianService librarian)
     {
         _rateService = rateService;
         _entityReferenceResolver = entityReferenceResolver;
+        _librarian = librarian;
     }
 
     [HttpGet]
@@ -125,7 +130,7 @@ public class RatesController : ControllerBase
     /// ver costos, el precio que viaja es el de VENTA, nunca el costo (F-14).</para>
     /// </summary>
     [HttpGet("learned-products")]
-    public async Task<ActionResult<PagedResponse<LearnedProductDto>>> GetLearnedProducts(
+    public async Task<ActionResult<LearnedProductsResponse>> GetLearnedProducts(
         [FromQuery] LearnedProductsQuery query,
         CancellationToken ct)
     {
@@ -138,6 +143,182 @@ public class RatesController : ControllerBase
         }
 
         return Ok(await _rateService.GetLearnedProductsAsync(query, ct));
+    }
+
+    /// <summary>
+    /// La ficha de UN producto (spec 2026-08-07, §7): igual que la lista pero con TODOS sus precios,
+    /// agrupados por habitación, sin el tope de 3 renglones.
+    /// </summary>
+    [HttpGet("learned-products/{ratePublicId:guid}")]
+    public async Task<IActionResult> GetLearnedProduct(Guid ratePublicId, CancellationToken ct)
+    {
+        var product = await _rateService.GetLearnedProductAsync(ratePublicId, ct);
+        if (product is null) return NotFound(new { message = "No encontramos ese producto en el tarifario." });
+        return Ok(product);
+    }
+
+    /// <summary>
+    /// Qué precio sugerir al vender ESTA habitación (spec 2026-08-07, M-15 / V9=A).
+    ///
+    /// <para>Devuelve <c>isSameVariant=true</c> cuando el precio es de la misma habitación (la pantalla lo
+    /// puede precargar en amarillo) y <c>false</c> cuando es de otra parecida: en ese caso el casillero
+    /// queda VACÍO y el precio solo se muestra abajo en gris, con la frase ya armada. 204 si el producto
+    /// todavía no tiene ningún precio aprendido.</para>
+    /// </summary>
+    [HttpGet("variant-price-suggestion")]
+    public async Task<IActionResult> GetVariantPriceSuggestion(
+        [FromQuery] VariantPriceSuggestionQuery query, CancellationToken ct)
+    {
+        var suggestion = await _rateService.GetVariantPriceSuggestionAsync(query, ct);
+        if (suggestion is null) return NoContent();
+        return Ok(suggestion);
+    }
+
+    /// <summary>
+    /// Los nombres finos de habitación (o los vehículos) que ya se usaron alguna vez, para ofrecerlos
+    /// mientras el vendedor escribe (spec 2026-08-07, §5.2 / M-19). Texto libre CON memoria.
+    /// </summary>
+    [HttpGet("variant-names")]
+    public async Task<ActionResult<IReadOnlyList<string>>> GetVariantNames(
+        [FromQuery] string? serviceType, [FromQuery] string? q, CancellationToken ct)
+    {
+        return Ok(await _rateService.GetVariantNameSuggestionsAsync(serviceType, q, ct));
+    }
+
+    /// <summary>
+    /// Corrige cómo se llama una habitación de un producto (spec 2026-08-07, §7 / M-18). Si al corregirla
+    /// queda igual que otra, las dos se juntan solas y queda el precio más nuevo. <b>Nunca toca importes.</b>
+    /// </summary>
+    [HttpPost("learned-products/variants/rename")]
+    [RequirePermission(Permissions.TarifarioEdit)]
+    public async Task<IActionResult> RenameVariant(
+        [FromBody] RenameVariantRequest req, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _rateService.RenameVariantAsync(req, ct));
+        }
+        catch (RateValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or CatalogProductNotFoundException)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    // ============================================================
+    // La bandeja "Repetidos" y el ordenado automático (spec 2026-08-07, §6)
+    // ============================================================
+
+    /// <summary>
+    /// La bandeja "Repetidos" (§6 / V11=B): un producto arriba y abajo todos los que se le parecen, con
+    /// el contador de lo que el sistema ordenó solo esta semana.
+    /// </summary>
+    [HttpGet("duplicates")]
+    public async Task<ActionResult<DuplicateProductsResponse>> GetDuplicates(CancellationToken ct)
+    {
+        return Ok(await _librarian.GetDuplicateGroupsAsync(ct));
+    }
+
+    /// <summary>
+    /// "Es el mismo": el de arriba absorbe los precios y las habitaciones del otro. <b>Nada se borra</b>:
+    /// el absorbido se apaga y queda con Deshacer disponible.
+    /// </summary>
+    [HttpPost("duplicates/merge")]
+    [RequirePermission(Permissions.TarifarioEdit)]
+    public async Task<IActionResult> MergeDuplicates([FromBody] MergeProductsRequest req, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _librarian.MergeProductsAsync(req, ct));
+        }
+        catch (RateValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        // Las excepciones PROPIAS del tarifario traen un texto escrito para una persona; cualquier otra
+        // sigue de largo al manejador global (generico amable), para no filtrar nada tecnico.
+        catch (Exception ex) when (ex is KeyNotFoundException or CatalogProductNotFoundException)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>"Es otro": ese par no se vuelve a proponer nunca más.</summary>
+    [HttpPost("duplicates/not-duplicates")]
+    [RequirePermission(Permissions.TarifarioEdit)]
+    public async Task<IActionResult> MarkNotDuplicates([FromBody] NotDuplicatesRequest req, CancellationToken ct)
+    {
+        try
+        {
+            await _librarian.MarkAsNotDuplicatesAsync(req, ct);
+            return NoContent();
+        }
+        catch (RateValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or CatalogProductNotFoundException)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Lo que el sistema ordenó solo, para "Ver qué ordenó" (§6). Cada línea trae si se puede deshacer.</summary>
+    [HttpGet("tidy-up-log")]
+    public async Task<ActionResult<TidyUpLogResponse>> GetTidyUpLog(CancellationToken ct)
+    {
+        return Ok(await _librarian.GetTidyUpLogAsync(ct));
+    }
+
+    /// <summary>
+    /// Deshacer una unión (o una corrección de habitación): vuelve todo a como estaba. Se puede tocar dos
+    /// veces sin drama.
+    ///
+    /// <para>Respuestas: 204 si se deshizo · 404 si ese movimiento no existe · <b>409</b> si ya no se puede
+    /// deshacer con fidelidad (hubo ventas nuevas encima, el casillero de destino quedó ocupado, o encima
+    /// se ordenó otra vez). El <c>message</c> del 409 explica en criollo cuál de esas cosas pasó: es lo que
+    /// la pantalla muestra tal cual.</para>
+    /// </summary>
+    [HttpPost("tidy-up-log/{actionPublicId:guid}/undo")]
+    [RequirePermission(Permissions.TarifarioEdit)]
+    public async Task<IActionResult> UndoTidyUp(Guid actionPublicId, CancellationToken ct)
+    {
+        try
+        {
+            await _librarian.UndoTidyUpActionAsync(actionPublicId, ct);
+            return NoContent();
+        }
+        catch (CatalogTidyUpNotReversibleException ex)
+        {
+            // 409 y no 400: no hay nada que el usuario pueda corregir y reintentar — es el estado actual
+            // el que ya no permite la vuelta atras.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or CatalogTidyUpNotFoundException)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Pasada del bibliotecario: une los "casi seguros" que dejó el formulario viejo (§6 / Q3=B firmada).
+    /// Es idempotente — correrla dos veces no hace nada la segunda.
+    /// </summary>
+    [HttpPost("librarian/tidy-up")]
+    [RequirePermission(Permissions.TarifarioEdit)]
+    public async Task<IActionResult> RunLibrarian(CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _librarian.TidyUpAsync(ct));
+        }
+        catch (RateValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     /// <summary>

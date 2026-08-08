@@ -7,10 +7,79 @@ import {
   buildRenameLearnedProductPayload,
   resolveSimilarProductDialogDecision,
   SIMILAR_PRODUCT_DIALOG_DECISION,
+  buildRenameVariantPayload,
+  buildInitialVariantCorrectionFields,
 } from "./ratesLearnedProductsLogic.js";
 
+describe("buildInitialVariantCorrectionFields", () => {
+  it("precarga con la variante ACTUAL (P-21): una Triple con desayuno no arranca en Doble", () => {
+    const iniciales = buildInitialVariantCorrectionFields({
+      roomType: "Triple", mealPlan: "Media Pension", roomCategory: "Vista al mar", cabinClass: null, vehicleType: null,
+    });
+    assert.deepEqual(iniciales, {
+      roomType: "Triple", mealPlan: "Media Pension", roomCategory: "Vista al mar", cabinClass: "", vehicleType: "",
+    });
+  });
+
+  it("Aéreo: precarga la cabina real, no un default de hotel", () => {
+    const iniciales = buildInitialVariantCorrectionFields({ cabinClass: "Business" });
+    assert.equal(iniciales.cabinClass, "Business");
+    assert.equal(iniciales.roomType, "Doble"); // no aplica a Aéreo, pero no debe romper
+  });
+
+  it("Traslado: precarga el vehículo real", () => {
+    const iniciales = buildInitialVariantCorrectionFields({ vehicleType: "Van" });
+    assert.equal(iniciales.vehicleType, "Van");
+  });
+
+  it("variante vieja sin desglose (piezas null): cae al mismo default que el resto de la app", () => {
+    const iniciales = buildInitialVariantCorrectionFields(null);
+    assert.deepEqual(iniciales, {
+      roomType: "Doble", mealPlan: "Desayuno", roomCategory: "", cabinClass: "", vehicleType: "",
+    });
+  });
+});
+
+describe("buildRenameVariantPayload", () => {
+  it("Hotel: manda roomType/mealPlan/roomCategory, el resto en null", () => {
+    const payload = buildRenameVariantPayload({
+      serviceType: "Hotel", productPublicId: "p1", currentVariantKey: "doble|desayuno",
+      roomType: "Triple", mealPlan: "Media Pension", roomCategory: "  Superior  ",
+    });
+    assert.deepEqual(payload, {
+      productPublicId: "p1", currentVariantKey: "doble|desayuno",
+      roomType: "Triple", mealPlan: "Media Pension", roomCategory: "Superior",
+      cabinClass: null, vehicleType: null,
+    });
+  });
+
+  it("Aereo: manda solo cabinClass", () => {
+    const payload = buildRenameVariantPayload({
+      serviceType: "Aereo", productPublicId: "p2", currentVariantKey: "economy", cabinClass: "Business",
+    });
+    assert.equal(payload.cabinClass, "Business");
+    assert.equal(payload.roomType, null);
+    assert.equal(payload.vehicleType, null);
+  });
+
+  it("Traslado: manda solo vehicleType, recortado", () => {
+    const payload = buildRenameVariantPayload({
+      serviceType: "Traslado", productPublicId: "p3", currentVariantKey: "van", vehicleType: "  Sedán  ",
+    });
+    assert.equal(payload.vehicleType, "Sedán");
+    assert.equal(payload.cabinClass, null);
+  });
+
+  it("Paquete/Asistencia: sin variante natural, todo queda en null", () => {
+    const payload = buildRenameVariantPayload({ serviceType: "Paquete", productPublicId: "p4", currentVariantKey: "" });
+    assert.equal(payload.roomType, null);
+    assert.equal(payload.cabinClass, null);
+    assert.equal(payload.vehicleType, null);
+  });
+});
+
 describe("buildCreateSimpleProductPayload", () => {
-  it("hotel: manda ciudad recortada y unidad 'noche'", () => {
+  it("hotel: manda ciudad recortada, unidad 'noche' y la variante (roomType/mealPlan/roomCategory)", () => {
     const payload = buildCreateSimpleProductPayload({
       serviceType: "Hotel",
       name: "  Maitei Posadas  ",
@@ -18,6 +87,9 @@ describe("buildCreateSimpleProductPayload", () => {
       supplierId: "sup-1",
       price: "48000",
       currency: "ARS",
+      roomType: "Triple",
+      mealPlan: "Media Pension",
+      roomCategory: "  Superior  ",
     });
     assert.deepEqual(payload, {
       serviceType: "Hotel",
@@ -28,19 +100,55 @@ describe("buildCreateSimpleProductPayload", () => {
       currency: "ARS",
       priceUnit: "noche",
       createAnyway: false,
+      roomType: "Triple",
+      mealPlan: "Media Pension",
+      roomCategory: "Superior",
+      cabinClass: null,
+      vehicleType: null,
     });
   });
 
-  it("no-hotel (aéreo/paquete/etc): no manda ciudad ni unidad", () => {
+  it("aéreo: manda cabinClass, no manda ciudad/unidad/variante de hotel", () => {
     const payload = buildCreateSimpleProductPayload({
       serviceType: "Aereo",
       name: "Buenos Aires - Miami",
       city: "esto no debería viajar",
       price: 780,
       currency: "USD",
+      cabinClass: "Business",
+      roomType: "esto tampoco debería viajar",
     });
     assert.equal(payload.city, null);
     assert.equal(payload.priceUnit, null);
+    assert.equal(payload.cabinClass, "Business");
+    assert.equal(payload.roomType, null);
+    assert.equal(payload.vehicleType, null);
+  });
+
+  it("traslado: manda vehicleType recortado (texto libre con memoria)", () => {
+    const payload = buildCreateSimpleProductPayload({
+      serviceType: "Traslado", name: "EZE - Hotel", price: 25000, vehicleType: "  Van  ",
+    });
+    assert.equal(payload.vehicleType, "Van");
+    assert.equal(payload.cabinClass, null);
+    assert.equal(payload.roomType, null);
+  });
+
+  it("traslado: vehicleType vacío queda null (no manda string vacío)", () => {
+    const payload = buildCreateSimpleProductPayload({ serviceType: "Traslado", name: "EZE - Hotel", price: 25000, vehicleType: "   " });
+    assert.equal(payload.vehicleType, null);
+  });
+
+  it("paquete/asistencia: sin variante natural (V2), todos los campos de variante en null", () => {
+    const payload = buildCreateSimpleProductPayload({
+      serviceType: "Paquete", name: "Bariloche", price: 100000,
+      roomType: "Doble", mealPlan: "Desayuno", roomCategory: "Superior", cabinClass: "Business", vehicleType: "Van",
+    });
+    assert.equal(payload.roomType, null);
+    assert.equal(payload.mealPlan, null);
+    assert.equal(payload.roomCategory, null);
+    assert.equal(payload.cabinClass, null);
+    assert.equal(payload.vehicleType, null);
   });
 
   it("sin operador ni moneda: operador null, moneda default ARS, precio 0 si no es numérico", () => {

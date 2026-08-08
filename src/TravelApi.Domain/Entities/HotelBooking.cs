@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
@@ -47,6 +47,20 @@ public class HotelBooking : IHasPublicId
     
     [MaxLength(50)]
     public string MealPlan { get; set; } = "Desayuno"; // Solo Aloj., Desayuno, Media Pensión, All Inclusive
+
+    /// <summary>
+    /// Nombre FINO de la habitacion, tal como lo escribe el vendedor: "Superior", "Vista al mar",
+    /// "Deluxe" (spec firmada 2026-08-07, §5.2). Es texto libre CON MEMORIA: la primera vez se escribe,
+    /// despues el sistema lo ofrece.
+    ///
+    /// <para><b>Por que hacia falta</b>: sin este dato, una "Doble Superior" y una "Doble" comun
+    /// compartian la misma memoria de precio y una pisaba a la otra. Junto con la capacidad
+    /// (<see cref="RoomType"/>) y el regimen (<see cref="MealPlan"/>) forman la VARIANTE del producto.</para>
+    ///
+    /// <para>Opcional: la mayoria de las ventas no lo usa y queda null (la habitacion es "Doble" a secas).</para>
+    /// </summary>
+    [MaxLength(100)]
+    public string? RoomCategory { get; set; }
     
     public int Rooms { get; set; } = 1;
     public int Adults { get; set; } = 2;

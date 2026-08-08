@@ -109,6 +109,25 @@ public partial class RateService : IRateService
         }
     }
 
+    /// <summary>
+    /// Escribe la variante ya resuelta en cada item del tarifario. Se hace DESPUES de traer los datos
+    /// porque la etiqueta se arma en C# (Postgres no sabe escribir "Doble Superior con desayuno") y
+    /// porque el mismo helper tiene que dar el mismo resultado que en la venta y en el listado nuevo.
+    /// </summary>
+    private static void FillVariantLabels(IEnumerable<RateListItemDto> items)
+    {
+        foreach (var item in items)
+        {
+            var variant = CatalogVariant.For(
+                item.ServiceType,
+                roomType: item.RoomType, mealPlan: item.MealPlan, fineName: item.RoomCategory,
+                cabinClass: item.CabinClass, vehicleType: item.VehicleType);
+
+            item.VariantKey = variant.Key;
+            item.VariantLabel = variant.Label;
+        }
+    }
+
     public async Task<PagedResponse<RateListItemDto>> GetAllAsync(RateListQuery query, CancellationToken ct)
     {
         var supplierId = await ResolveOptionalSupplierIdAsync(query.SupplierId, ct);
@@ -119,6 +138,7 @@ public partial class RateService : IRateService
             .ToPagedResponseAsync(query, ct);
 
         await MaskRateListCostsAsync(page.Items, ct);
+        FillVariantLabels(page.Items);
         return page;
     }
 
@@ -387,7 +407,11 @@ public partial class RateService : IRateService
         // Fuga 1 (F1b): tambien lo usan Create/Update/Deactivate/Reactivate para armar
         // el response, pero esos endpoints son Admin-only y Admin tiene bypass -> para
         // ellos el resultado es identico a antes.
-        if (item != null) await MaskRateListCostsAsync(new[] { item }, ct);
+        if (item != null)
+        {
+            await MaskRateListCostsAsync(new[] { item }, ct);
+            FillVariantLabels(new[] { item });
+        }
         return item;
     }
 
@@ -402,7 +426,13 @@ public partial class RateService : IRateService
             .FirstOrDefaultAsync(ct);
 
         // Fuga 1 (F1b): GET /api/rates/{publicId} es de cualquier logueado -> masking.
-        if (item != null) await MaskRateListCostsAsync(new[] { item }, ct);
+        // Las llaves NO son decorativas: si el producto no existe, item es null y las dos ayudas de abajo
+        // reventarian con un error tecnico en vez de responder "no lo encontramos".
+        if (item != null)
+        {
+            await MaskRateListCostsAsync(new[] { item }, ct);
+            FillVariantLabels(new[] { item });
+        }
         return item;
     }
 
@@ -1248,7 +1278,9 @@ public partial class RateService : IRateService
     {
         var sales = await _db.RateSupplierSales
             .AsNoTracking()
-            .Where(sale => rateIds.Contains(sale.RateId))
+            // Una fila ESCONDIDA por una union (2026-08-07) no es un precio vigente: no puede volver como
+            // "la ultima vez que lo vendiste". Invariante de RateSupplierSale: toda lectura filtra por null.
+            .Where(sale => rateIds.Contains(sale.RateId) && sale.AbsorbedByTidyUpActionId == null)
             .Select(sale => new CatalogLatestSale(
                 sale.RateId,
                 sale.LastSoldAt,

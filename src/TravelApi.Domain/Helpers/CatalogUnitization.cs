@@ -12,6 +12,19 @@ public static class CatalogServiceTypes
     public const string Traslado = "Traslado";
     public const string Paquete = "Paquete";
     public const string Asistencia = "Asistencia";
+
+    /// <summary>
+    /// Excursión (addendum firmado 2026-08-08, V17=C): tiene solapa propia en el Tarifario. No tiene
+    /// variante (como paquete y asistencia) y su precio se expresa por pasajero.
+    /// </summary>
+    public const string Excursion = "Excursion";
+
+    /// <summary>
+    /// "Otro" queda AFUERA del tarifario (V17=C): se sigue vendiendo normal en una reserva, pero no se
+    /// carga a mano como producto ni se lista. Un cajón de sastre no es un producto que se pueda repetir,
+    /// comparar ni recordar por precio — llenaría el tarifario de ruido.
+    /// </summary>
+    public const string Otro = "Otro";
 }
 
 /// <summary>
