@@ -132,6 +132,13 @@ services:
       # Obra "Empezar de cero": directorio DENTRO del contenedor donde queda el dump antes de un borrado
       # masivo. Coincide con el volumen montado arriba (./backups/postgres/wipe:/backups/wipe).
       Wipe__BackupDirectory: /backups/wipe
+      # Cerebro IA (ADR-016 / Tarifario Inteligente F2): OPCIONALES a proposito — sin clave el
+      # sistema degrada al comportamiento sin IA (AiAssistantService devuelve Degraded, jamas
+      # rompe). La clave vive SOLO en el .env del VPS (llega via workflow ops-ai-env, secreto
+      # de GitHub AI_API_KEY); nunca en este repo ni en la base.
+      Ai__BaseUrl: ${AI_BASEURL:-https://api.groq.com/openai/v1}
+      Ai__ApiKey: ${AI_API_KEY:-}
+      Ai__Model: ${AI_MODEL:-llama-3.3-70b-versatile}
       # Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B-N2 de seguridad, "los timeouts no cierran
       # entre sí"): valores EXPLÍCITOS (no solo el default hardcodeado en el código) para que la invariante
       # sea visible y auditable acá, en el mismo lugar donde se despliega. INVARIANTE que tiene que cumplirse
@@ -256,6 +263,11 @@ services:
       # servicio "api" más arriba.
       Maintenance__MaxDurationMinutes: "30"
       Maintenance__StateFilePath: /app/logs/maintenance-mode-state.json
+      # Cerebro IA: el worker corre los jobs Hangfire (el "bibliotecario" del Tarifario
+      # Inteligente F3 vive aca). Mismas variables opcionales que el api; sin clave, degrada.
+      Ai__BaseUrl: ${AI_BASEURL:-https://api.groq.com/openai/v1}
+      Ai__ApiKey: ${AI_API_KEY:-}
+      Ai__Model: ${AI_MODEL:-llama-3.3-70b-versatile}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
       interval: 20s
