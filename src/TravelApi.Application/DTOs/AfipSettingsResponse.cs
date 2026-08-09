@@ -31,9 +31,8 @@ public class AfipSettingsResponse
     // Con OFF (default) la rama de ND es UI muerta y el backend es byte-identico a hoy.
     public bool EnableCancellationDebitNote { get; set; }
 
-    // Flag operativo SOLO LECTURA (ADR-016 F0a). El frontend lo usara (a partir de F2) para
-    // mostrar/ocultar el bloque de texto generado por IA en las alertas. Vive en
-    // OperationalFinanceSettings; se proyecta aca igual que los demas flags para no obligar al
-    // frontend a pegarle a un segundo endpoint. Con OFF (default) no hay nada de copiloto en UI.
-    public bool EnableAiCopilot { get; set; }
+    // "EnableAiCopilot" salio de esta respuesta el 2026-08-07 (spec firmada §15.7, M-33): la IA ya
+    // no se prende con un interruptor, se configura en "Configuracion → Inteligencia artificial".
+    // Si una pantalla necesita saber si hay IA disponible, lo pregunta ahi (GET /api/settings/ai),
+    // no en la configuracion de facturacion.
 }

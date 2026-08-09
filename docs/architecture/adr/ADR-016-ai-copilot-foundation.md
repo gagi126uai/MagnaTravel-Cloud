@@ -282,3 +282,83 @@ Cada fase mergeable con flag OFF (byte-idéntico). Revisores por fase: backend-r
 - **Job:** idempotencia (no re-llamar lo fresco), respeto del límite por lote.
 - **Frontend:** estados loading/empty/ok/degradado; flag OFF no renderiza nada nuevo.
 - **No** testear contra la API real del proveedor en CI (cuota + no determinismo). A lo sumo un smoke manual en staging.
+
+---
+
+## 11. ADENDA FIRMADA (2026-08-07) — La configuración de la IA se carga desde la pantalla
+
+> **Estado**: vigente. **Deroga** lo que este mismo ADR decía en §2.2 sobre "la API key nunca va a
+> la DB" y sobre "base_url/model solo por env". **Origen**: decisión del dueño (Gastón), registrada
+> en la spec firmada `docs/ux/specs/2026-08-07-tarifario-inteligente-FIRMADA.md` §15 (dependencias
+> M-28 a M-33) y §15.11. **Construido**: 2026-08-09.
+
+### 11.1 Qué cambia y por qué
+
+ADR-016 §2.2 decidió que la conexión al cerebro (dirección, clave, modelo) viviera **solo en
+variables de entorno**, con el argumento de que una API key es un secreto y no debe ir a la base.
+
+**El dueño lo derogó para este caso**: el dueño de una agencia tiene que poder configurar su
+inteligencia artificial **desde la pantalla**, sin llamar a un técnico y sin tocar el servidor. Con
+el diseño anterior, cambiar de proveedor exigía editar `.env` + reiniciar — inviable para el usuario
+real del producto, que es una agencia minorista sin equipo de sistemas.
+
+El argumento de seguridad original **no se ignora, se resuelve de otra forma**: la clave va a la base
+**cifrada** con el mismo mecanismo que ya protege los datos sensibles de ARCA
+(`ISensitiveDataProtector`, AES-GCM con la llave del servidor `Security__EncryptionKey`). Un backup
+de la base **no alcanza** para leerla: hace falta además la llave del servidor, que sigue viviendo
+solo en variables de entorno.
+
+### 11.2 La regla nueva de precedencia (M-29)
+
+| Orden | De dónde | Cuándo manda |
+|---|---|---|
+| 1 | **Pantalla** (`AiSettings` en la base) | Siempre que esté **completa**: dirección + modelo + clave. |
+| 2 | **Variables del servidor** (`Ai__*`) | **Respaldo**: solo si en la base no hay una configuración completa. |
+| 3 | Nada | No hay IA. El sistema funciona igual, sin las ayudas inteligentes (§3.5 de la spec). |
+
+**"Completa o nada"**: no se mezcla media configuración de la base con media del servidor. Una clave
+de un proveedor con la dirección de otro no funciona y daría un error incomprensible.
+
+### 11.3 Sin configuración congelada al arrancar (M-30)
+
+La conexión ya **no** se lee una sola vez en `Program.cs`. `IAiConnectionResolver` la resuelve
+**leyendo la base en cada llamada**, y `OpenAiCompatibleChatProvider` le pregunta antes de cada POST.
+Consecuencia práctica: guardar una clave nueva tiene efecto en la llamada siguiente, sin reiniciar.
+
+**No hay cache a propósito.** Es la lección del cache de `AfipSettings`: un resolver que cachea y no
+se invalida al guardar hace que el sistema siga usando la credencial vieja sin que nadie entienda por
+qué. El costo de releer una fila antes de una llamada por internet de cientos de milisegundos es
+despreciable. **Si alguna vez se agrega cache acá, hay que invalidarlo SIEMPRE al guardar.**
+
+### 11.4 Muere el interruptor `EnableAiCopilot` (M-33)
+
+Tener un interruptor para "prender la IA" **además** de la pantalla donde se la configura es
+exactamente lo que la orden general del dueño prohíbe (**"basta de llaves"**, la misma que mató a
+`enableCatalogFindOrCreate` el 2026-08-06). La regla pasa a ser una sola:
+
+> **Si hay una inteligencia artificial configurada (pantalla o respaldo del servidor), las ayudas
+> inteligentes funcionan. Si no hay, no funcionan y el sistema anda igual.**
+
+Quien contesta esa pregunta es `IAiConnectionResolver.IsUsableAsync`. La columna
+`OperationalFinanceSettings.EnableAiCopilot` **sigue existiendo en la base pero es inerte**: no se
+lee, no se escribe y salió de la superficie de la API (`OperationalFinanceSettingsDto` y
+`AfipSettingsResponse`). Un `if` nuevo sobre ese campo es un bug.
+
+### 11.5 Guardas de seguridad que acompañan a la derogación
+
+- **Solo Admin** lee o escribe esta configuración (`/api/settings/ai`, `[Authorize(Roles="Admin")]`).
+- **La clave es de una sola dirección**: entra cifrada y no sale nunca. La API devuelve "hay clave
+  sí/no", de dónde sale y sus **primeros 4 caracteres**. No hay endpoint que devuelva la clave.
+- **Nunca en logs ni en mensajes de error** (ni la clave, ni la respuesta cruda del proveedor).
+- **Queda auditado** quién guardó y cuándo. El texto cifrado está en `SensitiveAuditFields`, así que
+  ni siquiera se copia al historial de auditoría.
+- **Anti-SSRF en la dirección** (`AiEndpointGuard`): solo `https` absoluto, sin usuario:clave, y el
+  nombre tiene que resolver a direcciones públicas. Se rechaza todo lo que apunte a la red interna
+  (loopback, 10/8, 172.16/12, 192.168/16, CGNAT, ULA IPv6) y en particular al servicio de metadatos
+  de la nube (169.254.169.254). Se aplica **tanto al probar como al guardar**: si solo se revisara al
+  probar, alcanzaría con guardar la dirección interna y esperar a que la use el sistema.
+- **Tope de intentos** en "Probar conexión" (política `ai-test`, 12 cada 5 minutos por usuario), para
+  que el botón no sirva como sonda.
+- **Limitación declarada**: entre la revisión del nombre y la conexión real, un servidor de nombres
+  hostil podría contestar distinto ("DNS rebinding"). No se cierra hoy: el atacante tendría que ser
+  un Admin de la propia agencia y lo único que obtendría es un código de cinco valores, sin cuerpo.

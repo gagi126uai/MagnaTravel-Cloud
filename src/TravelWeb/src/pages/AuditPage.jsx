@@ -48,6 +48,7 @@ const entityTranslations = {
   ApplicationUser: "Usuario", RefreshToken: "Sesión",
   AgencySettings: "Config. agencia", OperationalFinanceSettings: "Config. finanzas",
   AfipSettings: "Config. AFIP", WhatsAppBotConfig: "Config. WhatsApp Bot",
+  AiSettings: "Configuración de inteligencia artificial",
   BusinessSequence: "Numeración", RolePermission: "Permiso de rol",
   BnaExchangeRateSnapshot: "Cotización BNA", Notification: "Notificación",
   // Eventos de negocio
@@ -101,6 +102,11 @@ const fieldTranslations = {
   CreatedAt: "Fecha de creación", UpdatedAt: "Ãšltima modificación",
   DeletedAt: "Fecha de eliminación", ClosedAt: "Fecha de cierre",
   CreatedBy: "Creado por", UploadedBy: "Subido por", UploadedAt: "Fecha de subida",
+
+  // Inteligencia artificial (la clave NO figura acá a propósito: no se audita ni cifrada)
+  Provider: "Con cuál se trabaja", BaseUrl: "Dirección", Model: "Modelo",
+  ApiKeyPrefix: "Comienzo de la clave", LastTestOutcome: "Resultado de la última prueba",
+  LastTestAt: "Fecha de la última prueba",
 
   // Reservas
   NumeroReserva: "Nro. reserva", TotalSale: "Venta total", TotalCost: "Costo total",

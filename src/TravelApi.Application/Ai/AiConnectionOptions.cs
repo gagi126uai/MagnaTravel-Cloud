@@ -1,17 +1,18 @@
 namespace TravelApi.Application.Ai;
 
 /// <summary>
-/// Configuracion GLOBAL del proveedor de IA, leida de variables de entorno (NUNCA de la DB).
+/// Los datos con los que se habla con la IA: direccion, clave y modelo (mas tiempos y topes).
 ///
-/// <para><b>Por que en env y no en la DB</b> (ADR-016 §2.2): la <see cref="ApiKey"/> es un
-/// secreto y sigue el mismo manejo que JWT_KEY / MinIO / RabbitMQ (env + validado en deploy,
-/// nunca al repo ni a backups de DB en claro). <see cref="BaseUrl"/> y <see cref="Model"/>
-/// van junto a la key a proposito: son inseparables (un base_url de un proveedor con la key
-/// de otro no funciona). Tenerlos juntos hace que "cambiar de proveedor" sea una operacion
-/// atomica de editar .env + restart, sin estados incoherentes.</para>
+/// <para><b>De donde salen</b> (adenda firmada a ADR-016, 2026-08-07 §11): los arma
+/// <c>IAiConnectionResolver</c> en CADA llamada. Primero mira lo que el dueño cargo en
+/// "Configuracion → Inteligencia artificial" (base, con la clave cifrada); si ahi no hay una
+/// configuracion completa, usa como RESPALDO las variables de entorno <c>Ai__*</c> que se leen en
+/// <c>Program.cs</c> con el patron del repo (<c>["Ai:X"] ?? ["Ai__X"]</c>).</para>
 ///
-/// <para>Estos valores se leen en <c>Program.cs</c> con el patron del repo
-/// (<c>["Ai:X"] ?? ["Ai__X"]</c>) y se inyectan al provider. NO se loguea la <see cref="ApiKey"/>.</para>
+/// <para><b>Los tres van juntos a proposito</b>: son inseparables (la direccion de un proveedor con
+/// la clave de otro no funciona). Por eso se toman los tres del mismo lado, nunca mezclados.</para>
+///
+/// <para>La <see cref="ApiKey"/> NUNCA se loguea ni sale por ninguna API.</para>
 /// </summary>
 public sealed class AiConnectionOptions
 {
@@ -23,8 +24,9 @@ public sealed class AiConnectionOptions
     public string BaseUrl { get; init; } = string.Empty;
 
     /// <summary>
-    /// API key del proveedor. SECRETO. Solo por env. NUNCA se loguea ni se persiste.
-    /// Si esta vacia con el copiloto prendido, el provider degrada con "config invalida".
+    /// La clave del proveedor, EN CLARO y solo en memoria. SECRETO: nunca se loguea, nunca sale por
+    /// la API. Cuando viene de la pantalla, en la base esta guardada CIFRADA. Si esta vacia, no hay
+    /// IA y el sistema funciona igual, sin las ayudas.
     /// </summary>
     public string ApiKey { get; init; } = string.Empty;
 

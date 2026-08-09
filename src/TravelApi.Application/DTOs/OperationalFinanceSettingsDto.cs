@@ -111,23 +111,11 @@ public class OperationalFinanceSettingsDto
     /// </summary>
     public bool? EnableCancellationDebitNote { get; set; }
 
-    /// <summary>
-    /// ADR-016 F0a (Base del copiloto de IA, 2026-06-03): feature flag maestro del copiloto.
-    /// El admin lo prende/apaga desde el panel de Configuracion.
-    ///
-    /// <para>Es un flag de COMPORTAMIENTO: con OFF (default) el copiloto no existe y nada sale
-    /// hacia la nube. NO tiene validacion cruzada en F0a porque el flag del piloto que lo
-    /// consume (EnableAiUpcomingClientAlerts) todavia no existe; esa cruzada llega en F1.</para>
-    ///
-    /// <para>OJO: este flag NO incluye la API key ni el proveedor (eso va por variables de
-    /// entorno <c>Ai__*</c>, fuera de la DB). Prender el flag sin esa config hace que el cerebro
-    /// degrade elegante, no rompe nada.</para>
-    ///
-    /// <para>Nullable y patch-like (mismo criterio B-002 que el resto del DTO): enviar null
-    /// u omitir el campo en el PUT = no se modifica el valor actual. Solo se persiste si viene
-    /// con valor.</para>
-    /// </summary>
-    public bool? EnableAiCopilot { get; set; }
+    // El interruptor "EnableAiCopilot" SALIO de este contrato el 2026-08-07 (spec firmada §15.7,
+    // M-33): tener un interruptor aparte para prender la IA, ademas de la pantalla donde se la
+    // configura, es exactamente lo que la orden "basta de llaves" del dueño prohibe. La regla nueva
+    // es una sola: si hay una IA configurada, las ayudas funcionan; si no, el sistema anda igual.
+    // Se configura en "Configuracion → Inteligencia artificial" (GET/PUT /api/settings/ai).
 
     /// <summary>
     /// DEROGADA el 2026-08-06 (spec firmada de Tarifario, P8=A / M-10): el catalogo que aprende de las

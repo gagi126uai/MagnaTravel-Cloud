@@ -28,6 +28,11 @@
  *   - Con permiso: ve Costo por noche + ganancia en el footer.
  *   - Sin permiso: no ve costo ni ganancia (jamás mostrar "$0").
  *     El buscador le muestra el precio de VENTA de la última vez (salePrice).
+ *
+ * LÍNEA INTELIGENTE (spec 2026-08-07, §3): mientras el vendedor escribe la frase entera
+ * en el mismo buscador de arriba, `useServiceLineInterpretationForForm` va precargando en
+ * amarillo lo que el motor entendió (operador, habitación/régimen/categoría, fechas,
+ * costo) — ver ese hook para la lógica completa.
  */
 
 import { useState, useEffect } from "react";
@@ -40,6 +45,10 @@ import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemo
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
 import { resolverCamposAlCambiarVariante } from "./variantPriceSuggestionLogic";
 import { VariantSuggestionHint } from "./VariantSuggestionHint";
+import { useServiceLineInterpretationForForm } from "./useServiceLineInterpretationForForm";
+import { ServiceLineDoubtQuestion } from "./ServiceLineDoubtQuestion";
+import { ResolvedProductRow } from "./ResolvedProductRow";
+import { DOUBT_FIELD, construirPatchDeSeleccionManual, debeResetearTocadoTrasSeleccion } from "./serviceLineInterpretationLogic";
 
 // ─── Helpers de formato ──────────────────────────────────────────────────────
 
@@ -86,6 +95,15 @@ const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50`;
 // Calculado: solo lectura con estilo gris punteado — mockup estilo .calc
 const INPUT_CALCULADO = `${INPUT_BASE} border-slate-200 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default`;
 const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
+
+// Ids de los campos que puede señalar una duda grande de la línea inteligente (§4): si el
+// vendedor contesta "No", el foco tiene que volver a ese casillero para que lo complete.
+const IDS_DUDA_LINEA_INTELIGENTE = {
+    supplierId: "hotel-operador",
+    unitNetCost: "hotel-costo-noche",
+    checkIn: "hotel-checkin",
+    checkOut: "hotel-checkout",
+};
 
 // ─── Componente NewHotelBox ───────────────────────────────────────────────────
 
@@ -162,7 +180,7 @@ function NewHotelBox({ newProduct, onChange, suppliers }) {
 
 // ─── Componente principal HotelInlineForm ─────────────────────────────────────
 
-export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
+export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // Noches calculadas automáticamente a partir de las fechas (guía UX: "le gusta el conteo")
@@ -235,6 +253,19 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
     const [precioTocadoPorElUsuario, setPrecioTocadoPorElUsuario] = useState(isEditing);
     const [monedaTocadaPorElUsuario, setMonedaTocadaPorElUsuario] = useState(isEditing);
 
+    // ─── Texto de la CAJA de arriba, separado del nombre del producto (mockup firmado
+    // §3.3, revisión funcional B4) ──────────────────────────────────────────────────
+    // Antes, el mismo `form.hotelName` era a la vez "lo que se tipeó" Y "el nombre del
+    // producto elegido" — cuando la línea inteligente resolvía el producto, esto hacía
+    // que la caja de búsqueda REEMPLAZARA la frase del vendedor por el nombre limpio del
+    // hotel, algo que el mockup firmado NO pide: la caja conserva la frase tal cual
+    // ("sheraton iguazu doble desayuno...") y el nombre limpio va en un renglón "Producto
+    // *" aparte (ver más abajo, `ResolvedProductRow`). Mientras el vendedor tipea SIN que
+    // nada se haya resuelto todavía, este estado y `form.hotelName` viajan sincronizados
+    // (ver `handleSearchChange`) — solo se separan cuando la línea inteligente resuelve
+    // el producto sin que el vendedor haya elegido nada él mismo.
+    const [textoBuscador, setTextoBuscador] = useState(() => form.hotelName || "");
+
     // useEffect con dependencia en `sugerenciaVariante`: corre cada vez que llega una
     // respuesta nueva del hook (que ya viene debounced). NO se agregan los flags de
     // "tocado" ni campoPrecioVariante a las deps a propósito (eslint-disable): si el
@@ -270,6 +301,45 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sugerenciaVariante]);
 
+    // ─── LA LÍNEA INTELIGENTE (spec 2026-08-07, §3): mismo casillero de arriba ────────
+    // Mientras el vendedor escribe la frase completa en el buscador de hotel, este hook
+    // la manda a interpretar y va precargando en amarillo lo que el motor entendió —
+    // producto, operador, habitación/régimen/categoría, fechas y costo por noche.
+    const {
+        isThinking: pensandoLineaInteligente,
+        duda: dudaLineaInteligente,
+        onRespuestaDuda,
+        aiOverride,
+        productoResueltoPorLineaInteligente,
+        limpiarResolucionIA,
+        marcarTocado,
+        camposTocados,
+    } = useServiceLineInterpretationForForm({
+        reservaId,
+        serviceType: "Hotel",
+        isEditing,
+        canSeeCost,
+        form,
+        setForm,
+        setCamposSugeridos,
+        precioTocadoPorElUsuario,
+        monedaTocadaPorElUsuario,
+        idsDeCampoParaEnfocar: IDS_DUDA_LINEA_INTELIGENTE,
+        // Si la duda de precio se contesta "No", ese campo se vacía — hay que avisarle a
+        // la sugerencia POR HABITACIÓN (que usa sus PROPIOS flags) para que no lo vuelva
+        // a completar sola 300ms después, deshaciendo el "No" sin que el vendedor lo toque.
+        alVaciarCampoPorDuda: (campo) => {
+            if (campo === "unitNetCost" || campo === "unitSalePrice") setPrecioTocadoPorElUsuario(true);
+            if (campo === "currency") setMonedaTocadaPorElUsuario(true);
+        },
+        // Bug bloqueante B2: el costo que salió de LA FRASE cuenta como "tocado" para la
+        // sugerencia POR HABITACIÓN, para que no lo pise 300ms después.
+        alPrecargarPrecioDeLaFrase: (cual) => {
+            if (cual === "costo") setPrecioTocadoPorElUsuario(true);
+            if (cual === "moneda") setMonedaTocadaPorElUsuario(true);
+        },
+    });
+
     // C5: si el operador sugerido (de la última venta del buscador) NO está en la lista
     // de operadores de la reserva, lo agregamos como opción dinámica para que el <select>
     // no quede en amarillo con ninguna fila seleccionable.
@@ -293,15 +363,37 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult) => {
+    const handleSelectExisting = (catalogResult, meta) => {
         // Tomamos la sugerencia del lastSale (venta real) o del rateFallback (campos del Rate)
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
 
-        const supplierPublicId = sale.supplierPublicId || "";
-        const unitSalePrice = sale.salePrice != null ? String(sale.salePrice) : "";
-        // Si no tiene permiso de ver costos, netCost viene null del backend → no tocar el campo
-        const unitNetCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost;
-        const currency = sale.currency || "ARS";
+        // Bug bloqueante B3 (revisor funcional, Momento 4 §3.4): si este resultado vino
+        // de los PARECIDOS que ya eligió el motor, el resto de la frase (operador, precio)
+        // puede haber quedado precargado ANTES de elegir el producto — la venta de ESTE
+        // catálogo no puede pisar lo que ya está sugerido por la línea inteligente ni lo
+        // que el vendedor tocó. Fuera de ese camino (búsqueda normal, sin IA de por
+        // medio), el comportamiento es EXACTAMENTE el de siempre: pisa todo con la venta
+        // del producto recién elegido (nueva decisión, sugerencias vuelven a tener vía libre).
+        const { patch: patchVentaCatalogo, camposSugeridos: sugeridosVentaCatalogo } = meta?.fromAiOverride
+            ? construirPatchDeSeleccionManual({
+                  serviceType: "Hotel", sale, canSeeCost,
+                  camposActualmenteSugeridos: camposSugeridos, camposTocados,
+              })
+            : {
+                  patch: {
+                      supplierId: sale.supplierPublicId || "",
+                      supplierName: sale.supplierName || null,
+                      unitSalePrice: sale.salePrice != null ? String(sale.salePrice) : "",
+                      unitNetCost: canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost,
+                      currency: sale.currency || "ARS",
+                  },
+                  camposSugeridos: {
+                      supplierId: Boolean(sale.supplierPublicId),
+                      unitNetCost: canSeeCost && sale.netCost != null,
+                      unitSalePrice: Boolean(sale.salePrice),
+                      currency: Boolean(sale.currency),
+                  },
+              };
 
         setForm((prev) => ({
             ...prev,
@@ -312,27 +404,32 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
             rateId: catalogResult.ratePublicId,
             // Limpiamos el modo "producto nuevo" porque ahora el usuario eligió uno existente
             newCatalogProduct: null,
-            supplierId: supplierPublicId,
-            // Guardamos el nombre del proveedor sugerido (C5) por si no está en la lista de la reserva
-            supplierName: sale.supplierName || null,
-            unitSalePrice,
-            unitNetCost: canSeeCost ? unitNetCost : prev.unitNetCost,
-            currency,
+            ...patchVentaCatalogo,
         }));
+        // Mockup firmado §3.3 (elegir a mano sigue igual que siempre, revisión B4-c): la
+        // caja de arriba pasa a mostrar el nombre limpio del producto elegido.
+        setTextoBuscador(catalogResult.name || form.hotelName || "");
 
-        // Marcamos los campos que vinieron como sugerencia para pintar el fondo amarillo
-        setCamposSugeridos({
-            supplierId: Boolean(supplierPublicId),
-            unitNetCost: canSeeCost && sale.netCost != null,
-            unitSalePrice: Boolean(sale.salePrice),
-            currency: Boolean(sale.currency),
-        });
-        // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
-        // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
-        setPrecioTocadoPorElUsuario(false);
-        setMonedaTocadaPorElUsuario(false);
+        // MERGE, nunca reemplazo entero (bug bloqueante B3): así no se apaga el amarillo
+        // de habitación/fechas que esta pantalla ni mira acá.
+        setCamposSugeridos((prev) => ({ ...prev, ...sugeridosVentaCatalogo }));
+        // Producto NUEVO recién elegido: sueltan los flags para que el sistema vuelva a
+        // tener vía libre — PERO solo si el campo se pisó de verdad con la venta del
+        // catálogo (bug bloqueante B2, segunda vuelta): si el precio venía protegido
+        // porque salió de LA FRASE (Momento 4) y `sugeridosVentaCatalogo` no lo tocó,
+        // soltar el flag acá lo dejaría desprotegido y la sugerencia por habitación se lo
+        // comería 300ms después aunque siga pintado de amarillo.
+        if (debeResetearTocadoTrasSeleccion({ fromAiOverride: meta?.fromAiOverride, campo: campoPrecioVariante, camposSugeridosDeVenta: sugeridosVentaCatalogo })) {
+            setPrecioTocadoPorElUsuario(false);
+        }
+        if (debeResetearTocadoTrasSeleccion({ fromAiOverride: meta?.fromAiOverride, campo: "currency", camposSugeridosDeVenta: sugeridosVentaCatalogo })) {
+            setMonedaTocadaPorElUsuario(false);
+        }
         // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR HABITACIÓN
         // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
+        // El producto ya quedó resuelto: ni el desplegable de candidatos ni el renglón
+        // "Producto *" (Momento 3) siguen aplicando.
+        limpiarResolucionIA();
     };
 
     const handleCreateNew = (searchText) => {
@@ -356,11 +453,13 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
             },
             ...camposLimpios,
         }));
+        setTextoBuscador(searchText);
         // Los campos que quedaron limpios dejan de ser "sugeridos"; los preservados ya
         // estaban en false (si no, se habrían limpiado), así que todo queda en false.
         setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
         setPrecioTocadoPorElUsuario(false);
         setMonedaTocadaPorElUsuario(false);
+        limpiarResolucionIA();
         // "Crear nuevo" no tiene rateId: la sugerencia por habitación se apaga sola (el hook
         // no consulta sin producto elegido).
     };
@@ -370,6 +469,7 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
     // viejo mientras el texto del input ya apunta a otro nombre.
     // También limpiamos el producto nuevo si borra todo el texto.
     const handleSearchChange = (texto) => {
+        setTextoBuscador(texto);
         setForm((prev) => ({
             ...prev,
             hotelName: texto,
@@ -378,6 +478,10 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
+        // Cualquier tecleo invalida lo que la línea inteligente venía resolviendo sobre
+        // la IDENTIDAD del producto (Momento 3/4) — si el vendedor sigue escribiendo,
+        // está buscando de nuevo.
+        limpiarResolucionIA();
         // Si borra el texto, también limpiamos los sugeridos (no hay producto seleccionado)
         if (!texto) {
             setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
@@ -390,16 +494,35 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
         <div className="space-y-4">
 
             {/* === BUSCADOR (primer campo — mockup Momento 1) === */}
+            {/* Label "Escribilo como te salga" (§3.1, mockup firmado): la caja acepta una
+                palabra o la frase entera, y funciona igual en los dos casos. */}
             <ProductSearchField
                 serviceType="Hotel"
-                value={form.hotelName || ""}
+                value={textoBuscador}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing} // Al editar, el producto no cambia (solo los datos del servicio)
-                label="Hotel"
-                placeholder="Escribí el nombre del hotel..."
+                label="Escribilo como te salga"
+                placeholder="Ej: sheraton iguazú doble desayuno ola 48 usd del 12 al 15/9"
+                aiCandidates={aiOverride?.candidates ?? null}
+                aiCreateText={aiOverride?.createText ?? null}
+                externalThinking={pensandoLineaInteligente}
             />
+
+            {/* === RENGLÓN "Producto *" (Momento 3, §3.3 — mockup firmado) ===
+                Aparece SOLO cuando la línea inteligente reconoció el producto directo:
+                la caja de arriba sigue mostrando la frase tal cual, este renglón muestra
+                el nombre limpio, en amarillo, SOLO LECTURA (ver ResolvedProductRow.jsx
+                para el porqué — cambiar de producto se hace desde la caja de arriba). */}
+            {productoResueltoPorLineaInteligente && form.rateId && !form.newCatalogProduct && (
+                <ResolvedProductRow
+                    id="hotel-producto-resuelto"
+                    label="Hotel *"
+                    value={form.hotelName}
+                    dataTestId="hotel-producto-resuelto"
+                />
+            )}
 
             {/* === RECUADRO DE HOTEL NUEVO (solo aparece si el usuario elige "crear nuevo") === */}
             {form.newCatalogProduct && (
@@ -421,6 +544,7 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
+                            marcarTocado("supplierId");
                         }}
                         data-testid="hotel-supplier"
                         aria-label="Operador del hotel"
@@ -436,6 +560,11 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                             </option>
                         ))}
                     </select>
+                    {/* Duda grande de la línea inteligente (§4): una sola línea, Sí/No,
+                        pegada al campo que señala. Nunca traba Guardar (es ignorable). */}
+                    {dudaLineaInteligente?.field === DOUBT_FIELD.SUPPLIER && (
+                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
+                    )}
                 </div>
             )}
 
@@ -450,9 +579,13 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                     <input
                         id="hotel-checkin"
                         type="date"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.checkIn ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.checkIn || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, checkIn: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, checkIn: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, checkIn: false }));
+                            marcarTocado("checkIn");
+                        }}
                         data-testid="hotel-checkin"
                         aria-label="Fecha de entrada"
                     />
@@ -465,14 +598,25 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                     <input
                         id="hotel-checkout"
                         type="date"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.checkOut ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.checkOut || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, checkOut: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, checkOut: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, checkOut: false }));
+                            marcarTocado("checkOut");
+                        }}
                         min={form.checkIn || undefined}
                         data-testid="hotel-checkout"
                         aria-label="Fecha de salida"
                     />
+                    {/* La duda de fechas (§4) va debajo de la fila entera: puede afectar
+                        tanto entrada como salida ("¿del 12 al 15/9 es septiembre 2026?"). */}
                 </div>
+                {dudaLineaInteligente?.field === DOUBT_FIELD.DATES && (
+                    <div className="col-span-2 sm:col-span-5">
+                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
+                    </div>
+                )}
                 <div>
                     <label className={LABEL_BASE}>Noches</label>
                     {/* Calculado automáticamente — solo lectura (mockup estilo .calc) */}
@@ -534,9 +678,13 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                     </label>
                     <select
                         id="hotel-regimen"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.mealPlan ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.mealPlan || "Desayuno"}
-                        onChange={(event) => setForm((prev) => ({ ...prev, mealPlan: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, mealPlan: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, mealPlan: false }));
+                            marcarTocado("mealPlan");
+                        }}
                         required
                         data-testid="inline-hotel-meal-plan"
                         aria-label="Régimen de comidas del hotel"
@@ -554,9 +702,13 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                     </label>
                     <select
                         id="hotel-tipo-habitacion"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.roomType ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.roomType || "Doble"}
-                        onChange={(event) => setForm((prev) => ({ ...prev, roomType: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, roomType: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, roomType: false }));
+                            marcarTocado("roomType");
+                        }}
                         required
                         data-testid="inline-hotel-room-type"
                         aria-label="Tipo de habitación del hotel"
@@ -577,7 +729,12 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                         label="Categoría"
                         placeholder="Ej: Superior, Vista al mar"
                         value={form.roomCategory}
-                        onChange={(texto) => setForm((prev) => ({ ...prev, roomCategory: texto }))}
+                        onChange={(texto) => {
+                            setForm((prev) => ({ ...prev, roomCategory: texto }));
+                            setCamposSugeridos((prev) => ({ ...prev, roomCategory: false }));
+                            marcarTocado("roomCategory");
+                        }}
+                        isSuggested={Boolean(camposSugeridos.roomCategory)}
                     />
                 </div>
             </div>
@@ -611,6 +768,9 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
                             genérico "Último precio" de la venta del producto — este SÍ sabe
                             si el precio es de esta habitación o de una parecida (V9=A). */}
                         <VariantSuggestionHint text={hintVariante} />
+                        {dudaLineaInteligente?.field === DOUBT_FIELD.PRICE && (
+                            <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
+                        )}
                     </div>
                 )}
                 <div>

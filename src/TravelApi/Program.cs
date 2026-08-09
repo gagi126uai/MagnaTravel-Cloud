@@ -456,6 +456,42 @@ builder.Services.AddRateLimiter(options =>
         });
     });
 
+    // "ai-test" (spec firmada 2026-08-07 §15, M-31): tope de intentos del boton "Probar conexion".
+    // Ese boton hace que el SERVIDOR le pegue a una direccion escrita por el usuario, asi que aunque
+    // solo entre un Admin, se acota cuantas veces por rato se puede disparar. 12 en 5 minutos alcanza
+    // de sobra para configurar (probar, corregir, volver a probar) y no sirve para barrer nada.
+    options.AddPolicy("ai-test", context =>
+    {
+        var partitionKey = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                           ?? ResolveClientIpPartitionKey(context);
+
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 12,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+
+    // "ai-line" (spec firmada 2026-08-07 §3, M-20): tope de la caja que entiende lo que escribe el
+    // vendedor. Cada llamada gasta cuota del proveedor de inteligencia artificial, asi que se acota
+    // POR USUARIO: 40 por minuto es mucho mas de lo que se puede cargar a mano en un minuto y evita
+    // que un bucle del navegador (o una pestaña colgada reintentando) se coma la cuota de la agencia.
+    options.AddPolicy("ai-line", context =>
+    {
+        var partitionKey = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                           ?? ResolveClientIpPartitionKey(context);
+
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 40,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+
     options.AddPolicy("afip", context =>
     {
         var isAuth = context.User.Identity?.IsAuthenticated == true;
@@ -494,16 +530,19 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<IAfipService, AfipService>();
 
 // ============================================================
-// ADR-016 F0a — Cerebro del copiloto de IA (detras del flag EnableAiCopilot, default OFF).
+// Cerebro de la inteligencia artificial (ADR-016 F0a + adenda firmada del 2026-08-07 §15).
 //
-// IMPORTANTE: registrar estos servicios NO los invoca. Con el flag OFF, nadie llama a
-// IAiAssistantService, asi que el cerebro queda inerte y el comportamiento es byte-identico.
-// El arranque NO hace NINGUNA llamada a la IA (no hay hosted service ni warmup aca).
+// IMPORTANTE: registrar estos servicios NO los invoca. El arranque NO hace NINGUNA llamada a la
+// IA (no hay hosted service ni warmup aca).
 //
-// La config del proveedor (base_url, key, modelo, timeout...) se lee de variables de entorno
-// con el patron del repo (["Ai:X"] ?? ["Ai__X"]). La API KEY es un SECRETO: solo por env,
-// nunca a la DB, nunca logueada. Cambiar de proveedor = editar .env + restart, cero codigo
-// (la unica implementacion del provider es OpenAI-compatible y esta 100% parametrizada).
+// DE DONDE SALE LA CONFIGURACION (cambio del 2026-08-07): la pantalla "Configuracion →
+// Inteligencia artificial" MANDA; estas variables de entorno quedan como RESPALDO para las
+// instalaciones donde la clave la dejo el tecnico. Quien decide cual gana en cada llamada es
+// IAiConnectionResolver, y lo resuelve LEYENDO la base cada vez (nada de config congelada al
+// arrancar, nada de cache que quede viejo). Ver la adenda a ADR-016 §11.
+//
+// El viejo interruptor EnableAiCopilot NO gobierna mas nada (M-33): la unica pregunta es
+// "¿hay configuracion de IA utilizable?".
 // ============================================================
 var aiConnectionOptions = new AiConnectionOptions
 {
@@ -515,12 +554,43 @@ var aiConnectionOptions = new AiConnectionOptions
     MaxTokens = ReadIntConfig(builder.Configuration, "Ai:MaxTokens", "Ai__MaxTokens", defaultValue: 512),
     MaxRetries = ReadIntConfig(builder.Configuration, "Ai:MaxRetries", "Ai__MaxRetries", defaultValue: 2),
 };
-// Singleton: la config no cambia en runtime (cambiar de proveedor implica restart, por diseno).
+// Singleton: es el RESPALDO leido del servidor, y eso si se congela al arrancar (cambiar una
+// variable de entorno siempre implico reiniciar). Lo que NO se congela es la eleccion del dueño.
 builder.Services.AddSingleton(aiConnectionOptions);
-// Typed HttpClient para el provider (mismo patron que IAfipService). El timeout efectivo lo
-// controla el provider por llamada via CancellationToken; el del HttpClient queda holgado.
-builder.Services.AddHttpClient<IAiChatProvider, OpenAiCompatibleChatProvider>();
+// Revisor de direcciones (anti-SSRF): sin estado, se comparte. Lo usan el probador y el guardado.
+builder.Services.AddSingleton<AiEndpointGuard>();
+// Scoped porque lee la base (mismo patron que el resto de los servicios que tocan AppDbContext).
+builder.Services.AddScoped<IAiConnectionResolver, AiConnectionResolver>();
+builder.Services.AddScoped<IAiSettingsService, AiSettingsService>();
+// Typed HttpClient para el provider y para el probador (mismo patron que IAfipService). El timeout
+// efectivo lo controla cada uno por llamada via CancellationToken; el del HttpClient queda holgado.
+//
+// DOS CANDADOS que valen para los dos clientes (hallazgo de seguridad de la review, 2026-08-09):
+//
+//  1. NO SEGUIR REDIRECCIONES. Por default, HttpClient sigue solo un "302 mudate para alla". Eso
+//     esquivaria por completo la revision de direccion (AiEndpointGuard): alcanzaba con que un
+//     servidor de afuera contestara "seguime a https://169.254.169.254/" para que el servidor
+//     terminara pegandole igual a la red interna. Con esto apagado, un 302 es simplemente una
+//     respuesta que no es exitosa y ahi termina.
+//  2. TACHAR la cabecera Authorization en los logs de HttpClient. Es la cabecera donde viaja la
+//     clave del proveedor; sin esto, subir el nivel de log del cliente HTTP la escupiria al archivo.
+builder.Services.AddHttpClient<IAiChatProvider, OpenAiCompatibleChatProvider>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+    .RedactLoggedHeaders(new[] { "Authorization" });
+builder.Services.AddHttpClient<IAiConnectionTester, AiConnectionTester>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+    .RedactLoggedHeaders(new[] { "Authorization" });
 builder.Services.AddScoped<IAiAssistantService, AiAssistantService>();
+
+// "La linea inteligente" (spec firmada 2026-08-07 §3, M-20 a M-23 + M-27): el primer consumidor real
+// del cerebro. El tiempo de espera es CORTO y propio (el vendedor esta parado frente a la ficha), por
+// eso no reusa el timeout general de las llamadas a la IA.
+builder.Services.AddSingleton(new ServiceLineInterpretationOptions
+{
+    TimeoutSeconds = ReadIntConfig(
+        builder.Configuration, "Ai:ServiceLineTimeoutSeconds", "Ai__ServiceLineTimeoutSeconds", defaultValue: 8),
+});
+builder.Services.AddScoped<IServiceLineInterpreter, ServiceLineInterpreter>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IApprovalRequestService, ApprovalRequestService>();

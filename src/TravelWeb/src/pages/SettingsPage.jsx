@@ -30,7 +30,8 @@ import {
   TerminalSquare,
   Settings2,
   ShieldAlert,
-  ShieldCheck
+  ShieldCheck,
+  Sparkles
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
@@ -43,6 +44,8 @@ import RolesPermissionsTab from "../components/RolesPermissionsTab";
 import AuditPage from "./AuditPage";
 import { getPublicId } from "../lib/publicIds";
 import { ListaCuentasBancarias } from "../features/bank-accounts/components/ListaCuentasBancarias";
+import AiSettingsTab from "../features/ai-settings/components/AiSettingsTab";
+import { puedeVerConfiguracionIa } from "../features/ai-settings/lib/aiSettingsPresentation.js";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
@@ -152,8 +155,11 @@ const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
   { id: "operations", label: "Operativa y Caja", icon: Settings2 },
   { id: "afip", label: "Facturación", icon: FileText },
-  { id: "approvals", label: "Workflows de aprobación", icon: ShieldCheck, requiredPermission: "approvals.policies" },
   { id: "whatsapp", label: "WhatsApp Bot", icon: Smartphone },
+  // §15.1 de la spec firmada 2026-08-07: solapa nueva, al lado de Facturación y WhatsApp
+  // Bot, SOLO Admin (adminOnly abajo en isTabVisible — un vendedor no la ve, ni apagada).
+  { id: "ai", label: "Inteligencia artificial", icon: Sparkles, adminOnly: true },
+  { id: "approvals", label: "Workflows de aprobación", icon: ShieldCheck, requiredPermission: "approvals.policies" },
   { id: "logs", label: "Logs y Programación", icon: TerminalSquare }
 ];
 
@@ -227,8 +233,14 @@ export default function SettingsPage() {
     if (["users", "roles", "logs", "programming"].includes(tabId)) {
       return adminUser;
     }
-    // B1.15 Fase B'': tabs nuevos pueden declarar requiredPermission.
     const tab = tabs.find((t) => t.id === tabId);
+    // §15.1 spec firmada 2026-08-07: "Inteligencia artificial" es solo-Admin y la solapa
+    // NO existe para nadie mas (ni apagada). puedeVerConfiguracionIa es la misma regla,
+    // como funcion pura y testeada en features/ai-settings/lib/aiSettingsPresentation.js.
+    if (tab?.adminOnly) {
+      return puedeVerConfiguracionIa(adminUser);
+    }
+    // B1.15 Fase B'': tabs nuevos pueden declarar requiredPermission.
     if (tab?.requiredPermission) {
       return hasPermission(tab.requiredPermission);
     }
@@ -736,6 +748,9 @@ Ajustá cómo funciona el sistema para tu agencia.
 
         {/* --- WHATSAPP TAB --- */}
         {activeTab === "whatsapp" && <WhatsAppBotTab />}
+
+        {/* --- INTELIGENCIA ARTIFICIAL TAB --- */}
+        {activeTab === "ai" && <AiSettingsTab />}
 
         {/* --- LOGS TAB --- */}
         {activeTab === "logs" && <LogsDashboard />}

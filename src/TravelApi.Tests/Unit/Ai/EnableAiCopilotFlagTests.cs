@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -11,24 +12,23 @@ using Xunit;
 namespace TravelApi.Tests.Unit.Ai;
 
 /// <summary>
-/// Tests del flag maestro del copiloto (<c>EnableAiCopilot</c>, ADR-016 F0a) en el panel de
-/// Configuracion. Verifican: patch-like (omitir no pisa), GET lo expone, y la regresion clave
-/// de F0a -> con el flag OFF NADIE llama al cerebro.
+/// La muerte del interruptor <c>EnableAiCopilot</c> (M-33 de la spec firmada 2026-08-07 §15.7).
 ///
-/// <para>Son tests UNITARIOS sobre el service directo con EF Core InMemory: no tocan la nube,
-/// Postgres ni HTTP. Mismo estilo que <c>OperationalFinanceSettingsFlagsTests</c>.</para>
+/// <para><b>Que cambio</b>: antes habia una llave en Configuracion para "prender la IA", ademas de
+/// las variables del servidor donde se cargaba la conexion. Tener dos lugares para prender lo mismo
+/// es justo lo que la orden del dueño prohibe ("basta de llaves", la misma que mato a
+/// <c>enableCatalogFindOrCreate</c> el 2026-08-06).</para>
+///
+/// <para><b>La regla nueva es una sola</b>: si hay una inteligencia artificial configurada, las
+/// ayudas funcionan; si no hay, no funcionan y el sistema anda igual. Quien contesta esa pregunta es
+/// <c>IAiConnectionResolver.IsUsableAsync</c>, NO una llave.</para>
+///
+/// <para>Estos tests cuidan las dos mitades: que la llave vieja ya no gobierne nada ni se muestre en
+/// ningun lado, y que la decision nueva funcione con la llave apagada.</para>
 /// </summary>
 public class EnableAiCopilotFlagTests
 {
-    private static AppDbContext BuildDbContext()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .ConfigureWarnings(w => w.Ignore(
-                Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-        return new AppDbContext(options);
-    }
+    private static AppDbContext BuildDbContext() => AiTestDoubles.BuildDbContext();
 
     private static async Task<OperationalFinanceSettings> SeedSettingsAsync(
         AppDbContext db,
@@ -52,122 +52,103 @@ public class EnableAiCopilotFlagTests
     };
 
     // ============================================================
-    // Default OFF
+    // La llave vieja salio de la superficie
     // ============================================================
 
     [Fact]
-    public void NewSettings_AiCopilotFlag_DefaultsOff()
+    public void LaConfiguracionOperativa_YaNoOfreceElInterruptorDeIa()
     {
-        var settings = new OperationalFinanceSettings();
-        Assert.False(settings.EnableAiCopilot);
+        // Si alguien lo vuelve a agregar al contrato, este test se rompe y obliga a releer §15.7.
+        var propertyNames = typeof(OperationalFinanceSettingsDto)
+            .GetProperties()
+            .Select(property => property.Name)
+            .ToList();
+
+        Assert.DoesNotContain("EnableAiCopilot", propertyNames);
     }
 
-    // ============================================================
-    // Patch-like: omitir el flag NO lo pisa
-    // ============================================================
+    [Fact]
+    public void LaConfiguracionDeFacturacion_TampocoLoExpone()
+    {
+        var propertyNames = typeof(AfipSettingsResponse)
+            .GetProperties()
+            .Select(property => property.Name)
+            .ToList();
+
+        Assert.DoesNotContain("EnableAiCopilot", propertyNames);
+    }
 
     [Fact]
-    public async Task UpdateAsync_OmittedAiCopilotFlag_DoesNotOverwriteCurrentValue()
+    public async Task GuardarLaConfiguracionOperativa_NoTocaLaColumnaVieja()
     {
         await using var db = BuildDbContext();
-        // El admin ya prendio el copiloto.
-        await SeedSettingsAsync(db, s => s.EnableAiCopilot = true);
+        // Una instalacion que en su momento prendio la llave: la columna sigue ahi, con su valor.
+        await SeedSettingsAsync(db, settings => settings.EnableAiCopilot = true);
         var service = new OperationalFinanceSettingsService(db);
 
-        var request = BaseRequest();
-        Assert.Null(request.EnableAiCopilot); // el PUT no incluye el flag
+        await service.UpdateAsync(BaseRequest(), CancellationToken.None);
 
-        var result = await service.UpdateAsync(request, CancellationToken.None);
-
-        // Omitir != apagar: el valor previo (true) sigue intacto.
-        Assert.True(result.EnableAiCopilot);
+        // La columna queda INERTE: ni se apaga ni se prende sola. Nadie la lee.
         db.ChangeTracker.Clear();
         var persisted = await db.OperationalFinanceSettings.SingleAsync();
         Assert.True(persisted.EnableAiCopilot);
     }
 
     // ============================================================
-    // Prender / apagar explicito (sin validacion cruzada en F0a)
+    // La decision nueva: manda "¿hay IA configurada?"
     // ============================================================
 
     [Fact]
-    public async Task UpdateAsync_EnableAiCopilot_Persists_NoCrossValidation()
+    public async Task ConLaLlaveVieja_ApagadaPeroConIaConfigurada_LasAyudasFuncionan()
+    {
+        await using var db = BuildDbContext();
+        await SeedSettingsAsync(db, settings => settings.EnableAiCopilot = false);
+        var protector = AiTestDoubles.BuildRealProtector();
+        db.AiSettings.Add(new AiSettings
+        {
+            Provider = AiProviderKey.Groq,
+            BaseUrl = "https://api.groq.com/openai/v1",
+            Model = "llama-3.3-70b-versatile",
+            EncryptedApiKey = protector.ProtectString("gsk_de_la_pantalla"),
+            ApiKeyPrefix = "gsk_",
+        });
+        await db.SaveChangesAsync();
+
+        var resolver = AiTestDoubles.BuildResolver(db, protector, AiTestDoubles.EmptyEnvironmentOptions());
+
+        // La llave vieja esta apagada y NO importa: hay IA cargada, entonces hay IA.
+        Assert.True(await resolver.IsUsableAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ConLaLlaveVieja_PrendidaPeroSinIaConfigurada_NoHayAyudas()
+    {
+        await using var db = BuildDbContext();
+        await SeedSettingsAsync(db, settings => settings.EnableAiCopilot = true);
+
+        var resolver = AiTestDoubles.BuildResolver(
+            db, AiTestDoubles.BuildRealProtector(), AiTestDoubles.EmptyEnvironmentOptions());
+
+        // Prender una llave nunca alcanzo para que la IA funcione, y ahora ni siquiera se mira.
+        Assert.False(await resolver.IsUsableAsync(CancellationToken.None));
+    }
+
+    // ============================================================
+    // Regresion: el camino de settings sigue sin tocar el cerebro
+    // ============================================================
+
+    [Fact]
+    public async Task GuardarConfiguracionOperativa_NuncaLlamaALaIa()
     {
         await using var db = BuildDbContext();
         await SeedSettingsAsync(db);
         var service = new OperationalFinanceSettingsService(db);
 
-        var request = BaseRequest();
-        request.EnableAiCopilot = true;
-
-        // En F0a el flag no depende de ningun otro: prenderlo solo no debe lanzar.
-        var result = await service.UpdateAsync(request, CancellationToken.None);
-
-        Assert.True(result.EnableAiCopilot);
-        db.ChangeTracker.Clear();
-        var persisted = await db.OperationalFinanceSettings.SingleAsync();
-        Assert.True(persisted.EnableAiCopilot);
-    }
-
-    [Fact]
-    public async Task UpdateAsync_ExplicitFalseAiCopilotFlag_TurnsItOff()
-    {
-        await using var db = BuildDbContext();
-        await SeedSettingsAsync(db, s => s.EnableAiCopilot = true);
-        var service = new OperationalFinanceSettingsService(db);
-
-        var request = BaseRequest();
-        request.EnableAiCopilot = false; // false explicito != omitido
-
-        var result = await service.UpdateAsync(request, CancellationToken.None);
-
-        Assert.False(result.EnableAiCopilot);
-        db.ChangeTracker.Clear();
-        var persisted = await db.OperationalFinanceSettings.SingleAsync();
-        Assert.False(persisted.EnableAiCopilot);
-    }
-
-    // ============================================================
-    // GET expone el flag
-    // ============================================================
-
-    [Fact]
-    public async Task GetAsync_ExposesAiCopilotFlag()
-    {
-        await using var db = BuildDbContext();
-        await SeedSettingsAsync(db, s => s.EnableAiCopilot = true);
-        var service = new OperationalFinanceSettingsService(db);
-
-        var dto = await service.GetAsync(CancellationToken.None);
-
-        Assert.True(dto.EnableAiCopilot);
-    }
-
-    // ============================================================
-    // Regresion F0a: con el flag OFF, configurar settings NO llama al cerebro.
-    //
-    // En F0a no existe todavia un caller del copiloto (el piloto llega en F1), asi que el
-    // unico riesgo de regresion seria que el flujo de settings tocara la IA "sin querer".
-    // Verificamos que correr el GET y el UPDATE con el flag OFF deja el FakeAiChatProvider
-    // con cero invocaciones: nada del camino de settings toca el cerebro.
-    // ============================================================
-
-    [Fact]
-    public async Task SettingsFlow_WithAiCopilotOff_NeverInvokesTheBrain()
-    {
-        await using var db = BuildDbContext();
-        await SeedSettingsAsync(db, s => s.EnableAiCopilot = false);
-        var service = new OperationalFinanceSettingsService(db);
-
-        // Un fake "armado" pero que nadie deberia tocar en este flujo.
         var brain = new FakeAiChatProvider();
 
         await service.GetAsync(CancellationToken.None);
-        var request = BaseRequest();
-        request.EnableAiCopilot = false;
-        await service.UpdateAsync(request, CancellationToken.None);
+        await service.UpdateAsync(BaseRequest(), CancellationToken.None);
 
-        // El cerebro nunca fue invocado por el camino de settings.
         Assert.Equal(0, brain.CallCount);
     }
 }

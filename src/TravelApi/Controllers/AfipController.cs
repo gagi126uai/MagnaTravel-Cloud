@@ -48,8 +48,7 @@ public class AfipController : ControllerBase
         return Ok(MapResponse(
             settings,
             financeSettings.EnableMultiCurrencyInvoicing,
-            financeSettings.EnableCancellationDebitNote,
-            financeSettings.EnableAiCopilot));
+            financeSettings.EnableCancellationDebitNote));
     }
 
     public class AfipSettingsRequest
@@ -117,8 +116,7 @@ public class AfipController : ControllerBase
             return Ok(MapResponse(
                 settings,
                 financeSettings.EnableMultiCurrencyInvoicing,
-                financeSettings.EnableCancellationDebitNote,
-                financeSettings.EnableAiCopilot));
+                financeSettings.EnableCancellationDebitNote));
         }
         catch (ArgumentException ex)
         {
@@ -133,14 +131,12 @@ public class AfipController : ControllerBase
     private static AfipSettingsResponse MapResponse(
         AfipSettings settings,
         bool enableMultiCurrencyInvoicing,
-        bool enableCancellationDebitNote,
-        bool enableAiCopilot)
+        bool enableCancellationDebitNote)
     {
         return new AfipSettingsResponse
         {
             EnableMultiCurrencyInvoicing = enableMultiCurrencyInvoicing,
             EnableCancellationDebitNote = enableCancellationDebitNote,
-            EnableAiCopilot = enableAiCopilot,
 
             Cuit = settings.Cuit,
             PuntoDeVenta = settings.PuntoDeVenta,

@@ -100,14 +100,19 @@ public static class WipeGroups
     /// Tablas del grupo "configuracion" (AFIP, políticas de aprobación, bot de WhatsApp, ajustes generales).
     /// Fuente única compartida entre <c>SystemDataWipeService</c> (las trunca) y <c>SystemDataRestoreService</c>
     /// (Parte B, "restaurar desde la app": es la lista blanca de tablas permitidas para el modo <c>real</c> de
-    /// la restauración — data-only, solo sobre estas 5 tablas cuando están vacías, ver el comentario de
+    /// la restauración — data-only, solo sobre estas tablas cuando están vacías, ver el comentario de
     /// <c>ISystemDataRestoreService</c> para la justificación completa de por qué se restringe a este grupo).
-    /// Ninguna de estas 5 tablas tiene foreign keys hacia otra tabla del sistema (son ajustes standalone), por
+    /// Ninguna de estas tablas tiene foreign keys hacia otra tabla del sistema (son ajustes standalone), por
     /// eso un restore data-only tabla-por-tabla es seguro sin preocuparse por el orden.
+    ///
+    /// <para><b>AiSettings entró acá el 2026-08-09</b> (review de seguridad de la obra M-28): si "borrar la
+    /// configuración" dejaba viva la clave de la inteligencia artificial, una instalación que se entrega o se
+    /// limpia se quedaba con la credencial del dueño anterior adentro. Va con el resto de la configuración.</para>
     /// </summary>
     public static readonly string[] ConfiguracionTables =
     {
         "AgencySettings", "AfipSettings", "OperationalFinanceSettings", "ApprovalPolicies", "WhatsAppBotConfigs",
+        "AiSettings",
     };
 
     /// <summary>
@@ -123,5 +128,6 @@ public static class WipeGroups
         ["OperationalFinanceSettings"] = "los ajustes operativos",
         ["ApprovalPolicies"] = "las reglas de aprobación",
         ["WhatsAppBotConfigs"] = "la configuración del bot de WhatsApp",
+        ["AiSettings"] = "la configuración de inteligencia artificial",
     };
 }

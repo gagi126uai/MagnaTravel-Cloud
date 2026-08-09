@@ -23,6 +23,13 @@ public sealed class FakeAiChatProvider : IAiChatProvider
     public int CallCount { get; private set; }
 
     /// <summary>
+    /// El ultimo pedido que recibio, guardado para poder MIRAR que texto sale del servidor hacia el
+    /// proveedor. Lo usan los tests de privacidad de la linea inteligente (M-21): la unica forma de
+    /// afirmar "aca no viajan datos de pasajeros" es leer el prompt de verdad.
+    /// </summary>
+    public AiChatRequest? LastRequest { get; private set; }
+
+    /// <summary>
     /// Construye el fake con la secuencia de resultados que va a devolver, uno por llamada.
     /// Si se lo invoca mas veces que resultados cargados, devuelve un degradado generico
     /// (en vez de explotar), para que un test mal escrito falle por el assert, no por el fake.
@@ -35,6 +42,7 @@ public sealed class FakeAiChatProvider : IAiChatProvider
     public Task<AiChatResult> ChatAsync(AiChatRequest request, CancellationToken cancellationToken)
     {
         CallCount++;
+        LastRequest = request;
         var result = _scriptedResults.Count > 0
             ? _scriptedResults.Dequeue()
             : AiChatResult.Degraded("fake sin mas resultados cargados");

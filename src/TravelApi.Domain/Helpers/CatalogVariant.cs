@@ -237,6 +237,38 @@ public static class CatalogVariant
     }
 
     // ============================================================
+    // ¿Es una de las opciones que ofrece el formulario? (lista blanca)
+    // ============================================================
+
+    /// <summary>
+    /// Las opciones CERRADAS de cada desplegable, ya normalizadas. Existen como listas explicitas
+    /// porque los tres <c>Normalize*</c> de arriba, cuando no reconocen lo que les pasan, devuelven el
+    /// texto tal cual (<c>_ =&gt; raw</c>). Eso esta bien para guardar lo que escribio una persona, pero
+    /// NO alcanza cuando quien "escribe" es una sugerencia automatica: sin una lista blanca, un
+    /// "unknown" o un "null" del que interpreta terminaria mostrandose como si fuera una habitacion.
+    /// </summary>
+    private static readonly HashSet<string> KnownRoomTypes = new(StringComparer.Ordinal)
+    { "simple", "doble", "twin", "triple", "cuadruple", "familiar", "suite" };
+
+    private static readonly HashSet<string> KnownMealPlans = new(StringComparer.Ordinal)
+    { "solo_alojamiento", "desayuno", "media_pension", "pension_completa", "todo_incluido" };
+
+    private static readonly HashSet<string> KnownCabins = new(StringComparer.Ordinal)
+    { "economica", "economica_premium", "ejecutiva", "primera" };
+
+    /// <summary>True si lo escrito corresponde a una habitacion de las que ofrece el desplegable.</summary>
+    public static bool IsKnownRoomType(string? roomType)
+        => KnownRoomTypes.Contains(NormalizeRoomType(roomType));
+
+    /// <summary>True si lo escrito corresponde a un regimen de los que ofrece el desplegable.</summary>
+    public static bool IsKnownMealPlan(string? mealPlan)
+        => KnownMealPlans.Contains(NormalizeMealPlan(mealPlan));
+
+    /// <summary>True si lo escrito corresponde a una cabina de las que ofrece el desplegable.</summary>
+    public static bool IsKnownCabin(string? cabinClass)
+        => KnownCabins.Contains(NormalizeCabin(cabinClass));
+
+    // ============================================================
     // Etiquetas para mostrar (criollo, las arma el motor)
     // ============================================================
 

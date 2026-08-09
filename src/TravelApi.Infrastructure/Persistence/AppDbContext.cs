@@ -26,6 +26,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         "TokenHash",
         "ReplacedByTokenHash",
         "WebhookSecret",
+        // Clave del proveedor de IA (ya viaja cifrada, pero ni el texto cifrado tiene por que
+        // quedar duplicado en el historial de auditoria).
+        "EncryptedApiKey",
         "RefreshToken",
         "AccessToken",
         "CsrfToken"
@@ -288,6 +291,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<SupplierInvoicePaymentApplicationReversal> SupplierInvoicePaymentApplicationReversals => Set<SupplierInvoicePaymentApplicationReversal>();
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
     public DbSet<OperationalFinanceSettings> OperationalFinanceSettings => Set<OperationalFinanceSettings>();
+    // Configuracion de la inteligencia artificial de esta instalacion (spec firmada 2026-08-07 §15,
+    // M-28). Fila unica, con la clave del proveedor CIFRADA (ver AiSettings).
+    public DbSet<AiSettings> AiSettings => Set<AiSettings>();
     public DbSet<CommissionRule> CommissionRules => Set<CommissionRule>();
     public DbSet<Country> Countries => Set<Country>();
     public DbSet<Destination> Destinations => Set<Destination>();

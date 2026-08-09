@@ -15,7 +15,25 @@
  * Quien no tiene permiso `cobranzas.see_cost` recibe `netCost = null`
  * del backend y ve el precio de VENTA en el dropdown (nunca el costo).
  *
- * Se usa dentro de ServiceInlineCard para el tab Hotel (y en el futuro los otros 4 tipos).
+ * Se usa dentro de ServiceInlineCard para los 5 tipos de servicio.
+ *
+ * LÍNEA INTELIGENTE (spec firmada 2026-08-07, §3, Q1=A): este es el MISMO casillero que
+ * usa la interpretación por IA — no hay una caja aparte. Dos props opcionales lo conectan
+ * con esa obra, sin que este componente sepa nada de IA ni de reservas:
+ *   - `aiCandidates` / `aiCreateText`: cuando el motor entendió la frase pero el producto
+ *     todavía no existe (Momento 4, §3.4), el padre manda los parecidos QUE YA ELIGIÓ EL
+ *     MOTOR (mismo contrato que el buscador de catálogo) para reemplazar la búsqueda
+ *     propia de este campo — y el texto de "crear ..." usa el nombre limpio que sacó el
+ *     motor, no la frase entera que escribió el vendedor.
+ *   - `externalThinking`: para que el "Buscando…" sutil (ya firmado, Ronda 2 2026-06-06)
+ *     siga encendido mientras el motor todavía está pensando, aunque la búsqueda propia
+ *     de este campo ya haya terminado.
+ *
+ * IMPORTANTE (mockup firmado §3.3, revisión funcional): cuando el motor reconoce el
+ * producto directo (Momento 3), este campo NO cambia su `value` — la frase que escribió
+ * el vendedor se conserva tal cual arriba. El producto resuelto se muestra aparte, en un
+ * renglón "Producto *" propio que arma cada *InlineForm (ver
+ * useServiceLineInterpretationForForm.js, `productoResueltoPorLineaInteligente`).
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -173,6 +191,11 @@ export function ProductSearchField({
     disabled,
     label,
     placeholder,
+    // Los props de abajo son SOLO para la línea inteligente (ver comentario de arriba).
+    // Todos opcionales: sin ellos, este campo funciona exactamente como siempre.
+    aiCandidates = null,
+    aiCreateText = null,
+    externalThinking = false,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -225,6 +248,17 @@ export function ProductSearchField({
         }
     }, [serviceType]);
 
+    // Línea inteligente (Momento 4, §3.4): en cuanto llegan candidatos elegidos por el
+    // motor, se abre el desplegable solo — es la misma lista de siempre, con "crear ..."
+    // al final, para que el vendedor decida sin tener que volver a escribir nada.
+    useEffect(() => {
+        if (Array.isArray(aiCandidates)) {
+            setShowDropdown(true);
+            setKeyboardIndex(-1);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [aiCandidates]);
+
     // Debounce: espera DEBOUNCE_MS desde el último tecleo antes de buscar.
     // Condiciones para NO buscar:
     //   1. skipNextSearch: recién elegimos un resultado (evita re-búsqueda por el setState del nombre).
@@ -254,10 +288,21 @@ export function ProductSearchField({
     // Limpiar el timer de blur al desmontar para no hacer setState en componente muerto
     useEffect(() => () => clearTimeout(blurTimer.current), []);
 
+    // Línea inteligente (Momento 4, §3.4): con candidatos del motor puestos, esta lista
+    // reemplaza a la búsqueda propia del campo — son los parecidos QUE YA ELIGIÓ EL
+    // MOTOR, más finos que buscar la frase entera tal cual la escribió el vendedor.
+    // Declarado ACÁ (antes de handleSelectExisting) porque ese handler lo usa.
+    const overrideActivo = Array.isArray(aiCandidates);
+
     const handleSelectExisting = (result) => {
         skipNextSearch.current = true;
         setKeyboardIndex(-1);
-        onSelectExisting(result);
+        // Le avisamos al padre si este resultado vino de los candidatos QUE YA ELIGIÓ EL
+        // MOTOR (Momento 4, `aiCandidates`) o de una búsqueda normal — el padre lo usa
+        // para decidir si tiene que respetar lo que la línea inteligente ya sugirió
+        // (bug bloqueante B3: elegir un parecido no puede pisar lo que YA está en
+        // amarillo por la interpretación, ni lo que el vendedor tocó).
+        onSelectExisting(result, { fromAiOverride: overrideActivo });
         setShowDropdown(false);
     };
 
@@ -269,6 +314,12 @@ export function ProductSearchField({
 
     const handleFocus = () => {
         clearTimeout(blurTimer.current);
+        // Con candidatos del motor puestos, un blur accidental (ej. Alt+Tab) no debería
+        // perder la propuesta: volver a enfocar la reabre igual.
+        if (Array.isArray(aiCandidates)) {
+            setShowDropdown(true);
+            return;
+        }
         // Re-abrir el dropdown solo si el usuario ya interactuó antes (escribió algo)
         // y hay resultados en caché. En modo edición (sin haber tipeado), el foco
         // no debe disparar ninguna apertura.
@@ -285,10 +336,23 @@ export function ProductSearchField({
         }, 150);
     };
 
+    // resultadosVisibles/textoParaCrear derivan de `overrideActivo` (declarado más arriba).
+    const resultadosVisibles = overrideActivo ? aiCandidates : results;
+    // El texto de "crear ..." también usa el nombre limpio que sacó el motor
+    // (`productSearchText`, sin mayúsculas ni comillas raras) en vez de la frase cruda.
+    const textoParaCrear = overrideActivo ? (aiCreateText || "") : (value || "").trim();
+    // El "Buscando…" sutil se reusa: sigue encendido mientras el motor todavía piensa,
+    // aunque la búsqueda propia de este campo ya haya terminado (spec §3.2).
+    const pensando = isSearching || externalThinking;
+
     // Cantidad total de opciones navegables: resultados existentes + opción "crear"
-    // La opción "crear" solo aparece cuando el texto es suficientemente largo y no está buscando.
-    const showCreateOption = !isSearching && (value || "").trim().length >= MIN_QUERY_LENGTH;
-    const totalOptions = results.length + (showCreateOption ? 1 : 0);
+    // Con candidatos del motor, "crear" siempre está disponible (el motor ya armó el
+    // nombre limpio); sin override, sigue el criterio de siempre (texto suficiente y sin
+    // estar buscando todavía).
+    const showCreateOption = overrideActivo
+        ? true
+        : !isSearching && (value || "").trim().length >= MIN_QUERY_LENGTH;
+    const totalOptions = resultadosVisibles.length + (showCreateOption ? 1 : 0);
 
     // Maneja la navegación con teclado dentro del dropdown (↑↓ Enter Esc).
     // Esto permite que usuarios de teclado / lectores de pantalla usen el buscador sin mouse.
@@ -303,12 +367,12 @@ export function ProductSearchField({
             setKeyboardIndex((prev) => (prev > 0 ? prev - 1 : totalOptions - 1));
         } else if (event.key === "Enter" && keyboardIndex >= 0) {
             event.preventDefault();
-            if (keyboardIndex < results.length) {
+            if (keyboardIndex < resultadosVisibles.length) {
                 // Enter sobre un resultado existente: elegirlo
-                handleSelectExisting(results[keyboardIndex]);
+                handleSelectExisting(resultadosVisibles[keyboardIndex]);
             } else {
                 // Enter sobre "Crear nuevo": dispararlo
-                handleCreateNew((value || "").trim());
+                handleCreateNew(textoParaCrear);
             }
         } else if (event.key === "Escape") {
             event.preventDefault();
@@ -317,7 +381,8 @@ export function ProductSearchField({
         }
     };
 
-    const hasNoResults = !isSearching && results.length === 0 && (value || "").trim().length >= MIN_QUERY_LENGTH;
+    const hasNoResults =
+        !overrideActivo && !isSearching && results.length === 0 && (value || "").trim().length >= MIN_QUERY_LENGTH;
 
     // El id del ítem actualmente resaltado por teclado (para aria-activedescendant)
     const activeDescendantId = keyboardIndex >= 0 ? getOptionId(keyboardIndex) : undefined;
@@ -355,7 +420,7 @@ export function ProductSearchField({
                     aria-activedescendant={activeDescendantId}
                     role="combobox"
                 />
-                {isSearching && (
+                {pensando && (
                     <RefreshCw className="absolute right-3 top-2.5 w-4 h-4 text-blue-500 animate-spin" />
                 )}
             </div>
@@ -368,14 +433,14 @@ export function ProductSearchField({
                     role="listbox"
                     aria-label={`Resultados de búsqueda de ${label || "productos"}`}
                 >
-                    {isSearching && (
+                    {!overrideActivo && isSearching && (
                         // Estado "buscando": texto sutil, no bloqueante
                         <div className="px-4 py-3 text-xs text-slate-400 italic" role="status">
                             Buscando…
                         </div>
                     )}
 
-                    {!isSearching && results.length > 0 && results.map((result, index) => (
+                    {(overrideActivo || !isSearching) && resultadosVisibles.length > 0 && resultadosVisibles.map((result, index) => (
                         <SearchResultItem
                             key={result.ratePublicId || index}
                             result={result}
@@ -397,14 +462,16 @@ export function ProductSearchField({
 
                     {/* La opción crear SIEMPRE va al final (candado 2 anti-duplicados).
                         Pasamos serviceType para que el texto diga el tipo correcto:
-                        "crear X como aéreo nuevo" / "como hotel nuevo" / etc. */}
-                    {showCreateOption && (
+                        "crear X como aéreo nuevo" / "como hotel nuevo" / etc. Con
+                        candidatos del motor puestos, el nombre es el que armó el motor
+                        (`textoParaCrear`), no la frase cruda que escribió el vendedor. */}
+                    {showCreateOption && (overrideActivo || !isSearching) && (
                         <CreateNewOption
-                            searchText={(value || "").trim()}
+                            searchText={textoParaCrear}
                             serviceType={serviceType}
                             onCreateNew={handleCreateNew}
-                            isKeyboardFocused={keyboardIndex === results.length}
-                            optionId={getOptionId(results.length)}
+                            isKeyboardFocused={keyboardIndex === resultadosVisibles.length}
+                            optionId={getOptionId(resultadosVisibles.length)}
                         />
                     )}
                 </div>

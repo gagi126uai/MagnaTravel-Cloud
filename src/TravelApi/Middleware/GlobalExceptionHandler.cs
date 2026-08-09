@@ -81,6 +81,15 @@ public class GlobalExceptionHandler : IExceptionHandler
             };
             validationProblem.Extensions["code"] = "validation_failed";
 
+            // Algunas validaciones llevan ademas un CODIGO estable de la causa
+            // (CodedValidationException). Viaja en un campo APARTE para no cambiarle el contrato a
+            // las pantallas que ya miran "code": las que necesitan distinguir la causa exacta miran
+            // "validationCode" en vez de adivinar por como empieza la frase (T-13).
+            if (exception is TravelApi.Domain.Exceptions.CodedValidationException coded)
+            {
+                validationProblem.Extensions["validationCode"] = coded.Code;
+            }
+
             httpContext.Response.StatusCode = validationProblem.Status.Value;
             await httpContext.Response.WriteAsJsonAsync(validationProblem, cancellationToken);
             return true;

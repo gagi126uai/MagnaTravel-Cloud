@@ -435,11 +435,9 @@ public class OperationalFinanceSettings
     public decimal CancellationDebitNoteFourEyesThreshold { get; set; } = 2_000_000m;
 
     // ============================================================
-    // ADR-016 F0a (Base del copiloto de IA, 2026-06-03): flag MAESTRO del copiloto.
-    // Default conservador (OFF), igual que todos los flags nuevos. En F0a este flag
-    // NO tiene caller todavia (el cerebro existe pero nadie lo invoca); el piloto que
-    // lo consume llega en F1. Por eso aca NO hay validacion cruzada: el flag del piloto
-    // (EnableAiUpcomingClientAlerts) todavia no existe.
+    // ADR-016 F0a (2026-06-03): era el flag MAESTRO del copiloto de IA.
+    // DEROGADO el 2026-08-07 (spec firmada §15.7, M-33): la IA ya no se prende con una llave, se
+    // configura en "Configuracion → Inteligencia artificial". Columna inerte, ver el docstring.
     // ============================================================
 
     /// <summary>
@@ -453,13 +451,16 @@ public class OperationalFinanceSettings
     /// el enriquecimiento de alertas "cliente por vencer") puedan llamar a la IA. El primer
     /// caller real NO se construye en F0a.</para>
     ///
-    /// <para><b>Config aparte (env)</b>: la conexion al proveedor (base_url, API key, modelo)
-    /// vive en variables de entorno (<c>Ai__*</c>), NO en esta tabla. La API key es un secreto
-    /// y nunca va a la DB. Prender este flag sin esa config hace que el cerebro degrade elegante
-    /// (no rompe nada, solo no genera texto IA).</para>
+    /// <para><b>DEROGADO el 2026-08-07</b> (spec firmada del tarifario inteligente §15.7, M-33):
+    /// tener un interruptor para prender la IA ADEMAS de la pantalla donde se la configura es
+    /// justo lo que la orden "basta de llaves" del dueño prohibe (la misma que mato a
+    /// <see cref="EnableCatalogFindOrCreate"/>). La regla nueva es una sola: <b>si hay una
+    /// inteligencia artificial configurada, las ayudas funcionan; si no, el sistema anda igual,
+    /// sin ellas</b>. Quien contesta esa pregunta es <c>IAiConnectionResolver.IsUsableAsync</c>.</para>
     ///
-    /// <para>Default <c>false</c>. Editable desde el panel admin (PUT operational-finance) y
-    /// expuesto read-only en <c>GET /afip/settings</c>, igual que los demas flags.</para>
+    /// <para>La columna sobrevive en la base para no hacer una migracion destructiva por nada,
+    /// pero es INERTE: no se lee, no se escribe, no se expone en ninguna API. Si aparece un
+    /// <c>if</c> nuevo sobre este campo, es un bug.</para>
     /// </summary>
     public bool EnableAiCopilot { get; set; } = false;
 

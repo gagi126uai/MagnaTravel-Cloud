@@ -96,15 +96,10 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.EnableCancellationDebitNote = request.EnableCancellationDebitNote.Value;
         }
 
-        // ADR-016 F0a (Base del copiloto de IA, 2026-06-03): persistimos el flag maestro del
-        // copiloto. Update CONDICIONAL (patch-like, criterio B-002): solo se aplica si el request
-        // trae valor. Es un flag de comportamiento puro y en F0a NO tiene dependencias con otros
-        // flags (el flag del piloto que lo consumiria llega en F1), por eso NO hay validacion
-        // cruzada para este flag mas abajo.
-        if (request.EnableAiCopilot.HasValue)
-        {
-            entity.EnableAiCopilot = request.EnableAiCopilot.Value;
-        }
+        // EnableAiCopilot: DEROGADO el 2026-08-07 (spec firmada §15.7, M-33). Ya no se lee ni se
+        // escribe desde aca: la IA se configura en su propia pantalla y la unica pregunta es "¿hay
+        // configuracion utilizable?" (IAiConnectionResolver). La columna sigue en la base, inerte;
+        // si aparece un if nuevo sobre ella, es un bug.
 
         // ADR-017 F1.1 (catalogo find-or-create + fechas limite, 2026-06-05): persistimos los 2 flags
         // nuevos + el setting StaleCostReferenceDays. Update CONDICIONAL (patch-like, criterio B-002):
@@ -336,8 +331,6 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             EnableMultiCurrencyInvoicing = entity.EnableMultiCurrencyInvoicing,
             // ADR-013: el GET expone el flag de emision de Nota de Debito en cancelacion.
             EnableCancellationDebitNote = entity.EnableCancellationDebitNote,
-            // ADR-016 F0a: el GET expone el flag maestro del copiloto de IA.
-            EnableAiCopilot = entity.EnableAiCopilot,
             // Llave DEROGADA (2026-08-06, P8=A): el catalogo que aprende de las ventas no se puede
             // apagar. Se devuelve true fijo para no confundir al panel viejo; se saca del contrato
             // cuando la pantalla de Configuracion deje de dibujar el interruptor.

@@ -907,6 +907,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             <div role="tabpanel">
                 {tabActiva === "Hotel" && (
                     <HotelInlineForm
+                        reservaId={reservaId}
                         form={formHotel}
                         setForm={setFormHotel}
                         suppliers={suppliers}
@@ -915,6 +916,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 )}
                 {tabActiva === "Aereo" && (
                     <FlightInlineForm
+                        reservaId={reservaId}
                         form={formVuelo}
                         setForm={setFormVuelo}
                         suppliers={suppliers}
@@ -923,6 +925,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 )}
                 {tabActiva === "Traslado" && (
                     <TransferInlineForm
+                        reservaId={reservaId}
                         form={formTraslado}
                         setForm={setFormTraslado}
                         suppliers={suppliers}
@@ -931,6 +934,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 )}
                 {tabActiva === "Paquete" && (
                     <PackageInlineForm
+                        reservaId={reservaId}
                         form={formPaquete}
                         setForm={setFormPaquete}
                         suppliers={suppliers}
@@ -939,6 +943,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 )}
                 {tabActiva === "Asistencia" && (
                     <AssistanceInlineForm
+                        reservaId={reservaId}
                         form={formAsistencia}
                         setForm={setFormAsistencia}
                         suppliers={suppliers}

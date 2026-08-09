@@ -18,9 +18,16 @@ namespace TravelApi.Infrastructure.Ai;
 /// <c>{BaseUrl}/chat/completions</c> con el formato OpenAI-compatible (model, messages,
 /// opcional response_format) y mapea la respuesta al <see cref="AiChatResult"/> NEUTRO.
 ///
-/// <para>Sirve a cualquier proveedor OpenAI-compatible (el del piloto y otros): la unica
-/// diferencia es base_url + api_key + modelo, todo por env. Este archivo NO contiene el
-/// nombre de ningun proveedor: es 100% parametrizado por <see cref="AiConnectionOptions"/>.</para>
+/// <para>Sirve a cualquier proveedor OpenAI-compatible: la unica diferencia es base_url +
+/// api_key + modelo. Este archivo NO contiene el nombre de ningun proveedor: es 100%
+/// parametrizado por <see cref="AiConnectionOptions"/>.</para>
+///
+/// <para><b>De donde salen esos tres datos</b> (adenda firmada a ADR-016, 2026-08-07): ya NO se
+/// congelan al arrancar el servidor. Antes de CADA llamada se le pregunta al
+/// <see cref="IAiConnectionResolver"/>, que devuelve lo que el dueño cargo en Configuracion y, si
+/// ahi no hay nada, lo que dejo el tecnico en las variables del servidor. Asi, cambiar de
+/// proveedor desde la pantalla tiene efecto en la llamada siguiente, sin reiniciar nada y sin
+/// riesgo de seguir usando una clave vieja cacheada (M-29 + M-30).</para>
 ///
 /// <para><b>Resiliencia</b> (mismo espiritu que <c>BnaExchangeRateService</c>): es funcionalidad
 /// NO critica, asi que NUNCA tira hacia arriba. Timeout/red/5xx/JSON ilegible -> resultado
@@ -31,7 +38,7 @@ namespace TravelApi.Infrastructure.Ai;
 public sealed class OpenAiCompatibleChatProvider : IAiChatProvider
 {
     private readonly HttpClient _httpClient;
-    private readonly AiConnectionOptions _options;
+    private readonly IAiConnectionResolver _connectionResolver;
     private readonly ILogger<OpenAiCompatibleChatProvider> _logger;
 
     // System.Text.Json es case-insensitive aca porque las respuestas OpenAI-compatible
@@ -44,34 +51,33 @@ public sealed class OpenAiCompatibleChatProvider : IAiChatProvider
 
     public OpenAiCompatibleChatProvider(
         HttpClient httpClient,
-        AiConnectionOptions options,
+        IAiConnectionResolver connectionResolver,
         ILogger<OpenAiCompatibleChatProvider> logger)
     {
         _httpClient = httpClient;
-        _options = options;
+        _connectionResolver = connectionResolver;
         _logger = logger;
     }
 
     public async Task<AiChatResult> ChatAsync(AiChatRequest request, CancellationToken cancellationToken)
     {
-        // Config minima ausente o sin reemplazar -> degradamos sin siquiera intentar el POST.
-        // Cubre el caso de un install que prendio el flag sin cargar las variables Ai__*, o
-        // que dejo el placeholder CHANGE_THIS_* del .env.example. Cortar aca ahorra un
-        // round-trip que volveria 401 igual.
-        if (string.IsNullOrWhiteSpace(_options.BaseUrl)
-            || string.IsNullOrWhiteSpace(_options.ApiKey)
-            || string.IsNullOrWhiteSpace(_options.Model)
-            || LooksLikePlaceholder(_options.ApiKey))
+        // Se relee la configuracion autoritativa en CADA llamada (M-30): la que cargo el dueño en
+        // la pantalla, o el respaldo del servidor. Sin configuracion utilizable no hay IA, y eso NO
+        // es un error: la instalacion funciona igual, sin las ayudas inteligentes (§3.5 de la spec).
+        var resolution = await _connectionResolver.ResolveAsync(cancellationToken);
+        if (resolution == null)
         {
-            _logger.LogError(
-                "Copiloto IA: configuracion incompleta o sin reemplazar (revisar Ai__BaseUrl / " +
-                "Ai__ApiKey / Ai__Model). Se degrada la llamada sin contactar al proveedor.");
-            return AiChatResult.Degraded("config incompleta");
+            _logger.LogInformation(
+                "Ayudas inteligentes: no hay configuracion de IA cargada ni en la pantalla ni en el " +
+                "servidor. Se degrada la llamada sin contactar a ningun proveedor.");
+            return AiChatResult.Degraded("sin configuracion");
         }
+
+        var options = resolution.Options;
 
         try
         {
-            return await PostChatAsync(request, cancellationToken);
+            return await PostChatAsync(request, options, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -98,37 +104,44 @@ public sealed class OpenAiCompatibleChatProvider : IAiChatProvider
         }
         catch (FormatException ex)
         {
-            // Ai__BaseUrl malformado: BuildChatCompletionsUri tira UriFormatException (deriva
-            // de FormatException). Es falla de config del operador, no del proveedor; degradamos
-            // para honrar el contrato "nunca tira" de IAiChatProvider.
-            _logger.LogError("Copiloto IA: Ai__BaseUrl invalido. Motivo: {Message}", ex.Message);
-            return AiChatResult.Degraded("config invalida (base url)");
+            // Dos cosas caen aca: la direccion malformada (BuildChatCompletionsUri tira
+            // UriFormatException, que deriva de FormatException) y una clave que no entra en una
+            // cabecera HTTP. Las dos son falla de CONFIGURACION, no del proveedor; degradamos para
+            // honrar el contrato "nunca tira" de IAiChatProvider.
+            //
+            // OJO: NO se loguea ex.Message. Cuando el que falla es el armado de la cabecera, ese
+            // mensaje puede traer la clave adentro y terminaria escrita en el archivo de log. Se
+            // loguea solo el TIPO, que alcanza para diagnosticar.
+            _logger.LogError(
+                "Copiloto IA: la configuracion no se pudo usar para armar el pedido. Motivo interno: {Type}",
+                ex.GetType().Name);
+            return AiChatResult.Degraded("config invalida");
         }
     }
 
-    /// <summary>
-    /// Detecta el placeholder del <c>.env.example</c> (CHANGE_THIS_*) sin reemplazar, para
-    /// degradar antes del POST. Misma heuristica que usa el chequeo de secretos del deploy.
-    /// </summary>
-    private static bool LooksLikePlaceholder(string apiKey) =>
-        apiKey.Contains("CHANGE_THIS", StringComparison.OrdinalIgnoreCase);
-
-    private async Task<AiChatResult> PostChatAsync(AiChatRequest request, CancellationToken cancellationToken)
+    private async Task<AiChatResult> PostChatAsync(
+        AiChatRequest request,
+        AiConnectionOptions options,
+        CancellationToken cancellationToken)
     {
-        var requestUri = BuildChatCompletionsUri(_options.BaseUrl);
-        var payload = BuildOpenAiPayload(request);
+        var requestUri = BuildChatCompletionsUri(options.BaseUrl);
+        var payload = BuildOpenAiPayload(request, options);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, requestUri)
         {
             Content = new StringContent(payload, Encoding.UTF8, "application/json"),
         };
         // La API key viaja como Bearer. OJO: NUNCA loguear este header.
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+        // Se limpia igual que en el probador de conexion: una clave con un salto de linea pegado
+        // (lo mas comun al copiar y pegar) hace que armar la cabecera tire FormatException.
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            AiApiKeySanitizer.Sanitize(options.ApiKey));
 
         // Timeout POR LLAMADA: encadenamos un CTS con el del caller. No tocamos
         // HttpClient.Timeout global porque el client es compartido por la factory.
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.TimeoutSeconds)));
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds)));
 
         using var response = await _httpClient.SendAsync(
             httpRequest,
@@ -140,8 +153,9 @@ public sealed class OpenAiCompatibleChatProvider : IAiChatProvider
         if (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden)
         {
             _logger.LogError(
-                "Copiloto IA: el proveedor rechazo la credencial (HTTP {StatusCode}). Revisar Ai__ApiKey. " +
-                "Se degrada sin reintentar.",
+                "Copiloto IA: el proveedor rechazo la credencial (HTTP {StatusCode}). Revisar la clave " +
+                "cargada en Configuracion -> Inteligencia artificial (o el respaldo Ai__ApiKey del " +
+                "servidor). Se degrada sin reintentar.",
                 (int)response.StatusCode);
             return AiChatResult.Degraded($"config invalida ({(int)response.StatusCode})");
         }
@@ -173,7 +187,7 @@ public sealed class OpenAiCompatibleChatProvider : IAiChatProvider
     /// Arma el JSON estilo OpenAI (model + messages + opcionales). Este es el UNICO lugar
     /// del codigo que conoce el formato OpenAI; hacia arriba todo es neutro.
     /// </summary>
-    private string BuildOpenAiPayload(AiChatRequest request)
+    private static string BuildOpenAiPayload(AiChatRequest request, AiConnectionOptions options)
     {
         var messages = new object[request.Messages.Count];
         for (var i = 0; i < request.Messages.Count; i++)
@@ -186,9 +200,9 @@ public sealed class OpenAiCompatibleChatProvider : IAiChatProvider
         // mas robusto frente a proveedores quisquillosos).
         var payload = new Dictionary<string, object?>
         {
-            ["model"] = _options.Model,
+            ["model"] = options.Model,
             ["messages"] = messages,
-            ["max_tokens"] = request.Options.MaxTokens ?? _options.MaxTokens,
+            ["max_tokens"] = request.Options.MaxTokens ?? options.MaxTokens,
         };
 
         if (request.Options.Temperature.HasValue)
