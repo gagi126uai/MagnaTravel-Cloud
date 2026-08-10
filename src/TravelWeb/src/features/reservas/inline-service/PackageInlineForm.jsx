@@ -122,6 +122,14 @@ export function PackageInlineForm({
     onSelectOtherType,
     seleccionPendiente,
     onConsumirSeleccionPendiente,
+    // Fix #4 (auditoría 2026-08-10): levantado a ServiceInlineCard — ver HotelInlineForm
+    // para la explicación completa de por qué (sobrevive al remount de cambiar de solapa).
+    camposSugeridos,
+    setCamposSugeridos,
+    // Fix regresión #1+#6 (re-review 2026-08-10): APARTE de camposSugeridos — ver el
+    // comentario largo en ServiceInlineCard.jsx donde se declara.
+    camposTocadosAMano,
+    setCamposTocadosAMano,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -138,17 +146,6 @@ export function PackageInlineForm({
     // "Más detalles" se abre automáticamente al editar si ya hay datos
     const tieneDetallesExistentes = Boolean(form.itinerary || form.fileNumber);
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
-
-    const [camposSugeridos, setCamposSugeridos] = useState({
-        supplierId: false,
-        unitNetCost: false,
-        unitSalePrice: false,
-        currency: false,
-        // startDate/endDate (D13, spec 2026-08-10): amarillo cuando salen de la
-        // interpretación de la frase completa tipeada en el buscador.
-        startDate: false,
-        endDate: false,
-    });
 
     // Renglón gris "Último precio" (spec 2026-08-06, §3.2, P9=A) — ver HotelInlineForm.
     const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
@@ -173,16 +170,18 @@ export function PackageInlineForm({
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
+    const handleSelectExisting = (catalogResult, interpretacion) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
 
-        // Fix C-5(b) (review 2026-08-10): en el camino de selección PENDIENTE (salto de
-        // solapa) no se pisa lo que el vendedor ya había tipeado a mano en esta solapa.
+        // Regla transversal (auditoría 2026-08-10, #1): un campo se reemplaza si está
+        // vacío O si NO fue tocado a mano por el vendedor (`camposTocadosAMano`) —
+        // nunca si lo tipeó/eligió a mano. Fix regresión #1+#6: la señal es
+        // `camposTocadosAMano`, NO `camposSugeridos` (ese es solo el amarillo).
         const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
             sale,
             canSeeCost,
             formActual: form,
-            esSeleccionPendiente,
+            camposTocadosAMano,
             campoVenta: "unitSalePrice",
             campoCosto: "unitNetCost",
         });
@@ -191,7 +190,7 @@ export function PackageInlineForm({
         // la frase (D13).
         const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_PAQUETE, formActual: form }
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_PAQUETE, formActual: form, camposTocadosAMano }
         );
 
         setForm((prev) => ({
@@ -228,10 +227,11 @@ export function PackageInlineForm({
     const handleCreateNew = (searchText, interpretacion) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
         // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
-        // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
+        // campos que el vendedor NUNCA tocó a mano (fix regresión #1+#6: la señal es
+        // `camposTocadosAMano`, no `camposSugeridos`).
         const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
             { supplierId: form.supplierId, unitNetCost: form.unitNetCost, unitSalePrice: form.unitSalePrice, currency: form.currency },
-            camposSugeridos,
+            camposTocadosAMano,
             { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS" }
         );
 
@@ -240,7 +240,7 @@ export function PackageInlineForm({
         // violeta, ver abajo) — acá no hay `sale`.
         const { patch: patchFechas, sugeridos: sugeridosFechas } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_PAQUETE, formActual: form }
+            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_PAQUETE, formActual: form, camposTocadosAMano }
         );
 
         // El operador del recuadro "paquete nuevo" arranca SIEMPRE vacío — si la frase
@@ -276,9 +276,11 @@ export function PackageInlineForm({
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        if (!texto) {
-            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, startDate: false, endDate: false });
-        }
+        // Fix #6 (auditoría 2026-08-10): CUALQUIER tecleo desvincula el rateId — los
+        // amarillos que quedaban pintados ya no corresponden a ninguna selección viva
+        // (el VALOR se queda, deja de ser "sugerencia"). Antes esto solo pasaba si el
+        // vendedor borraba TODO el texto.
+        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, startDate: false, endDate: false });
         setUltimoPrecioSugerido(null);
     };
 
@@ -296,6 +298,8 @@ export function PackageInlineForm({
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
                 esEdicion={isEditing}
+                rateId={form.rateId}
+                supplierIdElegido={form.supplierId}
                 label="Paquete"
                 placeholder="Ej: Iguazú 7 noches, Cancún todo incluido..."
             />
@@ -322,6 +326,7 @@ export function PackageInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, supplierId: true }));
                         }}
                         data-testid="package-supplier"
                         aria-label="Operador del paquete"
@@ -360,6 +365,7 @@ export function PackageInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, startDate: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, startDate: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, startDate: true }));
                         }}
                         data-testid="package-salida"
                         aria-label="Fecha de salida del paquete"
@@ -384,6 +390,7 @@ export function PackageInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, endDate: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, endDate: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, endDate: true }));
                         }}
                         data-testid="package-end-date"
                         aria-label="Fecha de fin del paquete"
@@ -444,6 +451,7 @@ export function PackageInlineForm({
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
+                                setCamposTocadosAMano((prev) => ({ ...prev, unitNetCost: true }));
                             }}
                             placeholder="0,00"
                             data-testid="package-costo-persona"
@@ -464,6 +472,7 @@ export function PackageInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, unitSalePrice: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, unitSalePrice: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, unitSalePrice: true }));
                         }}
                         placeholder="0,00"
                         required
@@ -494,6 +503,7 @@ export function PackageInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, currency: true }));
                         }}
                         data-testid="package-moneda"
                         aria-label="Moneda"

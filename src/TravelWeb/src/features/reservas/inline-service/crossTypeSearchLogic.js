@@ -43,15 +43,49 @@ export function esResultadoDeOtroTipo(result, serviceTypeActivo) {
  * únicas que hay — no hace falta un caso especial, la partición ya lo resuelve sola
  * (el primer bloque queda vacío).
  *
+ * Fix #1 (auditoría de coherencia 2026-08-10, bug reportado por Gastón): si el vendedor
+ * ya eligió un operador a mano en el form (`supplierIdElegido`), DENTRO de cada uno de
+ * los dos bloques las filas cuya última venta fue con ESE operador quedan primero —
+ * "el dato ya viaja con el vendedor". Esto es un REORDEN, no un filtro: ninguna fila
+ * desaparece ni se saca de su bloque de tipo (la partición D9 sigue mandando primero).
+ *
  * @param {object[]} resultados — resultados tal cual los devuelve catalog-search
  * @param {string} serviceTypeActivo
+ * @param {string} [supplierIdElegido] — operador que el vendedor ya eligió a mano, si hay
  * @returns {object[]} mismos objetos, reordenados en los dos bloques
  */
-export function particionarPorTipo(resultados, serviceTypeActivo) {
+export function particionarPorTipo(resultados, serviceTypeActivo, supplierIdElegido) {
   const lista = resultados || [];
   const delTipoActivo = lista.filter((resultado) => !esResultadoDeOtroTipo(resultado, serviceTypeActivo));
   const deOtroTipo = lista.filter((resultado) => esResultadoDeOtroTipo(resultado, serviceTypeActivo));
-  return [...delTipoActivo, ...deOtroTipo];
+  return [
+    ...priorizarPorOperadorElegido(delTipoActivo, supplierIdElegido),
+    ...priorizarPorOperadorElegido(deOtroTipo, supplierIdElegido),
+  ];
+}
+
+// ─── Fix #1 (auditoría 2026-08-10): priorizar filas del operador ya elegido ───────
+
+/**
+ * Reordena `resultados` poniendo PRIMERO las filas cuya ÚLTIMA VENTA fue con
+ * `supplierIdElegido` (sin tocar el orden relativo dentro de cada uno de los dos
+ * grupos) — nunca filtra ni saca nada, las demás quedan abajo tal cual estaban.
+ *
+ * Bug reportado por el dueño: el vendedor elegía un operador a mano en el select antes
+ * de buscar el producto, y el buscador lo ignoraba por completo — mostraba los
+ * resultados en el orden de siempre, sin aprovechar el dato que el vendedor ya había
+ * dado.
+ *
+ * @param {object[]} resultados — filas de catalog-search (con `lastSale.supplierPublicId`)
+ * @param {string} [supplierIdElegido] — operador ya elegido a mano; sin esto, no reordena nada
+ */
+export function priorizarPorOperadorElegido(resultados, supplierIdElegido) {
+  const lista = resultados || [];
+  if (!supplierIdElegido) return lista;
+
+  const conEseOperador = lista.filter((resultado) => resultado?.lastSale?.supplierPublicId === supplierIdElegido);
+  const conOtroOperador = lista.filter((resultado) => resultado?.lastSale?.supplierPublicId !== supplierIdElegido);
+  return [...conEseOperador, ...conOtroOperador];
 }
 
 // ─── D6: al EDITAR, el buscador sigue limitado a su tipo ──────────────────────────

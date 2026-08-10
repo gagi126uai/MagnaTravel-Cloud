@@ -5,6 +5,7 @@ import {
   particionarPorTipo,
   filtrarPorTipoActivo,
   debeAplicarSeleccionPendiente,
+  priorizarPorOperadorElegido,
 } from "./crossTypeSearchLogic.js";
 
 describe("esResultadoDeOtroTipo", () => {
@@ -62,6 +63,74 @@ describe("particionarPorTipo (D9: partición dura)", () => {
   it("lista vacía/null no revienta", () => {
     assert.deepEqual(particionarPorTipo([], "Hotel"), []);
     assert.deepEqual(particionarPorTipo(null, "Hotel"), []);
+  });
+
+  it("fix #1: con supplierIdElegido, prioriza DENTRO de cada bloque de tipo sin romper la partición D9", () => {
+    const resultados = [
+      { ratePublicId: "r1", serviceType: "Hotel", lastSale: { supplierPublicId: "sup-ola" } },
+      { ratePublicId: "r2", serviceType: "Hotel", lastSale: { supplierPublicId: "sup-delfos" } },
+      { ratePublicId: "r3", serviceType: "Traslado", lastSale: { supplierPublicId: "sup-delfos" } },
+      { ratePublicId: "r4", serviceType: "Traslado", lastSale: { supplierPublicId: "sup-ola" } },
+    ];
+    const resultado = particionarPorTipo(resultados, "Hotel", "sup-delfos");
+    // Bloque Hotel primero (D9 intacto): r2 (delfos) antes que r1 (otro operador).
+    // Bloque Traslado después: r3 (delfos) antes que r4 (otro operador) — pero SIGUE
+    // abajo del bloque Hotel entero, nunca se cuela arriba por tener el operador.
+    assert.deepEqual(resultado.map((r) => r.ratePublicId), ["r2", "r1", "r3", "r4"]);
+  });
+
+  it("sin supplierIdElegido: el orden es igual que antes (sin reordenar por operador)", () => {
+    const resultados = [
+      { ratePublicId: "r1", serviceType: "Hotel", lastSale: { supplierPublicId: "sup-ola" } },
+      { ratePublicId: "r2", serviceType: "Hotel", lastSale: { supplierPublicId: "sup-delfos" } },
+    ];
+    assert.deepEqual(particionarPorTipo(resultados, "Hotel").map((r) => r.ratePublicId), ["r1", "r2"]);
+  });
+});
+
+describe("priorizarPorOperadorElegido (fix #1, auditoría 2026-08-10)", () => {
+  it("pone primero las filas con ESE operador, sin filtrar las demás", () => {
+    const resultados = [
+      { ratePublicId: "r1", lastSale: { supplierPublicId: "sup-ola" } },
+      { ratePublicId: "r2", lastSale: { supplierPublicId: "sup-delfos" } },
+      { ratePublicId: "r3", lastSale: { supplierPublicId: "sup-delfos" } },
+    ];
+    const resultado = priorizarPorOperadorElegido(resultados, "sup-delfos");
+    assert.deepEqual(resultado.map((r) => r.ratePublicId), ["r2", "r3", "r1"]);
+  });
+
+  it("preserva el orden relativo DENTRO de cada uno de los dos grupos", () => {
+    const resultados = [
+      { ratePublicId: "a", lastSale: { supplierPublicId: "otro" } },
+      { ratePublicId: "b", lastSale: { supplierPublicId: "sup-delfos" } },
+      { ratePublicId: "c", lastSale: { supplierPublicId: "otro" } },
+      { ratePublicId: "d", lastSale: { supplierPublicId: "sup-delfos" } },
+    ];
+    const resultado = priorizarPorOperadorElegido(resultados, "sup-delfos");
+    assert.deepEqual(resultado.map((r) => r.ratePublicId), ["b", "d", "a", "c"]);
+  });
+
+  it("sin supplierIdElegido: no reordena nada (mismo array)", () => {
+    const resultados = [{ ratePublicId: "r1", lastSale: { supplierPublicId: "sup-ola" } }];
+    assert.deepEqual(priorizarPorOperadorElegido(resultados, null), resultados);
+    assert.deepEqual(priorizarPorOperadorElegido(resultados, undefined), resultados);
+    assert.deepEqual(priorizarPorOperadorElegido(resultados, ""), resultados);
+  });
+
+  it("resultado sin lastSale (rateFallback, nunca se vendió): no matchea, queda en el segundo grupo", () => {
+    const resultados = [{ ratePublicId: "r1" }, { ratePublicId: "r2", lastSale: { supplierPublicId: "sup-delfos" } }];
+    const resultado = priorizarPorOperadorElegido(resultados, "sup-delfos");
+    assert.deepEqual(resultado.map((r) => r.ratePublicId), ["r2", "r1"]);
+  });
+
+  it("ningún resultado matchea: el orden original queda igual", () => {
+    const resultados = [{ ratePublicId: "r1", lastSale: { supplierPublicId: "sup-a" } }, { ratePublicId: "r2", lastSale: { supplierPublicId: "sup-b" } }];
+    assert.deepEqual(priorizarPorOperadorElegido(resultados, "sup-z").map((r) => r.ratePublicId), ["r1", "r2"]);
+  });
+
+  it("lista vacía/null no revienta", () => {
+    assert.deepEqual(priorizarPorOperadorElegido([], "sup-1"), []);
+    assert.deepEqual(priorizarPorOperadorElegido(null, "sup-1"), []);
   });
 });
 

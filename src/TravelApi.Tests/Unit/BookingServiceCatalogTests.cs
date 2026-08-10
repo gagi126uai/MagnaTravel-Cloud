@@ -504,6 +504,186 @@ public class BookingServiceCatalogTests
         Assert.Equal(packageRate.Id, stored.RateId);
     }
 
+    // ===================== coherencia identidad-del-producto vs datos-de-la-venta (review 2026-08-1x) =====================
+    // Bug: cuando el hotel sigue vinculado al MISMO Rate (no cambio de producto), UpdateHotelAsync
+    // revertia TODOS los campos derivados del snapshot — incluyendo operador, tipo de habitacion y
+    // regimen, que la ficha de edicion SI deja tocar sin cambiar de producto. El vendedor los
+    // cambiaba, el PUT contestaba 200 "guardado", y volvian solos en silencio. El fix separa la
+    // IDENTIDAD del producto (RateId/HotelName/City/Country/StarRating — protegida, el buscador esta
+    // deshabilitado en edicion) de los DATOS DE LA VENTA (SupplierId/RoomType/MealPlan — editables).
+
+    private static async Task<HotelBooking> SeedLinkedHotelAsync(AppDbContext context, int reservaId, Rate rate)
+    {
+        var hotel = new HotelBooking
+        {
+            ReservaId = reservaId,
+            SupplierId = rate.SupplierId ?? 0,
+            RateId = rate.Id,
+            HotelName = rate.HotelName!,
+            City = rate.City!,
+            Country = "Argentina",
+            CheckIn = DateTime.UtcNow.Date.AddDays(10),
+            CheckOut = DateTime.UtcNow.Date.AddDays(12),
+            Nights = 2,
+            RoomType = rate.RoomType!,
+            MealPlan = rate.MealPlan!,
+            Rooms = 1,
+            Adults = 2,
+            Children = 0,
+            NetCost = 200m,
+            SalePrice = 300m,
+            Commission = 100m,
+            Currency = "ARS",
+        };
+        context.HotelBookings.Add(hotel);
+        await context.SaveChangesAsync();
+        return hotel;
+    }
+
+    [Fact]
+    public async Task UpdateHotelAsync_WithSameRateId_SavesOperatorRoomTypeAndMealPlanChanges()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, supplierB) = await SeedAsync(context);
+        var hotelRate = await SeedHotelRateAsync(context, supplierA.Id); // Hotel Maitei, Posadas, Doble/Desayuno
+        var hotel = await SeedLinkedHotelAsync(context, reserva.Id, hotelRate);
+
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+
+        // El vendedor NO cambia de producto (mismo RateId) pero SI cambia el operador, el tipo de
+        // habitacion y el regimen: cosas que la ficha de edicion permite tocar sin buscar otro hotel.
+        var request = new UpdateHotelRequest(
+            SupplierId: supplierB.PublicId.ToString(),
+            HotelName: "Hotel Maitei",
+            StarRating: 4,
+            City: "Posadas",
+            Country: "Argentina",
+            CheckIn: hotel.CheckIn,
+            CheckOut: hotel.CheckOut,
+            RoomType: "Triple",
+            MealPlan: "Media pension",
+            Adults: 2,
+            Children: 0,
+            Rooms: 1,
+            ConfirmationNumber: null,
+            NetCost: 200m,
+            SalePrice: 300m,
+            Commission: 100m,
+            RateId: hotelRate.PublicId.ToString());
+
+        await service.UpdateHotelAsync(reserva.Id, hotel.Id, request, CancellationToken.None);
+
+        var stored = await context.HotelBookings.SingleAsync();
+        Assert.Equal(supplierB.Id, stored.SupplierId);
+        Assert.Equal("Triple", stored.RoomType);
+        Assert.Equal("Media pension", stored.MealPlan);
+        // El producto sigue siendo el mismo: esto no es un cambio de identidad, solo de venta.
+        Assert.Equal(hotelRate.Id, stored.RateId);
+    }
+
+    [Fact]
+    public async Task UpdateHotelAsync_WithSameRateId_KeepsProductIdentityEvenIfRequestSendsOtherValues()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var hotelRate = await SeedHotelRateAsync(context, supplierA.Id); // Hotel Maitei, Posadas
+        var hotel = await SeedLinkedHotelAsync(context, reserva.Id, hotelRate);
+
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+
+        // El request manda OTRO nombre y OTRA ciudad, pero el RateId es el MISMO: en la ficha real
+        // esto no puede pasar (el buscador esta deshabilitado en edicion), asi que si llega hay que
+        // protegerse (un request viejo, un cliente manipulado) y quedarse con la identidad guardada.
+        var request = new UpdateHotelRequest(
+            SupplierId: supplierA.PublicId.ToString(),
+            HotelName: "Otro Hotel Cualquiera",
+            StarRating: 5,
+            City: "Buenos Aires",
+            Country: "Argentina",
+            CheckIn: hotel.CheckIn,
+            CheckOut: hotel.CheckOut,
+            RoomType: "Doble",
+            MealPlan: "Desayuno",
+            Adults: 2,
+            Children: 0,
+            Rooms: 1,
+            ConfirmationNumber: null,
+            NetCost: 200m,
+            SalePrice: 300m,
+            Commission: 100m,
+            RateId: hotelRate.PublicId.ToString());
+
+        await service.UpdateHotelAsync(reserva.Id, hotel.Id, request, CancellationToken.None);
+
+        var stored = await context.HotelBookings.SingleAsync();
+        Assert.Equal("Hotel Maitei", stored.HotelName);
+        Assert.Equal("Posadas", stored.City);
+    }
+
+    [Fact]
+    public async Task UpdateHotelAsync_WithNewRateId_AppliesFullSnapshotOfNewProduct()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, supplierB) = await SeedAsync(context);
+        var oldRate = await SeedHotelRateAsync(context, supplierA.Id); // Hotel Maitei, Posadas
+        var newRate = new Rate
+        {
+            SupplierId = supplierB.Id,
+            ServiceType = "Hotel",
+            ProductName = "Sheraton Iguazu",
+            HotelName = "Sheraton Iguazu",
+            SearchName = "sheraton iguazu",
+            City = "Puerto Iguazu",
+            RoomType = "Suite",
+            MealPlan = "Todo incluido",
+            StarRating = 5,
+            NetCost = 150m,
+            SalePrice = 250m,
+            Currency = "USD",
+            PriceUnit = "noche_habitacion",
+            IsActive = true,
+        };
+        context.Rates.Add(newRate);
+        await context.SaveChangesAsync();
+        var hotel = await SeedLinkedHotelAsync(context, reserva.Id, oldRate);
+
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+
+        // El vendedor SI cambia de producto (busco otro hotel y lo eligio): el snapshot completo del
+        // Rate nuevo tiene que pisar todo, igual que antes del fix.
+        var request = new UpdateHotelRequest(
+            SupplierId: supplierA.PublicId.ToString(), // da igual: el snapshot del rate nuevo manda
+            HotelName: "Hotel Maitei",                 // el request todavia trae el nombre viejo
+            StarRating: 3,
+            City: "Posadas",
+            Country: "Argentina",
+            CheckIn: hotel.CheckIn,
+            CheckOut: hotel.CheckOut,
+            RoomType: "Doble",
+            MealPlan: "Desayuno",
+            Adults: 2,
+            Children: 0,
+            Rooms: 1,
+            ConfirmationNumber: null,
+            NetCost: 200m,
+            SalePrice: 300m,
+            Commission: 100m,
+            RateId: newRate.PublicId.ToString());
+
+        await service.UpdateHotelAsync(reserva.Id, hotel.Id, request, CancellationToken.None);
+
+        var stored = await context.HotelBookings.SingleAsync();
+        Assert.Equal(newRate.Id, stored.RateId);
+        Assert.Equal("Sheraton Iguazu", stored.HotelName);
+        Assert.Equal("Puerto Iguazu", stored.City);
+        Assert.Equal(supplierB.Id, stored.SupplierId);
+        Assert.Equal("Suite", stored.RoomType);
+        Assert.Equal("Todo incluido", stored.MealPlan);
+    }
+
     // ===================== R6/R3 — unitarizacion del producto nuevo =====================
 
     [Fact]

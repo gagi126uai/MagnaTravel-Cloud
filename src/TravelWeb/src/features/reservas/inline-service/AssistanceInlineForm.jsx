@@ -138,6 +138,14 @@ export function AssistanceInlineForm({
     onSelectOtherType,
     seleccionPendiente,
     onConsumirSeleccionPendiente,
+    // Fix #4 (auditoría 2026-08-10): levantado a ServiceInlineCard — ver HotelInlineForm
+    // para la explicación completa de por qué (sobrevive al remount de cambiar de solapa).
+    camposSugeridos,
+    setCamposSugeridos,
+    // Fix regresión #1+#6 (re-review 2026-08-10): APARTE de camposSugeridos — ver el
+    // comentario largo en ServiceInlineCard.jsx donde se declara.
+    camposTocadosAMano,
+    setCamposTocadosAMano,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -160,16 +168,6 @@ export function AssistanceInlineForm({
     const tieneDetallesExistentes = Boolean(form.voucherNumbers || form.upgrades || form.confirmationNumber);
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
-    const [camposSugeridos, setCamposSugeridos] = useState({
-        supplierId: false,
-        unitNetCost: false,
-        unitSalePrice: false,
-        currency: false,
-        // validFrom/validTo (D13, spec 2026-08-10): amarillo cuando salen de la
-        // interpretación de la frase completa tipeada en el buscador.
-        validFrom: false,
-        validTo: false,
-    });
 
     // Renglón gris "Último precio" (spec 2026-08-06, §3.2, P9=A) — ver HotelInlineForm.
     const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
@@ -194,16 +192,18 @@ export function AssistanceInlineForm({
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
+    const handleSelectExisting = (catalogResult, interpretacion) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
 
-        // Fix C-5(b) (review 2026-08-10): en el camino de selección PENDIENTE (salto de
-        // solapa) no se pisa lo que el vendedor ya había tipeado a mano en esta solapa.
+        // Regla transversal (auditoría 2026-08-10, #1): un campo se reemplaza si está
+        // vacío O si NO fue tocado a mano por el vendedor (`camposTocadosAMano`) —
+        // nunca si lo tipeó/eligió a mano. Fix regresión #1+#6: la señal es
+        // `camposTocadosAMano`, NO `camposSugeridos` (ese es solo el amarillo).
         const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
             sale,
             canSeeCost,
             formActual: form,
-            esSeleccionPendiente,
+            camposTocadosAMano,
             campoVenta: "unitSalePrice",
             campoCosto: "unitNetCost",
         });
@@ -212,7 +212,7 @@ export function AssistanceInlineForm({
         // la frase (D13).
         const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_ASISTENCIA, formActual: form }
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_ASISTENCIA, formActual: form, camposTocadosAMano }
         );
 
         setForm((prev) => ({
@@ -249,10 +249,11 @@ export function AssistanceInlineForm({
     const handleCreateNew = (searchText, interpretacion) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
         // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
-        // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
+        // campos que el vendedor NUNCA tocó a mano (fix regresión #1+#6: la señal es
+        // `camposTocadosAMano`, no `camposSugeridos`).
         const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
             { supplierId: form.supplierId, unitNetCost: form.unitNetCost, unitSalePrice: form.unitSalePrice, currency: form.currency },
-            camposSugeridos,
+            camposTocadosAMano,
             { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS" }
         );
 
@@ -261,7 +262,7 @@ export function AssistanceInlineForm({
         // violeta, ver abajo) — acá no hay `sale`.
         const { patch: patchFechas, sugeridos: sugeridosFechas } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_ASISTENCIA, formActual: form }
+            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_ASISTENCIA, formActual: form, camposTocadosAMano }
         );
 
         // El operador del recuadro "plan nuevo" arranca SIEMPRE vacío — si la frase trajo
@@ -297,9 +298,11 @@ export function AssistanceInlineForm({
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        if (!texto) {
-            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, validFrom: false, validTo: false });
-        }
+        // Fix #6 (auditoría 2026-08-10): CUALQUIER tecleo desvincula el rateId — los
+        // amarillos que quedaban pintados ya no corresponden a ninguna selección viva
+        // (el VALOR se queda, deja de ser "sugerencia"). Antes esto solo pasaba si el
+        // vendedor borraba TODO el texto.
+        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, validFrom: false, validTo: false });
         setUltimoPrecioSugerido(null);
     };
 
@@ -317,6 +320,8 @@ export function AssistanceInlineForm({
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
                 esEdicion={isEditing}
+                rateId={form.rateId}
+                supplierIdElegido={form.supplierId}
                 label="Plan / cobertura"
                 placeholder="Ej: AC 150, Assist Card, Fullcard..."
             />
@@ -343,6 +348,7 @@ export function AssistanceInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, supplierId: true }));
                         }}
                         data-testid="assistance-supplier"
                         aria-label="Operador de la asistencia"
@@ -377,6 +383,7 @@ export function AssistanceInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, validFrom: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, validFrom: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, validFrom: true }));
                         }}
                         data-testid="assistance-desde"
                         aria-label="Vigencia desde"
@@ -396,6 +403,7 @@ export function AssistanceInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, validTo: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, validTo: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, validTo: true }));
                         }}
                         data-testid="assistance-hasta"
                         aria-label="Vigencia hasta"
@@ -448,6 +456,7 @@ export function AssistanceInlineForm({
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
+                                setCamposTocadosAMano((prev) => ({ ...prev, unitNetCost: true }));
                             }}
                             placeholder="0,00"
                             data-testid="assistance-costo"
@@ -468,6 +477,7 @@ export function AssistanceInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, unitSalePrice: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, unitSalePrice: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, unitSalePrice: true }));
                         }}
                         placeholder="0,00"
                         required
@@ -485,6 +495,7 @@ export function AssistanceInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, currency: true }));
                         }}
                         data-testid="assistance-moneda"
                         aria-label="Moneda"

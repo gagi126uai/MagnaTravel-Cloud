@@ -36,6 +36,7 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { esRechazoCostoMenorAPagado, agregarConfirmacionCostoMenorAPagado } from "../lib/costConfirmationGuard";
+import { resolverRateIdDeEdicion, resolverCamposALimpiarAlCrearNuevo, resolverTocadosAManoTrasLimpiarOrigen } from "./inlineServiceFormHelpers";
 import { HotelInlineForm, calcularNoches, redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { FlightInlineForm, calcularTotalesVuelo } from "./FlightInlineForm";
 import { TransferInlineForm, calcularTotalesTraslado } from "./TransferInlineForm";
@@ -161,7 +162,9 @@ function buildHotelFormInitial(serviceToEdit) {
         confirmationNumber: serviceToEdit.confirmationNumber || "",
         // operatorPaymentDeadline no se carga en la UI (campo eliminado en F2)
         address: serviceToEdit.address || "",
-        rateId: serviceToEdit.rateId || null,
+        // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
+        // en inlineServiceFormHelpers.js para el detalle completo del bug.
+        rateId: resolverRateIdDeEdicion(serviceToEdit),
         newCatalogProduct: null,
     };
 }
@@ -208,7 +211,9 @@ function buildFlightFormInitial(serviceToEdit) {
         // lectura, como texto legible ("Nacional"/"Internacional") o null si nunca se definió.
         // Fallback "" (Sin definir) cuando el backend devuelve null.
         geographicScope: serviceToEdit.geographicScope || "",
-        rateId: serviceToEdit.rateId || null,
+        // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
+        // en inlineServiceFormHelpers.js para el detalle completo del bug.
+        rateId: resolverRateIdDeEdicion(serviceToEdit),
         newCatalogProduct: null,
     };
 }
@@ -257,7 +262,9 @@ function buildTransferFormInitial(serviceToEdit) {
         confirmationNumber: serviceToEdit.confirmationNumber || "",
         // Round-trip: el backend devuelve vehicleType en TransferBookingDto; fallback "" (no especificado).
         vehicleType: serviceToEdit.vehicleType || "",
-        rateId: serviceToEdit.rateId || null,
+        // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
+        // en inlineServiceFormHelpers.js para el detalle completo del bug.
+        rateId: resolverRateIdDeEdicion(serviceToEdit),
         newCatalogProduct: null,
     };
 }
@@ -299,7 +306,9 @@ function buildPackageFormInitial(serviceToEdit) {
         // operatorPaymentDeadline no se carga en la UI (campo eliminado en F2)
         itinerary: serviceToEdit.itinerary || "",
         fileNumber: serviceToEdit.fileNumber || serviceToEdit.confirmationNumber || "",
-        rateId: serviceToEdit.rateId || null,
+        // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
+        // en inlineServiceFormHelpers.js para el detalle completo del bug.
+        rateId: resolverRateIdDeEdicion(serviceToEdit),
         newCatalogProduct: null,
     };
 }
@@ -344,7 +353,9 @@ function buildAssistanceFormInitial(serviceToEdit) {
         voucherNumbers: serviceToEdit.policyNumber || serviceToEdit.voucherNumbers || "",
         upgrades: serviceToEdit.notes || serviceToEdit.upgrades || "",
         confirmationNumber: serviceToEdit.confirmationNumber || "",
-        rateId: serviceToEdit.rateId || null,
+        // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
+        // en inlineServiceFormHelpers.js para el detalle completo del bug.
+        rateId: resolverRateIdDeEdicion(serviceToEdit),
         newCatalogProduct: null,
     };
 }
@@ -388,6 +399,10 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // Al editar, la pestaña queda bloqueada (no se puede cambiar de tipo).
     const [tabActiva, setTabActiva] = useState(() => detectarTabParaEdicion(serviceToEdit));
 
+    // Subida acá arriba (antes vivía más abajo) porque los estados de "sugerido"/"tocado"
+    // de acá abajo necesitan su valor inicial (fix #4, auditoría 2026-08-10 — ver más abajo).
+    const esEdicion = Boolean(serviceToEdit);
+
     // â”€â”€â”€ Estados de formulario por tipo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Inicializamos todos con sus builders; solo el activo se usa para guardar.
     const [formHotel, setFormHotel] = useState(() => buildHotelFormInitial(serviceToEdit?.recordKind === "hotel" ? serviceToEdit : null));
@@ -396,6 +411,81 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     const [formPaquete, setFormPaquete] = useState(() => buildPackageFormInitial(serviceToEdit?.recordKind === "package" ? serviceToEdit : null));
     const [formAsistencia, setFormAsistencia] = useState(() => buildAssistanceFormInitial(serviceToEdit?.recordKind === "assistance" ? serviceToEdit : null));
 
+    // ─── Fix #4 (auditoría de coherencia 2026-08-10) ──────────────────────────────
+    // `camposSugeridos` (qué campos siguen "en amarillo", sugerencia sin confirmar) y
+    // los flags de precio/moneda "tocados a mano" vivían como useState LOCAL de cada
+    // Inline*Form — pero cada form se REMONTA (instancia de React nueva) al cambiar de
+    // solapa, aunque su `form` (los VALORES) siga vivo acá arriba, levantado. Un
+    // remount resetea el useState local a su default (`false`) — así que un campo que
+    // seguía siendo sugerencia (amarillo, reemplazable) se volvía "protegido" por error
+    // al volver a esa solapa, y viceversa. Subir estos 3 estados junto con `form`
+    // (misma altura, mismo patrón) los deja sobrevivir al remount igual que los valores.
+    //
+    // Consecuencias reales que este fix arregla: "crear nuevo" veía plata vieja de OTRA
+    // solapa como si el vendedor la hubiera tipeado a mano (y no la limpiaba); el precio
+    // recién tipeado perdía su protección "no tocar" al volver a la solapa.
+    const [camposSugeridosHotel, setCamposSugeridosHotel] = useState({
+        supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, checkIn: false, checkOut: false,
+    });
+    const [camposSugeridosVuelo, setCamposSugeridosVuelo] = useState({
+        supplierId: false, netCost: false, salePrice: false, currency: false, departureDate: false, returnDate: false,
+    });
+    const [camposSugeridosTraslado, setCamposSugeridosTraslado] = useState({
+        supplierId: false, netCost: false, salePrice: false, currency: false, pickupDate: false,
+    });
+    const [camposSugeridosPaquete, setCamposSugeridosPaquete] = useState({
+        supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, startDate: false, endDate: false,
+    });
+    const [camposSugeridosAsistencia, setCamposSugeridosAsistencia] = useState({
+        supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, validFrom: false, validTo: false,
+    });
+
+    // Los flags de "tocado a mano" (para la sugerencia POR VARIANTE) solo existen en
+    // Hotel/Aéreo/Traslado (los 3 forms que usan useVariantPriceSuggestion, spec
+    // 2026-08-07 §3.3) — Paquete/Asistencia no tienen sugerencia por variante, así que
+    // no necesitan este flag. Arrancan en `esEdicion` (editar un servicio YA GUARDADO:
+    // ese precio/moneda es del vendedor, nunca una sugerencia — ver el comentario largo
+    // en HotelInlineForm.jsx).
+    const [precioTocadoHotel, setPrecioTocadoHotel] = useState(esEdicion);
+    const [monedaTocadaHotel, setMonedaTocadaHotel] = useState(esEdicion);
+    const [precioTocadoVuelo, setPrecioTocadoVuelo] = useState(esEdicion);
+    const [monedaTocadaVuelo, setMonedaTocadaVuelo] = useState(esEdicion);
+    const [precioTocadoTraslado, setPrecioTocadoTraslado] = useState(esEdicion);
+    const [monedaTocadaTraslado, setMonedaTocadaTraslado] = useState(esEdicion);
+
+    // ─── Fix REGRESIÓN #1+#6 (re-review 2026-08-10) ───────────────────────────────
+    // `camposSugeridos` (arriba) cumple DOS trabajos incompatibles hasta este fix:
+    // pintar el amarillo (que #6 apaga con cualquier tecleo del buscador) Y decidir qué
+    // campo es reemplazable por una selección nueva (que #1 necesita CONSERVAR entre
+    // tecleos). Repro real: elegir Hotel A (queda todo sugerido/amarillo) → escribir el
+    // nombre de Hotel B en el buscador (fix #6 apaga TODOS los amarillos, sin que el
+    // vendedor haya tocado ningún campo puntual) → elegir Hotel B → el sistema veía la
+    // plata de A como "tocada a mano" (porque camposSugeridos ya estaba todo en false) y
+    // NO la reemplazaba — Hotel B se guardaba con la plata de A, sin amarillo.
+    //
+    // `camposTocadosAMano` es un estado APARTE, con el mismo shape que camposSugeridos,
+    // que representa SOLO "el vendedor tocó este campo puntual a mano" — se prende
+    // ÚNICAMENTE en el onChange de CADA campo (operador/costo/venta/moneda/fechas), NUNCA
+    // por tipear en el buscador de producto. Solo se resetea ENTERO cuando cambia el
+    // CONTEXTO (salto de solapa que limpia el origen — fix #11, ver
+    // limpiarBusquedaDelFormOrigen más abajo): elegir o crear un producto NO lo resetea
+    // — al contrario, ahí es donde más importa que lo tocado a mano siga protegido.
+    const [camposTocadosAManoHotel, setCamposTocadosAManoHotel] = useState({
+        supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, checkIn: false, checkOut: false,
+    });
+    const [camposTocadosAManoVuelo, setCamposTocadosAManoVuelo] = useState({
+        supplierId: false, netCost: false, salePrice: false, currency: false, departureDate: false, returnDate: false,
+    });
+    const [camposTocadosAManoTraslado, setCamposTocadosAManoTraslado] = useState({
+        supplierId: false, netCost: false, salePrice: false, currency: false, pickupDate: false,
+    });
+    const [camposTocadosAManoPaquete, setCamposTocadosAManoPaquete] = useState({
+        supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, startDate: false, endDate: false,
+    });
+    const [camposTocadosAManoAsistencia, setCamposTocadosAManoAsistencia] = useState({
+        supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, validFrom: false, validTo: false,
+    });
+
     // ─── Buscador versátil: salto de solapa (spec FIRMADA 2026-08-10, D1..D13) ───────
     // Cuando el vendedor elige, en el buscador de CUALQUIER solapa, una fila de OTRO
     // tipo de servicio, la ficha salta de solapa sola (D3, silencioso e inmediato) y deja
@@ -403,22 +493,103 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // (con `useSeleccionPendienteDelTipo`, ver los 5 Inline*Form.jsx).
     const [seleccionPendiente, setSeleccionPendiente] = useState(null);
 
-    // Limpia SOLO el campo de búsqueda de producto del form de ORIGEN (nombre/rateId/
-    // newCatalogProduct) — D10: nada más de lo que el vendedor haya tipeado en esa
-    // solapa se toca; si vuelve, todo lo demás lo encuentra intacto.
+    // Limpia el campo de búsqueda de producto del form de ORIGEN (nombre/rateId/
+    // newCatalogProduct) — D10: nada de lo que el vendedor haya tipeado A MANO en esa
+    // solapa se toca; si vuelve, lo encuentra intacto.
+    //
+    // Fix #11 (auditoría de coherencia 2026-08-10): ADEMÁS, los campos que NUNCA fueron
+    // tocados a mano en el origen (vinieron de la selección que se está deshaciendo, D3)
+    // se limpian con ella — reusa `resolverCamposALimpiarAlCrearNuevo` (mismo criterio
+    // del Bug #28).
+    //
+    // Fix REGRESIÓN #1+#6 (re-review 2026-08-10): la decisión de "qué preservar" pasó de
+    // `camposSugeridos` (el amarillo, que #6 apaga con cualquier tecleo y ya no sirve
+    // como señal) a `camposTocadosAMano` — ver el comentario largo donde se declara ese
+    // estado, más arriba. Además, "salto de solapa que limpia el origen" es uno de los
+    // puntos donde `camposTocadosAMano` SÍ se resetea entero (cambia el contexto: el
+    // vendedor se va de esta solapa) — a diferencia de elegir/crear un producto, que
+    // nunca lo resetea.
     const limpiarBusquedaDelFormOrigen = useCallback((tabOrigen) => {
+        // Apaga a `false` los flags de "sugerido" (amarillo) de los campos que se acaban
+        // de limpiar — visual nomás, no decide nada (eso ya lo hizo camposTocadosAMano).
+        const apagarSugeridos = (setCamposSugeridos, camposLimpios) => {
+            setCamposSugeridos((prev) => {
+                const next = { ...prev };
+                for (const clave of Object.keys(camposLimpios)) next[clave] = false;
+                return next;
+            });
+        };
+        // Fix residual (re-review 2026-08-10, ítem B): OJO — NO resetear el mapa entero.
+        // `camposLimpios` (arriba) preserva el VALOR de los campos tocados a mano (el
+        // vendedor los tipeó antes de saltar de solapa); si acá apagábamos su bandera de
+        // "tocado a mano" igual, al volver a esta solapa y elegir un producto ese valor
+        // tipeado quedaba "libre" (camposTocadosAMano en false) y una selección nueva lo
+        // pisaba en silencio — el mismo bug de plata equivocada, pero por el camino del
+        // salto-de-solapa en vez del camino del tecleo. `resolverTocadosAManoTrasLimpiarOrigen`
+        // (inlineServiceFormHelpers.js, testeada por separado) solo apaga la bandera de los
+        // campos que EFECTIVAMENTE volvieron al default; los tocados a mano quedan protegidos.
+        const resetearTocadosAMano = (setCamposTocadosAMano, camposLimpios, camposTocadosAManoDeEsteTipo) => {
+            setCamposTocadosAMano(resolverTocadosAManoTrasLimpiarOrigen(camposTocadosAManoDeEsteTipo, camposLimpios));
+        };
+
         if (tabOrigen === "Hotel") {
-            setFormHotel((prev) => ({ ...prev, hotelName: "", rateId: null, newCatalogProduct: null }));
+            const valoresPorDefecto = { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS", checkIn: "", checkOut: "" };
+            const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
+                { supplierId: formHotel.supplierId, unitNetCost: formHotel.unitNetCost, unitSalePrice: formHotel.unitSalePrice, currency: formHotel.currency, checkIn: formHotel.checkIn, checkOut: formHotel.checkOut },
+                camposTocadosAManoHotel,
+                valoresPorDefecto
+            );
+            // city (fix #5, mismo espíritu): es un dato de la IDENTIDAD del hotel elegido
+            // (lo llenaba handleSelectExisting desde el subtitle del resultado) — se va
+            // junto con hotelName/rateId, no es algo que el vendedor tipee a mano.
+            setFormHotel((prev) => ({ ...prev, hotelName: "", city: "", rateId: null, newCatalogProduct: null, ...camposLimpios }));
+            apagarSugeridos(setCamposSugeridosHotel, camposLimpios);
+            resetearTocadosAMano(setCamposTocadosAManoHotel, camposLimpios, camposTocadosAManoHotel);
         } else if (tabOrigen === "Aereo") {
-            setFormVuelo((prev) => ({ ...prev, routeName: "", rateId: null, newCatalogProduct: null }));
+            const valoresPorDefecto = { supplierId: "", netCost: "", salePrice: "", currency: "ARS", departureDate: "", returnDate: "" };
+            const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
+                { supplierId: formVuelo.supplierId, netCost: formVuelo.netCost, salePrice: formVuelo.salePrice, currency: formVuelo.currency, departureDate: formVuelo.departureDate, returnDate: formVuelo.returnDate },
+                camposTocadosAManoVuelo,
+                valoresPorDefecto
+            );
+            setFormVuelo((prev) => ({ ...prev, routeName: "", rateId: null, newCatalogProduct: null, ...camposLimpios }));
+            apagarSugeridos(setCamposSugeridosVuelo, camposLimpios);
+            resetearTocadosAMano(setCamposTocadosAManoVuelo, camposLimpios, camposTocadosAManoVuelo);
         } else if (tabOrigen === "Traslado") {
-            setFormTraslado((prev) => ({ ...prev, routeName: "", rateId: null, newCatalogProduct: null }));
+            const valoresPorDefecto = { supplierId: "", netCost: "", salePrice: "", currency: "ARS", pickupDate: "" };
+            const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
+                { supplierId: formTraslado.supplierId, netCost: formTraslado.netCost, salePrice: formTraslado.salePrice, currency: formTraslado.currency, pickupDate: formTraslado.pickupDate },
+                camposTocadosAManoTraslado,
+                valoresPorDefecto
+            );
+            setFormTraslado((prev) => ({ ...prev, routeName: "", rateId: null, newCatalogProduct: null, ...camposLimpios }));
+            apagarSugeridos(setCamposSugeridosTraslado, camposLimpios);
+            resetearTocadosAMano(setCamposTocadosAManoTraslado, camposLimpios, camposTocadosAManoTraslado);
         } else if (tabOrigen === "Paquete") {
-            setFormPaquete((prev) => ({ ...prev, packageName: "", rateId: null, newCatalogProduct: null }));
+            const valoresPorDefecto = { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS", startDate: "", endDate: "" };
+            const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
+                { supplierId: formPaquete.supplierId, unitNetCost: formPaquete.unitNetCost, unitSalePrice: formPaquete.unitSalePrice, currency: formPaquete.currency, startDate: formPaquete.startDate, endDate: formPaquete.endDate },
+                camposTocadosAManoPaquete,
+                valoresPorDefecto
+            );
+            setFormPaquete((prev) => ({ ...prev, packageName: "", rateId: null, newCatalogProduct: null, ...camposLimpios }));
+            apagarSugeridos(setCamposSugeridosPaquete, camposLimpios);
+            resetearTocadosAMano(setCamposTocadosAManoPaquete, camposLimpios, camposTocadosAManoPaquete);
         } else if (tabOrigen === "Asistencia") {
-            setFormAsistencia((prev) => ({ ...prev, planName: "", rateId: null, newCatalogProduct: null }));
+            const valoresPorDefecto = { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS", validFrom: "", validTo: "" };
+            const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
+                { supplierId: formAsistencia.supplierId, unitNetCost: formAsistencia.unitNetCost, unitSalePrice: formAsistencia.unitSalePrice, currency: formAsistencia.currency, validFrom: formAsistencia.validFrom, validTo: formAsistencia.validTo },
+                camposTocadosAManoAsistencia,
+                valoresPorDefecto
+            );
+            setFormAsistencia((prev) => ({ ...prev, planName: "", rateId: null, newCatalogProduct: null, ...camposLimpios }));
+            apagarSugeridos(setCamposSugeridosAsistencia, camposLimpios);
+            resetearTocadosAMano(setCamposTocadosAManoAsistencia, camposLimpios, camposTocadosAManoAsistencia);
         }
-    }, []);
+    }, [
+        formHotel, formVuelo, formTraslado, formPaquete, formAsistencia,
+        camposTocadosAManoHotel, camposTocadosAManoVuelo, camposTocadosAManoTraslado, camposTocadosAManoPaquete, camposTocadosAManoAsistencia,
+    ]);
 
     // Handler que reciben los 5 buscadores (`onSelectOtherType` de ProductSearchField):
     // guarda la selección como pendiente, salta de solapa y limpia el buscador de origen.
@@ -469,8 +640,6 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     useEffect(() => {
         setErrorValidacion(null);
     }, [tabActiva, formHotel, formVuelo, formTraslado, formPaquete, formAsistencia]);
-
-    const esEdicion = Boolean(serviceToEdit);
 
     // â”€â”€â”€ Acceso al form activo (lectura) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -962,6 +1131,18 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         onSelectOtherType={handleSelectOtherType}
                         seleccionPendiente={seleccionPendiente}
                         onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
+                        // Fix #4 (auditoría 2026-08-10): "sugerido"/"tocado" levantados acá
+                        // arriba, junto con `form` — sobreviven al remount del cambio de solapa.
+                        camposSugeridos={camposSugeridosHotel}
+                        setCamposSugeridos={setCamposSugeridosHotel}
+                        precioTocadoPorElUsuario={precioTocadoHotel}
+                        setPrecioTocadoPorElUsuario={setPrecioTocadoHotel}
+                        monedaTocadaPorElUsuario={monedaTocadaHotel}
+                        setMonedaTocadaPorElUsuario={setMonedaTocadaHotel}
+                        // Fix regresión #1+#6 (re-review 2026-08-10): separado de
+                        // camposSugeridos — ver el comentario largo donde se declara.
+                        camposTocadosAMano={camposTocadosAManoHotel}
+                        setCamposTocadosAMano={setCamposTocadosAManoHotel}
                     />
                 )}
                 {tabActiva === "Aereo" && (
@@ -974,6 +1155,14 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         onSelectOtherType={handleSelectOtherType}
                         seleccionPendiente={seleccionPendiente}
                         onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
+                        camposSugeridos={camposSugeridosVuelo}
+                        setCamposSugeridos={setCamposSugeridosVuelo}
+                        precioTocadoPorElUsuario={precioTocadoVuelo}
+                        setPrecioTocadoPorElUsuario={setPrecioTocadoVuelo}
+                        monedaTocadaPorElUsuario={monedaTocadaVuelo}
+                        setMonedaTocadaPorElUsuario={setMonedaTocadaVuelo}
+                        camposTocadosAMano={camposTocadosAManoVuelo}
+                        setCamposTocadosAMano={setCamposTocadosAManoVuelo}
                     />
                 )}
                 {tabActiva === "Traslado" && (
@@ -986,6 +1175,14 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         onSelectOtherType={handleSelectOtherType}
                         seleccionPendiente={seleccionPendiente}
                         onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
+                        camposSugeridos={camposSugeridosTraslado}
+                        setCamposSugeridos={setCamposSugeridosTraslado}
+                        precioTocadoPorElUsuario={precioTocadoTraslado}
+                        setPrecioTocadoPorElUsuario={setPrecioTocadoTraslado}
+                        monedaTocadaPorElUsuario={monedaTocadaTraslado}
+                        setMonedaTocadaPorElUsuario={setMonedaTocadaTraslado}
+                        camposTocadosAMano={camposTocadosAManoTraslado}
+                        setCamposTocadosAMano={setCamposTocadosAManoTraslado}
                     />
                 )}
                 {tabActiva === "Paquete" && (
@@ -998,6 +1195,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         onSelectOtherType={handleSelectOtherType}
                         seleccionPendiente={seleccionPendiente}
                         onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
+                        // Paquete no usa useVariantPriceSuggestion: sin precioTocado/monedaTocada.
+                        camposSugeridos={camposSugeridosPaquete}
+                        setCamposSugeridos={setCamposSugeridosPaquete}
+                        camposTocadosAMano={camposTocadosAManoPaquete}
+                        setCamposTocadosAMano={setCamposTocadosAManoPaquete}
                     />
                 )}
                 {tabActiva === "Asistencia" && (
@@ -1010,6 +1212,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         onSelectOtherType={handleSelectOtherType}
                         seleccionPendiente={seleccionPendiente}
                         onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
+                        // Asistencia no usa useVariantPriceSuggestion: sin precioTocado/monedaTocada.
+                        camposSugeridos={camposSugeridosAsistencia}
+                        setCamposSugeridos={setCamposSugeridosAsistencia}
+                        camposTocadosAMano={camposTocadosAManoAsistencia}
+                        setCamposTocadosAMano={setCamposTocadosAManoAsistencia}
                     />
                 )}
             </div>

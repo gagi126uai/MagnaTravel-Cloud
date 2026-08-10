@@ -5,6 +5,27 @@
  * lógica repetida entre los 5 forms si aparece más en el futuro.
  */
 
+// ─── Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) ───────────────────────────
+
+/**
+ * Al editar un servicio, ¿con qué producto del tarifario está vinculado? El DTO que
+ * devuelve el backend lo expone como `ratePublicId` (ver HotelBookingDto.cs y
+ * equivalentes) — nunca `rateId`. Leer el nombre equivocado (bug real, hasta este fix)
+ * dejaba `form.rateId` SIEMPRE en `null` al editar, así que el PUT nunca mandaba el
+ * producto vinculado — y el candado "anti-clobber" del backend revertía en SILENCIO
+ * cualquier cambio de RoomType/MealPlan/Operador/Nombre/Ciudad que el vendedor hiciera
+ * (el motor interpretaba "no tocaron el producto" y pisaba con los valores viejos).
+ *
+ * `?? serviceToEdit.rateId` queda como red de contención por si algún día aparece un
+ * DTO legacy con el nombre viejo — hoy nunca debería hacer falta.
+ *
+ * @param {{ratePublicId?:string, rateId?:string}|null} serviceToEdit
+ * @returns {string|null}
+ */
+export function resolverRateIdDeEdicion(serviceToEdit) {
+    return serviceToEdit?.ratePublicId ?? serviceToEdit?.rateId ?? null;
+}
+
 /**
  * Bug #28 (Tanda 4, 2026-07-24): antes, tocar "Crear nuevo" en el buscador de producto
  * borraba TODOS los campos relacionados (operador, costo, venta, moneda) sin mirar si el
@@ -12,27 +33,33 @@
  * decidir el nombre del producto nuevo — o los editaba después de elegir uno del catálogo
  * y arrepentirse — ese trabajo se perdía en silencio al crear el producto nuevo.
  *
- * La solución usa `camposSugeridos` (el mismo estado que ya pinta de amarillo los campos
- * que vinieron de una sugerencia del catálogo, ver `handleSelectExisting` en cada form):
- * un campo SOLO se limpia si TODAVÍA está marcado como sugerido (sigue amarillo, es una
- * sugerencia vieja que ya no corresponde al producto nuevo). Si el usuario lo tocó a mano
- * en algún momento (`onChange` de ese campo ya puso `camposSugeridos[campo] = false`), su
- * valor se respeta tal cual está — nunca se pisa.
+ * Fix regresión #1+#6 (re-review 2026-08-10): la primera versión de este fix usaba
+ * `camposSugeridos` (el estado que pinta el AMARILLO) para decidir qué preservar — pero
+ * `camposSugeridos` también se apaga con cualquier tecleo en el buscador (fix #6, "el
+ * amarillo ya no corresponde a nada"), así que dejó de servir como señal confiable de
+ * "esto lo tipeó el vendedor a mano". Repro real: elegir Hotel A, después escribir el
+ * nombre de otro hotel buscando B (eso ya apaga TODOS los amarillos) y tocar "Crear
+ * nuevo" — con `camposSugeridos` como señal, esto interpretaba "todo tocado a mano" y
+ * preservaba la plata/operador de A en el producto nuevo, sin que el vendedor los
+ * hubiera tipeado. Ahora usa `camposTocadosAMano` — un estado APARTE que se prende
+ * SOLO en el `onChange` real de cada campo (nunca por tipear en el buscador) y sigue
+ * protegido aunque el amarillo se haya apagado. Ver `ServiceInlineCard.jsx` (fix #4)
+ * para dónde vive.
  *
  * @param {Record<string, any>} valoresActuales — valores actuales del form (antes de crear nuevo)
- * @param {Record<string, boolean>} camposSugeridos — mismas claves que valoresPorDefecto; true = todavía es sugerencia sin tocar
+ * @param {Record<string, boolean>} camposTocadosAMano — mismas claves que valoresPorDefecto; true = el vendedor tipeó/eligió ESE campo a mano
  * @param {Record<string, any>} valoresPorDefecto — valor a usar para los campos que SÍ hay que limpiar
  * @returns {Record<string, any>} objeto con TODAS las claves de valoresPorDefecto, listo para
  *          mezclar (spread) en el nuevo estado del form
  */
-export function resolverCamposALimpiarAlCrearNuevo(valoresActuales, camposSugeridos, valoresPorDefecto) {
+export function resolverCamposALimpiarAlCrearNuevo(valoresActuales, camposTocadosAMano, valoresPorDefecto) {
     const resultado = {};
     for (const campo of Object.keys(valoresPorDefecto)) {
-        // Si no hay registro para ese campo en camposSugeridos, lo tratamos como "sigue
-        // sugerido" (se limpia) — es la opción segura: nunca deja colgado un dato viejo
-        // de un producto que ya no es el elegido.
-        const sigueSiendoSugerido = camposSugeridos?.[campo] !== false;
-        resultado[campo] = sigueSiendoSugerido ? valoresPorDefecto[campo] : valoresActuales?.[campo];
+        // Solo se preserva si HAY un registro explícito de que el vendedor lo tocó a
+        // mano — sin registro (undefined) se trata como "no tocado" (se limpia): opción
+        // segura, nunca deja colgado un dato viejo de un producto que ya no es el elegido.
+        const estaTocadoAMano = camposTocadosAMano?.[campo] === true;
+        resultado[campo] = estaTocadoAMano ? valoresActuales?.[campo] : valoresPorDefecto[campo];
     }
     return resultado;
 }
@@ -49,35 +76,45 @@ export function resolverCamposALimpiarAlCrearNuevo(valoresActuales, camposSugeri
  * Fix C-5(a) (review 2026-08-10, P-21 "nunca pisa lo escrito a mano"): la versión
  * anterior solo miraba si `sale` ya traía un operador — pero un campo con valor
  * ESCRITO A MANO por el vendedor (antes de elegir este producto) tampoco se puede
- * pisar, aunque `sale` no diga nada al respecto. Por eso ahora la función recibe
- * `formActual` (el form tal cual está ANTES de aplicar esta selección) y solo escribe
- * en un campo si está REALMENTE vacío ahí — operador y fechas por igual.
+ * pisar, aunque `sale` no diga nada al respecto.
+ *
+ * Fix regresión #1+#6 (re-review 2026-08-10): "vacío" ya no alcanza como señal — un
+ * campo puede tener VALOR (de una sugerencia anterior, ej. eligió Hotel A y ahora elige
+ * Hotel B) sin que el vendedor lo haya tocado a mano; ESE sí tiene que poder
+ * reemplazarse. La señal correcta es `camposTocadosAMano` (ver
+ * `resolverCamposALimpiarAlCrearNuevo` arriba, mismo criterio): libre = vacío O no
+ * tocado a mano.
  *
  * Las fechas nunca chocan con `sale` (lastSale/rateFallback no trae fechas), pero SÍ
  * pueden chocar con una fecha que el vendedor ya haya tipeado a mano en esa solapa —
- * de ahí que `formActual` también se consulte para las dos.
+ * de ahí que `formActual`/`camposTocadosAMano` también se consulten para las dos.
  *
  * @param {{supplier:{supplierPublicId:string,name:string}|null, dates:{from:string,to:string|null}|null}|null} interpretacion
  *   lo que devolvió `extraerInterpretacionParaPrecarga` (productDedupMatchLogic.js), o null
- * @param {{yaHaySupplierDeLaVenta:boolean, camposFecha:string[], formActual:Record<string,any>}} opciones
+ * @param {{yaHaySupplierDeLaVenta:boolean, camposFecha:string[], formActual:Record<string,any>, camposTocadosAMano:Record<string,boolean>}} opciones
  *   `yaHaySupplierDeLaVenta` = la venta real (`sale`) ya trae operador (esa SIEMPRE gana).
  *   `camposFecha` son los nombres de campo del form para [desde] o [desde, hasta] — por
  *   ejemplo `["checkIn","checkOut"]` en Hotel, o solo `["pickupDate"]` en Traslado (un
  *   único campo de fecha, sin rango). `formActual` es el form ANTES de esta selección.
+ *   `camposTocadosAMano` dice cuáles de esos valores actuales son del vendedor (no se
+ *   pisan) y cuáles vinieron de una selección anterior (reemplazables).
  * @returns {{patch: Record<string, any>, sugeridos: Record<string, boolean>}}
  *   `patch` se mezcla (spread) en el `setForm`; `sugeridos` se mezcla en `camposSugeridos`
  *   para que esos campos se pinten de amarillo con el mismo estilo de siempre
  */
-export function aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta, camposFecha, formActual }) {
+export function aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta, camposFecha, formActual, camposTocadosAMano }) {
     const patch = {};
     const sugeridos = {};
     if (!interpretacion) return { patch, sugeridos };
 
     const actual = formActual || {};
+    const tocados = camposTocadosAMano || {};
+    // Libre = vacío O no tocado a mano (mismo criterio que resolverPatchDeVentaDelCatalogo).
+    const libre = (campo) => !actual[campo] || tocados[campo] !== true;
 
     // El operador de la frase solo se escribe si NI la venta real NI el vendedor (a
-    // mano, antes de esta selección) ya tenían uno puesto.
-    const supplierLibre = !yaHaySupplierDeLaVenta && !actual.supplierId;
+    // mano) ya tenían uno puesto.
+    const supplierLibre = !yaHaySupplierDeLaVenta && libre("supplierId");
     if (supplierLibre && interpretacion.supplier?.supplierPublicId) {
         patch.supplierId = interpretacion.supplier.supplierPublicId;
         patch.supplierName = interpretacion.supplier.name || null;
@@ -88,11 +125,11 @@ export function aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySuppl
     // <input type="date"> del form solo entienden la parte de fecha (YYYY-MM-DD) — mismo
     // recorte que ya usan buildXFormInitial() en ServiceInlineCard.jsx para servicios editados.
     const [campoDesde, campoHasta] = camposFecha || [];
-    if (campoDesde && !actual[campoDesde] && interpretacion.dates?.from) {
+    if (campoDesde && libre(campoDesde) && interpretacion.dates?.from) {
         patch[campoDesde] = String(interpretacion.dates.from).split("T")[0];
         sugeridos[campoDesde] = true;
     }
-    if (campoHasta && !actual[campoHasta] && interpretacion.dates?.to) {
+    if (campoHasta && libre(campoHasta) && interpretacion.dates?.to) {
         patch[campoHasta] = String(interpretacion.dates.to).split("T")[0];
         sugeridos[campoHasta] = true;
     }
@@ -100,74 +137,127 @@ export function aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySuppl
     return { patch, sugeridos };
 }
 
-// ─── C-5(b) (review 2026-08-10): el salto de solapa no puede pisar lo tipeado ─────
+// ─── Regla transversal (auditoría de coherencia 2026-08-10, #1/#2/#7) ─────────────
 
 /**
- * D5/D10: cada solapa guarda lo suyo por separado — el estado de los 5 formularios
- * vive LEVANTADO en `ServiceInlineCard`, así que un formulario que se remonta al saltar
- * de solapa (D3) puede traer, en su `form`, datos que el vendedor ya había tipeado A
- * MANO ahí ANTES de haberse ido a buscar en otra solapa (ej: ya había elegido un
- * Operador en Hotel, se fue a Aéreo, buscó algo que resultó ser un hotel, y la ficha
- * saltó de vuelta a Hotel).
+ * "Lo que el vendedor escribió a mano NUNCA se pisa ni se borra; lo que vino de una
+ * selección se reemplaza con la selección siguiente." Antes esta guarda solo regía en
+ * el camino de "selección pendiente" (salto de solapa, D3) — un bug real que el dueño
+ * reportó: elegir un producto DENTRO de la misma solapa pisaba un operador que el
+ * vendedor acababa de elegir a mano en el select de Operador.
  *
- * En el camino NORMAL (buscar y elegir un producto DENTRO de la misma solapa), la venta
- * real del producto elegido SIEMPRE manda sobre lo que hubiera antes — comportamiento
- * de toda la vida, sin cambios. Pero en el camino de "selección PENDIENTE" (llegó por
- * un salto de solapa), pisar esos campos sería tirar a la basura algo que el vendedor
- * ya había cargado — por eso `esSeleccionPendiente` hace que cada campo se escriba
- * SOLO si está vacío en el form actual.
+ * Fix REGRESIÓN #1+#6 (re-review 2026-08-10): la primera versión de este fix usaba
+ * `camposSugeridos` (el estado del AMARILLO) para decidir "reemplazable o no" — pero
+ * `camposSugeridos` cumple OTRO trabajo, apagarse con cualquier tecleo en el buscador
+ * (fix #6), así que dejó de ser una señal confiable de "esto es del vendedor". Repro
+ * real: elegir Hotel A (precio/operador quedan sugeridos, amarillo) → escribir el
+ * nombre de Hotel B en el buscador (eso apaga TODOS los amarillos, fix #6, sin que el
+ * vendedor haya tocado ningún campo de precio/operador) → elegir Hotel B → con
+ * `camposSugeridos` ya en `false` en todos lados, el sistema interpretaba "todo es del
+ * vendedor" y NO reemplazaba nada — Hotel B se guardaba con la plata de A, sin amarillo.
+ *
+ * Los dos significados están SEPARADOS ahora en dos estados distintos (viven en
+ * `ServiceInlineCard.jsx`, fix #4):
+ *   - `camposSugeridos`: SOLO pinta amarillo. Se apaga con cualquier tecleo (fix #6).
+ *   - `camposTocadosAMano`: se prende ÚNICAMENTE en el `onChange` real de CADA campo
+ *     (el vendedor tocó ESE campo puntual) — nunca por tipear en el buscador. Solo se
+ *     resetea entero cuando cambia el CONTEXTO (salto de solapa que limpia el origen,
+ *     `limpiarBusquedaDelFormOrigen` — fix #11), nunca por elegir/crear un producto
+ *     (ahí, al contrario, lo tocado a mano se PROTEGE).
+ *
+ * `libre(campo) = vacío O NO tocado a mano` — un campo con valor que vino de una
+ * selección ANTERIOR (nunca tocado a mano por el vendedor) es reemplazable por la
+ * selección nueva; eso es lo que hace que Hotel B reemplace la plata de Hotel A.
+ *
+ * Fix #2 (bug reportado por el dueño): si la venta elegida NO trae operador (producto
+ * sin ventas registradas todavía), NUNCA se escribe `supplierId`/`supplierName` — ni
+ * siquiera para "limpiarlo": antes esto borraba en silencio un operador que el vendedor
+ * ya había elegido.
+ *
+ * Fix #7 (moneda/precio fantasma + borde de la re-review): el precio de venta SOLO se
+ * escribe si la venta trae un valor REAL Y una moneda real — ni `0` ni vacío cuentan (un
+ * `rateFallback` sin precio curado no tiene nada que sugerir, y un precio sin moneda no
+ * es plata utilizable): nunca se pinta un número sin unidad ni "$0" sin amarillo. La
+ * moneda viaja PEGADA al precio — solo se toca cuando el precio TAMBIÉN se escribe.
  *
  * @param {object} params
  * @param {object} params.sale — `lastSale`/`rateFallback` del resultado elegido
  * @param {boolean} params.canSeeCost — permiso `cobranzas.see_cost`
  * @param {Record<string,any>} params.formActual — el form ANTES de esta selección
- * @param {boolean} params.esSeleccionPendiente — true si esto vino de un salto de solapa
+ * @param {Record<string,boolean>} params.camposTocadosAMano — ANTES de esta selección
+ *   (mismas claves que el form) — dice cuáles de los valores actuales son del vendedor
+ *   (protegidos) y cuáles vinieron de una selección anterior (reemplazables)
  * @param {string} params.campoVenta — nombre del campo de precio de venta del form (ej: "unitSalePrice"/"salePrice")
  * @param {string} params.campoCosto — nombre del campo de costo del form (ej: "unitNetCost"/"netCost")
  * @returns {{patch: Record<string, any>, sugeridos: Record<string, boolean>}}
  */
-export function resolverPatchDeVentaDelCatalogo({ sale, canSeeCost, formActual, esSeleccionPendiente, campoVenta, campoCosto }) {
+export function resolverPatchDeVentaDelCatalogo({ sale, canSeeCost, formActual, camposTocadosAMano, campoVenta, campoCosto }) {
     const actual = formActual || {};
+    const tocados = camposTocadosAMano || {};
     const patch = {};
     const sugeridos = {};
 
-    // "Libre para escribir" = camino normal (siempre gana la venta) O el campo está
-    // vacío en el form actual (nadie lo había tocado a mano todavía).
-    const libre = (campo) => !esSeleccionPendiente || !actual[campo];
+    // Libre para escribir = el campo está vacío, O tiene un valor pero NO fue tocado a
+    // mano por el vendedor (vino de una selección anterior, es reemplazable).
+    const libre = (campo) => !actual[campo] || tocados[campo] !== true;
 
-    if (libre("supplierId")) {
-        patch.supplierId = sale?.supplierPublicId || "";
-        patch.supplierName = sale?.supplierName || null;
-        sugeridos.supplierId = Boolean(sale?.supplierPublicId);
+    if (libre("supplierId") && sale?.supplierPublicId) {
+        patch.supplierId = sale.supplierPublicId;
+        patch.supplierName = sale.supplierName || null;
+        sugeridos.supplierId = true;
     }
 
-    // Fix "moneda fantasma" (review 2026-08-10): la moneda es la UNIDAD del precio, no
-    // un campo independiente — `libre("currency")` por sí solo está roto porque los 5
-    // buildXFormInitial() arrancan `currency: "ARS"` (nunca vacía, a diferencia del
-    // precio que arranca ""), así que en el camino de selección pendiente esa moneda
-    // "de fábrica" SIEMPRE parecía "ya tipeada a mano" y nunca se actualizaba — quedaba
-    // pisada por ejemplo con una venta en US$ mostrada como si fuera en ARS. La regla
-    // correcta: la moneda viaja PEGADA al precio de venta. Si el precio se escribe
-    // (`campoVenta` estaba libre), su moneda se escribe también, en amarillo igual que
-    // él. Si el precio NO se escribe (el vendedor ya había tipeado uno a mano), la
-    // moneda tampoco se toca — sería cambiarle la unidad a un número que no es el de
-    // esta venta.
-    const ventaLibre = libre(campoVenta);
-    if (ventaLibre) {
-        patch[campoVenta] = sale?.salePrice != null ? String(sale.salePrice) : "";
-        sugeridos[campoVenta] = Boolean(sale?.salePrice);
-        patch.currency = sale?.currency || "ARS";
-        sugeridos.currency = Boolean(sale?.currency);
+    // Borde de la re-review: precio Y moneda tienen que venir los DOS para que
+    // corresponda escribir algo — un precio sin moneda no es plata utilizable.
+    if (libre(campoVenta) && sale?.salePrice && sale?.currency) {
+        patch[campoVenta] = String(sale.salePrice);
+        sugeridos[campoVenta] = true;
+        patch.currency = sale.currency;
+        sugeridos.currency = true;
     }
 
     // El costo solo se toca si el vendedor tiene permiso de verlo (F-14): sin permiso,
     // el campo ni siquiera está a la vista, así que no corresponde tocarlo.
-    if (canSeeCost && libre(campoCosto)) {
-        patch[campoCosto] = sale?.netCost != null ? String(sale.netCost) : actual[campoCosto];
-        sugeridos[campoCosto] = sale?.netCost != null;
+    if (canSeeCost && libre(campoCosto) && sale?.netCost) {
+        patch[campoCosto] = String(sale.netCost);
+        sugeridos[campoCosto] = true;
     }
 
     return { patch, sugeridos };
+}
+
+// ─── Fix residual ítem B (re-review 2026-08-10) ───────────────────────────────────
+
+/**
+ * Al saltar de solapa (D3), `limpiarBusquedaDelFormOrigen` (ServiceInlineCard.jsx) usa
+ * `resolverCamposALimpiarAlCrearNuevo` para que los campos tocados a mano CONSERVEN su
+ * valor y los demás vuelvan al default — hasta acá bien. El bug estaba en el paso
+ * siguiente: la bandera `camposTocadosAMano` (la que dice "esto es protegido") se
+ * apagaba ENTERA, para TODOS los campos, aunque el valor tipeado a mano siguiera vivo
+ * en el form. Resultado: el vendedor tipeaba un precio a mano, saltaba de solapa,
+ * volvía, elegía un producto del buscador — y ese precio (que seguía ahí, a la vista)
+ * quedaba "libre" para la nueva selección y se pisaba en silencio. Mismo bug de "plata
+ * equivocada" que el fix #1+#6, pero por la puerta del salto-de-solapa en vez del
+ * tecleo en el buscador.
+ *
+ * Fix: solo apagar la bandera de los campos que EFECTIVAMENTE volvieron al default (el
+ * vendedor nunca los tocó) — los tocados a mano quedan con su bandera en `true`, tal
+ * cual estaban, protegidos para la próxima selección.
+ *
+ * @param {Record<string, boolean>} camposTocadosAMano — mapa ANTES de limpiar el origen
+ * @param {Record<string, any>} camposLimpios — el resultado de `resolverCamposALimpiarAlCrearNuevo`
+ *   para ESTE mismo tipo de servicio (mismas claves) — solo se usa para saber QUÉ claves
+ *   evaluar, no sus valores
+ * @returns {Record<string, boolean>} el nuevo mapa, listo para reemplazar el estado completo
+ */
+export function resolverTocadosAManoTrasLimpiarOrigen(camposTocadosAMano, camposLimpios) {
+    const resultado = { ...camposTocadosAMano };
+    for (const campo of Object.keys(camposLimpios || {})) {
+        if (camposTocadosAMano?.[campo] !== true) {
+            resultado[campo] = false;
+        }
+    }
+    return resultado;
 }
 
 /**

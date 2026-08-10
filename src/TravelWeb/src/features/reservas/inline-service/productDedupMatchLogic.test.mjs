@@ -107,6 +107,34 @@ describe("mergearCandidatosDedup", () => {
     assert.deepEqual(mergearCandidatosDedup([], [], 8), []);
   });
 
+  it("fix #10: locales YA llenan el tope (8) y el motor trajo candidatos — se reservan 2 lugares (6 locales + 2 motor)", () => {
+    const actuales = Array.from({ length: 8 }, (_, i) => ({ ratePublicId: `local-${i}` }));
+    const candidatos = [{ ratePublicId: "motor-1" }, { ratePublicId: "motor-2" }, { ratePublicId: "motor-3" }];
+    const resultado = mergearCandidatosDedup(actuales, candidatos, 8);
+    assert.equal(resultado.length, 8);
+    // Los primeros 6 son locales, tal cual estaban (sin reordenar)
+    assert.deepEqual(resultado.slice(0, 6).map((r) => r.ratePublicId), ["local-0", "local-1", "local-2", "local-3", "local-4", "local-5"]);
+    // Los últimos 2 son del motor (el 3ro no entra: solo hay 2 lugares reservados)
+    assert.deepEqual(resultado.slice(6).map((r) => r.ratePublicId), ["motor-1", "motor-2"]);
+  });
+
+  it("fix #10: locales llenan el tope pero el motor NO trajo nada — los locales ocupan el tope completo, sin cambios", () => {
+    const actuales = Array.from({ length: 8 }, (_, i) => ({ ratePublicId: `local-${i}` }));
+    const resultado = mergearCandidatosDedup(actuales, [], 8);
+    assert.equal(resultado.length, 8);
+    assert.deepEqual(resultado.map((r) => r.ratePublicId), actuales.map((r) => r.ratePublicId));
+  });
+
+  it("fix #10: pocos locales (menos que el tope) y motor con candidatos — el motor no 'roba' lugares de más, solo ocupa lo que sobra", () => {
+    const actuales = [{ ratePublicId: "local-0" }, { ratePublicId: "local-1" }, { ratePublicId: "local-2" }];
+    const candidatos = [{ ratePublicId: "motor-1" }, { ratePublicId: "motor-2" }, { ratePublicId: "motor-3" }, { ratePublicId: "motor-4" }, { ratePublicId: "motor-5" }];
+    const resultado = mergearCandidatosDedup(actuales, candidatos, 8);
+    // 3 locales + hasta 5 lugares libres para el motor (no hace falta recortar locales)
+    assert.equal(resultado.length, 8);
+    assert.deepEqual(resultado.slice(0, 3).map((r) => r.ratePublicId), ["local-0", "local-1", "local-2"]);
+    assert.deepEqual(resultado.slice(3).map((r) => r.ratePublicId), ["motor-1", "motor-2", "motor-3", "motor-4", "motor-5"]);
+  });
+
   it("sin tope explícito: no recorta nada", () => {
     const actuales = [{ ratePublicId: "r1" }];
     const candidatos = [{ ratePublicId: "r2" }, { ratePublicId: "r3" }];
@@ -332,5 +360,13 @@ describe("debeMostrarDuda", () => {
 
   it("sin duda: no se muestra", () => {
     assert.equal(debeMostrarDuda({ duda: null, isSearching: false, dudaDescartada: false }), false);
+  });
+
+  it("fix #9: ya hay un producto vinculado (rateId seteado) — la duda queda obsoleta, no se muestra", () => {
+    assert.equal(debeMostrarDuda({ duda: dudaDeProducto, isSearching: false, dudaDescartada: false, hayProductoVinculado: true }), false);
+  });
+
+  it("fix #9: sin producto vinculado (hayProductoVinculado ausente/false): se comporta como siempre", () => {
+    assert.equal(debeMostrarDuda({ duda: dudaDeProducto, isSearching: false, dudaDescartada: false, hayProductoVinculado: false }), true);
   });
 });

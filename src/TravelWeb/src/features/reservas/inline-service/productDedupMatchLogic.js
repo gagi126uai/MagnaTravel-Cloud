@@ -62,10 +62,22 @@ export function esRespuestaUtilizable(dto) {
 
 // ─── Mezclar candidatos sin duplicar lo que ya está ─────────────────────────────
 
+// Fix #10 (auditoría de coherencia 2026-08-10): cuando la búsqueda local YA llena el
+// tope (8 filas), antes los candidatos del motor quedaban afuera del todo — el
+// `.slice(0, tope)` se comía la lista entera con los locales, aunque el motor hubiera
+// traído algo mejor. Se reservan estos lugares para el motor SOLO cuando trajo algo;
+// si no trajo nada, los locales siguen ocupando el tope completo (sin cambios).
+const LUGARES_RESERVADOS_PARA_EL_MOTOR = 2;
+
 /**
  * Agrega al final de `resultadosActuales` los candidatos del motor que TODAVÍA no
- * estaban en la lista (mismo `ratePublicId`). Nunca reordena ni saca nada de lo que el
- * buscador normal ya trajo — la lista "solo mejora", nunca empeora ni sorprende.
+ * estaban en la lista (mismo `ratePublicId`). Nunca reordena lo que el buscador normal
+ * ya trajo — la lista "solo mejora", nunca empeora ni sorprende.
+ *
+ * Con tope y candidatos del motor de por medio, se reservan
+ * `LUGARES_RESERVADOS_PARA_EL_MOTOR` lugares para ellos (recortando los locales si hace
+ * falta): con tope 8, locales llenos y motor con candidatos, quedan 6 locales + 2 del
+ * motor. Si el motor no trajo nada, los locales ocupan el tope completo, como siempre.
  *
  * @param {object[]} resultadosActuales — resultados del buscador normal (catalog-search)
  * @param {object[]} candidatosDelMotor — `productCandidates` de la respuesta del matcher
@@ -85,8 +97,22 @@ export function mergearCandidatosDedup(resultadosActuales, candidatosDelMotor, t
     return true;
   });
 
-  const mezclados = [...actuales, ...nuevos];
-  return typeof tope === "number" ? mezclados.slice(0, tope) : mezclados;
+  if (typeof tope !== "number") {
+    return [...actuales, ...nuevos];
+  }
+
+  if (nuevos.length === 0) {
+    // Sin candidatos del motor: los locales ocupan todo el tope, como siempre.
+    return actuales.slice(0, tope);
+  }
+
+  // Con candidatos del motor: se les reservan lugares, recortando los locales si hace
+  // falta (nunca al revés — si hay pocos locales, el motor no "roba" lugares de más).
+  const topeLocales = Math.max(tope - LUGARES_RESERVADOS_PARA_EL_MOTOR, 0);
+  const localesRecortados = actuales.slice(0, topeLocales);
+  const lugaresParaMotor = tope - localesRecortados.length;
+  const motorRecortado = nuevos.slice(0, lugaresParaMotor);
+  return [...localesRecortados, ...motorRecortado];
 }
 
 // ─── El texto de "crear ..." no puede nacer con basura ──────────────────────────
@@ -274,10 +300,16 @@ export function esDudaDeProducto(duda) {
  * `ProductSearchField.jsx` con un ref (se prende en Esc/blur, se apaga al seguir
  * tipeando) — acá solo se USA la decisión, sin acoplarse a cómo se guarda.
  *
- * @param {{duda:object|null, isSearching:boolean, dudaDescartada:boolean}} params
+ * Fix #9 (auditoría de coherencia 2026-08-10): tampoco corresponde mostrarla si YA hay
+ * un producto vinculado (`hayProductoVinculado`, `rateId` seteado) — la identidad ya
+ * está resuelta, así que cualquier duda que hubiera quedado dando vueltas (ej. un
+ * refoco después de elegir) está obsoleta.
+ *
+ * @param {{duda:object|null, isSearching:boolean, dudaDescartada:boolean, hayProductoVinculado?:boolean}} params
  */
-export function debeMostrarDuda({ duda, isSearching, dudaDescartada }) {
+export function debeMostrarDuda({ duda, isSearching, dudaDescartada, hayProductoVinculado }) {
   if (isSearching) return false;
   if (dudaDescartada) return false;
+  if (hayProductoVinculado) return false;
   return esDudaDeProducto(duda);
 }

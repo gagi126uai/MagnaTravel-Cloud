@@ -120,6 +120,18 @@ export function TransferInlineForm({
     onSelectOtherType,
     seleccionPendiente,
     onConsumirSeleccionPendiente,
+    // Fix #4 (auditoría 2026-08-10): levantados a ServiceInlineCard — ver HotelInlineForm
+    // para la explicación completa de por qué (sobreviven al remount de cambiar de solapa).
+    camposSugeridos,
+    setCamposSugeridos,
+    precioTocadoPorElUsuario,
+    setPrecioTocadoPorElUsuario,
+    monedaTocadaPorElUsuario,
+    setMonedaTocadaPorElUsuario,
+    // Fix regresión #1+#6 (re-review 2026-08-10): APARTE de camposSugeridos — ver el
+    // comentario largo en ServiceInlineCard.jsx donde se declara.
+    camposTocadosAMano,
+    setCamposTocadosAMano,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -134,16 +146,6 @@ export function TransferInlineForm({
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
-    const [camposSugeridos, setCamposSugeridos] = useState({
-        supplierId: false,
-        netCost: false,
-        salePrice: false,
-        currency: false,
-        // pickupDate (D13, spec 2026-08-10): amarillo cuando salió de la interpretación
-        // de la frase completa tipeada en el buscador.
-        pickupDate: false,
-    });
-
     // ─── Sugerencia POR VEHÍCULO (spec 2026-08-07, §3.3 / M-15 / V9=A / V10=A) ────────
     // En Traslado la variante es el vehículo (texto libre con memoria) — ver HotelInlineForm
     // para la explicación completa del patrón "se acomoda sola mientras no la toques".
@@ -154,19 +156,6 @@ export function TransferInlineForm({
         vehicleType: form.vehicleType,
     });
     const [hintVariante, setHintVariante] = useState(null);
-
-    // Flags EXPLÍCITOS de "el vendedor escribió acá a mano" (fix ronda 2 de review —
-    // hallazgos #4 y #5, ver HotelInlineForm para la explicación completa). Reemplazan a
-    // derivar el touch-status de `camposSugeridos`, que confundía "vacío y nunca tocado"
-    // con "tocado" y trataba precio+moneda como un solo territorio.
-    //
-    // Fix ronda 3 (BLOQUEANTE, ver HotelInlineForm): en modo edición arrancan en `true` —
-    // el precio/moneda de un servicio YA GUARDADO no es una sugerencia del sistema, es un
-    // dato del vendedor. Sin este seed, el efecto de abajo corría en el MONTAJE con
-    // `sugerenciaVariante` todavía en null (la consulta recién se disparó) y borraba el
-    // costo/venta cargado del servicio.
-    const [precioTocadoPorElUsuario, setPrecioTocadoPorElUsuario] = useState(isEditing);
-    const [monedaTocadaPorElUsuario, setMonedaTocadaPorElUsuario] = useState(isEditing);
 
     useEffect(() => {
         if (!form.rateId) {
@@ -179,6 +168,9 @@ export function TransferInlineForm({
             estaPrecioTocado: precioTocadoPorElUsuario,
             estaMonedaTocada: monedaTocadaPorElUsuario,
             suggestion: sugerenciaVariante,
+            // Fix #8 (auditoría 2026-08-10): ver HotelInlineForm — nunca vaciar un
+            // precio que ya tiene valor.
+            precioActual: form[campoPrecioVariante],
         });
         setHintVariante(resultado.hintText);
         if (resultado.debeActualizarPrecio || resultado.debeActualizarMoneda) {
@@ -213,16 +205,18 @@ export function TransferInlineForm({
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
+    const handleSelectExisting = (catalogResult, interpretacion) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
 
-        // Fix C-5(b) (review 2026-08-10): en el camino de selección PENDIENTE (salto de
-        // solapa) no se pisa lo que el vendedor ya había tipeado a mano en esta solapa.
+        // Regla transversal (auditoría 2026-08-10, #1): un campo se reemplaza si está
+        // vacío O si NO fue tocado a mano por el vendedor (`camposTocadosAMano`) —
+        // nunca si lo tipeó/eligió a mano. Fix regresión #1+#6: la señal es
+        // `camposTocadosAMano`, NO `camposSugeridos` (ese es solo el amarillo).
         const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
             sale,
             canSeeCost,
             formActual: form,
-            esSeleccionPendiente,
+            camposTocadosAMano,
             campoVenta: "salePrice",
             campoCosto: "netCost",
         });
@@ -231,7 +225,7 @@ export function TransferInlineForm({
         // la frase (D13).
         const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_TRASLADO, formActual: form }
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_TRASLADO, formActual: form, camposTocadosAMano }
         );
 
         setForm((prev) => ({
@@ -253,10 +247,10 @@ export function TransferInlineForm({
             ...sugeridosVenta,
             ...sugeridosFrase,
         });
-        // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
-        // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
-        setPrecioTocadoPorElUsuario(false);
-        setMonedaTocadaPorElUsuario(false);
+        // Fix residual (re-review 2026-08-10, ítem A): sembrar desde el mapa persistente,
+        // no apagar a ciegas — mismo motivo que HotelInlineForm.jsx.
+        setPrecioTocadoPorElUsuario(camposTocadosAMano[campoPrecioVariante] === true);
+        setMonedaTocadaPorElUsuario(camposTocadosAMano.currency === true);
         // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR VEHÍCULO
         // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
     };
@@ -272,10 +266,11 @@ export function TransferInlineForm({
     const handleCreateNew = (searchText, interpretacion) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
         // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
-        // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
+        // campos que el vendedor NUNCA tocó a mano (fix regresión #1+#6: la señal es
+        // `camposTocadosAMano`, no `camposSugeridos`).
         const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
             { supplierId: form.supplierId, netCost: form.netCost, salePrice: form.salePrice, currency: form.currency },
-            camposSugeridos,
+            camposTocadosAMano,
             { supplierId: "", netCost: "", salePrice: "", currency: "ARS" }
         );
 
@@ -284,7 +279,7 @@ export function TransferInlineForm({
         // violeta, ver abajo) — acá no hay `sale`.
         const { patch: patchFechas, sugeridos: sugeridosFechas } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_TRASLADO, formActual: form }
+            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_TRASLADO, formActual: form, camposTocadosAMano }
         );
 
         // El operador del recuadro "trayecto nuevo" arranca SIEMPRE vacío — si la frase
@@ -309,8 +304,9 @@ export function TransferInlineForm({
             pickupDate: false,
             ...sugeridosFechas,
         });
-        setPrecioTocadoPorElUsuario(false);
-        setMonedaTocadaPorElUsuario(false);
+        // Mismo criterio que en handleSelectExisting (fix residual, ítem A).
+        setPrecioTocadoPorElUsuario(camposTocadosAMano[campoPrecioVariante] === true);
+        setMonedaTocadaPorElUsuario(camposTocadosAMano.currency === true);
     };
 
     const handleSearchChange = (texto) => {
@@ -320,11 +316,13 @@ export function TransferInlineForm({
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        if (!texto) {
-            setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false, pickupDate: false });
-            setPrecioTocadoPorElUsuario(false);
-            setMonedaTocadaPorElUsuario(false);
-        }
+        // Fix #6 (auditoría 2026-08-10): CUALQUIER tecleo desvincula el rateId — los
+        // amarillos que quedaban pintados ya no corresponden a ninguna selección viva
+        // (el VALOR se queda, deja de ser "sugerencia"). Antes esto solo pasaba si el
+        // vendedor borraba TODO el texto.
+        setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false, pickupDate: false });
+        // Fix REGRESIÓN #1+#6 (re-review 2026-08-10): estos dos NO se tocan acá (ver
+        // HotelInlineForm para la explicación completa). `camposTocadosAMano` tampoco.
     };
 
     return (
@@ -341,6 +339,8 @@ export function TransferInlineForm({
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
                 esEdicion={isEditing}
+                rateId={form.rateId}
+                supplierIdElegido={form.supplierId}
                 label="Trayecto"
                 placeholder="Ej: EZE → hotel, Aeropuerto → ciudad..."
             />
@@ -367,6 +367,7 @@ export function TransferInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, supplierId: true }));
                         }}
                         data-testid="transfer-supplier"
                         aria-label="Operador del traslado"
@@ -401,6 +402,7 @@ export function TransferInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, pickupDate: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, pickupDate: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, pickupDate: true }));
                         }}
                         data-testid="transfer-fecha"
                         aria-label="Fecha del traslado"
@@ -493,6 +495,7 @@ export function TransferInlineForm({
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, netCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, netCost: false }));
+                                setCamposTocadosAMano((prev) => ({ ...prev, netCost: true }));
                                 // Con permiso de costos, "costo" ES el campo que la variante
                                 // sigue (campoPrecioVariante === "netCost").
                                 setPrecioTocadoPorElUsuario(true);
@@ -518,6 +521,7 @@ export function TransferInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, salePrice: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, salePrice: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, salePrice: true }));
                             // "Venta" solo es la variante rastreada para quien NO ve costos
                             // (campoPrecioVariante === "salePrice"); con permiso de costos
                             // es un campo aparte, ajeno a la sugerencia.
@@ -539,6 +543,7 @@ export function TransferInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, currency: true }));
                             setMonedaTocadaPorElUsuario(true);
                         }}
                         data-testid="transfer-moneda"

@@ -21,10 +21,12 @@ import { debeAplicarSeleccionPendiente } from "./crossTypeSearchLogic";
  * @param {object} params
  * @param {{serviceType:string, result:object, interpretacion:object|null}|null} params.seleccionPendiente
  * @param {string} params.serviceType — el tipo de ESTE formulario (ej: "Hotel")
- * @param {(result:object, interpretacion:object|null, opciones:{esSeleccionPendiente:boolean}) => void} params.onSeleccionar
- *   el `handleSelectExisting` propio del formulario — recibe `esSeleccionPendiente:true`
- *   (fix C-5b, review 2026-08-10) para que NO pise campos que el vendedor ya había
- *   tipeado a mano en esa solapa antes de haberse ido a buscar en otra
+ * @param {(result:object, interpretacion:object|null) => void} params.onSeleccionar
+ *   el `handleSelectExisting` propio del formulario. Desde la auditoría de coherencia
+ *   2026-08-10 (#1) ya no hace falta avisarle "esto vino de un salto de solapa": la
+ *   regla de "nunca pisar lo tipeado a mano" es la MISMA para los dos caminos (normal y
+ *   pendiente) — la decide `resolverPatchDeVentaDelCatalogo` mirando `camposSugeridos`
+ *   del form, no quién lo llamó.
  * @param {() => void} params.onConsumida — avisa a `ServiceInlineCard` que ya se aplicó
  *   (así limpia `seleccionPendiente` y no queda colgada para el próximo salto)
  */
@@ -39,10 +41,7 @@ export function useSeleccionPendienteDelTipo({ seleccionPendiente, serviceType, 
             return;
         }
         ultimaAplicadaRef.current = seleccionPendiente;
-        // esSeleccionPendiente:true (fix C-5b) — el form destino puede traer campos que
-        // el vendedor ya había tipeado a mano en esa solapa antes de irse; a diferencia
-        // del camino normal, acá la venta del producto NO puede pisarlos.
-        onSeleccionar(seleccionPendiente.result, seleccionPendiente.interpretacion, { esSeleccionPendiente: true });
+        onSeleccionar(seleccionPendiente.result, seleccionPendiente.interpretacion);
         onConsumida();
         // Deps a propósito solo en la pendiente y el tipo: `onSeleccionar`/`onConsumida` son
         // funciones nuevas en cada render del formulario (no memoizadas con useCallback) — si

@@ -191,6 +191,20 @@ export function HotelInlineForm({
     onSelectOtherType,
     seleccionPendiente,
     onConsumirSeleccionPendiente,
+    // Fix #4 (auditoría 2026-08-10): antes vivían acá como useState local — un remount
+    // (cambio de solapa) los reseteaba y perdía si un campo seguía siendo "sugerencia
+    // reemplazable" o no. Ahora los levanta ServiceInlineCard junto con `form`.
+    camposSugeridos,
+    setCamposSugeridos,
+    precioTocadoPorElUsuario,
+    setPrecioTocadoPorElUsuario,
+    monedaTocadaPorElUsuario,
+    setMonedaTocadaPorElUsuario,
+    // Fix regresión #1+#6 (re-review 2026-08-10): APARTE de camposSugeridos (el
+    // amarillo) — dice qué campo tocó el vendedor a mano de verdad. Ver el comentario
+    // largo en ServiceInlineCard.jsx donde se declara.
+    camposTocadosAMano,
+    setCamposTocadosAMano,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -216,19 +230,10 @@ export function HotelInlineForm({
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
-    // Cuando el usuario elige un hotel existente del buscador, precargamos operador
+    // `camposSugeridos` (qué campos siguen "en amarillo") llega por prop desde
+    // ServiceInlineCard (fix #4, auditoría 2026-08-10) — cuando el usuario elige un
+    // hotel existente del buscador, `handleSelectExisting` más abajo precarga operador
     // y precio de la última venta EN AMARILLO (sugeridos, editables — mockup Momento 3).
-    // Los campos sugeridos se marcan con isSuggested para pintar el fondo amarillo.
-    const [camposSugeridos, setCamposSugeridos] = useState({
-        supplierId: false,
-        unitNetCost: false,
-        unitSalePrice: false,
-        currency: false,
-        // checkIn/checkOut (D13, spec 2026-08-10): amarillo cuando salen de la
-        // interpretación de la frase completa tipeada en el buscador.
-        checkIn: false,
-        checkOut: false,
-    });
 
     // ─── Sugerencia POR HABITACIÓN (spec 2026-08-07, §3.3 / M-15 / V9=A / V10=A) ───────
     // El campo de precio que este usuario ve y edita: costo para quien tiene permiso de
@@ -265,8 +270,8 @@ export function HotelInlineForm({
     // de habitación DURANTE la edición no las reactiva a propósito — mover el precio de
     // un servicio ya guardado sin que el vendedor lo pida sigue siendo territorio
     // prohibido, edite lo que edite después.
-    const [precioTocadoPorElUsuario, setPrecioTocadoPorElUsuario] = useState(isEditing);
-    const [monedaTocadaPorElUsuario, setMonedaTocadaPorElUsuario] = useState(isEditing);
+    // (Fix #4, auditoría 2026-08-10: estos dos flags llegan por prop — el seed en
+    // `isEditing` ahora lo hace ServiceInlineCard, una sola vez, al levantar el estado.)
 
     // useEffect con dependencia en `sugerenciaVariante`: corre cada vez que llega una
     // respuesta nueva del hook (que ya viene debounced). NO se agregan los flags de
@@ -286,6 +291,10 @@ export function HotelInlineForm({
             estaPrecioTocado: precioTocadoPorElUsuario,
             estaMonedaTocada: monedaTocadaPorElUsuario,
             suggestion: sugerenciaVariante,
+            // Fix #8 (auditoría 2026-08-10): el valor ACTUAL del campo — así la función
+            // pura sabe si hay algo con valor que no se puede vaciar (ej: el precio que
+            // `handleSelectExisting` acaba de precargar de la venta real).
+            precioActual: form[campoPrecioVariante],
         });
         setHintVariante(resultado.hintText);
         if (resultado.debeActualizarPrecio || resultado.debeActualizarMoneda) {
@@ -326,29 +335,32 @@ export function HotelInlineForm({
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
+    const handleSelectExisting = (catalogResult, interpretacion) => {
         // Tomamos la sugerencia del lastSale (venta real) o del rateFallback (campos del Rate)
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
 
-        // Fix C-5(b) (review 2026-08-10): en el camino NORMAL, la venta real siempre
-        // pisa (comportamiento de toda la vida). En el camino de SELECCIÓN PENDIENTE
-        // (salto de solapa, D3), el form puede traer campos que el vendedor ya había
-        // tipeado a mano en esta solapa ANTES de irse — ahí solo se escribe lo vacío.
+        // Regla transversal (auditoría 2026-08-10, #1): un campo se reemplaza si está
+        // vacío O si NO fue tocado a mano por el vendedor (`camposTocadosAMano` de ANTES
+        // de esta selección) — nunca si lo tipeó/eligió a mano. Vale igual en la misma
+        // solapa que tras un salto (D3): ya no hay distinción entre "camino normal" y
+        // "pendiente". Fix regresión #1+#6: la señal es `camposTocadosAMano`, NO
+        // `camposSugeridos` (ese es solo el amarillo, se apaga con cualquier tecleo del
+        // buscador — ver el comentario largo en ServiceInlineCard.jsx).
         const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
             sale,
             canSeeCost,
             formActual: form,
-            esSeleccionPendiente,
+            camposTocadosAMano,
             campoVenta: "unitSalePrice",
             campoCosto: "unitNetCost",
         });
 
         // Fix C-5(a) (review 2026-08-10): la precarga de la frase (D13) tampoco pisa un
         // campo que el vendedor ya tenía cargado a mano — ni la venta real (chequeado
-        // acá con Boolean(sale.supplierPublicId)) ni lo que ya estaba escrito en `form`.
+        // acá con Boolean(sale.supplierPublicId)) ni lo que ya estaba tocado a mano.
         const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_HOTEL, formActual: form }
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_HOTEL, formActual: form, camposTocadosAMano }
         );
 
         setForm((prev) => ({
@@ -378,10 +390,14 @@ export function HotelInlineForm({
             ...sugeridosVenta,
             ...sugeridosFrase,
         });
-        // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
-        // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
-        setPrecioTocadoPorElUsuario(false);
-        setMonedaTocadaPorElUsuario(false);
+        // Fix residual (re-review 2026-08-10, ítem A): estos dos flags NO se apagan a
+        // ciegas. Si el vendedor ya había tocado a mano el campo que sigue la variante
+        // (`campoPrecioVariante`) ANTES de elegir este producto, ese toque tiene que
+        // sobrevivir — si no, 300ms después la sugerencia por habitación (el useEffect de
+        // arriba, disparado por el rateId nuevo) lo pisa igual, aunque `camposTocadosAMano`
+        // ya lo tuviera protegido. Sembramos desde el mapa persistente, no desde `false` fijo.
+        setPrecioTocadoPorElUsuario(camposTocadosAMano[campoPrecioVariante] === true);
+        setMonedaTocadaPorElUsuario(camposTocadosAMano.currency === true);
         // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR HABITACIÓN
         // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
     };
@@ -399,10 +415,11 @@ export function HotelInlineForm({
     const handleCreateNew = (searchText, interpretacion) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
         // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
-        // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
+        // campos que el vendedor NUNCA tocó a mano (fix regresión #1+#6: la señal es
+        // `camposTocadosAMano`, no `camposSugeridos` — ver resolverCamposALimpiarAlCrearNuevo).
         const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
             { supplierId: form.supplierId, unitNetCost: form.unitNetCost, unitSalePrice: form.unitSalePrice, currency: form.currency },
-            camposSugeridos,
+            camposTocadosAMano,
             { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS" }
         );
 
@@ -414,7 +431,7 @@ export function HotelInlineForm({
         // un producto nuevo) — va aparte, al operador del recuadro violeta, ver abajo.
         const { patch: patchFechas, sugeridos: sugeridosFechas } = aplicarInterpretacionComoSugerencia(
             interpretacion,
-            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_HOTEL, formActual: form }
+            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_HOTEL, formActual: form, camposTocadosAMano }
         );
 
         // El operador del recuadro "hotel nuevo" arranca SIEMPRE vacío (recién se está
@@ -426,6 +443,12 @@ export function HotelInlineForm({
         setForm((prev) => ({
             ...prev,
             hotelName: searchText,
+            // Fix #5 (auditoría 2026-08-10): `city` es un dato de la IDENTIDAD del hotel
+            // EXISTENTE que se estaba mirando (lo llena handleSelectExisting desde el
+            // subtitle del resultado) — al crear un hotel nuevo, esa ciudad vieja queda
+            // huérfana y no corresponde. La ciudad del producto NUEVO se carga aparte,
+            // en el recuadro violeta (newCatalogProduct.city), a mano.
+            city: "",
             // Limpiamos el rateId porque ahora vamos al path "producto nuevo"
             rateId: null,
             newCatalogProduct: {
@@ -450,8 +473,13 @@ export function HotelInlineForm({
             checkOut: false,
             ...sugeridosFechas,
         });
-        setPrecioTocadoPorElUsuario(false);
-        setMonedaTocadaPorElUsuario(false);
+        // Mismo criterio que en handleSelectExisting (fix residual, ítem A): sembrar desde
+        // el mapa persistente, no apagar a ciegas. En "crear nuevo" no hay rateId todavía,
+        // así que la sugerencia por habitación no se dispara — pero si el vendedor vuelve
+        // a elegir un producto EXISTENTE después sin haber tocado nada nuevo, el flag debe
+        // seguir reflejando lo que ya estaba protegido.
+        setPrecioTocadoPorElUsuario(camposTocadosAMano[campoPrecioVariante] === true);
+        setMonedaTocadaPorElUsuario(camposTocadosAMano.currency === true);
         // "Crear nuevo" no tiene rateId: la sugerencia por habitación se apaga sola (el hook
         // no consulta sin producto elegido).
     };
@@ -467,14 +495,27 @@ export function HotelInlineForm({
             // Siempre limpiamos el rateId al tipear: el usuario tiene que volver a elegir
             // del dropdown para que el producto quede vinculado de nuevo.
             rateId: null,
+            // city (fix #5) es un dato de la IDENTIDAD del hotel que se estaba mirando —
+            // editar el nombre desvincula el producto, así que la ciudad vieja también
+            // queda huérfana. Se recupera al elegir de nuevo (handleSelectExisting).
+            city: "",
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        // Si borra el texto, también limpiamos los sugeridos (no hay producto seleccionado)
-        if (!texto) {
-            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, checkIn: false, checkOut: false });
-            setPrecioTocadoPorElUsuario(false);
-            setMonedaTocadaPorElUsuario(false);
-        }
+        // Fix #6 (auditoría 2026-08-10): CUALQUIER tecleo desvincula el rateId — los
+        // amarillos que quedaban pintados ya no corresponden a ninguna selección viva
+        // (el VALOR se queda tal cual, deja de ser "sugerencia"). Antes esto solo pasaba
+        // si el vendedor borraba TODO el texto; una letra de más dejaba operador/precio/
+        // fechas pintados de amarillo como si siguieran siendo sugerencia del producto
+        // que ya no está vinculado.
+        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, checkIn: false, checkOut: false });
+        // Fix REGRESIÓN #1+#6 (re-review 2026-08-10): `precioTocadoPorElUsuario`/
+        // `monedaTocadaPorElUsuario` (guardan de la sugerencia POR HABITACIÓN) NO se
+        // tocan acá — antes se apagaban en cada tecleo del buscador por error, dejando
+        // que esa sugerencia pisara un precio que el vendedor acababa de tocar a mano.
+        // Solo los apaga elegir/crear un producto (como siempre fue) o el onChange del
+        // propio campo de precio/moneda (los prende).
+        // `camposTocadosAMano` TAMPOCO se toca acá — tipear en el buscador no es "tocar
+        // a mano" ningún campo puntual (esa es justamente la separación del fix #1+#6).
     };
 
     return (
@@ -491,6 +532,8 @@ export function HotelInlineForm({
                 onCreateNew={handleCreateNew}
                 disabled={isEditing} // Al editar, el producto no cambia (solo los datos del servicio)
                 esEdicion={isEditing}
+                rateId={form.rateId}
+                supplierIdElegido={form.supplierId}
                 label="Hotel"
                 placeholder="Escribí el nombre del hotel..."
             />
@@ -517,6 +560,9 @@ export function HotelInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
+                            // Fix regresión #1+#6: el vendedor tocó ESTE campo a mano de
+                            // verdad — queda protegido hasta que cambie el contexto.
+                            setCamposTocadosAMano((prev) => ({ ...prev, supplierId: true }));
                         }}
                         data-testid="hotel-supplier"
                         aria-label="Operador del hotel"
@@ -553,6 +599,7 @@ export function HotelInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, checkIn: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, checkIn: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, checkIn: true }));
                         }}
                         data-testid="hotel-checkin"
                         aria-label="Fecha de entrada"
@@ -571,6 +618,7 @@ export function HotelInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, checkOut: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, checkOut: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, checkOut: true }));
                         }}
                         min={form.checkIn || undefined}
                         data-testid="hotel-checkout"
@@ -702,6 +750,7 @@ export function HotelInlineForm({
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
+                                setCamposTocadosAMano((prev) => ({ ...prev, unitNetCost: true }));
                                 // Con permiso de costos, "costo" ES el campo que la variante
                                 // sigue (campoPrecioVariante === "unitNetCost") — tocarlo a
                                 // mano lo saca del territorio del sistema para siempre.
@@ -729,6 +778,7 @@ export function HotelInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, unitSalePrice: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, unitSalePrice: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, unitSalePrice: true }));
                             // "Venta" solo es la variante rastreada por el sistema para quien
                             // NO ve costos (campoPrecioVariante === "unitSalePrice"); con
                             // permiso de costos es un campo aparte, ajeno a la sugerencia.
@@ -751,6 +801,7 @@ export function HotelInlineForm({
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
+                            setCamposTocadosAMano((prev) => ({ ...prev, currency: true }));
                             setMonedaTocadaPorElUsuario(true);
                         }}
                         data-testid="hotel-moneda"

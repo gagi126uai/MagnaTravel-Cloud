@@ -59,16 +59,32 @@ export function buildVariantSuggestionFields(suggestion) {
  *       también da "no sugerido" ahí, y eso frenaba la precarga de V9=A por error (un
  *       precio real de la MISMA habitación se quedaba sin mostrar).
  *
- * @param {{estaPrecioTocado: boolean, estaMonedaTocada: boolean, suggestion: object|null}} params
+ * Fix #8 (auditoría de coherencia 2026-08-10): la sugerencia NUNCA borra un precio que
+ * YA tiene valor. Antes, con `estaPrecioTocado=false` (el vendedor nunca tocó el campo
+ * a mano — por ejemplo, porque el precio que hay ahí lo precargó `handleSelectExisting`
+ * al elegir el producto, RECIÉN, desde la venta real) y una sugerencia nueva que llega
+ * vacía (otra habitación/cabina/vehículo, o ninguna venta previa de ESA variante), el
+ * efecto pisaba el casillero con `""` — el precio que el vendedor acababa de ver
+ * precargado desaparecía solo, sin que nadie lo tocara. Ahora, si la sugerencia nueva
+ * viene vacía y el casillero YA tiene algo cargado, ese valor se preserva — solo habla
+ * el renglón gris (que sigue actualizándose siempre, es solo informativo).
+ *
+ * @param {{estaPrecioTocado: boolean, estaMonedaTocada: boolean, suggestion: object|null, precioActual: string}} params
  * @returns {{ debeActualizarPrecio: boolean, price: string, debeActualizarMoneda: boolean, currency: string|null, hintText: string|null }}
  */
-export function resolverCamposAlCambiarVariante({ estaPrecioTocado, estaMonedaTocada, suggestion }) {
+export function resolverCamposAlCambiarVariante({ estaPrecioTocado, estaMonedaTocada, suggestion, precioActual }) {
   const campos = buildVariantSuggestionFields(suggestion);
+
+  // La sugerencia nueva vino vacía Y el casillero ya tiene algo — no es territorio
+  // libre para vaciar, aunque el vendedor nunca lo haya "tocado" en el sentido de
+  // onChange (pudo haber llegado ahí por una precarga de venta real, no por tipeo).
+  const escribiriaVacioSobreAlgoConValor = !campos.price && Boolean(precioActual);
+  const debeActualizarPrecio = !estaPrecioTocado && !escribiriaVacioSobreAlgoConValor;
 
   return {
     // El vendedor ya escribió un precio a mano: NUNCA se toca, ni para vaciarlo.
-    debeActualizarPrecio: !estaPrecioTocado,
-    price: !estaPrecioTocado ? campos.price : null,
+    debeActualizarPrecio,
+    price: debeActualizarPrecio ? campos.price : null,
     // La moneda sigue la MISMA regla, pero de forma independiente del precio (fix #4).
     debeActualizarMoneda: !estaMonedaTocada,
     currency: !estaMonedaTocada ? campos.currency : null,

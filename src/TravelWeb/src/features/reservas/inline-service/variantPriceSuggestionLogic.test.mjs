@@ -145,4 +145,111 @@ describe("resolverCamposAlCambiarVariante", () => {
     assert.equal(sinSugerencia.debeActualizarPrecio, true);
     assert.equal(sinSugerencia.price, "");
   });
+
+  // ─── Fix #8 (auditoría de coherencia 2026-08-10) ────────────────────────────────
+  // Repro real del bug: el vendedor elige un producto, `handleSelectExisting` precarga
+  // el precio de la venta real (el casillero YA tiene un valor). Milisegundos después
+  // llega la respuesta de useVariantPriceSuggestion para la habitación por default —
+  // si esa combinación nunca se vendió, la sugerencia es null/vacía. Sin este fix, el
+  // efecto pisaba el precio recién precargado con "".
+
+  it("fix #8: sugerencia vacía pero el casillero YA tiene un precio con valor — NO se borra (solo el renglón gris habla)", () => {
+    const resultado = resolverCamposAlCambiarVariante({
+      estaPrecioTocado: false,
+      estaMonedaTocada: false,
+      suggestion: null,
+      precioActual: "48000",
+    });
+    assert.equal(resultado.debeActualizarPrecio, false);
+    assert.equal(resultado.price, null);
+  });
+
+  it("fix #8: mismo caso pero con suggestion.isSameVariant=false (otra habitación, con precio ajeno) — tampoco borra el actual", () => {
+    const resultado = resolverCamposAlCambiarVariante({
+      estaPrecioTocado: false,
+      estaMonedaTocada: false,
+      suggestion: { isSameVariant: false, price: 70, currency: "USD", suggestionText: "El de Triple es US$ 70" },
+      precioActual: "48000",
+    });
+    assert.equal(resultado.debeActualizarPrecio, false);
+    assert.equal(resultado.price, null);
+    // El renglón gris SÍ se actualiza igual (es informativo, nunca pisa el casillero)
+    assert.match(resultado.hintText, /Triple/);
+  });
+
+  it("fix #8: sugerencia vacía y el casillero YA está vacío — no hay nada que preservar, sigue 'actualizando' (a vacío, sin cambio real)", () => {
+    const resultado = resolverCamposAlCambiarVariante({
+      estaPrecioTocado: false,
+      estaMonedaTocada: false,
+      suggestion: null,
+      precioActual: "",
+    });
+    assert.equal(resultado.debeActualizarPrecio, true);
+    assert.equal(resultado.price, "");
+  });
+
+  it("fix #8: sugerencia CON valor real para la MISMA variante — se actualiza igual, aunque ya hubiera un precio distinto (nueva sugerencia legítima, no un borrado)", () => {
+    const resultado = resolverCamposAlCambiarVariante({
+      estaPrecioTocado: false,
+      estaMonedaTocada: false,
+      suggestion: { isSameVariant: true, price: 55, currency: "USD", suggestionText: "Último precio: Delfos · US$ 55" },
+      precioActual: "48000",
+    });
+    assert.equal(resultado.debeActualizarPrecio, true);
+    assert.equal(resultado.price, "55");
+  });
+
+  it("fix #8: precio tocado a mano + sugerencia vacía + precioActual con valor — sigue protegido por la regla de siempre (ni entra a evaluar el nuevo guard)", () => {
+    const resultado = resolverCamposAlCambiarVariante({
+      estaPrecioTocado: true,
+      estaMonedaTocada: false,
+      suggestion: null,
+      precioActual: "48000",
+    });
+    assert.equal(resultado.debeActualizarPrecio, false);
+    assert.equal(resultado.price, null);
+  });
+});
+
+// ─── Secuencia (regresión #1+#6, re-review 2026-08-10) ────────────────────────────────
+// La re-review encontró que `setPrecioTocadoPorElUsuario(false)` se llamaba por error en
+// CADA tecleo del buscador (agregado junto con el fix #6) — eso dejaba la puerta abierta
+// para que la sugerencia por variante pisara un precio que el vendedor acababa de tocar
+// a mano, apenas escribía una letra más en el buscador. El fix: ese reset SOLO pasa al
+// elegir/crear un producto (como siempre fue) o al `onChange` del propio campo — nunca
+// por tipear en el buscador.
+
+describe("Secuencia: tocar el precio a mano y seguir escribiendo en el buscador — la variante no lo pisa", () => {
+  it("precioTocadoPorElUsuario en true, tal cual queda después de tocar el campo, bloquea la sugerencia aunque el vendedor siga escribiendo en el buscador", () => {
+    // Paso 1: el vendedor tipea el precio a mano → el form (fuera de esta función) prende
+    // `precioTocadoPorElUsuario = true` en el onChange de ESE campo — eso es lo único que
+    // simulamos acá, porque es lo único que le importa a esta función pura.
+    const precioTocadoPorElUsuario = true;
+
+    // Paso 2 (lo que el bug rompía): el vendedor sigue escribiendo en el CASILLERO DE
+    // BÚSQUEDA de producto (buscando otro hotel) — el fix #6 apaga `camposSugeridos`
+    // ahí, pero `precioTocadoPorElUsuario` NO tiene que tocarse: sigue en `true`.
+    // (No hay nada que llamar acá: el punto es que el flag NO cambió.)
+
+    // Paso 3: llega una respuesta nueva de useVariantPriceSuggestion (por ejemplo, para
+    // la habitación por default) — con el precio protegido, NUNCA se pisa, tenga o no
+    // tenga sugerencia la variante nueva.
+    const conSugerencia = resolverCamposAlCambiarVariante({
+      estaPrecioTocado: precioTocadoPorElUsuario,
+      estaMonedaTocada: false,
+      suggestion: { isSameVariant: true, price: 999, currency: "USD", suggestionText: "Último precio: Ola · US$ 999" },
+      precioActual: "48000",
+    });
+    assert.equal(conSugerencia.debeActualizarPrecio, false);
+    assert.equal(conSugerencia.price, null);
+
+    const sinSugerencia = resolverCamposAlCambiarVariante({
+      estaPrecioTocado: precioTocadoPorElUsuario,
+      estaMonedaTocada: false,
+      suggestion: null,
+      precioActual: "48000",
+    });
+    assert.equal(sinSugerencia.debeActualizarPrecio, false);
+    assert.equal(sinSugerencia.price, null);
+  });
 });

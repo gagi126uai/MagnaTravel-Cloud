@@ -1267,12 +1267,15 @@ public partial class BookingService : IBookingService
         var oldSalePrice = hotel.SalePrice;
         var oldNetCost = hotel.NetCost;
         var oldRateId = hotel.RateId;
+        // Identidad del producto (lo que el buscador del tarifario resuelve y la ficha NO deja tocar
+        // a mano mientras el hotel siga vinculado al mismo Rate): se guardan para PROTEGER estos
+        // campos si el request viene con otro valor sin haber cambiado de producto (ver el revert
+        // mas abajo). RoomType/MealPlan NO estan aca: son datos DE LA VENTA, la ficha SI los deja
+        // editar aunque el producto no cambie (bug de coherencia, review 2026-08-1x — ver el revert).
         var oldHotelName = hotel.HotelName;
         var oldCity = hotel.City;
         var oldCountry = hotel.Country;
         var oldStarRating = hotel.StarRating;
-        var oldRoomType = hotel.RoomType;
-        var oldMealPlan = hotel.MealPlan;
         var requestedRateId = await ResolveRateIdAsync(req.RateId, ct);
         var isRateChanged = requestedRateId.HasValue && requestedRateId != oldRateId;
         var requestedRate = isRateChanged
@@ -1317,14 +1320,25 @@ public partial class BookingService : IBookingService
         }
         else if (oldRateId.HasValue)
         {
+            // Bug de coherencia (review 2026-08-1x): el hotel sigue vinculado al MISMO producto del
+            // tarifario (no vino un RateId nuevo), asi que solo se protege la IDENTIDAD del producto
+            // — RateId/HotelName/City/Country/StarRating — de un request viejo o de un formulario que
+            // los reenvie con otro valor. En edicion el buscador del tarifario esta deshabilitado
+            // (no se puede tocar el producto a mano sin elegir otro), asi que estos campos NUNCA
+            // deberian cambiar solos y ESTE revert los protege.
+            //
+            // Lo que la ficha SI deja editar aunque el producto no cambie — el operador (SupplierId,
+            // ya resuelto arriba del request) y los datos DE LA VENTA (RoomType/MealPlan) — NO se
+            // revierte mas: antes este bloque los pisaba con el valor viejo, el vendedor los
+            // cambiaba en la pantalla, el PUT contestaba 200 "guardado" y el dato volvia solo en
+            // silencio. RoomCategory (el nombre fino de la habitacion) nunca estuvo en este revert
+            // y siempre se guardo bien: la correccion es que RoomType/MealPlan/SupplierId se
+            // comporten IGUAL que RoomCategory, no que RoomCategory empiece a revertirse tambien.
             hotel.RateId = oldRateId;
-            hotel.SupplierId = oldSupplierId;
             hotel.HotelName = oldHotelName;
             hotel.City = oldCity;
             hotel.Country = oldCountry;
             hotel.StarRating = oldStarRating;
-            hotel.RoomType = oldRoomType;
-            hotel.MealPlan = oldMealPlan;
         }
 
         // En Presupuesto el status siempre es "Solicitado".

@@ -248,6 +248,16 @@ export function ProductSearchField({
     // — el cruce de tipos se apaga (se filtra al tipo activo) y elegir una fila nunca
     // dispara onSelectOtherType, aunque el backend siga mandando resultados mezclados.
     esEdicion,
+    // Fix #9 (auditoría de coherencia 2026-08-10): el rateId YA vinculado del form (si
+    // hay uno). Con un producto ya elegido, el matcher IA no tiene sentido (la identidad
+    // ya está resuelta) y cualquier duda vieja quedaría obsoleta — ver matcherHabilitado
+    // y debeMostrarDuda más abajo.
+    rateId,
+    // Fix #1 (auditoría de coherencia 2026-08-10, bug reportado por Gastón): el operador
+    // que el vendedor ya eligió a mano en el form (si hay uno). No filtra ningún
+    // resultado — solo ordena: dentro de cada bloque de tipo, las filas cuya última
+    // venta fue con ESE operador van primero (el dato ya viaja con el vendedor).
+    supplierIdElegido,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -347,10 +357,16 @@ export function ProductSearchField({
     // `skipNextSearch` está activo — ese flag significa "el vendedor ACABA de elegir o
     // crear un producto", momento en el que la identidad ya quedó resuelta y consultar
     // igual sería una llamada desperdiciada (cuota del motor, plata).
+    // Fix #9 (auditoría de coherencia 2026-08-10): mismo criterio pero MÁS ancho que
+    // `skipNextSearch` — ese flag solo dura el instante de la selección; `rateId` sigue
+    // seteado después, mientras el producto siga vinculado. Si el vendedor vuelve a
+    // enfocar el campo o edita otra cosa sin desvincular el producto, el matcher no
+    // tiene que re-consultar: la identidad ya está resuelta.
     const matcherHabilitado =
         userHasInteracted.current &&
         !isSearching &&
         !skipNextSearch.current &&
+        !rateId &&
         debeDispararDedupMatch(value) &&
         (busquedaLocalDebil(results) || pareceLineaCompleta(value));
     const dedupResult = useProductDedupMatch({
@@ -375,10 +391,15 @@ export function ProductSearchField({
     // Buscador versátil (spec 2026-08-10, D1..D9): desde acá el backend ya no filtra por
     // `serviceType` (es solo una preferencia de orden), así que el cruce de tipos se
     // resuelve del lado del front. Editando (D6) el buscador queda limitado a su propio
-    // tipo; fuera de edición, partición dura (D9): primero el tipo de la solapa activa.
+    // tipo; fuera de edición, partición dura (D9): primero el tipo de la solapa activa
+    // — y, dentro de cada bloque, fix #1 (auditoría 2026-08-10): si el vendedor ya
+    // eligió un operador a mano, las filas cuya última venta fue con ESE operador
+    // quedan primero (no filtra nada, solo ordena).
     const resultadosFrescos = useMemo(
-        () => (esEdicion ? filtrarPorTipoActivo(resultadosMergeados, serviceType) : particionarPorTipo(resultadosMergeados, serviceType)),
-        [resultadosMergeados, serviceType, esEdicion]
+        () => (esEdicion
+            ? filtrarPorTipoActivo(resultadosMergeados, serviceType)
+            : particionarPorTipo(resultadosMergeados, serviceType, supplierIdElegido)),
+        [resultadosMergeados, serviceType, esEdicion, supplierIdElegido]
     );
 
     // Bug bloqueante B2 (revisor funcional): si el vendedor está navegando el dropdown
@@ -576,12 +597,14 @@ export function ProductSearchField({
                         casillero. NO es una opción — no lleva optionId, no es clickeable,
                         no entra en totalOptions (ver contarOpcionesNavegables más arriba).
                         Se contesta eligiendo la fila de abajo, que es la respuesta.
-                        `debeMostrarDuda` (fix C-4/C-6) ya filtró que sea de PRODUCTO (las
-                        otras 3 dudas del motor tienen su propio mecanismo, D12-bis) y que
-                        no haya sido descartada con Esc/blur (dudaDescartadaRef). Se apaga
-                        sola en cuanto el vendedor sigue tipeando (dedupResult se reinicia
-                        y el ref se re-arma) o cierra el desplegable. */}
-                    {debeMostrarDuda({ duda: dedupResult?.duda, isSearching, dudaDescartada: dudaDescartadaRef.current }) && (
+                        `debeMostrarDuda` (fix C-4/C-6/#9) ya filtró que sea de PRODUCTO (las
+                        otras 3 dudas del motor tienen su propio mecanismo, D12-bis), que
+                        no haya sido descartada con Esc/blur (dudaDescartadaRef) y que NO
+                        haya ya un producto vinculado (rateId) — con la identidad resuelta,
+                        cualquier duda vieja da vueltas de más. Se apaga sola en cuanto el
+                        vendedor sigue tipeando (dedupResult se reinicia y el ref se
+                        re-arma) o cierra el desplegable. */}
+                    {debeMostrarDuda({ duda: dedupResult?.duda, isSearching, dudaDescartada: dudaDescartadaRef.current, hayProductoVinculado: Boolean(rateId) }) && (
                         <div
                             className="px-4 py-2 text-xs text-slate-500 bg-slate-50 border-b border-slate-100"
                             role="status"
