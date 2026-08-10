@@ -156,6 +156,18 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
     /// Consigue la extraccion del modelo para esta frase — de la cache si ya se le pregunto hace poco,
     /// o preguntandole de verdad si no. Es el UNICO paso cacheable de todo el recorrido (ver C-1 en
     /// <see cref="ServiceLineInterpretationCache"/>): no toca la base ni sabe quien esta preguntando.
+    ///
+    /// <para><b>Bug de PROD (2026-08-1x): una excepcion del proveedor se colaba como 500</b>. Antes,
+    /// si <see cref="AskModelAsync"/> (o el armado del contexto de arriba) TIRABA una excepcion en vez
+    /// de degradar prolijo (una clave vieja rechazada, algo que el proveedor no contemplo en sus
+    /// propios catch de red/HTTP), la linea <c>_cache.Set</c> de mas abajo nunca se ejecutaba: el
+    /// resultado negativo no quedaba cacheado, y encima esta funcion no atajaba nada — la excepcion
+    /// subia entera. Terminaba atrapada recien en <see cref="InterpretAsync"/> (por eso el vendedor NO
+    /// veia un error, la degradacion "funcionaba"), pero cada tecleo volvia a martillar al proveedor
+    /// caido, porque el "no sirvio de nada" nunca quedaba guardado. Envolver TODO este metodo en un
+    /// try/catch cierra las dos cosas de una vez: cachea el negativo (TTL corto) Y loguea WARNING (es
+    /// un fallo del mundo de afuera, no un bug nuestro) en el mismo lugar donde ya se cachean los
+    /// resultados buenos.</para>
     /// </summary>
     private async Task<ServiceLineAiPayload?> GetModelExtractionAsync(
         string text, string type, CancellationToken ct)
@@ -166,9 +178,29 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
             return cachedPayload;
         }
 
-        var context = await BuildCatalogContextAsync(type, text, ct);
-        var request = ServiceLinePromptBuilder.Build(text, type, context, DateTime.UtcNow.Date);
-        var payload = await AskModelAsync(request, ct);
+        ServiceLineAiPayload? payload;
+        try
+        {
+            var context = await BuildCatalogContextAsync(type, text, ct);
+            var request = ServiceLinePromptBuilder.Build(text, type, context, DateTime.UtcNow.Date);
+            payload = await AskModelAsync(request, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // El vendedor cerro la ficha: NO es una falla del proveedor, asi que no se cachea (no
+            // tiene sentido "recordar" una cancelacion) y se propaga tal cual, igual que siempre.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Cualquier otra cosa (incluido un timeout INTERNO nuestro que no sea la cancelacion del
+            // caller) es un fallo del proveedor/modelo: se degrada exactamente igual que si
+            // AskModelAsync hubiera devuelto null solo, con el mismo TTL corto de reintento.
+            _logger.LogWarning(
+                ex,
+                "Linea inteligente: fallo el proveedor/modelo al pedir la extraccion. Se degrada sin interpretar.");
+            payload = null;
+        }
 
         _cache.Set(cacheKey, payload);
         return payload;

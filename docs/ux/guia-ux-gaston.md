@@ -2697,6 +2697,9 @@ Configuración haya un lugar para configurar la IA, universal para cualquier tip
   el servicio se crea **recién al tocar Guardar** (P-21, "nada se confirma solo"). **El precio NO se
   precarga desde la frase** (decisión 2026-08-10: Gastón pidió "hotel + operador y fecha", y el precio
   se cruza con el permiso de ver costos; v2 solo con su firma).
+- **(2026-08-10 tarde, firmado) La frase también ayuda al CREAR:** si el producto no existe y se
+  termina en "Crear nuevo", se crea con el nombre limpio Y fechas + operador de la frase quedan en
+  amarillo editable (mismo trato que al elegir uno existente; se guarda recién con Guardar, P-21).
 - **(2026-08-10) NADA lo anuncia:** mismo casillero, mismo tamaño, **mismo texto de ayuda de hoy**.
   Cero placeholder nuevo, cero ejemplo, cero leyenda (P-15 + "misma fachada"). Es un atajo escondido a
   propósito.

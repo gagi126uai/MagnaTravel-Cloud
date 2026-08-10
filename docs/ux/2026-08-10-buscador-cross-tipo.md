@@ -194,6 +194,13 @@ la frase (**fechas y operador**) queda **precargado en amarillo, editable**.
 > **Precio: NO en v1** (decisión 2026-08-10). Gastón pidió textual "hotel + operador y fecha"; el
 > precio además se cruza con el permiso de ver costos. Si algún día lo pide, es una v2 con su firma.
 
+**D13-bis (FIRMADO por Gastón, 2026-08-10 tarde) — la frase también ayuda al CREAR nuevo.** Si el
+producto de la frase NO existe todavía y el vendedor termina en "Crear nuevo", el producto se crea con
+el **nombre limpio** (como ya decía D13) **y las fechas + operador de la frase quedan precargados en
+amarillo editable**, igual que si hubiera elegido uno existente. Nada se confirma solo: se guarda
+recién con Guardar (P-21). Motivo: Gastón probó *"llao llao del 10/02 al 15/02 con delfos"* sin tener
+el Llao Llao cargado y la frase se tiraba a la basura — exactamente el caso donde más ayuda crea.
+
 - **La fachada no cambia:** mismo casillero, mismo tamaño, **mismo texto de ayuda de hoy**. Cero
   placeholder nuevo, cero leyenda, cero ejemplo, cero "probá escribiendo…". Nada insinúa que existe.
   *(P-15 + restricción del dueño "misma fachada".)*

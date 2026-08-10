@@ -439,7 +439,12 @@ export function ProductSearchField({
         skipNextSearch.current = true;
         setKeyboardIndex(-1);
         setShowDropdown(false);
-        onCreateNew(text);
+        // D13-bis (spec 2026-08-10, fix "crear nuevo pelado"): la interpretación vigente
+        // de la frase también viaja al camino de crear — mismo criterio que
+        // handleSelectExisting (leer `dedupResult` ACÁ, antes de que `skipNextSearch`
+        // recién puesto apague el matcher y borre `dedupResult` en el próximo render).
+        const interpretacionVigente = dedupResult?.interpretacion || null;
+        onCreateNew(text, interpretacionVigente);
     };
 
     const handleFocus = () => {

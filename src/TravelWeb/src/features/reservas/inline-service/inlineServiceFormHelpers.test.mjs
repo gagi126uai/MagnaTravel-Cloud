@@ -5,6 +5,7 @@ import {
     aplicarInterpretacionComoSugerencia,
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
+    resolverOperadorSugeridoParaProductoNuevo,
 } from "./inlineServiceFormHelpers.js";
 
 // ─── resolverCamposALimpiarAlCrearNuevo (Bug #28, Tanda 4, 2026-07-24) ────────────────
@@ -285,5 +286,83 @@ describe("resolverNombreEnCasillero", () => {
 
     it("ni resultado ni texto actual: string vacío, nunca undefined", () => {
         assert.equal(resolverNombreEnCasillero(null, null), "");
+    });
+});
+
+// ─── D13-bis (spec FIRMADA 2026-08-10): "crear nuevo" tampoco queda pelado ────────
+// Cuando la frase completa termina en "crear nuevo" porque el producto no existía
+// todavía, las fechas + el operador de la frase se aplican igual que en
+// handleSelectExisting — mismas dos piezas: `aplicarInterpretacionComoSugerencia`
+// (fechas, con `yaHaySupplierDeLaVenta:true` porque acá no hay `sale` y el operador NO
+// va al campo genérico) + `resolverOperadorSugeridoParaProductoNuevo` (operador, que va
+// al recuadro del producto nuevo).
+
+describe("resolverOperadorSugeridoParaProductoNuevo (D13-bis)", () => {
+    it("interpretación con operador matcheado por el motor: lo usa", () => {
+        const interpretacion = { supplier: { supplierPublicId: "sup-delfos", name: "Delfos" }, dates: null };
+        assert.equal(resolverOperadorSugeridoParaProductoNuevo(interpretacion), "sup-delfos");
+    });
+
+    it("interpretación sin operador (el motor no matcheó ninguno): no inventa nada, string vacío", () => {
+        assert.equal(resolverOperadorSugeridoParaProductoNuevo({ supplier: null, dates: null }), "");
+    });
+
+    it("sin interpretación (null/undefined): string vacío, no revienta", () => {
+        assert.equal(resolverOperadorSugeridoParaProductoNuevo(null), "");
+        assert.equal(resolverOperadorSugeridoParaProductoNuevo(undefined), "");
+    });
+});
+
+describe("D13-bis: crear-nuevo con interpretación — fechas vía aplicarInterpretacionComoSugerencia", () => {
+    // Repro exacto del caso de Gastón: "llao llao del 10/02 al 15/02 con delfos" sin
+    // tener el Llao Llao cargado todavía → termina en "crear nuevo".
+    const interpretacionCompleta = {
+        supplier: { supplierPublicId: "sup-delfos", name: "Delfos" },
+        dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" },
+    };
+
+    it("form VACÍO: las fechas se aplican en amarillo (mismas guardas que al elegir un producto existente)", () => {
+        const formVacio = { supplierId: "", checkIn: "", checkOut: "" };
+        // yaHaySupplierDeLaVenta:true a propósito (fix "crear nuevo pelado"): en el
+        // camino de crear NO hay `sale`, y el operador de la interpretación no va al
+        // campo genérico `supplierId` (oculto mientras se crea un producto nuevo) — va
+        // aparte, al recuadro del producto nuevo, vía resolverOperadorSugeridoParaProductoNuevo.
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacionCompleta, {
+            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formVacio,
+        });
+        assert.deepEqual(resultado.patch, { checkIn: "2026-02-10", checkOut: "2026-02-15" });
+        assert.deepEqual(resultado.sugeridos, { checkIn: true, checkOut: true });
+        // El operador del recuadro nuevo sale por la otra pieza, no por acá:
+        assert.equal(resolverOperadorSugeridoParaProductoNuevo(interpretacionCompleta), "sup-delfos");
+    });
+
+    it("el vendedor YA tipeó una fecha a mano ANTES de crear nuevo: esa no se pisa", () => {
+        const formConFechaAMano = { supplierId: "", checkIn: "2026-05-01", checkOut: "" };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacionCompleta, {
+            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formConFechaAMano,
+        });
+        assert.equal(resultado.patch.checkIn, undefined);
+        assert.equal(resultado.sugeridos.checkIn, undefined);
+        // checkOut SÍ estaba vacío: se completa igual
+        assert.equal(resultado.patch.checkOut, "2026-02-15");
+        assert.equal(resultado.sugeridos.checkOut, true);
+    });
+
+    it("sin interpretación (motor no entendió/no disparó): crear-nuevo queda igual que siempre, sin agregar nada", () => {
+        const formVacio = { supplierId: "", checkIn: "", checkOut: "" };
+        const resultado = aplicarInterpretacionComoSugerencia(null, {
+            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formVacio,
+        });
+        assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
+        assert.equal(resolverOperadorSugeridoParaProductoNuevo(null), "");
+    });
+
+    it("Traslado (un solo campo de fecha, sin 'hasta'): se completa igual que en handleSelectExisting", () => {
+        const formVacio = { supplierId: "", pickupDate: "" };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacionCompleta, {
+            yaHaySupplierDeLaVenta: true, camposFecha: ["pickupDate"], formActual: formVacio,
+        });
+        assert.deepEqual(resultado.patch, { pickupDate: "2026-02-10" });
+        assert.deepEqual(resultado.sugeridos, { pickupDate: true });
     });
 });

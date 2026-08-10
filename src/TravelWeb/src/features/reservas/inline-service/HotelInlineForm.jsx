@@ -40,6 +40,7 @@ import {
     aplicarInterpretacionComoSugerencia,
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
+    resolverOperadorSugeridoParaProductoNuevo,
 } from "./inlineServiceFormHelpers";
 import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemoryField";
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
@@ -103,8 +104,13 @@ const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
  * Recuadro violeta que aparece cuando el usuario elige "crear nuevo hotel".
  * Campos: Nombre · Ciudad/destino (OBLIGATORIA) · Operador.
  * La Ciudad es el arma principal contra duplicados (guía UX).
+ *
+ * `supplierSugerido` (D13-bis, spec 2026-08-10): true cuando el Operador se precargó
+ * solo desde la frase completa tipeada en el buscador ("... con Delfos") — pinta el
+ * select en amarillo, igual que cualquier otra sugerencia editable de la ficha.
+ * `onSupplierTouched` avisa al padre que el vendedor lo tocó a mano (saca el amarillo).
  */
-function NewHotelBox({ newProduct, onChange, suppliers }) {
+function NewHotelBox({ newProduct, onChange, suppliers, supplierSugerido, onSupplierTouched }) {
     return (
         <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4">
             <div className="flex items-center gap-2 mb-3">
@@ -147,9 +153,12 @@ function NewHotelBox({ newProduct, onChange, suppliers }) {
                 <div>
                     <label className={LABEL_BASE}>Operador *</label>
                     <select
-                        className={INPUT_NORMAL}
+                        className={supplierSugerido ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={newProduct.supplierPublicId || ""}
-                        onChange={(event) => onChange({ ...newProduct, supplierPublicId: event.target.value })}
+                        onChange={(event) => {
+                            onChange({ ...newProduct, supplierPublicId: event.target.value });
+                            onSupplierTouched?.();
+                        }}
                         required
                         data-testid="new-hotel-supplier"
                         aria-label="Operador del hotel nuevo"
@@ -387,7 +396,7 @@ export function HotelInlineForm({
         onConsumida: onConsumirSeleccionPendiente,
     });
 
-    const handleCreateNew = (searchText) => {
+    const handleCreateNew = (searchText, interpretacion) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
         // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
         // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
@@ -396,6 +405,24 @@ export function HotelInlineForm({
             camposSugeridos,
             { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS" }
         );
+
+        // D13-bis (spec 2026-08-10, fix "crear nuevo pelado"): las fechas de la frase
+        // completa también se aplican acá — misma función y mismas guardas que
+        // handleSelectExisting (nunca pisa un campo que el vendedor ya tipeó a mano).
+        // yaHaySupplierDeLaVenta:true a propósito: en "crear nuevo" no hay `sale`, y el
+        // operador NO va al campo genérico `supplierId` (queda oculto mientras se crea
+        // un producto nuevo) — va aparte, al operador del recuadro violeta, ver abajo.
+        const { patch: patchFechas, sugeridos: sugeridosFechas } = aplicarInterpretacionComoSugerencia(
+            interpretacion,
+            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_HOTEL, formActual: form }
+        );
+
+        // El operador del recuadro "hotel nuevo" arranca SIEMPRE vacío (recién se está
+        // armando ahora mismo) — si la frase trajo un operador REAL (matcheado por el
+        // motor entre los proveedores de la agencia; si no matcheó, no se inventa nada),
+        // se precarga ahí, editable.
+        const supplierSugeridoDelNuevo = resolverOperadorSugeridoParaProductoNuevo(interpretacion);
+
         setForm((prev) => ({
             ...prev,
             hotelName: searchText,
@@ -404,14 +431,25 @@ export function HotelInlineForm({
             newCatalogProduct: {
                 name: searchText,
                 city: "",
-                supplierPublicId: "",
+                supplierPublicId: supplierSugeridoDelNuevo,
             },
             ...camposLimpios,
+            ...patchFechas,
         }));
         // Los campos que quedaron limpios dejan de ser "sugeridos"; los preservados ya
         // estaban en false (si no, se habrían limpiado), así que todo queda en false.
-        // checkIn/checkOut (D13) también pierden el amarillo: son de OTRO producto.
-        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, checkIn: false, checkOut: false });
+        // `supplierId` se reusa acá para el amarillo del Operador del recuadro violeta
+        // (D13-bis): los dos campos nunca conviven en pantalla (uno se oculta cuando el
+        // otro se muestra), así que no hay conflicto en compartir la misma bandera.
+        setCamposSugeridos({
+            supplierId: Boolean(supplierSugeridoDelNuevo),
+            unitNetCost: false,
+            unitSalePrice: false,
+            currency: false,
+            checkIn: false,
+            checkOut: false,
+            ...sugeridosFechas,
+        });
         setPrecioTocadoPorElUsuario(false);
         setMonedaTocadaPorElUsuario(false);
         // "Crear nuevo" no tiene rateId: la sugerencia por habitación se apaga sola (el hook
@@ -463,6 +501,8 @@ export function HotelInlineForm({
                     newProduct={form.newCatalogProduct}
                     onChange={(newProduct) => setForm((prev) => ({ ...prev, newCatalogProduct: newProduct }))}
                     suppliers={suppliers}
+                    supplierSugerido={camposSugeridos.supplierId}
+                    onSupplierTouched={() => setCamposSugeridos((prev) => ({ ...prev, supplierId: false }))}
                 />
             )}
 

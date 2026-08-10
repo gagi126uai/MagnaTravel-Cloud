@@ -26,6 +26,7 @@ import {
     aplicarInterpretacionComoSugerencia,
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
+    resolverOperadorSugeridoParaProductoNuevo,
 } from "./inlineServiceFormHelpers";
 import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemoryField";
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
@@ -49,8 +50,10 @@ const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
 /**
  * Recuadro que aparece al crear un trayecto de traslado nuevo.
  * Campo mínimo: nombre del trayecto (ej: "EZE → Sheraton Pilar") + operador.
+ *
+ * `supplierSugerido`/`onSupplierTouched` (D13-bis, spec 2026-08-10): ver NewHotelBox.
  */
-function NewTransferBox({ newProduct, onChange, suppliers }) {
+function NewTransferBox({ newProduct, onChange, suppliers, supplierSugerido, onSupplierTouched }) {
     return (
         <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4">
             <div className="flex items-center gap-2 mb-3">
@@ -79,9 +82,12 @@ function NewTransferBox({ newProduct, onChange, suppliers }) {
                 <div>
                     <label className={LABEL_BASE}>Operador *</label>
                     <select
-                        className={INPUT_NORMAL}
+                        className={supplierSugerido ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={newProduct.supplierPublicId || ""}
-                        onChange={(event) => onChange({ ...newProduct, supplierPublicId: event.target.value })}
+                        onChange={(event) => {
+                            onChange({ ...newProduct, supplierPublicId: event.target.value });
+                            onSupplierTouched?.();
+                        }}
                         required
                         data-testid="new-transfer-supplier"
                         aria-label="Operador del traslado nuevo"
@@ -263,7 +269,7 @@ export function TransferInlineForm({
         onConsumida: onConsumirSeleccionPendiente,
     });
 
-    const handleCreateNew = (searchText) => {
+    const handleCreateNew = (searchText, interpretacion) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
         // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
         // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
@@ -272,14 +278,37 @@ export function TransferInlineForm({
             camposSugeridos,
             { supplierId: "", netCost: "", salePrice: "", currency: "ARS" }
         );
+
+        // D13-bis (spec 2026-08-10, fix "crear nuevo pelado"): fecha de la frase, misma
+        // función/guardas que handleSelectExisting. El operador va aparte (recuadro
+        // violeta, ver abajo) — acá no hay `sale`.
+        const { patch: patchFechas, sugeridos: sugeridosFechas } = aplicarInterpretacionComoSugerencia(
+            interpretacion,
+            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_TRASLADO, formActual: form }
+        );
+
+        // El operador del recuadro "trayecto nuevo" arranca SIEMPRE vacío — si la frase
+        // trajo un operador REAL (matcheado por el motor), se precarga ahí, editable.
+        const supplierSugeridoDelNuevo = resolverOperadorSugeridoParaProductoNuevo(interpretacion);
+
         setForm((prev) => ({
             ...prev,
             routeName: searchText,
             rateId: null,
-            newCatalogProduct: { name: searchText, supplierPublicId: "" },
+            newCatalogProduct: { name: searchText, supplierPublicId: supplierSugeridoDelNuevo },
             ...camposLimpios,
+            ...patchFechas,
         }));
-        setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false, pickupDate: false });
+        // `supplierId` se reusa para el amarillo del Operador del recuadro violeta
+        // (D13-bis) — los dos campos nunca conviven en pantalla.
+        setCamposSugeridos({
+            supplierId: Boolean(supplierSugeridoDelNuevo),
+            netCost: false,
+            salePrice: false,
+            currency: false,
+            pickupDate: false,
+            ...sugeridosFechas,
+        });
         setPrecioTocadoPorElUsuario(false);
         setMonedaTocadaPorElUsuario(false);
     };
@@ -322,6 +351,8 @@ export function TransferInlineForm({
                     newProduct={form.newCatalogProduct}
                     onChange={(newProduct) => setForm((prev) => ({ ...prev, newCatalogProduct: newProduct }))}
                     suppliers={suppliers}
+                    supplierSugerido={camposSugeridos.supplierId}
+                    onSupplierTouched={() => setCamposSugeridos((prev) => ({ ...prev, supplierId: false }))}
                 />
             )}
 

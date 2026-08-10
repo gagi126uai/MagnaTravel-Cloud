@@ -182,3 +182,29 @@ export function resolverPatchDeVentaDelCatalogo({ sale, canSeeCost, formActual, 
 export function resolverNombreEnCasillero(catalogResult, textoActual) {
     return catalogResult?.name || textoActual || "";
 }
+
+// ─── D13-bis (spec FIRMADA 2026-08-10): "crear nuevo" tampoco queda pelado ────────
+
+/**
+ * Fix "crear nuevo pelado" (D13-bis): el vendedor puede tirar la frase completa
+ * ("llao llao del 10/02 al 15/02 con delfos") y terminar en "crear nuevo" porque el
+ * producto todavía no existe en el tarifario — antes de este fix, el nombre limpio se
+ * usaba para crear el producto pero el operador y las fechas de la frase se tiraban.
+ *
+ * El operador del recuadro "producto nuevo" (violeta) arranca SIEMPRE vacío en el
+ * instante en que se abre — si la interpretación trae un operador REAL (matcheado por
+ * el motor entre los proveedores de la agencia, nunca inventado), se usa como
+ * sugerencia inicial ahí. Si el motor no matcheó ningún operador, no se inventa nada:
+ * el campo queda vacío como siempre y el vendedor lo elige a mano.
+ *
+ * Las FECHAS de la frase no pasan por acá — esas reusan `aplicarInterpretacionComoSugerencia`
+ * (mismas guardas de "nunca pisa lo tipeado a mano" que ya usa `handleSelectExisting`),
+ * porque van a un campo del form normal (siempre visible), no al recuadro del producto
+ * nuevo.
+ *
+ * @param {{supplier:{supplierPublicId:string}|null}|null} interpretacion
+ * @returns {string} el supplierPublicId sugerido, o "" si no hay ninguno para sugerir
+ */
+export function resolverOperadorSugeridoParaProductoNuevo(interpretacion) {
+    return interpretacion?.supplier?.supplierPublicId || "";
+}

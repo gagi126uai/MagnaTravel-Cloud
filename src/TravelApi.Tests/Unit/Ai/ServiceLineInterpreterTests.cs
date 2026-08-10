@@ -202,6 +202,98 @@ public class ServiceLineInterpreterTests
     }
 
     // ============================================================
+    // Bug de PROD (2026-08-1x): una excepcion del proveedor no puede ser un 500
+    // ============================================================
+
+    [Fact]
+    public async Task Provider_que_explota_no_rompe_y_responde_no_interpretado()
+    {
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        var provider = new ThrowingChatProvider();
+        var interpreter = BuildInterpreter(db, provider);
+
+        var result = await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        Assert.False(result.Interpreted);
+        Assert.Null(result.Product);
+        Assert.Null(result.Doubt);
+        Assert.Equal(1, provider.CallCount);
+    }
+
+    [Fact]
+    public async Task Provider_que_explota_cachea_el_negativo_y_la_segunda_llamada_inmediata_no_lo_martilla()
+    {
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        var provider = new ThrowingChatProvider();
+        var cache = new ServiceLineInterpretationCache();
+        var interpreter = BuildInterpreter(db, provider, cache: cache);
+
+        var primero = await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+        var segundo = await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        Assert.False(primero.Interpreted);
+        Assert.False(segundo.Interpreted);
+        // El negativo quedo cacheado (TTL corto): la segunda pregunta NO volvio a golpear al
+        // proveedor caido. Antes del fix esto fallaba: CallCount daba 2.
+        Assert.Equal(1, provider.CallCount);
+    }
+
+    [Fact]
+    public async Task Provider_que_explota_se_reintenta_pasado_el_ttl_corto_del_negativo()
+    {
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        var provider = new ThrowingChatProvider();
+        // TTL de milisegundos SOLO para el test (constructor interno de ServiceLineInterpretationCache).
+        var cache = new ServiceLineInterpretationCache(
+            interpretedTtl: TimeSpan.FromMilliseconds(30), notInterpretedTtl: TimeSpan.FromMilliseconds(30));
+        var interpreter = BuildInterpreter(db, provider, cache: cache);
+
+        await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+        await Task.Delay(200);
+        await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        Assert.Equal(2, provider.CallCount);
+    }
+
+    [Fact]
+    public async Task La_cancelacion_del_caller_se_propaga_sin_cachear_y_el_proximo_pedido_llama_de_nuevo()
+    {
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        var provider = new NeverAnsweringChatProvider();
+        var cache = new ServiceLineInterpretationCache();
+
+        using var callerCancellation = new CancellationTokenSource();
+        callerCancellation.CancelAfter(TimeSpan.FromMilliseconds(100));
+        var interpreter = BuildInterpreter(db, provider, cache: cache);
+
+        // Cerrar la ficha (cancelacion legitima) se propaga, como siempre.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => interpreter.InterpretAsync(Frase, "Hotel", callerCancellation.Token));
+        Assert.Equal(1, provider.CallCount);
+
+        // Un pedido NUEVO, sin cancelar, tiene que volver a golpear al proveedor: la cancelacion NO
+        // es un resultado "negativo" del modelo y no se cachea. Se corta con el reloj CORTO del
+        // interprete (no con la cancelacion del caller) para no colgar el test.
+        var interpreterConRelojCorto = BuildInterpreter(db, provider, cache: cache, timeoutSeconds: 1);
+        var result = await interpreterConRelojCorto.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        Assert.False(result.Interpreted);
+        Assert.Equal(2, provider.CallCount);
+    }
+
+    // ============================================================
     // M-22 — una sola duda grande, y primero la de plata
     // ============================================================
 
@@ -1315,9 +1407,33 @@ internal sealed class FakeAiConnectionResolver : IAiConnectionResolver
 /// </summary>
 internal sealed class NeverAnsweringChatProvider : IAiChatProvider
 {
+    /// <summary>Cantidad de veces que se llamo a <see cref="ChatAsync"/> (bug PROD 2026-08-1x: para
+    /// probar que un pedido cancelado NO deja un negativo cacheado, el proximo pedido tiene que volver
+    /// a golpear al proveedor).</summary>
+    public int CallCount { get; private set; }
+
     public async Task<AiChatResult> ChatAsync(AiChatRequest request, CancellationToken cancellationToken)
     {
+        CallCount++;
         await Task.Delay(Timeout.Infinite, cancellationToken);
         return AiChatResult.Degraded("inalcanzable");
+    }
+}
+
+/// <summary>
+/// Un proveedor que EXPLOTA en vez de degradar solo (bug PROD 2026-08-1x: una clave rechazada, o
+/// cualquier otra cosa que <see cref="OpenAiCompatibleChatProvider"/> no haya contemplado en sus
+/// propios catch de red/HTTP). Sirve para probar que el motor degrada igual — nunca un 500 al vendedor.
+/// </summary>
+internal sealed class ThrowingChatProvider : IAiChatProvider
+{
+    /// <summary>Cantidad de veces que se llamo a <see cref="ChatAsync"/> — para probar que un negativo
+    /// cacheado evita martillar al proveedor caido en cada tecleo.</summary>
+    public int CallCount { get; private set; }
+
+    public Task<AiChatResult> ChatAsync(AiChatRequest request, CancellationToken cancellationToken)
+    {
+        CallCount++;
+        throw new InvalidOperationException("simulado: el proveedor exploto sin degradar solo");
     }
 }

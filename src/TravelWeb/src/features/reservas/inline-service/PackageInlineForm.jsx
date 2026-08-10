@@ -30,6 +30,7 @@ import {
     aplicarInterpretacionComoSugerencia,
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
+    resolverOperadorSugeridoParaProductoNuevo,
 } from "./inlineServiceFormHelpers";
 import { buildLastSaleHintText } from "./lastSaleHintLogic";
 import { LastSaleHint } from "./LastSaleHint";
@@ -51,8 +52,10 @@ const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
 /**
  * Recuadro que aparece al crear un paquete nuevo.
  * Campo mínimo: nombre del paquete + operador.
+ *
+ * `supplierSugerido`/`onSupplierTouched` (D13-bis, spec 2026-08-10): ver NewHotelBox.
  */
-function NewPackageBox({ newProduct, onChange, suppliers }) {
+function NewPackageBox({ newProduct, onChange, suppliers, supplierSugerido, onSupplierTouched }) {
     return (
         <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4">
             <div className="flex items-center gap-2 mb-3">
@@ -81,9 +84,12 @@ function NewPackageBox({ newProduct, onChange, suppliers }) {
                 <div>
                     <label className={LABEL_BASE}>Operador *</label>
                     <select
-                        className={INPUT_NORMAL}
+                        className={supplierSugerido ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={newProduct.supplierPublicId || ""}
-                        onChange={(event) => onChange({ ...newProduct, supplierPublicId: event.target.value })}
+                        onChange={(event) => {
+                            onChange({ ...newProduct, supplierPublicId: event.target.value });
+                            onSupplierTouched?.();
+                        }}
                         required
                         data-testid="new-package-supplier"
                         aria-label="Operador del paquete nuevo"
@@ -219,7 +225,7 @@ export function PackageInlineForm({
         onConsumida: onConsumirSeleccionPendiente,
     });
 
-    const handleCreateNew = (searchText) => {
+    const handleCreateNew = (searchText, interpretacion) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
         // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
         // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
@@ -228,14 +234,38 @@ export function PackageInlineForm({
             camposSugeridos,
             { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS" }
         );
+
+        // D13-bis (spec 2026-08-10, fix "crear nuevo pelado"): fechas de la frase, misma
+        // función/guardas que handleSelectExisting. El operador va aparte (recuadro
+        // violeta, ver abajo) — acá no hay `sale`.
+        const { patch: patchFechas, sugeridos: sugeridosFechas } = aplicarInterpretacionComoSugerencia(
+            interpretacion,
+            { yaHaySupplierDeLaVenta: true, camposFecha: CAMPOS_FECHA_PAQUETE, formActual: form }
+        );
+
+        // El operador del recuadro "paquete nuevo" arranca SIEMPRE vacío — si la frase
+        // trajo un operador REAL (matcheado por el motor), se precarga ahí, editable.
+        const supplierSugeridoDelNuevo = resolverOperadorSugeridoParaProductoNuevo(interpretacion);
+
         setForm((prev) => ({
             ...prev,
             packageName: searchText,
             rateId: null,
-            newCatalogProduct: { name: searchText, supplierPublicId: "" },
+            newCatalogProduct: { name: searchText, supplierPublicId: supplierSugeridoDelNuevo },
             ...camposLimpios,
+            ...patchFechas,
         }));
-        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, startDate: false, endDate: false });
+        // `supplierId` se reusa para el amarillo del Operador del recuadro violeta
+        // (D13-bis) — los dos campos nunca conviven en pantalla.
+        setCamposSugeridos({
+            supplierId: Boolean(supplierSugeridoDelNuevo),
+            unitNetCost: false,
+            unitSalePrice: false,
+            currency: false,
+            startDate: false,
+            endDate: false,
+            ...sugeridosFechas,
+        });
         setUltimoPrecioSugerido(null);
     };
 
@@ -276,6 +306,8 @@ export function PackageInlineForm({
                     newProduct={form.newCatalogProduct}
                     onChange={(newProduct) => setForm((prev) => ({ ...prev, newCatalogProduct: newProduct }))}
                     suppliers={suppliers}
+                    supplierSugerido={camposSugeridos.supplierId}
+                    onSupplierTouched={() => setCamposSugeridos((prev) => ({ ...prev, supplierId: false }))}
                 />
             )}
 
