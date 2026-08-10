@@ -1,5 +1,13 @@
 # La línea inteligente y la pantalla para configurar la IA (F2 del Tarifario Inteligente)
 
+> ⚠️ **ACTUALIZACIÓN DEL MISMO DÍA (V18):** Gastón vio esta obra deployada y
+> pidió un cambio de rumbo: la parte de "escribir la frase entera" **se sacó de
+> la ficha** ese mismo día. La ficha volvió a ser la de siempre, y la IA quedó
+> **invisible**, enfocada solo en **evitar duplicados** (mejora los parecidos del
+> buscador y limpia el nombre al crear). La pantalla de Configuración → IA quedó
+> tal cual. El detalle está en el addendum V18 de la spec firmada. Lo que sigue
+> abajo describe la obra como se construyó originalmente esa mañana.
+
 **Fecha:** 2026-08-09 · Continúa la obra de `2026-08-08-tarifario-inteligente-f1.md`
 **Spec firmada:** `docs/ux/specs/2026-08-07-tarifario-inteligente-FIRMADA.md` (§3, §4 y §15)
 

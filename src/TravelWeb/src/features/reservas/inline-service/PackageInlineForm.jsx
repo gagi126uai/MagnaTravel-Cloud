@@ -18,11 +18,6 @@
  *
  * Fecha de fin: campo opcional. Si se carga, no puede ser anterior a la salida
  * (la validación vive en ServiceInlineCard.validarForm).
- *
- * LÍNEA INTELIGENTE (spec 2026-08-07, §3): mientras el vendedor escribe la frase entera
- * en el buscador del paquete, `useServiceLineInterpretationForForm` va precargando en
- * amarillo lo que el motor entendió (operador, fechas, costo por persona). El paquete NO
- * tiene variante natural (V2=todos, con esa única excepción documentada en la spec).
  */
 
 import { useState } from "react";
@@ -33,10 +28,6 @@ import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
 import { buildLastSaleHintText } from "./lastSaleHintLogic";
 import { LastSaleHint } from "./LastSaleHint";
-import { useServiceLineInterpretationForForm } from "./useServiceLineInterpretationForForm";
-import { ServiceLineDoubtQuestion } from "./ServiceLineDoubtQuestion";
-import { ResolvedProductRow } from "./ResolvedProductRow";
-import { DOUBT_FIELD, construirPatchDeSeleccionManual } from "./serviceLineInterpretationLogic";
 
 // ─── Clases CSS ───────────────────────────────────────────────────────────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -44,14 +35,6 @@ const INPUT_NORMAL = `${INPUT_BASE} border-slate-200`;
 const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50`;
 const INPUT_CALCULADO = `${INPUT_BASE} border-slate-200 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default`;
 const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
-
-// Ids de los campos que puede señalar una duda grande de la línea inteligente (§4).
-const IDS_DUDA_LINEA_INTELIGENTE = {
-    supplierId: "package-operador",
-    unitNetCost: "package-costo-persona",
-    startDate: "package-salida",
-    endDate: "package-fin",
-};
 
 // ─── Recuadro violeta para paquete nuevo ─────────────────────────────────────
 
@@ -141,38 +124,6 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
     const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
     const textoUltimoPrecio = buildLastSaleHintText(ultimoPrecioSugerido, { canSeeCost });
 
-    // Texto de la caja de arriba, separado de packageName (mockup firmado §3.3, ver
-    // HotelInlineForm para la explicación completa del porqué).
-    const [textoBuscador, setTextoBuscador] = useState(() => form.packageName || "");
-
-    // ─── LA LÍNEA INTELIGENTE (spec 2026-08-07, §3) ───────────────────────────────────
-    // El paquete no usa la sugerencia POR VARIANTE (no tiene variante, V2=todos): por eso
-    // acá no hay `precioTocadoPorElUsuario`/`monedaTocadaPorElUsuario` como en Hotel — se
-    // marcan tocados el costo y la moneda directamente en sus onChange, más abajo (por
-    // eso tampoco necesita `alPrecargarPrecioDeLaFrase`: no hay una segunda feature a la
-    // que avisarle).
-    const {
-        isThinking: pensandoLineaInteligente,
-        duda: dudaLineaInteligente,
-        onRespuestaDuda,
-        aiOverride,
-        productoResueltoPorLineaInteligente,
-        limpiarResolucionIA,
-        marcarTocado,
-        camposTocados,
-    } = useServiceLineInterpretationForForm({
-        reservaId,
-        serviceType: "Paquete",
-        isEditing,
-        canSeeCost,
-        form,
-        setForm,
-        setCamposSugeridos,
-        precioTocadoPorElUsuario: false,
-        monedaTocadaPorElUsuario: false,
-        idsDeCampoParaEnfocar: IDS_DUDA_LINEA_INTELIGENTE,
-    });
-
     // C5: operador sugerido que no está en la lista de la reserva
     const supplierListaIds = new Set(suppliers.map((s) => s.publicId || s.PublicId));
     const supplierSugeridoFuera =
@@ -192,43 +143,32 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, meta) => {
+    const handleSelectExisting = (catalogResult) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
-
-        // Bug bloqueante B3: ver el comentario completo en HotelInlineForm.
-        const { patch: patchVentaCatalogo, camposSugeridos: sugeridosVentaCatalogo } = meta?.fromAiOverride
-            ? construirPatchDeSeleccionManual({
-                  serviceType: "Paquete", sale, canSeeCost,
-                  camposActualmenteSugeridos: camposSugeridos, camposTocados,
-              })
-            : {
-                  patch: {
-                      supplierId: sale.supplierPublicId || "",
-                      supplierName: sale.supplierName || null,
-                      unitSalePrice: sale.salePrice != null ? String(sale.salePrice) : "",
-                      unitNetCost: canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost,
-                      currency: sale.currency || "ARS",
-                  },
-                  camposSugeridos: {
-                      supplierId: Boolean(sale.supplierPublicId),
-                      unitNetCost: canSeeCost && sale.netCost != null,
-                      unitSalePrice: Boolean(sale.salePrice),
-                      currency: Boolean(sale.currency),
-                  },
-              };
+        const supplierPublicId = sale.supplierPublicId || "";
+        const unitSalePrice = sale.salePrice != null ? String(sale.salePrice) : "";
+        const unitNetCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost;
+        const currency = sale.currency || "ARS";
 
         setForm((prev) => ({
             ...prev,
             packageName: catalogResult.name || prev.packageName,
             rateId: catalogResult.ratePublicId,
             newCatalogProduct: null,
-            ...patchVentaCatalogo,
+            supplierId: supplierPublicId,
+            supplierName: sale.supplierName || null,
+            unitSalePrice,
+            unitNetCost: canSeeCost ? unitNetCost : prev.unitNetCost,
+            currency,
         }));
-        setTextoBuscador(catalogResult.name || form.packageName || "");
 
-        setCamposSugeridos((prev) => ({ ...prev, ...sugeridosVentaCatalogo }));
+        setCamposSugeridos({
+            supplierId: Boolean(supplierPublicId),
+            unitNetCost: canSeeCost && sale.netCost != null,
+            unitSalePrice: Boolean(sale.salePrice),
+            currency: Boolean(sale.currency),
+        });
         setUltimoPrecioSugerido(catalogResult);
-        limpiarResolucionIA();
     };
 
     const handleCreateNew = (searchText) => {
@@ -247,21 +187,17 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
             ...camposLimpios,
         }));
-        setTextoBuscador(searchText);
         setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
         setUltimoPrecioSugerido(null);
-        limpiarResolucionIA();
     };
 
     const handleSearchChange = (texto) => {
-        setTextoBuscador(texto);
         setForm((prev) => ({
             ...prev,
             packageName: texto,
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        limpiarResolucionIA();
         if (!texto) {
             setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
         }
@@ -273,28 +209,16 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
 
             {/* === BUSCADOR (nombre del paquete) === */}
             <ProductSearchField
+                reservaId={reservaId}
                 serviceType="Paquete"
-                value={textoBuscador}
+                value={form.packageName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
-                label="Escribilo como te salga"
-                placeholder="Ej: Iguazú 7 noches todo incluido julia tours 900 usd por persona 1 al 8/10"
-                aiCandidates={aiOverride?.candidates ?? null}
-                aiCreateText={aiOverride?.createText ?? null}
-                externalThinking={pensandoLineaInteligente}
+                label="Paquete"
+                placeholder="Ej: Iguazú 7 noches, Cancún todo incluido..."
             />
-
-            {/* === RENGLÓN "Producto *" (Momento 3, §3.3 — mockup firmado) === */}
-            {productoResueltoPorLineaInteligente && form.rateId && !form.newCatalogProduct && (
-                <ResolvedProductRow
-                    id="package-producto-resuelto"
-                    label="Paquete *"
-                    value={form.packageName}
-                    dataTestId="package-producto-resuelto"
-                />
-            )}
 
             {/* === RECUADRO PRODUCTO NUEVO === */}
             {form.newCatalogProduct && (
@@ -316,7 +240,6 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
-                            marcarTocado("supplierId");
                         }}
                         data-testid="package-supplier"
                         aria-label="Operador del paquete"
@@ -331,9 +254,6 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                             </option>
                         ))}
                     </select>
-                    {dudaLineaInteligente?.field === DOUBT_FIELD.SUPPLIER && (
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    )}
                 </div>
             )}
 
@@ -351,13 +271,9 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                     <input
                         id="package-salida"
                         type="date"
-                        className={camposSugeridos.startDate ? INPUT_SUGERIDO : INPUT_NORMAL}
+                        className={INPUT_NORMAL}
                         value={form.startDate || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, startDate: event.target.value }));
-                            setCamposSugeridos((prev) => ({ ...prev, startDate: false }));
-                            marcarTocado("startDate");
-                        }}
+                        onChange={(event) => setForm((prev) => ({ ...prev, startDate: event.target.value }))}
                         data-testid="package-salida"
                         aria-label="Fecha de salida del paquete"
                     />
@@ -376,19 +292,12 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                     <input
                         id="package-fin"
                         type="date"
-                        className={camposSugeridos.endDate ? INPUT_SUGERIDO : INPUT_NORMAL}
+                        className={INPUT_NORMAL}
                         value={form.endDate || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, endDate: event.target.value }));
-                            setCamposSugeridos((prev) => ({ ...prev, endDate: false }));
-                            marcarTocado("endDate");
-                        }}
+                        onChange={(event) => setForm((prev) => ({ ...prev, endDate: event.target.value }))}
                         data-testid="package-end-date"
                         aria-label="Fecha de fin del paquete"
                     />
-                    {dudaLineaInteligente?.field === DOUBT_FIELD.DATES && (
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    )}
                 </div>
                 <div>
                     <label className={LABEL_BASE} htmlFor="package-pasajeros">
@@ -445,16 +354,12 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
-                                marcarTocado("unitNetCost");
                             }}
                             placeholder="0,00"
                             data-testid="package-costo-persona"
                             aria-label="Costo por persona"
                         />
                         <LastSaleHint text={textoUltimoPrecio} />
-                        {dudaLineaInteligente?.field === DOUBT_FIELD.PRICE && (
-                            <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                        )}
                     </div>
                 )}
                 <div>
@@ -499,7 +404,6 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
-                            marcarTocado("currency");
                         }}
                         data-testid="package-moneda"
                         aria-label="Moneda"

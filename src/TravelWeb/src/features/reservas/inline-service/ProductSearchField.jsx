@@ -15,32 +15,30 @@
  * Quien no tiene permiso `cobranzas.see_cost` recibe `netCost = null`
  * del backend y ve el precio de VENTA en el dropdown (nunca el costo).
  *
- * Se usa dentro de ServiceInlineCard para los 5 tipos de servicio.
+ * Se usa dentro de ServiceInlineCard para el tab Hotel (y en el futuro los otros 4 tipos).
  *
- * LÍNEA INTELIGENTE (spec firmada 2026-08-07, §3, Q1=A): este es el MISMO casillero que
- * usa la interpretación por IA — no hay una caja aparte. Dos props opcionales lo conectan
- * con esa obra, sin que este componente sepa nada de IA ni de reservas:
- *   - `aiCandidates` / `aiCreateText`: cuando el motor entendió la frase pero el producto
- *     todavía no existe (Momento 4, §3.4), el padre manda los parecidos QUE YA ELIGIÓ EL
- *     MOTOR (mismo contrato que el buscador de catálogo) para reemplazar la búsqueda
- *     propia de este campo — y el texto de "crear ..." usa el nombre limpio que sacó el
- *     motor, no la frase entera que escribió el vendedor.
- *   - `externalThinking`: para que el "Buscando…" sutil (ya firmado, Ronda 2 2026-06-06)
- *     siga encendido mientras el motor todavía está pensando, aunque la búsqueda propia
- *     de este campo ya haya terminado.
- *
- * IMPORTANTE (mockup firmado §3.3, revisión funcional): cuando el motor reconoce el
- * producto directo (Momento 3), este campo NO cambia su `value` — la frase que escribió
- * el vendedor se conserva tal cual arriba. El producto resuelto se muestra aparte, en un
- * renglón "Producto *" propio que arma cada *InlineForm (ver
- * useServiceLineInterpretationForForm.js, `productoResueltoPorLineaInteligente`).
+ * MATCHER ANTI-DUPLICADOS INVISIBLE (decisión de Gastón, 2026-08-09): cuando la búsqueda
+ * normal de acá arriba NO encuentra un parecido fuerte, este componente consulta en
+ * SILENCIO al motor (POST /linea-inteligente) para traer mejores candidatos y evitar que
+ * el vendedor cree un producto duplicado (P7). Los candidatos se mezclan en el MISMO
+ * dropdown de siempre, sin ningún estilo nuevo — la lista solo "mejora". Si el motor no
+ * contesta nada útil (sin clave, caído, tardó), la pantalla es exactamente la de hoy: ni
+ * un cartel, ni un "pensando" distinto. Ver `useProductDedupMatch.js` y
+ * `productDedupMatchLogic.js` para la lógica completa.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Search, RefreshCw, Plus } from "lucide-react";
 import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
 import { formatDate, formatCurrency } from "../../../lib/utils";
+import { useProductDedupMatch } from "./useProductDedupMatch";
+import {
+    hayParecidoFuerte,
+    mergearCandidatosDedup,
+    resolverTextoDeCrear,
+    resolverListaParaMostrar,
+} from "./productDedupMatchLogic";
 
 // Mínimo de caracteres para lanzar la búsqueda (igual al backend)
 const MIN_QUERY_LENGTH = 2;
@@ -191,11 +189,10 @@ export function ProductSearchField({
     disabled,
     label,
     placeholder,
-    // Los props de abajo son SOLO para la línea inteligente (ver comentario de arriba).
-    // Todos opcionales: sin ellos, este campo funciona exactamente como siempre.
-    aiCandidates = null,
-    aiCreateText = null,
-    externalThinking = false,
+    // Opcional: sin reservaId el matcher anti-duplicados simplemente no dispara (mismo
+    // comportamiento que si el motor estuviera caído) — este campo funciona igual que
+    // siempre para quien no lo pase.
+    reservaId,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -248,17 +245,6 @@ export function ProductSearchField({
         }
     }, [serviceType]);
 
-    // Línea inteligente (Momento 4, §3.4): en cuanto llegan candidatos elegidos por el
-    // motor, se abre el desplegable solo — es la misma lista de siempre, con "crear ..."
-    // al final, para que el vendedor decida sin tener que volver a escribir nada.
-    useEffect(() => {
-        if (Array.isArray(aiCandidates)) {
-            setShowDropdown(true);
-            setKeyboardIndex(-1);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [aiCandidates]);
-
     // Debounce: espera DEBOUNCE_MS desde el último tecleo antes de buscar.
     // Condiciones para NO buscar:
     //   1. skipNextSearch: recién elegimos un resultado (evita re-búsqueda por el setState del nombre).
@@ -288,25 +274,78 @@ export function ProductSearchField({
     // Limpiar el timer de blur al desmontar para no hacer setState en componente muerto
     useEffect(() => () => clearTimeout(blurTimer.current), []);
 
-    // Línea inteligente (Momento 4, §3.4): con candidatos del motor puestos, esta lista
-    // reemplaza a la búsqueda propia del campo — son los parecidos QUE YA ELIGIÓ EL
-    // MOTOR, más finos que buscar la frase entera tal cual la escribió el vendedor.
-    // Declarado ACÁ (antes de handleSelectExisting) porque ese handler lo usa.
-    const overrideActivo = Array.isArray(aiCandidates);
+    // ─── Matcher anti-duplicados INVISIBLE (P7, decisión 2026-08-09) ──────────────────
+    // Solo tiene sentido consultar al motor cuando la búsqueda normal de acá arriba
+    // TODAVÍA no encontró un parecido fuerte — si ya lo encontró, no hay nada que mejorar.
+    // Fix menor (revisor funcional, 2ª vuelta): también se apaga mientras
+    // `skipNextSearch` está activo — ese flag significa "el vendedor ACABA de elegir o
+    // crear un producto", momento en el que la identidad ya quedó resuelta y consultar
+    // igual sería una llamada desperdiciada (cuota del motor, plata).
+    const matcherHabilitado =
+        userHasInteracted.current &&
+        !isSearching &&
+        !skipNextSearch.current &&
+        !hayParecidoFuerte(results, STRONG_MATCH_THRESHOLD);
+    const dedupResult = useProductDedupMatch({
+        reservaId,
+        serviceType,
+        text: value,
+        enabled: matcherHabilitado,
+    });
+
+    // La lista fresca: los resultados de siempre + lo que el matcher haya sumado, sin
+    // duplicar (nunca reordena lo que ya estaba). DERIVADA con useMemo — sin estado, sin
+    // efecto — para que no exista NUNCA un render con esta lista "atrasada" respecto de
+    // `results`/`dedupResult` (fix de la 2ª vuelta: la versión con useState+useEffect
+    // metía un render de por medio, y en ESE render `hasNoResults` alcanzaba a leer la
+    // lista vieja — flasheaba "No encontramos..." una fracción de segundo antes de cada
+    // lista exitosa, incluso sin IA de por medio: regresión visible vs 0d94e806).
+    const resultadosFrescos = useMemo(
+        () => (dedupResult ? mergearCandidatosDedup(results, dedupResult.productCandidates, MAX_DISPLAY_RESULTS) : results),
+        [results, dedupResult]
+    );
+
+    // Bug bloqueante B2 (revisor funcional): si el vendedor está navegando el dropdown
+    // con las flechas (`keyboardIndex >= 0`) y en ESE momento el matcher hace crecer
+    // `resultadosFrescos`, el índice que apuntaba a "crear" pasaría a apuntar a un
+    // producto existente — un Enter rápido lo elegiría por error. `listaCongeladaRef`
+    // guarda la ÚLTIMA lista fresca vista mientras NO se estaba navegando; apenas arranca
+    // la navegación deja de actualizarse sola (nunca se le vuelve a escribir hasta que
+    // `keyboardIndex` vuelve a -1), así que queda "congelada" tal cual estaba antes de
+    // que el vendedor tocara una flecha — sin usar estado ni efecto, así no hay ningún
+    // render de por medio: `resolverListaParaMostrar` decide, en ESTE MISMO render, cuál
+    // de las dos lista corresponde, y `hasNoResults`/`totalOptions` leen ese resultado
+    // ÚNICO más abajo (nunca una versión vieja).
+    const listaCongeladaRef = useRef(resultadosFrescos);
+    if (keyboardIndex < 0) {
+        listaCongeladaRef.current = resultadosFrescos;
+    }
+    const resultadosParaMostrar = resolverListaParaMostrar({
+        keyboardIndex,
+        listaCongelada: listaCongeladaRef.current,
+        listaFresca: resultadosFrescos,
+    });
+
+    // El texto de "crear ..." usa el nombre limpio que sacó el motor cuando lo hay, para
+    // que un alta nueva no nazca con la frase entera de basura en el nombre.
+    const textoParaCrear = resolverTextoDeCrear(dedupResult?.productSearchText, value);
 
     const handleSelectExisting = (result) => {
         skipNextSearch.current = true;
         setKeyboardIndex(-1);
-        // Le avisamos al padre si este resultado vino de los candidatos QUE YA ELIGIÓ EL
-        // MOTOR (Momento 4, `aiCandidates`) o de una búsqueda normal — el padre lo usa
-        // para decidir si tiene que respetar lo que la línea inteligente ya sugirió
-        // (bug bloqueante B3: elegir un parecido no puede pisar lo que YA está en
-        // amarillo por la interpretación, ni lo que el vendedor tocó).
-        onSelectExisting(result, { fromAiOverride: overrideActivo });
+        onSelectExisting(result);
         setShowDropdown(false);
     };
 
     const handleCreateNew = (text) => {
+        // Bug bloqueante (revisor funcional): `text` puede ser `textoParaCrear` (el
+        // nombre que limpió el matcher), distinto de `value` tal cual lo escribió el
+        // vendedor. Sin este flag, el padre hace onCreateNew → setForm → `value` cambia
+        // → el efecto de debounce de la búsqueda normal lo ve como un tecleo nuevo y
+        // relanza la búsqueda: el desplegable REAPARECE ~350ms después, tapando el
+        // recuadro de "producto nuevo" que el vendedor recién abrió. Mismo patrón que ya
+        // usa handleSelectExisting acá arriba.
+        skipNextSearch.current = true;
         setKeyboardIndex(-1);
         setShowDropdown(false);
         onCreateNew(text);
@@ -314,16 +353,10 @@ export function ProductSearchField({
 
     const handleFocus = () => {
         clearTimeout(blurTimer.current);
-        // Con candidatos del motor puestos, un blur accidental (ej. Alt+Tab) no debería
-        // perder la propuesta: volver a enfocar la reabre igual.
-        if (Array.isArray(aiCandidates)) {
-            setShowDropdown(true);
-            return;
-        }
         // Re-abrir el dropdown solo si el usuario ya interactuó antes (escribió algo)
         // y hay resultados en caché. En modo edición (sin haber tipeado), el foco
         // no debe disparar ninguna apertura.
-        if (userHasInteracted.current && (value || "").trim().length >= MIN_QUERY_LENGTH && results.length > 0) {
+        if (userHasInteracted.current && (value || "").trim().length >= MIN_QUERY_LENGTH && resultadosParaMostrar.length > 0) {
             setShowDropdown(true);
         }
     };
@@ -336,23 +369,10 @@ export function ProductSearchField({
         }, 150);
     };
 
-    // resultadosVisibles/textoParaCrear derivan de `overrideActivo` (declarado más arriba).
-    const resultadosVisibles = overrideActivo ? aiCandidates : results;
-    // El texto de "crear ..." también usa el nombre limpio que sacó el motor
-    // (`productSearchText`, sin mayúsculas ni comillas raras) en vez de la frase cruda.
-    const textoParaCrear = overrideActivo ? (aiCreateText || "") : (value || "").trim();
-    // El "Buscando…" sutil se reusa: sigue encendido mientras el motor todavía piensa,
-    // aunque la búsqueda propia de este campo ya haya terminado (spec §3.2).
-    const pensando = isSearching || externalThinking;
-
     // Cantidad total de opciones navegables: resultados existentes + opción "crear"
-    // Con candidatos del motor, "crear" siempre está disponible (el motor ya armó el
-    // nombre limpio); sin override, sigue el criterio de siempre (texto suficiente y sin
-    // estar buscando todavía).
-    const showCreateOption = overrideActivo
-        ? true
-        : !isSearching && (value || "").trim().length >= MIN_QUERY_LENGTH;
-    const totalOptions = resultadosVisibles.length + (showCreateOption ? 1 : 0);
+    // La opción "crear" solo aparece cuando el texto es suficientemente largo y no está buscando.
+    const showCreateOption = !isSearching && (value || "").trim().length >= MIN_QUERY_LENGTH;
+    const totalOptions = resultadosParaMostrar.length + (showCreateOption ? 1 : 0);
 
     // Maneja la navegación con teclado dentro del dropdown (↑↓ Enter Esc).
     // Esto permite que usuarios de teclado / lectores de pantalla usen el buscador sin mouse.
@@ -367,9 +387,9 @@ export function ProductSearchField({
             setKeyboardIndex((prev) => (prev > 0 ? prev - 1 : totalOptions - 1));
         } else if (event.key === "Enter" && keyboardIndex >= 0) {
             event.preventDefault();
-            if (keyboardIndex < resultadosVisibles.length) {
+            if (keyboardIndex < resultadosParaMostrar.length) {
                 // Enter sobre un resultado existente: elegirlo
-                handleSelectExisting(resultadosVisibles[keyboardIndex]);
+                handleSelectExisting(resultadosParaMostrar[keyboardIndex]);
             } else {
                 // Enter sobre "Crear nuevo": dispararlo
                 handleCreateNew(textoParaCrear);
@@ -381,8 +401,7 @@ export function ProductSearchField({
         }
     };
 
-    const hasNoResults =
-        !overrideActivo && !isSearching && results.length === 0 && (value || "").trim().length >= MIN_QUERY_LENGTH;
+    const hasNoResults = !isSearching && resultadosParaMostrar.length === 0 && (value || "").trim().length >= MIN_QUERY_LENGTH;
 
     // El id del ítem actualmente resaltado por teclado (para aria-activedescendant)
     const activeDescendantId = keyboardIndex >= 0 ? getOptionId(keyboardIndex) : undefined;
@@ -420,7 +439,7 @@ export function ProductSearchField({
                     aria-activedescendant={activeDescendantId}
                     role="combobox"
                 />
-                {pensando && (
+                {isSearching && (
                     <RefreshCw className="absolute right-3 top-2.5 w-4 h-4 text-blue-500 animate-spin" />
                 )}
             </div>
@@ -433,14 +452,14 @@ export function ProductSearchField({
                     role="listbox"
                     aria-label={`Resultados de búsqueda de ${label || "productos"}`}
                 >
-                    {!overrideActivo && isSearching && (
+                    {isSearching && (
                         // Estado "buscando": texto sutil, no bloqueante
                         <div className="px-4 py-3 text-xs text-slate-400 italic" role="status">
                             Buscando…
                         </div>
                     )}
 
-                    {(overrideActivo || !isSearching) && resultadosVisibles.length > 0 && resultadosVisibles.map((result, index) => (
+                    {!isSearching && resultadosParaMostrar.length > 0 && resultadosParaMostrar.map((result, index) => (
                         <SearchResultItem
                             key={result.ratePublicId || index}
                             result={result}
@@ -462,16 +481,14 @@ export function ProductSearchField({
 
                     {/* La opción crear SIEMPRE va al final (candado 2 anti-duplicados).
                         Pasamos serviceType para que el texto diga el tipo correcto:
-                        "crear X como aéreo nuevo" / "como hotel nuevo" / etc. Con
-                        candidatos del motor puestos, el nombre es el que armó el motor
-                        (`textoParaCrear`), no la frase cruda que escribió el vendedor. */}
-                    {showCreateOption && (overrideActivo || !isSearching) && (
+                        "crear X como aéreo nuevo" / "como hotel nuevo" / etc. */}
+                    {showCreateOption && (
                         <CreateNewOption
                             searchText={textoParaCrear}
                             serviceType={serviceType}
                             onCreateNew={handleCreateNew}
-                            isKeyboardFocused={keyboardIndex === resultadosVisibles.length}
-                            optionId={getOptionId(resultadosVisibles.length)}
+                            isKeyboardFocused={keyboardIndex === resultadosParaMostrar.length}
+                            optionId={getOptionId(resultadosParaMostrar.length)}
                         />
                     )}
                 </div>

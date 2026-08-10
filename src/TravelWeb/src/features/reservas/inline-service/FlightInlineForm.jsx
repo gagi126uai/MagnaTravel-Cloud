@@ -15,10 +15,6 @@
  * Cálculo del total: precio total × pasajeros (si se ingresa precio unitario).
  * NOTA: El aéreo puede venderse como precio cerrado (consolidado) o por pasajero;
  * usamos precio total de venta directo (como el modal viejo) para no asumir unitarización.
- *
- * LÍNEA INTELIGENTE (spec 2026-08-07, §3): mientras el vendedor escribe la frase entera
- * en el buscador de ruta, `useServiceLineInterpretationForForm` va precargando en
- * amarillo lo que el motor entendió (operador, cabina, fechas, costo).
  */
 
 import { useState, useEffect } from "react";
@@ -30,10 +26,6 @@ import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
 import { resolverCamposAlCambiarVariante } from "./variantPriceSuggestionLogic";
 import { VariantSuggestionHint } from "./VariantSuggestionHint";
-import { useServiceLineInterpretationForForm } from "./useServiceLineInterpretationForForm";
-import { ServiceLineDoubtQuestion } from "./ServiceLineDoubtQuestion";
-import { ResolvedProductRow } from "./ResolvedProductRow";
-import { DOUBT_FIELD, construirPatchDeSeleccionManual, debeResetearTocadoTrasSeleccion } from "./serviceLineInterpretationLogic";
 
 // ─── Clases CSS (mismas que HotelInlineForm para coherencia visual) ──────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -41,14 +33,6 @@ const INPUT_NORMAL = `${INPUT_BASE} border-slate-200`;
 const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50`;
 const INPUT_CALCULADO = `${INPUT_BASE} border-slate-200 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default`;
 const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
-
-// Ids de los campos que puede señalar una duda grande de la línea inteligente (§4).
-const IDS_DUDA_LINEA_INTELIGENTE = {
-    supplierId: "flight-operador",
-    netCost: "flight-costo",
-    departureDate: "flight-ida",
-    returnDate: "flight-vuelta",
-};
 
 // ─── Recuadro violeta para vuelo nuevo ───────────────────────────────────────
 
@@ -157,10 +141,6 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
     const [precioTocadoPorElUsuario, setPrecioTocadoPorElUsuario] = useState(isEditing);
     const [monedaTocadaPorElUsuario, setMonedaTocadaPorElUsuario] = useState(isEditing);
 
-    // Texto de la caja de arriba, separado de routeName (mockup firmado §3.3, ver
-    // HotelInlineForm para la explicación completa del porqué).
-    const [textoBuscador, setTextoBuscador] = useState(() => form.routeName || "");
-
     useEffect(() => {
         if (!form.rateId) {
             // Fix ronda 3: sin producto elegido todavía no hay nada que sugerir ni que
@@ -187,47 +167,6 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sugerenciaVariante]);
 
-    // ─── LA LÍNEA INTELIGENTE (spec 2026-08-07, §3) ───────────────────────────────────
-    const {
-        isThinking: pensandoLineaInteligente,
-        duda: dudaLineaInteligente,
-        onRespuestaDuda,
-        aiOverride,
-        productoResueltoPorLineaInteligente,
-        limpiarResolucionIA,
-        marcarTocado,
-        camposTocados,
-    } = useServiceLineInterpretationForForm({
-        reservaId,
-        serviceType: "Aereo",
-        isEditing,
-        canSeeCost,
-        form,
-        setForm,
-        setCamposSugeridos,
-        precioTocadoPorElUsuario,
-        monedaTocadaPorElUsuario,
-        idsDeCampoParaEnfocar: IDS_DUDA_LINEA_INTELIGENTE,
-        // Ver el mismo comentario en HotelInlineForm: evita que la sugerencia POR CABINA
-        // reponga un precio/moneda que el vendedor acaba de rechazar con "No".
-        alVaciarCampoPorDuda: (campo) => {
-            if (campo === "netCost" || campo === "salePrice") setPrecioTocadoPorElUsuario(true);
-            if (campo === "currency") setMonedaTocadaPorElUsuario(true);
-        },
-        // Bug bloqueante B2: el costo que salió de LA FRASE cuenta como "tocado" para la
-        // sugerencia POR CABINA, para que no lo pise 300ms después.
-        alPrecargarPrecioDeLaFrase: (cual) => {
-            if (cual === "costo") setPrecioTocadoPorElUsuario(true);
-            if (cual === "moneda") setMonedaTocadaPorElUsuario(true);
-        },
-    });
-
-    // La cabina vive plegada bajo "Más detalles": si el motor la precargó, hay que abrir
-    // la sección sola — si no, el vendedor nunca vería ese amarillo (P-21).
-    useEffect(() => {
-        if (camposSugeridos.cabinClass) setMostrarDetalles(true);
-    }, [camposSugeridos.cabinClass]);
-
     // C5: si el operador sugerido no está en la lista de operadores de la reserva,
     // lo agregamos dinámicamente para que el <select> no quede con nada seleccionado
     const supplierListaIds = new Set(suppliers.map((s) => s.publicId || s.PublicId));
@@ -248,53 +187,37 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, meta) => {
+    const handleSelectExisting = (catalogResult) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
-
-        // Bug bloqueante B3: ver el comentario completo en HotelInlineForm.
-        const { patch: patchVentaCatalogo, camposSugeridos: sugeridosVentaCatalogo } = meta?.fromAiOverride
-            ? construirPatchDeSeleccionManual({
-                  serviceType: "Aereo", sale, canSeeCost,
-                  camposActualmenteSugeridos: camposSugeridos, camposTocados,
-              })
-            : {
-                  patch: {
-                      supplierId: sale.supplierPublicId || "",
-                      supplierName: sale.supplierName || null,
-                      salePrice: sale.salePrice != null ? String(sale.salePrice) : "",
-                      netCost: canSeeCost && sale.netCost != null ? String(sale.netCost) : form.netCost,
-                      currency: sale.currency || "ARS",
-                  },
-                  camposSugeridos: {
-                      supplierId: Boolean(sale.supplierPublicId),
-                      netCost: canSeeCost && sale.netCost != null,
-                      salePrice: Boolean(sale.salePrice),
-                      currency: Boolean(sale.currency),
-                  },
-              };
+        const supplierPublicId = sale.supplierPublicId || "";
+        const salePrice = sale.salePrice != null ? String(sale.salePrice) : "";
+        const netCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.netCost;
+        const currency = sale.currency || "ARS";
 
         setForm((prev) => ({
             ...prev,
             routeName: catalogResult.name || prev.routeName,
             rateId: catalogResult.ratePublicId,
             newCatalogProduct: null,
-            ...patchVentaCatalogo,
+            supplierId: supplierPublicId,
+            supplierName: sale.supplierName || null,
+            salePrice,
+            netCost: canSeeCost ? netCost : prev.netCost,
+            currency,
         }));
-        setTextoBuscador(catalogResult.name || form.routeName || "");
 
-        setCamposSugeridos((prev) => ({ ...prev, ...sugeridosVentaCatalogo }));
-        // Producto NUEVO recién elegido: sueltan los flags SOLO si el campo se pisó de
-        // verdad con la venta del catálogo (bug bloqueante B2, segunda vuelta) — ver el
-        // comentario completo en HotelInlineForm.
-        if (debeResetearTocadoTrasSeleccion({ fromAiOverride: meta?.fromAiOverride, campo: campoPrecioVariante, camposSugeridosDeVenta: sugeridosVentaCatalogo })) {
-            setPrecioTocadoPorElUsuario(false);
-        }
-        if (debeResetearTocadoTrasSeleccion({ fromAiOverride: meta?.fromAiOverride, campo: "currency", camposSugeridosDeVenta: sugeridosVentaCatalogo })) {
-            setMonedaTocadaPorElUsuario(false);
-        }
+        setCamposSugeridos({
+            supplierId: Boolean(supplierPublicId),
+            netCost: canSeeCost && sale.netCost != null,
+            salePrice: Boolean(sale.salePrice),
+            currency: Boolean(sale.currency),
+        });
+        // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
+        // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
+        setPrecioTocadoPorElUsuario(false);
+        setMonedaTocadaPorElUsuario(false);
         // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR CABINA
         // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
-        limpiarResolucionIA();
     };
 
     const handleCreateNew = (searchText) => {
@@ -313,22 +236,18 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
             ...camposLimpios,
         }));
-        setTextoBuscador(searchText);
         setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
         setPrecioTocadoPorElUsuario(false);
         setMonedaTocadaPorElUsuario(false);
-        limpiarResolucionIA();
     };
 
     const handleSearchChange = (texto) => {
-        setTextoBuscador(texto);
         setForm((prev) => ({
             ...prev,
             routeName: texto,
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        limpiarResolucionIA();
         if (!texto) {
             setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
             setPrecioTocadoPorElUsuario(false);
@@ -341,28 +260,16 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
 
             {/* === BUSCADOR (ruta o aerolínea) === */}
             <ProductSearchField
+                reservaId={reservaId}
                 serviceType="Aereo"
-                value={textoBuscador}
+                value={form.routeName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
-                label="Escribilo como te salga"
-                placeholder="Ej: AEP–IGR LATAM ola 90000 pesos ida y vuelta 12 al 15/9"
-                aiCandidates={aiOverride?.candidates ?? null}
-                aiCreateText={aiOverride?.createText ?? null}
-                externalThinking={pensandoLineaInteligente}
+                label="Ruta / aerolínea"
+                placeholder="Ej: AEP–IGR, LATAM, Aerolíneas..."
             />
-
-            {/* === RENGLÓN "Producto *" (Momento 3, §3.3 — mockup firmado) === */}
-            {productoResueltoPorLineaInteligente && form.rateId && !form.newCatalogProduct && (
-                <ResolvedProductRow
-                    id="flight-producto-resuelto"
-                    label="Ruta / aerolínea *"
-                    value={form.routeName}
-                    dataTestId="flight-producto-resuelto"
-                />
-            )}
 
             {/* === RECUADRO PRODUCTO NUEVO === */}
             {form.newCatalogProduct && (
@@ -384,7 +291,6 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
-                            marcarTocado("supplierId");
                         }}
                         data-testid="flight-supplier"
                         aria-label="Operador o consolidador"
@@ -399,9 +305,6 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                             </option>
                         ))}
                     </select>
-                    {dudaLineaInteligente?.field === DOUBT_FIELD.SUPPLIER && (
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    )}
                 </div>
             )}
 
@@ -415,13 +318,9 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                     <input
                         id="flight-ida"
                         type="date"
-                        className={camposSugeridos.departureDate ? INPUT_SUGERIDO : INPUT_NORMAL}
+                        className={INPUT_NORMAL}
                         value={form.departureDate || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, departureDate: event.target.value }));
-                            setCamposSugeridos((prev) => ({ ...prev, departureDate: false }));
-                            marcarTocado("departureDate");
-                        }}
+                        onChange={(event) => setForm((prev) => ({ ...prev, departureDate: event.target.value }))}
                         data-testid="flight-ida"
                         aria-label="Fecha de ida"
                     />
@@ -434,23 +333,14 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                     <input
                         id="flight-vuelta"
                         type="date"
-                        className={camposSugeridos.returnDate ? INPUT_SUGERIDO : INPUT_NORMAL}
+                        className={INPUT_NORMAL}
                         value={form.returnDate || ""}
                         min={form.departureDate || undefined}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, returnDate: event.target.value }));
-                            setCamposSugeridos((prev) => ({ ...prev, returnDate: false }));
-                            marcarTocado("returnDate");
-                        }}
+                        onChange={(event) => setForm((prev) => ({ ...prev, returnDate: event.target.value }))}
                         data-testid="flight-vuelta"
                         aria-label="Fecha de vuelta (vacío si solo hay ida)"
                     />
                 </div>
-                {dudaLineaInteligente?.field === DOUBT_FIELD.DATES && (
-                    <div className="col-span-2 sm:col-span-4">
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    </div>
-                )}
                 <div>
                     <label className={LABEL_BASE} htmlFor="flight-pasajeros">
                         <Users className="inline w-3 h-3 mr-1" />
@@ -516,9 +406,6 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                         {/* Renglón gris POR CABINA (spec 2026-08-07, §3.3): dice si el precio
                             es de esta cabina o de una parecida (V9=A). */}
                         <VariantSuggestionHint text={hintVariante} />
-                        {dudaLineaInteligente?.field === DOUBT_FIELD.PRICE && (
-                            <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                        )}
                     </div>
                 )}
                 <div>
@@ -643,13 +530,9 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                             <label className={LABEL_BASE} htmlFor="flight-cabina">Cabina</label>
                             <select
                                 id="flight-cabina"
-                                className={camposSugeridos.cabinClass ? INPUT_SUGERIDO : INPUT_NORMAL}
+                                className={INPUT_NORMAL}
                                 value={form.cabinClass || ""}
-                                onChange={(event) => {
-                                    setForm((prev) => ({ ...prev, cabinClass: event.target.value }));
-                                    setCamposSugeridos((prev) => ({ ...prev, cabinClass: false }));
-                                    marcarTocado("cabinClass");
-                                }}
+                                onChange={(event) => setForm((prev) => ({ ...prev, cabinClass: event.target.value }))}
                                 data-testid="inline-flight-cabin-class"
                                 aria-label="Clase de cabina del vuelo"
                             >

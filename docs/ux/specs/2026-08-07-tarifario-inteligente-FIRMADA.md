@@ -802,3 +802,37 @@ Excursión ni "Otro", que quedaban invisibles tras el alta):
 - **"Otro" queda AFUERA del tarifario**: no se ofrece en el alta a mano, no se
   lista ni se aprende. Se sigue vendiendo normal en las reservas.
 - Deroga quirúrgicamente el "5 solapas" de V8=A (pasa a 6); el resto de V8=A intacto.
+
+---
+
+## ADDENDUM FIRMADO 2026-08-09 — V18: la IA se esconde y se enfoca en evitar duplicados
+
+Gastón vio la línea inteligente construida y deployada (F2, commit `51dc4f5f`) y
+**no le cerró el diseño de la ficha** (palabras textuales: *"la forma de funcionar
+es como que exige usar la IA cuando no lo veo necesario, sería algo más backend;
+eso de 'escribilo como te salga' es raro, no sé si así tendría que andar en un
+ERP"*). Sus respuestas explícitas del 2026-08-09:
+
+1. **"Sacar la ayuda de la ficha"** → **§3 y §4 quedan DEROGADOS para la ficha de
+   servicio** (Q1 y Q2 sin efecto). La ficha de carga vuelve a verse y usarse
+   EXACTAMENTE como antes de F2: mismo buscador, mismos labels, sin precargado de
+   frases, sin renglón "Producto *", sin preguntas Sí/No. Las preguntas de duda
+   quedan construidas en el motor, dormidas, para un contexto futuro.
+2. **"La idea es que esto sea más una inteligencia que ayude a evitar
+   duplicados"** → la IA de la ficha pasa a ser un **matcher anti-duplicados
+   INVISIBLE** (refuerza P7): con 2+ palabras y sin parecido fuerte local, el
+   sistema consulta al motor por detrás y solo hace dos cosas, sin ningún cambio
+   visual: (a) **mejora la lista de parecidos** del desplegable de siempre para
+   que el vendedor elija el producto que YA existe aunque lo escriba distinto
+   ("sheraton iguazu dbl"); (b) **limpia el nombre de la opción "crear …"** para
+   que un alta nueva no nazca con basura en el nombre. Nada más de la respuesta
+   del motor se usa. Si la IA no está o falla, el desplegable es el de hoy.
+3. **Orden confirmado**: 1º el buscador invisible; 2º el bibliotecario nocturno
+   (F3 / M-25, que sigue firmado tal cual — la bandeja no cambia).
+4. **§15 (Configuración → Inteligencia artificial) queda INTACTO**: la pantalla
+   no recibió objeción y sigue vigente completa.
+
+El motor construido en F2 (M-20..M-23, M-27) **no se tira**: queda como proveedor
+del matcher (mismo endpoint, el front consume solo `productCandidates` y
+`productSearchText`). Las guardas de privacidad y anti-invento aprobadas siguen
+todas vigentes.

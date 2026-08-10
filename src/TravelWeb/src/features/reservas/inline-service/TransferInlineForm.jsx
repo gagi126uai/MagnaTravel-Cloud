@@ -14,10 +14,6 @@
  *
  * Cálculo del total: precio total de venta directo (traslado privado = precio cerrado;
  * compartido = normalmente precio por persona, pero el vendedor ingresa el total).
- *
- * LÍNEA INTELIGENTE (spec 2026-08-07, §3): mientras el vendedor escribe la frase entera
- * en el buscador de trayecto, `useServiceLineInterpretationForForm` va precargando en
- * amarillo lo que el motor entendió (operador, vehículo, fecha, costo).
  */
 
 import { useState, useEffect } from "react";
@@ -30,23 +26,12 @@ import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemo
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
 import { resolverCamposAlCambiarVariante } from "./variantPriceSuggestionLogic";
 import { VariantSuggestionHint } from "./VariantSuggestionHint";
-import { useServiceLineInterpretationForForm } from "./useServiceLineInterpretationForForm";
-import { ServiceLineDoubtQuestion } from "./ServiceLineDoubtQuestion";
-import { ResolvedProductRow } from "./ResolvedProductRow";
-import { DOUBT_FIELD, construirPatchDeSeleccionManual, debeResetearTocadoTrasSeleccion } from "./serviceLineInterpretationLogic";
 
 // ─── Clases CSS ───────────────────────────────────────────────────────────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
 const INPUT_NORMAL = `${INPUT_BASE} border-slate-200`;
 const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50`;
 const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
-
-// Ids de los campos que puede señalar una duda grande de la línea inteligente (§4).
-const IDS_DUDA_LINEA_INTELIGENTE = {
-    supplierId: "transfer-operador",
-    netCost: "transfer-costo",
-    pickupDate: "transfer-fecha",
-};
 
 // ─── Recuadro violeta para trayecto nuevo ────────────────────────────────────
 
@@ -153,10 +138,6 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
     const [precioTocadoPorElUsuario, setPrecioTocadoPorElUsuario] = useState(isEditing);
     const [monedaTocadaPorElUsuario, setMonedaTocadaPorElUsuario] = useState(isEditing);
 
-    // Texto de la caja de arriba, separado de routeName (mockup firmado §3.3, ver
-    // HotelInlineForm para la explicación completa del porqué).
-    const [textoBuscador, setTextoBuscador] = useState(() => form.routeName || "");
-
     useEffect(() => {
         if (!form.rateId) {
             // Fix ronda 3: sin producto elegido todavía no hay nada que sugerir ni que
@@ -183,41 +164,6 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sugerenciaVariante]);
 
-    // ─── LA LÍNEA INTELIGENTE (spec 2026-08-07, §3) ───────────────────────────────────
-    const {
-        isThinking: pensandoLineaInteligente,
-        duda: dudaLineaInteligente,
-        onRespuestaDuda,
-        aiOverride,
-        productoResueltoPorLineaInteligente,
-        limpiarResolucionIA,
-        marcarTocado,
-        camposTocados,
-    } = useServiceLineInterpretationForForm({
-        reservaId,
-        serviceType: "Traslado",
-        isEditing,
-        canSeeCost,
-        form,
-        setForm,
-        setCamposSugeridos,
-        precioTocadoPorElUsuario,
-        monedaTocadaPorElUsuario,
-        idsDeCampoParaEnfocar: IDS_DUDA_LINEA_INTELIGENTE,
-        // Ver el mismo comentario en HotelInlineForm: evita que la sugerencia POR VEHÍCULO
-        // reponga un precio/moneda que el vendedor acaba de rechazar con "No".
-        alVaciarCampoPorDuda: (campo) => {
-            if (campo === "netCost" || campo === "salePrice") setPrecioTocadoPorElUsuario(true);
-            if (campo === "currency") setMonedaTocadaPorElUsuario(true);
-        },
-        // Bug bloqueante B2: el costo que salió de LA FRASE cuenta como "tocado" para la
-        // sugerencia POR VEHÍCULO, para que no lo pise 300ms después.
-        alPrecargarPrecioDeLaFrase: (cual) => {
-            if (cual === "costo") setPrecioTocadoPorElUsuario(true);
-            if (cual === "moneda") setMonedaTocadaPorElUsuario(true);
-        },
-    });
-
     // C5: operador sugerido que no está en la lista de la reserva
     const supplierListaIds = new Set(suppliers.map((s) => s.publicId || s.PublicId));
     const supplierSugeridoFuera =
@@ -237,53 +183,37 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, meta) => {
+    const handleSelectExisting = (catalogResult) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
-
-        // Bug bloqueante B3: ver el comentario completo en HotelInlineForm.
-        const { patch: patchVentaCatalogo, camposSugeridos: sugeridosVentaCatalogo } = meta?.fromAiOverride
-            ? construirPatchDeSeleccionManual({
-                  serviceType: "Traslado", sale, canSeeCost,
-                  camposActualmenteSugeridos: camposSugeridos, camposTocados,
-              })
-            : {
-                  patch: {
-                      supplierId: sale.supplierPublicId || "",
-                      supplierName: sale.supplierName || null,
-                      salePrice: sale.salePrice != null ? String(sale.salePrice) : "",
-                      netCost: canSeeCost && sale.netCost != null ? String(sale.netCost) : form.netCost,
-                      currency: sale.currency || "ARS",
-                  },
-                  camposSugeridos: {
-                      supplierId: Boolean(sale.supplierPublicId),
-                      netCost: canSeeCost && sale.netCost != null,
-                      salePrice: Boolean(sale.salePrice),
-                      currency: Boolean(sale.currency),
-                  },
-              };
+        const supplierPublicId = sale.supplierPublicId || "";
+        const salePrice = sale.salePrice != null ? String(sale.salePrice) : "";
+        const netCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.netCost;
+        const currency = sale.currency || "ARS";
 
         setForm((prev) => ({
             ...prev,
             routeName: catalogResult.name || prev.routeName,
             rateId: catalogResult.ratePublicId,
             newCatalogProduct: null,
-            ...patchVentaCatalogo,
+            supplierId: supplierPublicId,
+            supplierName: sale.supplierName || null,
+            salePrice,
+            netCost: canSeeCost ? netCost : prev.netCost,
+            currency,
         }));
-        setTextoBuscador(catalogResult.name || form.routeName || "");
 
-        setCamposSugeridos((prev) => ({ ...prev, ...sugeridosVentaCatalogo }));
-        // Producto NUEVO recién elegido: sueltan los flags SOLO si el campo se pisó de
-        // verdad con la venta del catálogo (bug bloqueante B2, segunda vuelta) — ver el
-        // comentario completo en HotelInlineForm.
-        if (debeResetearTocadoTrasSeleccion({ fromAiOverride: meta?.fromAiOverride, campo: campoPrecioVariante, camposSugeridosDeVenta: sugeridosVentaCatalogo })) {
-            setPrecioTocadoPorElUsuario(false);
-        }
-        if (debeResetearTocadoTrasSeleccion({ fromAiOverride: meta?.fromAiOverride, campo: "currency", camposSugeridosDeVenta: sugeridosVentaCatalogo })) {
-            setMonedaTocadaPorElUsuario(false);
-        }
+        setCamposSugeridos({
+            supplierId: Boolean(supplierPublicId),
+            netCost: canSeeCost && sale.netCost != null,
+            salePrice: Boolean(sale.salePrice),
+            currency: Boolean(sale.currency),
+        });
+        // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
+        // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
+        setPrecioTocadoPorElUsuario(false);
+        setMonedaTocadaPorElUsuario(false);
         // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR VEHÍCULO
         // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
-        limpiarResolucionIA();
     };
 
     const handleCreateNew = (searchText) => {
@@ -302,22 +232,18 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
             ...camposLimpios,
         }));
-        setTextoBuscador(searchText);
         setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
         setPrecioTocadoPorElUsuario(false);
         setMonedaTocadaPorElUsuario(false);
-        limpiarResolucionIA();
     };
 
     const handleSearchChange = (texto) => {
-        setTextoBuscador(texto);
         setForm((prev) => ({
             ...prev,
             routeName: texto,
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        limpiarResolucionIA();
         if (!texto) {
             setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
             setPrecioTocadoPorElUsuario(false);
@@ -330,28 +256,16 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
 
             {/* === BUSCADOR (trayecto) === */}
             <ProductSearchField
+                reservaId={reservaId}
                 serviceType="Traslado"
-                value={textoBuscador}
+                value={form.routeName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
-                label="Escribilo como te salga"
-                placeholder="Ej: EZE al hotel julia tours 25000 pesos 12/9"
-                aiCandidates={aiOverride?.candidates ?? null}
-                aiCreateText={aiOverride?.createText ?? null}
-                externalThinking={pensandoLineaInteligente}
+                label="Trayecto"
+                placeholder="Ej: EZE → hotel, Aeropuerto → ciudad..."
             />
-
-            {/* === RENGLÓN "Producto *" (Momento 3, §3.3 — mockup firmado) === */}
-            {productoResueltoPorLineaInteligente && form.rateId && !form.newCatalogProduct && (
-                <ResolvedProductRow
-                    id="transfer-producto-resuelto"
-                    label="Trayecto *"
-                    value={form.routeName}
-                    dataTestId="transfer-producto-resuelto"
-                />
-            )}
 
             {/* === RECUADRO PRODUCTO NUEVO === */}
             {form.newCatalogProduct && (
@@ -373,7 +287,6 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
-                            marcarTocado("supplierId");
                         }}
                         data-testid="transfer-supplier"
                         aria-label="Operador del traslado"
@@ -388,9 +301,6 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
                             </option>
                         ))}
                     </select>
-                    {dudaLineaInteligente?.field === DOUBT_FIELD.SUPPLIER && (
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    )}
                 </div>
             )}
 
@@ -404,19 +314,12 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
                     <input
                         id="transfer-fecha"
                         type="date"
-                        className={camposSugeridos.pickupDate ? INPUT_SUGERIDO : INPUT_NORMAL}
+                        className={INPUT_NORMAL}
                         value={form.pickupDate || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, pickupDate: event.target.value }));
-                            setCamposSugeridos((prev) => ({ ...prev, pickupDate: false }));
-                            marcarTocado("pickupDate");
-                        }}
+                        onChange={(event) => setForm((prev) => ({ ...prev, pickupDate: event.target.value }))}
                         data-testid="transfer-fecha"
                         aria-label="Fecha del traslado"
                     />
-                    {dudaLineaInteligente?.field === DOUBT_FIELD.DATES && (
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    )}
                 </div>
                 <div>
                     {/*
@@ -486,12 +389,7 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
                     label="Vehículo"
                     placeholder="Van, sedán, microbús..."
                     value={form.vehicleType}
-                    onChange={(texto) => {
-                        setForm((prev) => ({ ...prev, vehicleType: texto }));
-                        setCamposSugeridos((prev) => ({ ...prev, vehicleType: false }));
-                        marcarTocado("vehicleType");
-                    }}
-                    isSuggested={Boolean(camposSugeridos.vehicleType)}
+                    onChange={(texto) => setForm((prev) => ({ ...prev, vehicleType: texto }))}
                 />
             </div>
 
@@ -521,9 +419,6 @@ export function TransferInlineForm({ reservaId, form, setForm, suppliers, isEdit
                         {/* Renglón gris POR VEHÍCULO (spec 2026-08-07, §3.3): dice si el precio
                             es de este vehículo o de uno parecido (V9=A). */}
                         <VariantSuggestionHint text={hintVariante} />
-                        {dudaLineaInteligente?.field === DOUBT_FIELD.PRICE && (
-                            <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                        )}
                     </div>
                 )}
                 <div>

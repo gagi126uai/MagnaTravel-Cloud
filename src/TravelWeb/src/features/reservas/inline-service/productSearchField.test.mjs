@@ -13,6 +13,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { formatDate } from "../../../lib/utils.js";
+import { mergearCandidatosDedup, resolverTextoDeCrear, resolverListaParaMostrar } from "./productDedupMatchLogic.js";
 
 // ─── Lógica pura extraída de ProductSearchField ───────────────────────────────
 // Estas funciones representan exactamente las reglas que el componente aplica.
@@ -94,6 +95,21 @@ test("skipNextSearch activo (recién eligió resultado) → NO debe buscar", () 
         userHasInteracted: true,
         skipNextSearch: true,
         value: "HARD ROCK",
+    });
+    assert.equal(resultado, false);
+});
+
+test("(d) skipNextSearch activo tras handleCreateNew → NO relanza la búsqueda (bloqueante B1)", () => {
+    // Bug bloqueante (revisor funcional): handleCreateNew ahora prende skipNextSearch
+    // ANTES de avisarle al padre (mismo patrón que handleSelectExisting) — sin esto,
+    // `textoParaCrear` (el nombre que limpió el matcher) puede diferir de `value`, el
+    // padre lo sube al form, `value` cambia, y sin el flag el efecto de debounce lo
+    // trataría como un tecleo nuevo: el desplegable reaparecería ~350ms después tapando
+    // el recuadro de "producto nuevo" recién abierto.
+    const resultado = debeDispararseBusqueda({
+        userHasInteracted: true,
+        skipNextSearch: true, // lo que deja handleCreateNew tras el fix
+        value: "Amerian Posadas", // textoParaCrear, distinto de lo que tipeó el vendedor
     });
     assert.equal(resultado, false);
 });
@@ -234,4 +250,78 @@ test("formatSoldDate: null → null", () => {
 
 test("formatSoldDate: timestamp real con hora → fecha en formato DD/MM/AAAA", () => {
     assert.equal(formatSoldDate("2026-05-22T14:03:00Z"), formatDate("2026-05-22T14:03:00Z"));
+});
+
+// ─── Tests: matcher anti-duplicados invisible — wiring de ProductSearchField ──
+// (a)/(b) usan las funciones REALES de productDedupMatchLogic.js (no una copia): acá
+// se prueba que ProductSearchField las usa tal cual para armar `resultadosParaMostrar`
+// y `textoParaCrear`, que es exactamente lo que renderiza el dropdown y la opción crear.
+
+test("(a) merge del matcher en la lista visible: no duplica lo que el buscador normal ya trajo", () => {
+    const resultadosDelBuscadorNormal = [{ ratePublicId: "r1", name: "Maitei Posadas" }];
+    const candidatosDelMotor = [
+        { ratePublicId: "r1", name: "Maitei Posadas (motor)" }, // ya está, no se duplica
+        { ratePublicId: "r2", name: "Amerian Posadas" }, // nuevo, se suma
+    ];
+    const resultadosParaMostrar = mergearCandidatosDedup(resultadosDelBuscadorNormal, candidatosDelMotor, 8);
+
+    assert.equal(resultadosParaMostrar.length, 2);
+    assert.equal(resultadosParaMostrar[0].name, "Maitei Posadas"); // el original, sin pisar
+    assert.equal(resultadosParaMostrar[1].ratePublicId, "r2");
+});
+
+test("(b) la opción 'crear ...' usa textoParaCrear (el nombre limpio del motor), no la frase cruda", () => {
+    const fraseCruda = "hotel amerian posadas triple mp julia 91000 pesos";
+    const textoParaCrear = resolverTextoDeCrear("Amerian Posadas", fraseCruda);
+
+    assert.equal(textoParaCrear, "Amerian Posadas");
+    assert.notEqual(textoParaCrear, fraseCruda);
+});
+
+// ─── (c) La lista NO cambia y el índice no se desalinea mientras se navega con teclado ──
+// Bug bloqueante B2: si el matcher aterriza una respuesta MIENTRAS el vendedor tiene
+// el dropdown navegado con las flechas, la lista no puede crecer debajo de sus dedos —
+// el índice que apuntaba a "crear" pasaría a apuntar a un producto existente y un Enter
+// rápido lo elegiría por error. Estos tests usan `resolverListaParaMostrar` REAL (la
+// misma función que importa y llama ProductSearchField.jsx, ver el import de arriba) —
+// nada de mirrors: si el día de mañana cambia la regla ahí, este test la sigue de cerca
+// en vez de quedarse afirmando una versión vieja en silencio.
+
+test("(c) con keyboardIndex >= 0 (navegando): la lista NO se actualiza aunque llegue un merge nuevo", () => {
+    const congelada = [{ ratePublicId: "r1" }];
+    const fresca = [{ ratePublicId: "r1" }, { ratePublicId: "r2" }];
+    assert.deepEqual(resolverListaParaMostrar({ keyboardIndex: 0, listaCongelada: congelada, listaFresca: fresca }), congelada);
+    assert.deepEqual(resolverListaParaMostrar({ keyboardIndex: 3, listaCongelada: congelada, listaFresca: fresca }), congelada);
+});
+
+test("(c) con keyboardIndex -1 (cursor en el input, sin navegar): la lista SÍ se actualiza a la fresca", () => {
+    const congelada = [{ ratePublicId: "r1" }];
+    const fresca = [{ ratePublicId: "r1" }, { ratePublicId: "r2" }];
+    assert.deepEqual(resolverListaParaMostrar({ keyboardIndex: -1, listaCongelada: congelada, listaFresca: fresca }), fresca);
+});
+
+test("(c) simulación completa: navegando sobre 'crear' (índice = length de la lista vieja), un merge que llega tarde NO corre esa posición", () => {
+    // Estado ANTES de que aterrice el matcher: 1 resultado + la opción "crear" en el
+    // índice 1 (results.length). El vendedor bajó la flechita hasta ahí.
+    const listaAntesDelMerge = [{ ratePublicId: "r1", name: "Maitei Posadas" }];
+    const keyboardIndex = listaAntesDelMerge.length; // 1 → estaba parado en "crear"
+
+    // El matcher aterriza CON el vendedor todavía navegando: la lista fresca ya tiene 2
+    // filas (esto es lo que causaría el bug si se usara sin más).
+    const candidatosQueLlegaronTarde = [{ ratePublicId: "r2", name: "Amerian Posadas" }];
+    const listaFresca = mergearCandidatosDedup(listaAntesDelMerge, candidatosQueLlegaronTarde, 8);
+    assert.equal(listaFresca.length, 2);
+
+    // resolverListaParaMostrar (la función REAL) decide cuál lista corresponde en este
+    // render — con keyboardIndex >= 0, tiene que devolver la congelada, no la fresca.
+    const listaEfectivamenteMostrada = resolverListaParaMostrar({
+        keyboardIndex,
+        listaCongelada: listaAntesDelMerge,
+        listaFresca,
+    });
+
+    assert.equal(listaEfectivamenteMostrada.length, 1);
+    // El índice 1 (donde estaba parado el vendedor) sigue siendo "crear" (length de la
+    // lista mostrada), no un producto existente.
+    assert.equal(keyboardIndex, listaEfectivamenteMostrada.length);
 });

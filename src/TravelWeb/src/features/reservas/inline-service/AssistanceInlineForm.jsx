@@ -18,11 +18,6 @@
  *
  * Cálculo del total: precio por persona × pasajeros × días.
  * Los "días" se calculan automáticamente a partir de vigencia desde/hasta.
- *
- * LÍNEA INTELIGENTE (spec 2026-08-07, §3): mientras el vendedor escribe la frase entera
- * en el buscador del plan, `useServiceLineInterpretationForForm` va precargando en
- * amarillo lo que el motor entendió (operador, vigencia, costo por persona/día). La
- * asistencia NO tiene variante natural (V2=todos, con esa única excepción de la spec).
  */
 
 import { useState } from "react";
@@ -33,10 +28,6 @@ import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
 import { buildLastSaleHintText } from "./lastSaleHintLogic";
 import { LastSaleHint } from "./LastSaleHint";
-import { useServiceLineInterpretationForForm } from "./useServiceLineInterpretationForForm";
-import { ServiceLineDoubtQuestion } from "./ServiceLineDoubtQuestion";
-import { ResolvedProductRow } from "./ResolvedProductRow";
-import { DOUBT_FIELD, construirPatchDeSeleccionManual } from "./serviceLineInterpretationLogic";
 
 // ─── Clases CSS ───────────────────────────────────────────────────────────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -44,14 +35,6 @@ const INPUT_NORMAL = `${INPUT_BASE} border-slate-200`;
 const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50`;
 const INPUT_CALCULADO = `${INPUT_BASE} border-slate-200 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default`;
 const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
-
-// Ids de los campos que puede señalar una duda grande de la línea inteligente (§4).
-const IDS_DUDA_LINEA_INTELIGENTE = {
-    supplierId: "assistance-proveedor",
-    unitNetCost: "assistance-costo",
-    validFrom: "assistance-desde",
-    validTo: "assistance-hasta",
-};
 
 // ─── Helper: calcular días de vigencia ───────────────────────────────────────
 
@@ -162,35 +145,6 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
     const [ultimoPrecioSugerido, setUltimoPrecioSugerido] = useState(null);
     const textoUltimoPrecio = buildLastSaleHintText(ultimoPrecioSugerido, { canSeeCost });
 
-    // Texto de la caja de arriba, separado de planName (mockup firmado §3.3, ver
-    // HotelInlineForm para la explicación completa del porqué).
-    const [textoBuscador, setTextoBuscador] = useState(() => form.planName || "");
-
-    // ─── LA LÍNEA INTELIGENTE (spec 2026-08-07, §3) ───────────────────────────────────
-    // Igual que en Paquete: sin variante, así que no hay `precioTocadoPorElUsuario` — el
-    // costo y la moneda se marcan tocados directamente en sus onChange, más abajo.
-    const {
-        isThinking: pensandoLineaInteligente,
-        duda: dudaLineaInteligente,
-        onRespuestaDuda,
-        aiOverride,
-        productoResueltoPorLineaInteligente,
-        limpiarResolucionIA,
-        marcarTocado,
-        camposTocados,
-    } = useServiceLineInterpretationForForm({
-        reservaId,
-        serviceType: "Asistencia",
-        isEditing,
-        canSeeCost,
-        form,
-        setForm,
-        setCamposSugeridos,
-        precioTocadoPorElUsuario: false,
-        monedaTocadaPorElUsuario: false,
-        idsDeCampoParaEnfocar: IDS_DUDA_LINEA_INTELIGENTE,
-    });
-
     // C5: operador sugerido que no está en la lista de la reserva
     const supplierListaIds = new Set(suppliers.map((s) => s.publicId || s.PublicId));
     const supplierSugeridoFuera =
@@ -210,43 +164,32 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult, meta) => {
+    const handleSelectExisting = (catalogResult) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
-
-        // Bug bloqueante B3: ver el comentario completo en HotelInlineForm.
-        const { patch: patchVentaCatalogo, camposSugeridos: sugeridosVentaCatalogo } = meta?.fromAiOverride
-            ? construirPatchDeSeleccionManual({
-                  serviceType: "Asistencia", sale, canSeeCost,
-                  camposActualmenteSugeridos: camposSugeridos, camposTocados,
-              })
-            : {
-                  patch: {
-                      supplierId: sale.supplierPublicId || "",
-                      supplierName: sale.supplierName || null,
-                      unitSalePrice: sale.salePrice != null ? String(sale.salePrice) : "",
-                      unitNetCost: canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost,
-                      currency: sale.currency || "ARS",
-                  },
-                  camposSugeridos: {
-                      supplierId: Boolean(sale.supplierPublicId),
-                      unitNetCost: canSeeCost && sale.netCost != null,
-                      unitSalePrice: Boolean(sale.salePrice),
-                      currency: Boolean(sale.currency),
-                  },
-              };
+        const supplierPublicId = sale.supplierPublicId || "";
+        const unitSalePrice = sale.salePrice != null ? String(sale.salePrice) : "";
+        const unitNetCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost;
+        const currency = sale.currency || "ARS";
 
         setForm((prev) => ({
             ...prev,
             planName: catalogResult.name || prev.planName,
             rateId: catalogResult.ratePublicId,
             newCatalogProduct: null,
-            ...patchVentaCatalogo,
+            supplierId: supplierPublicId,
+            supplierName: sale.supplierName || null,
+            unitSalePrice,
+            unitNetCost: canSeeCost ? unitNetCost : prev.unitNetCost,
+            currency,
         }));
-        setTextoBuscador(catalogResult.name || form.planName || "");
 
-        setCamposSugeridos((prev) => ({ ...prev, ...sugeridosVentaCatalogo }));
+        setCamposSugeridos({
+            supplierId: Boolean(supplierPublicId),
+            unitNetCost: canSeeCost && sale.netCost != null,
+            unitSalePrice: Boolean(sale.salePrice),
+            currency: Boolean(sale.currency),
+        });
         setUltimoPrecioSugerido(catalogResult);
-        limpiarResolucionIA();
     };
 
     const handleCreateNew = (searchText) => {
@@ -265,21 +208,17 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
             ...camposLimpios,
         }));
-        setTextoBuscador(searchText);
         setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
         setUltimoPrecioSugerido(null);
-        limpiarResolucionIA();
     };
 
     const handleSearchChange = (texto) => {
-        setTextoBuscador(texto);
         setForm((prev) => ({
             ...prev,
             planName: texto,
             rateId: null,
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
-        limpiarResolucionIA();
         if (!texto) {
             setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
         }
@@ -291,28 +230,16 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
 
             {/* === BUSCADOR (plan de asistencia) === */}
             <ProductSearchField
+                reservaId={reservaId}
                 serviceType="Asistencia"
-                value={textoBuscador}
+                value={form.planName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
-                label="Escribilo como te salga"
-                placeholder="Ej: AC 150 assist card 12 usd por persona por día 1 al 10/10"
-                aiCandidates={aiOverride?.candidates ?? null}
-                aiCreateText={aiOverride?.createText ?? null}
-                externalThinking={pensandoLineaInteligente}
+                label="Plan / cobertura"
+                placeholder="Ej: AC 150, Assist Card, Fullcard..."
             />
-
-            {/* === RENGLÓN "Producto *" (Momento 3, §3.3 — mockup firmado) === */}
-            {productoResueltoPorLineaInteligente && form.rateId && !form.newCatalogProduct && (
-                <ResolvedProductRow
-                    id="assistance-producto-resuelto"
-                    label="Plan / cobertura *"
-                    value={form.planName}
-                    dataTestId="assistance-producto-resuelto"
-                />
-            )}
 
             {/* === RECUADRO PRODUCTO NUEVO === */}
             {form.newCatalogProduct && (
@@ -334,7 +261,6 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, supplierId: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, supplierId: false }));
-                            marcarTocado("supplierId");
                         }}
                         data-testid="assistance-supplier"
                         aria-label="Operador de la asistencia"
@@ -349,9 +275,6 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                             </option>
                         ))}
                     </select>
-                    {dudaLineaInteligente?.field === DOUBT_FIELD.SUPPLIER && (
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    )}
                 </div>
             )}
 
@@ -365,13 +288,9 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                     <input
                         id="assistance-desde"
                         type="date"
-                        className={camposSugeridos.validFrom ? INPUT_SUGERIDO : INPUT_NORMAL}
+                        className={INPUT_NORMAL}
                         value={form.validFrom || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, validFrom: event.target.value }));
-                            setCamposSugeridos((prev) => ({ ...prev, validFrom: false }));
-                            marcarTocado("validFrom");
-                        }}
+                        onChange={(event) => setForm((prev) => ({ ...prev, validFrom: event.target.value }))}
                         data-testid="assistance-desde"
                         aria-label="Vigencia desde"
                     />
@@ -384,20 +303,13 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                     <input
                         id="assistance-hasta"
                         type="date"
-                        className={camposSugeridos.validTo ? INPUT_SUGERIDO : INPUT_NORMAL}
+                        className={INPUT_NORMAL}
                         value={form.validTo || ""}
                         min={form.validFrom || undefined}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, validTo: event.target.value }));
-                            setCamposSugeridos((prev) => ({ ...prev, validTo: false }));
-                            marcarTocado("validTo");
-                        }}
+                        onChange={(event) => setForm((prev) => ({ ...prev, validTo: event.target.value }))}
                         data-testid="assistance-hasta"
                         aria-label="Vigencia hasta"
                     />
-                    {dudaLineaInteligente?.field === DOUBT_FIELD.DATES && (
-                        <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                    )}
                 </div>
                 <div>
                     {/* Días calculados solos (guía UX: "días calculados solos") */}
@@ -446,16 +358,12 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                             onChange={(event) => {
                                 setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
-                                marcarTocado("unitNetCost");
                             }}
                             placeholder="0,00"
                             data-testid="assistance-costo"
                             aria-label="Costo por persona por día"
                         />
                         <LastSaleHint text={textoUltimoPrecio} />
-                        {dudaLineaInteligente?.field === DOUBT_FIELD.PRICE && (
-                            <ServiceLineDoubtQuestion doubt={dudaLineaInteligente} onRespuesta={onRespuestaDuda} />
-                        )}
                     </div>
                 )}
                 <div>
@@ -487,7 +395,6 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                         onChange={(event) => {
                             setForm((prev) => ({ ...prev, currency: event.target.value }));
                             setCamposSugeridos((prev) => ({ ...prev, currency: false }));
-                            marcarTocado("currency");
                         }}
                         data-testid="assistance-moneda"
                         aria-label="Moneda"

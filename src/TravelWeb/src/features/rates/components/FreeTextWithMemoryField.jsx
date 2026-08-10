@@ -20,7 +20,7 @@ import { buildFreeTextMemoryOptions } from "../lib/freeTextWithMemoryLogic";
 
 const DEBOUNCE_MS = 300;
 
-export function FreeTextWithMemoryField({ serviceType, value, onChange, label, placeholder, id, dataTestId, isSuggested = false }) {
+export function FreeTextWithMemoryField({ serviceType, value, onChange, label, placeholder, id, dataTestId }) {
   const [suggestions, setSuggestions] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const blurTimer = useRef(null);
@@ -104,13 +104,7 @@ export function FreeTextWithMemoryField({ serviceType, value, onChange, label, p
       <input
         id={id}
         type="text"
-        // isSuggested: mismo estilo amarillo "precargado, editable" que el resto de la
-        // ficha (P-21) — lo usa la línea inteligente cuando este campo vino del motor.
-        className={`w-full py-2 px-3 text-sm border rounded-lg focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 dark:text-white ${
-          isSuggested
-            ? "border-yellow-400 bg-yellow-50 dark:border-yellow-600 dark:bg-yellow-900/20"
-            : "bg-white border-slate-200 dark:border-slate-700 dark:bg-slate-900"
-        }`}
+        className="w-full py-2 px-3 text-sm border rounded-lg bg-white border-slate-200 focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
         value={value || ""}
         onChange={(event) => { onChange(event.target.value); setShowDropdown(true); }}
         onFocus={() => setShowDropdown(true)}
