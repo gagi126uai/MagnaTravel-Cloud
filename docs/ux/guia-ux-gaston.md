@@ -2626,3 +2626,82 @@ Configuración haya un lugar para configurar la IA, universal para cualquier tip
   clave va a la base **cifrada**, porque el dueño de una agencia tiene que poder configurar su IA
   desde la pantalla, sin técnico. **Lo cargado en la pantalla manda; el entorno queda de respaldo**
   cuando no hay nada cargado.
+
+## La ayuda inteligente NO se le empuja al vendedor (2026-08-09, rechazo del dueño)
+
+> **Origen:** salió la "línea inteligente" (una caja aparte que anunciaba que entendía lo que
+> escribías) y Gastón la rechazó **el mismo día**. Textual del cierre: la ficha vuelve a ser **la de
+> siempre** y la ayuda se esconde adentro del buscador que ya existía.
+
+- **(2026-08-09) La ficha de carga de servicio no gana ni una caja, ni una etiqueta, ni una palabra
+  nueva por tener ayuda inteligente.** La ayuda vive **adentro del buscador de producto de siempre**:
+  la lista solo "mejora" (aparecen mejores parecidos), y si el motor no contesta, la pantalla es
+  exactamente la de antes.
+- **(2026-08-09) El valor número uno de la ayuda es EVITAR REPETIDOS** (P7 del 2026-08-06), no
+  lucirse: encontrar el producto que ya existe aunque el vendedor escriba sucio.
+- **(2026-08-09) Nunca se nombra la IA en pantalla**, ni de costado ("inteligente", "automático",
+  "sugerido por el sistema"). Confirma la degradación silenciosa del 2026-08-07.
+- **⚠️ AJUSTADO el 2026-08-10** por el propio Gastón (opción **"Preguntas + simbolito"**): el sistema
+  **sí puede preguntar** cuando la duda es de verdad, en una línea con ✨. Ver la sección siguiente.
+  Todo lo demás de esta regla sigue en pie.
+
+## El buscador de la ficha de servicio encuentra TODOS los tipos, la solapa salta sola, y la pregunta con ✨ (2026-08-10, respuestas P1..P3 = A + dos firmas nuevas)
+
+> **Origen:** pedido textual de Gastón: *"que te deje buscar todo más allá de si fue un hotel u otro
+> tipo de servicio y en el caso de seleccionarlo cambie automáticamente la solapa"*, con la
+> restricción dura **misma fachada** (cero cajas nuevas, cero filtros a la vista, cero menciones de
+> IA). Spec completa: `docs/ux/2026-08-10-buscador-cross-tipo.md`.
+
+**El buscador deja de estar encerrado en la solapa:**
+
+- **(2026-08-10) Buscando desde cualquier solapa aparecen también los productos de OTROS tipos**, y al
+  elegir uno **la ficha se para sola en la solapa correcta**, con el producto precargado en amarillo
+  (la misma mecánica de siempre). **El salto es silencioso e inmediato:** sin ventana, sin "¿seguro?",
+  sin cartelito — *"el amarillo es el que habla"* (2026-08-07) + P-15, y el Cartel emergente
+  (2026-07-22) excluye a propósito las fichas de trabajo.
+- **(2026-08-10, P1=A) La fila de otro tipo lleva una chapita GRIS con la palabra del tipo** ("Aéreo",
+  "Traslado"…), a la izquierda de la verde "En tu tarifario" — misma forma y tamaño, la única chapita
+  que ya existía ahí. **Las filas del tipo de la solapa activa no llevan nada** (V8=A / P-16: la
+  solapa ya lo dice). La palabra es siempre del negocio, nunca un valor interno (P-1).
+- **(2026-08-10, P2=A) Primero los del tipo de la solapa activa; abajo, los de otros tipos.** Motivo:
+  que un Enter rápido no te salte de solapa sin querer. Si no hay ninguno del tipo activo, los otros
+  quedan arriba porque son los únicos. "Crear nuevo" **sigue último** (P7) y sigue creando en la
+  solapa donde estás.
+- **(2026-08-10, P3=A) Al saltar no se copia nada de lo que ya habías tipeado en la solapa anterior**:
+  cada solapa guarda lo suyo intacto y lo encontrás igual al volver.
+- **(2026-08-10) Al EDITAR un servicio ya cargado el cruce de tipos no aplica** (no se puede cambiar
+  el tipo de un servicio existente: las solapas están apagadas desde la Ronda 1 del 2026-06-06).
+
+**La pregunta cortita con ✨ (ajusta la regla del 2026-08-09):**
+
+- **(2026-08-10) Cuando hay una duda concreta que cambia QUÉ PRODUCTO es, el sistema pregunta en una
+  línea, con un ✨ discreto adelante** ("✨ ¿El Panamericano de Buenos Aires o el de Bariloche?").
+  Va **arriba de todo dentro del desplegable**, en gris, sin recuadro, sin título, sin botones.
+  **Si no hay duda no aparece nada**, y nunca hay dos preguntas a la vez (2026-08-07).
+- **(2026-08-10) No es clickeable ni navegable con las flechas:** es un aviso, no una opción. Se
+  contesta **eligiendo la fila de abajo**. No entra en el conteo del teclado ni se elige con Enter.
+- **(2026-08-10) Se va sola** al seguir tipeando, al elegir, al crear nuevo, con Esc o al cerrarse la
+  lista. No frena el Guardar y **no va al Cartel emergente** (2026-07-22 excluye las fichas de
+  trabajo). **Sin motor, la línea no existe** y la pantalla es la de siempre (degradación 2026-08-07).
+- **(2026-08-10) Jamás nombra la IA** ni usa jerga ("modelo", "no estoy seguro", códigos): solo la
+  pregunta, en palabras del negocio (P-1, P-17).
+- **(2026-08-10) Sigue vigente sin cambios la "duda grande" del 2026-08-07 sobre un DATO ya
+  precargado** ("¿'48' es el precio por noche?"): esa va **debajo de su campo, con Sí / No**, y el
+  "No" vacía el campo. Son dos momentos distintos: elegir el producto vs. revisar un dato cargado.
+
+**El atajo de la frase completa (para el que lo conoce):**
+
+- **(2026-08-10) En el MISMO casillero de búsqueda se puede tirar la frase entera** —*"llao llao del
+  10/02 al 15/02 con Delfos"*— y al elegir el hotel de la lista, **fechas y operador quedan
+  precargados en amarillo, editables**. Es sugerencia, no decisión: **nunca pisa** lo escrito a mano y
+  el servicio se crea **recién al tocar Guardar** (P-21, "nada se confirma solo"). **El precio NO se
+  precarga desde la frase** (decisión 2026-08-10: Gastón pidió "hotel + operador y fecha", y el precio
+  se cruza con el permiso de ver costos; v2 solo con su firma).
+- **(2026-08-10) NADA lo anuncia:** mismo casillero, mismo tamaño, **mismo texto de ayuda de hoy**.
+  Cero placeholder nuevo, cero ejemplo, cero leyenda (P-15 + "misma fachada"). Es un atajo escondido a
+  propósito.
+- **(2026-08-10) Lo que no entendió queda vacío, sin explicación** (2026-08-07), y en el casillero
+  queda **el nombre limpio del producto elegido, nunca la frase entera** — tampoco al crear uno nuevo.
+- **(2026-08-10) Si lo elegido es de otro tipo, los datos de la frase VIAJAN al formulario destino**
+  (son parte de la misma elección). Lo que no viaja es lo que el vendedor había cargado a mano en la
+  solapa anterior (P3=A).

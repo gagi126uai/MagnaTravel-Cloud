@@ -22,10 +22,19 @@ import { Plane, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
-import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
+import {
+    resolverCamposALimpiarAlCrearNuevo,
+    aplicarInterpretacionComoSugerencia,
+    resolverNombreEnCasillero,
+    resolverPatchDeVentaDelCatalogo,
+} from "./inlineServiceFormHelpers";
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
 import { resolverCamposAlCambiarVariante } from "./variantPriceSuggestionLogic";
 import { VariantSuggestionHint } from "./VariantSuggestionHint";
+import { useSeleccionPendienteDelTipo } from "./useSeleccionPendienteDelTipo";
+
+// D13 (spec 2026-08-10): campos de fecha de ESTE form, [desde, hasta] — Aéreo tiene ida/vuelta.
+const CAMPOS_FECHA_VUELO = ["departureDate", "returnDate"];
 
 // ─── Clases CSS (mismas que HotelInlineForm para coherencia visual) ──────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -94,7 +103,17 @@ function NewFlightBox({ newProduct, onChange, suppliers }) {
 
 // ─── Componente principal FlightInlineForm ────────────────────────────────────
 
-export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditing }) {
+export function FlightInlineForm({
+    reservaId,
+    form,
+    setForm,
+    suppliers,
+    isEditing,
+    // Salto de solapa (spec 2026-08-10, D1..D13) — ver ServiceInlineCard.jsx.
+    onSelectOtherType,
+    seleccionPendiente,
+    onConsumirSeleccionPendiente,
+}) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // Cálculo de ganancia: precio de venta - costo (solo si tiene permiso de ver costos)
@@ -115,6 +134,10 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
         netCost: false,
         salePrice: false,
         currency: false,
+        // departureDate/returnDate (D13, spec 2026-08-10): amarillo cuando salen de la
+        // interpretación de la frase completa tipeada en el buscador.
+        departureDate: false,
+        returnDate: false,
     });
 
     // ─── Sugerencia POR CABINA (spec 2026-08-07, §3.3 / M-15 / V9=A / V10=A) ──────────
@@ -187,30 +210,46 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult) => {
+    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
-        const supplierPublicId = sale.supplierPublicId || "";
-        const salePrice = sale.salePrice != null ? String(sale.salePrice) : "";
-        const netCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.netCost;
-        const currency = sale.currency || "ARS";
+
+        // Fix C-5(b) (review 2026-08-10): en el camino de selección PENDIENTE (salto de
+        // solapa) no se pisa lo que el vendedor ya había tipeado a mano en esta solapa.
+        const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
+            sale,
+            canSeeCost,
+            formActual: form,
+            esSeleccionPendiente,
+            campoVenta: "salePrice",
+            campoCosto: "netCost",
+        });
+
+        // Fix C-5(a) (review 2026-08-10): tampoco pisa lo tipeado a mano la precarga de
+        // la frase (D13).
+        const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
+            interpretacion,
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_VUELO, formActual: form }
+        );
 
         setForm((prev) => ({
             ...prev,
-            routeName: catalogResult.name || prev.routeName,
+            // D13: nombre limpio del producto elegido, nunca la frase entera.
+            routeName: resolverNombreEnCasillero(catalogResult, prev.routeName),
             rateId: catalogResult.ratePublicId,
             newCatalogProduct: null,
-            supplierId: supplierPublicId,
-            supplierName: sale.supplierName || null,
-            salePrice,
-            netCost: canSeeCost ? netCost : prev.netCost,
-            currency,
+            ...patchVenta,
+            ...patchFrase,
         }));
 
         setCamposSugeridos({
-            supplierId: Boolean(supplierPublicId),
-            netCost: canSeeCost && sale.netCost != null,
-            salePrice: Boolean(sale.salePrice),
-            currency: Boolean(sale.currency),
+            supplierId: false,
+            netCost: false,
+            salePrice: false,
+            currency: false,
+            departureDate: false,
+            returnDate: false,
+            ...sugeridosVenta,
+            ...sugeridosFrase,
         });
         // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
         // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
@@ -219,6 +258,14 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
         // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR CABINA
         // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
     };
+
+    // Salto de solapa (D3/D7, spec 2026-08-10): pendiente elegida desde OTRA solapa.
+    useSeleccionPendienteDelTipo({
+        seleccionPendiente,
+        serviceType: "Aereo",
+        onSeleccionar: handleSelectExisting,
+        onConsumida: onConsumirSeleccionPendiente,
+    });
 
     const handleCreateNew = (searchText) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
@@ -236,7 +283,7 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
             ...camposLimpios,
         }));
-        setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
+        setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false, departureDate: false, returnDate: false });
         setPrecioTocadoPorElUsuario(false);
         setMonedaTocadaPorElUsuario(false);
     };
@@ -249,7 +296,7 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
         if (!texto) {
-            setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
+            setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false, departureDate: false, returnDate: false });
             setPrecioTocadoPorElUsuario(false);
             setMonedaTocadaPorElUsuario(false);
         }
@@ -265,8 +312,10 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                 value={form.routeName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
+                onSelectOtherType={onSelectOtherType}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
+                esEdicion={isEditing}
                 label="Ruta / aerolínea"
                 placeholder="Ej: AEP–IGR, LATAM, Aerolíneas..."
             />
@@ -318,9 +367,14 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                     <input
                         id="flight-ida"
                         type="date"
-                        className={INPUT_NORMAL}
+                        // Amarillo (D13, spec 2026-08-10) cuando la fecha salió de la frase
+                        // tipeada en el buscador.
+                        className={camposSugeridos.departureDate ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.departureDate || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, departureDate: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, departureDate: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, departureDate: false }));
+                        }}
                         data-testid="flight-ida"
                         aria-label="Fecha de ida"
                     />
@@ -333,10 +387,13 @@ export function FlightInlineForm({ reservaId, form, setForm, suppliers, isEditin
                     <input
                         id="flight-vuelta"
                         type="date"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.returnDate ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.returnDate || ""}
                         min={form.departureDate || undefined}
-                        onChange={(event) => setForm((prev) => ({ ...prev, returnDate: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, returnDate: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, returnDate: false }));
+                        }}
                         data-testid="flight-vuelta"
                         aria-label="Fecha de vuelta (vacío si solo hay ida)"
                     />

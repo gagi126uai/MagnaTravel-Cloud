@@ -1030,6 +1030,24 @@ public partial class RateService : IRateService
     // del proveedor X". Deduplica las N tarifas legacy del mismo producto en un
     // solo resultado y le cuelga el contexto de la "ultima vez" que se vendio.
     //
+    // MEJORA 2026-08-10 (spec firmada, regla 3 del preambulo de la Constitucion;
+    // T-11: sin llaves; P-21: los resultados son SUGERENCIAS, nunca deciden por el
+    // vendedor). Tres cambios de fondo sobre el buscador original:
+    //
+    //   1. PALABRA POR PALABRA. Antes se medía el parecido del texto ENTERO contra el
+    //      nombre entero, con un piso de 0.4. Eso hacía que "sheraton" NO encontrara
+    //      "sheraton buenos aires hotel & convention center" (el nombre largo diluye el
+    //      parecido a ~0.25). Ahora cada palabra escrita se busca por separado — en el
+    //      nombre, en la ciudad, en el nombre del hotel y (en memoria) en los operadores.
+    //   2. EL TIPO YA NO ES UN FILTRO, ES UNA PREFERENCIA. Antes, sin tipo no había
+    //      resultados y con tipo no se veía nada de los otros. Ahora se busca en los 5
+    //      tipos de la ficha y el tipo de la solapa donde está parado el vendedor solo
+    //      EMPUJA sus productos arriba en la lista.
+    //   3. TODAS LAS PALABRAS MEJOR QUE ALGUNAS. Si algún producto cubre TODO lo que se
+    //      escribió (ej. "sheraton ola" = nombre + operador), se muestran solo esos; si
+    //      ninguno cubre todo, se muestran los que cubren más primero (degradé), para no
+    //      dejar al vendedor con la lista vacía.
+    //
     // SOLO LECTURA: no crea ni escribe nada (la creacion inline y el upsert son F1.3).
     // ===================================================================
 
@@ -1043,7 +1061,69 @@ public partial class RateService : IRateService
     // porque un mismo producto puede tener N tarifas legacy (room types / proveedores) que
     // colapsan a un solo resultado; si trajeramos solo 8 crudos, el dedupe podria dejar el
     // dropdown casi vacio. A escala single-tenant (pocos miles de Rates) es barato.
-    private const int CatalogSearchCandidateFetchLimit = 50;
+    // 2026-08-10: sube de 50 a 120 porque ahora la busqueda cruza los 5 tipos y recolecta
+    // por palabra suelta (trae mas ruido a proposito); el filtro fino se hace en memoria.
+    private const int CatalogSearchCandidateFetchLimit = 120;
+
+    // ===================================================================
+    // Piso de parecido POR PALABRA (word_similarity de pg_trgm), 2026-08-10.
+    //
+    // Ojo: NO es el mismo numero que FuzzyMatchSimilarityThreshold (0.4), que compara
+    // textos ENTEROS y lo usan el duplicate-check y el alta a mano. Este compara UNA
+    // palabra escrita contra el mejor pedazo del nombre del producto, asi que vive en
+    // otra escala: 0.45 agarra "sheratom" -> "sheraton buenos aires" sin traer cualquier
+    // cosa. Tocar uno NO debe tocar el otro.
+    //
+    // Importante — correccion del comentario anterior (C-3a, review 2026-08-1x): los brazos de
+    // TEXTO ENTERO ("SearchName" % @q y @q <% "SearchName", en RunCatalogTrigramQueryAsync) SI
+    // dependen de los GUC del servidor (pg_trgm.similarity_threshold / word_similarity_threshold
+    // respectivamente): si alguien los sube, esos dos brazos pueden dejar de traer un candidato.
+    // Pero son solo RECALL EXTRA — le suman candidatos aprovechando el indice GIN (mas rapido que
+    // recorrer toda la tabla), nada mas. Los brazos AUTORITATIVOS son los POR-PALABRA de mas abajo
+    // (uno por token, con la comparacion EXPLICITA >= @wordThreshold): esos NO dependen de ningun
+    // GUC y son los que de verdad deciden si un producto entra. Si el servidor tuviera el GUC en un
+    // valor raro, el peor caso es una consulta un poco mas lenta (sin el atajo del indice), nunca
+    // un resultado que falte.
+    // ===================================================================
+    private const double CatalogSearchWordSimilarityThreshold = 0.45;
+
+    // Puntaje que se le pone a un producto que cubre TODAS las palabras escritas, tal cual
+    // (sin necesidad de perdonar errores de tipeo). 0.7 esta por ENCIMA del 0.65 con el que
+    // la ficha resalta "el mas parecido" y con el que decide no molestar al motor de IA:
+    // si el vendedor escribio todo bien y hay un producto que lo tiene todo, es EL producto.
+    private const double CatalogSearchFullCoverageExactScore = 0.7;
+
+    // Cubre todas las palabras pero perdonandole algun error de tipeo: es un buen candidato,
+    // pero NO lo suficientemente seguro como para apagar la ayuda extra (queda bajo 0.65).
+    private const double CatalogSearchFullCoverageFuzzyScore = 0.55;
+
+    // Techo del score de Postgres (word_similarity/similarity) cuando el producto NO cubre todas
+    // las palabras escritas (fix C-2, review 2026-08-1x). word_similarity() compara la palabra
+    // contra el MEJOR PEDAZO del nombre, no contra el nombre entero: con textos cortos eso infla el
+    // numero contra un nombre largo que en realidad solo comparte UNA de las palabras escritas
+    // ("sheraton eze" da ~0.69 contra "Sheraton Buenos Aires Hotel & Convention Center", que ni
+    // menciona "eze"). Sin este techo ese score cruzaba el 0.65 con el que la ficha resalta "el mas
+    // parecido" y decide NO ofrecer el matcher anti-duplicados (P7) — quedaba pareciendo un
+    // resultado fuerte cuando en realidad falta la mitad de lo escrito. 0.64 esta justo ABAJO del
+    // corte de siempre.
+    private const double CatalogSearchPartialCoverageScoreCap = 0.64;
+
+    // Cuanto empuja hacia arriba el tipo de la solapa donde esta parado el vendedor. Es un
+    // desempate de ORDEN, no un puntaje: el Score que viaja en el DTO queda limpio (si el
+    // empujon se sumara al Score, un producto flojo del tipo correcto se resaltaria como
+    // "el mas parecido" en la ficha solo por estar en la solapa).
+    private const double CatalogSearchPreferredTypeBoost = 0.05;
+
+    // Los 5 tipos que tienen solapa en la ficha de carga. La busqueda cruza estos y solo
+    // estos: "Excursion" y "Otro" no se cargan desde este buscador.
+    private static readonly string[] CatalogSearchServiceTypes =
+    {
+        CatalogServiceTypes.Hotel,
+        CatalogServiceTypes.Aereo,
+        CatalogServiceTypes.Traslado,
+        CatalogServiceTypes.Paquete,
+        CatalogServiceTypes.Asistencia
+    };
 
     public async Task<IReadOnlyList<CatalogSearchItemDto>> CatalogSearchAsync(
         string? serviceType, string? query, CancellationToken ct)
@@ -1054,27 +1134,29 @@ public partial class RateService : IRateService
 
         // 1. Validacion de entrada. Normalizamos q con la MISMA funcion que escribe SearchName
         //    (NormalizeForCatalog), para que "Maitei" / "MAITEI " / "maitei--" se comporten igual
-        //    (cierra la nota NB-1 de los reviewers de F1.1). q con menos de 2 chars utiles o sin
-        //    tipo de servicio -> lista vacia (no es un error: todavia no hay nada que buscar).
-        var serviceTypeFilter = serviceType?.Trim() ?? string.Empty;
+        //    (cierra la nota NB-1 de los reviewers de F1.1). q con menos de 2 chars utiles -> lista
+        //    vacia (no es un error: todavia no hay nada que buscar).
+        //    El tipo de servicio YA NO filtra (2026-08-10): es el tipo PREFERIDO, y puede venir vacio.
+        var preferredServiceType = TextNormalizer.NormalizeForCatalog(serviceType);
         var normalizedQuery = TextNormalizer.NormalizeForCatalog(query);
-        if (serviceTypeFilter.Length == 0 || normalizedQuery.Length < CatalogSearchMinQueryLength)
+        if (normalizedQuery.Length < CatalogSearchMinQueryLength)
         {
             return Array.Empty<CatalogSearchItemDto>();
         }
 
-        var isHotel = string.Equals(
-            TextNormalizer.NormalizeForMatch(serviceTypeFilter), "hotel", StringComparison.Ordinal);
+        // Las palabras sueltas que escribio el vendedor. Puede quedar vacio (ej. escribio "de la"):
+        // en ese caso el buscador se comporta como antes, midiendo el parecido del texto entero.
+        var tokens = CatalogSearchTokens.Tokenize(normalizedQuery);
 
-        // 2. Candidatos difusos (RateId + score). En Postgres usa pg_trgm; en motores no
-        //    relacionales (tests InMemory) cae a un fallback LINQ por substring.
-        var candidates = await FetchCatalogCandidatesAsync(serviceTypeFilter, normalizedQuery, isHotel, ct);
+        // 2. Candidatos crudos (RateId + score). En Postgres usa pg_trgm; en motores no
+        //    relacionales (tests InMemory) cae a un fallback en memoria por substring.
+        var candidates = await FetchCatalogCandidatesAsync(normalizedQuery, tokens, ct);
         if (candidates.Count == 0)
         {
             return Array.Empty<CatalogSearchItemDto>();
         }
 
-        // 3. Detalle de cada Rate candidato + su ultima venta (RateSupplierSale).
+        // 3. Detalle de cada Rate candidato + su ultima venta (RateSupplierSale) + sus operadores.
         var scoreByRateId = candidates
             .GroupBy(candidate => candidate.RateId)
             .ToDictionary(group => group.Key, group => group.Max(candidate => candidate.Score));
@@ -1082,47 +1164,61 @@ public partial class RateService : IRateService
 
         var rates = await LoadCandidateRatesAsync(rateIds, ct);
         var latestSaleByRateId = await LoadLatestSalesAsync(rateIds, ct);
+        var supplierNamesByRateId = await LoadSupplierNamesAsync(rateIds, ct);
 
         // 4. Enmascarado de costo: lo resolvemos UNA vez (mismo resolver que F1b / CostMasking).
         var canSeeCost = await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct);
 
-        var items = rates
-            .Select(rate => BuildCatalogSearchItem(
+        // 5. Filtro FINO en memoria: cuantas de las palabras escritas cubre cada producto. Se hace
+        //    aca (y no en SQL) porque el nombre del operador no vive en la fila del Rate y porque
+        //    sobre 120 candidatos es instantaneo.
+        var matches = new List<CatalogMatch>(rates.Count);
+        foreach (var rate in rates)
+        {
+            var item = BuildCatalogSearchItem(
                 rate,
                 scoreByRateId.TryGetValue(rate.Id, out var score) ? score : null,
                 latestSaleByRateId.TryGetValue(rate.Id, out var sale) ? sale : null,
-                canSeeCost))
-            .ToList();
+                canSeeCost);
 
-        // 5. Dedupe (ADR §2.4 / m1): el mismo producto cargado N veces aparece UNA vez. Para Hotel
+            supplierNamesByRateId.TryGetValue(rate.Id, out var supplierNames);
+            var haystacks = BuildCatalogHaystacks(item, supplierNames);
+
+            matches.Add(new CatalogMatch(
+                item,
+                MatchedTokens: CatalogSearchTokens.MatchedTokenCount(tokens, haystacks),
+                ExactMatchedTokens: CatalogSearchTokens.ExactMatchedTokenCount(tokens, haystacks)));
+        }
+
+        var refined = KeepBestTokenCoverage(matches, tokens.Count);
+        ApplyCoverageScores(refined, tokens.Count);
+
+        // 6. Dedupe (ADR §2.4 / m1): el mismo producto cargado N veces aparece UNA vez. Para Hotel
         //    la clave incluye la City normalizada (homonimos de 2 ciudades = 2 productos distintos).
-        //    Lo hacemos en memoria con NormalizeForCatalog (autoritativo) sobre los pocos candidatos.
-        var deduped = DedupeCatalogItems(items, isHotel);
+        var deduped = DedupeCatalogItems(refined);
 
-        // 6. Orden final (ADR §2.3.a): mas parecido primero; a igual score, la venta mas reciente.
-        return deduped
-            .OrderByDescending(item => item.Score ?? -1d)
-            .ThenByDescending(item => item.LastSale?.SoldAt ?? DateTime.MinValue)
-            .Take(CatalogSearchResultLimit)
-            .ToList();
+        // 7. Orden final: primero el que cubre mas palabras; despues el mas parecido (con el empujon
+        //    del tipo de la solapa); a igual todo, la venta mas reciente.
+        return SortCatalogResults(deduped, preferredServiceType);
     }
 
     /// <summary>
-    /// Trae los candidatos difusos (RateId + score). En Postgres usa pg_trgm; si la extension no
+    /// Trae los candidatos crudos (RateId + score). En Postgres usa pg_trgm; si la extension no
     /// estuviera, cae al fallback ILIKE; en motores no relacionales (tests InMemory) usa un fallback
-    /// LINQ por substring para poder ejercitar el resto del pipeline (dedupe / masking / DTO).
+    /// en memoria por substring. Los TRES caminos devuelven lo mismo (ids + score opcional) y siguen
+    /// despues por el MISMO filtro fino, para que lo que prueban los tests sea la logica real.
     /// </summary>
     private async Task<IReadOnlyList<CatalogCandidate>> FetchCatalogCandidatesAsync(
-        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+        string normalizedQuery, IReadOnlyList<string> tokens, CancellationToken ct)
     {
         if (!_db.Database.IsRelational())
         {
-            return await FetchCatalogCandidatesLinqAsync(serviceType, normalizedQuery, isHotel, ct);
+            return await FetchCatalogCandidatesInMemoryAsync(normalizedQuery, tokens, ct);
         }
 
         try
         {
-            return await RunCatalogTrigramQueryAsync(serviceType, normalizedQuery, isHotel, ct);
+            return await RunCatalogTrigramQueryAsync(normalizedQuery, tokens, ct);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedFunction)
         {
@@ -1130,98 +1226,190 @@ public partial class RateService : IRateService
             _logger.LogWarning(
                 "pg_trgm no disponible en catalog-search; usando fallback ILIKE. " +
                 "Verificar la extension en el servidor (pg_trgm).");
-            return await RunCatalogIlikeFallbackAsync(serviceType, normalizedQuery, isHotel, ct);
+            return await RunCatalogIlikeFallbackAsync(normalizedQuery, tokens, ct);
         }
     }
 
     /// <summary>
-    /// Query difusa real con pg_trgm sobre <c>SearchName</c> (supplier-agnostica). SQL crudo
-    /// PARAMETRIZADO; el unico texto interpolado es la rama de Hotel, que sale de un bool fijo del
-    /// codigo (nunca del usuario). Conserva LAS DOS condiciones trigram (ADR §m3): el operador
-    /// <c>%</c> (pega contra el indice GIN, corta por el GUC 0.3) y <c>similarity() &gt;= umbral</c>
-    /// (0.4 parametrico). Para Hotel ademas matchea contra <c>lower(HotelName)</c> (el nombre real
-    /// del hotel legacy suele vivir ahi); el score es el MAYOR de ambas similitudes.
+    /// La pesca ANCHA contra Postgres: trae todo lo que se parezca, aunque sea de lejos. El recorte
+    /// fino lo hace despues el filtro en memoria — es preferible traer 120 y descartar que perderse
+    /// el hotel correcto.
+    ///
+    /// <para><b>Como pesca</b>: por el texto entero (operadores <c>%</c> y <c>&lt;%</c>, que usan el
+    /// indice GIN de <c>SearchName</c>) Y ademas por CADA palabra escrita, contra el nombre, el
+    /// nombre del hotel y la ciudad. El puntaje es el mejor de cuatro medidas: parecido del texto
+    /// entero y parecido del mejor pedazo (<c>word_similarity</c>), contra <c>SearchName</c> y contra
+    /// <c>HotelName</c> — asi "sheraton" saca puntaje alto contra "sheraton buenos aires hotel &amp;
+    /// convention center", que con la medida vieja daba ~0.25 y quedaba afuera.</para>
+    ///
+    /// <para><b>Seguridad</b>: SQL crudo pero 100% PARAMETRIZADO. Lo unico que se interpola en el
+    /// texto del SQL son los NOMBRES de parametro (<c>@t0</c>, <c>@p0</c>...), armados con un
+    /// contador del propio codigo; ningun caracter escrito por el usuario entra al SQL. El tope de 6
+    /// palabras (<see cref="CatalogSearchTokens.MaxTokens"/>) acota cuanto puede crecer la consulta.</para>
+    ///
+    /// <para><b>Costo</b>: los brazos por palabra sobre <c>HotelName</c>/<c>City</c> no tienen indice
+    /// trigram, asi que esta consulta puede recorrer la tabla entera de tarifas. A la escala de una
+    /// agencia (miles de filas) es barato; si el tarifario creciera un orden de magnitud, el paso
+    /// siguiente es un indice GIN sobre esas dos columnas.</para>
     /// </summary>
     private async Task<IReadOnlyList<CatalogCandidate>> RunCatalogTrigramQueryAsync(
-        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+        string normalizedQuery, IReadOnlyList<string> tokens, CancellationToken ct)
     {
-        // SearchName ya esta normalizado en DB (lower + sin tildes), por eso se compara directo
-        // contra @q (que tambien paso por NormalizeForCatalog). HotelName es crudo -> lower(...).
-        var scoreExpr = isHotel
-            ? @"GREATEST(similarity(""SearchName"", @q), similarity(lower(""HotelName""), @q))"
-            : @"similarity(""SearchName"", @q)";
-        var hotelMatch = isHotel
-            ? @" OR (""HotelName"" IS NOT NULL AND lower(""HotelName"") % @q AND similarity(lower(""HotelName""), @q) >= @threshold)"
-            : string.Empty;
+        // Un brazo por palabra: aparece como pedazo del nombre/hotel/ciudad, o se parece bastante a
+        // algun tramo del nombre (word_similarity tolera el error de tipeo).
+        var tokenArms = new List<string>();
+        for (var index = 0; index < tokens.Count; index++)
+        {
+            tokenArms.Add($@"(
+                    ""SearchName"" ILIKE @p{index}
+                    OR lower(coalesce(""HotelName"", '')) ILIKE @p{index}
+                    OR lower(coalesce(""City"", '')) ILIKE @p{index}
+                    OR word_similarity(@t{index}, ""SearchName"") >= @wordThreshold
+                )");
+        }
+        var tokenClause = tokenArms.Count == 0
+            ? string.Empty
+            : " OR " + string.Join(" OR ", tokenArms);
 
+        // SearchName ya esta normalizado en DB (lower + sin tildes), por eso se compara directo
+        // contra @q (que tambien paso por NormalizeForCatalog). HotelName/City son crudos -> lower(...).
         var sql = $@"
-            SELECT ""Id"", {scoreExpr} AS score
+            SELECT ""Id"",
+                   GREATEST(
+                       word_similarity(@q, ""SearchName""),
+                       similarity(""SearchName"", @q),
+                       word_similarity(@q, lower(coalesce(""HotelName"", ''))),
+                       similarity(lower(coalesce(""HotelName"", '')), @q)
+                   ) AS score
             FROM ""Rates""
-            WHERE ""ServiceType"" = @serviceType
-              AND ""IsActive"" = TRUE
+            WHERE ""IsActive"" = TRUE
               AND ""SearchName"" IS NOT NULL
+              AND ""ServiceType"" = ANY(@types)
               AND (
-                (""SearchName"" % @q AND similarity(""SearchName"", @q) >= @threshold)
-                {hotelMatch}
+                (""SearchName"" % @q)
+                OR (@q <% ""SearchName"")
+                {tokenClause}
               )
             ORDER BY score DESC
             LIMIT @limit;";
 
         await using var command = CreateRatesCommand(sql);
         command.Parameters.Add(new NpgsqlParameter("q", normalizedQuery));
-        command.Parameters.Add(new NpgsqlParameter("serviceType", serviceType));
-        command.Parameters.Add(new NpgsqlParameter("threshold", FuzzyMatchSimilarityThreshold));
+        command.Parameters.Add(new NpgsqlParameter("types", CatalogSearchServiceTypes));
+        command.Parameters.Add(new NpgsqlParameter("wordThreshold", CatalogSearchWordSimilarityThreshold));
         command.Parameters.Add(new NpgsqlParameter("limit", CatalogSearchCandidateFetchLimit));
+        AddCatalogTokenParameters(command, tokens);
 
         return await ReadCatalogCandidatesAsync(command, hasRealScore: true, ct);
     }
 
     /// <summary>
-    /// Fallback cuando pg_trgm no esta: substring case-insensitive (ILIKE). Sin score real (null).
+    /// Fallback cuando pg_trgm no esta: substring case-insensitive (ILIKE), por el texto entero y por
+    /// cada palabra. Sin score real (null): el puntaje sale despues de la cobertura de palabras.
     /// </summary>
     private async Task<IReadOnlyList<CatalogCandidate>> RunCatalogIlikeFallbackAsync(
-        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+        string normalizedQuery, IReadOnlyList<string> tokens, CancellationToken ct)
     {
-        var hotelMatch = isHotel ? @" OR lower(""HotelName"") ILIKE @pattern" : string.Empty;
+        var tokenArms = new List<string>();
+        for (var index = 0; index < tokens.Count; index++)
+        {
+            tokenArms.Add($@"(
+                    ""SearchName"" ILIKE @p{index}
+                    OR lower(coalesce(""HotelName"", '')) ILIKE @p{index}
+                    OR lower(coalesce(""City"", '')) ILIKE @p{index}
+                )");
+        }
+        var tokenClause = tokenArms.Count == 0
+            ? string.Empty
+            : " OR " + string.Join(" OR ", tokenArms);
+
         var sql = $@"
             SELECT ""Id"", NULL::real AS score
             FROM ""Rates""
-            WHERE ""ServiceType"" = @serviceType
-              AND ""IsActive"" = TRUE
+            WHERE ""IsActive"" = TRUE
               AND ""SearchName"" IS NOT NULL
-              AND (""SearchName"" ILIKE @pattern {hotelMatch})
+              AND ""ServiceType"" = ANY(@types)
+              AND (
+                ""SearchName"" ILIKE @pattern
+                {tokenClause}
+              )
             ORDER BY ""SearchName""
             LIMIT @limit;";
 
         await using var command = CreateRatesCommand(sql);
         // El % del LIKE se arma como VALOR del parametro, no se concatena en el SQL.
         command.Parameters.Add(new NpgsqlParameter("pattern", $"%{normalizedQuery}%"));
-        command.Parameters.Add(new NpgsqlParameter("serviceType", serviceType));
+        command.Parameters.Add(new NpgsqlParameter("types", CatalogSearchServiceTypes));
         command.Parameters.Add(new NpgsqlParameter("limit", CatalogSearchCandidateFetchLimit));
+        AddCatalogTokenParameters(command, tokens);
 
         return await ReadCatalogCandidatesAsync(command, hasRealScore: false, ct);
     }
 
     /// <summary>
-    /// Fallback para motores no relacionales (EF Core InMemory en los tests unitarios): no hay SQL
-    /// crudo ni pg_trgm. Filtra por substring sobre <c>SearchName</c> (ya normalizado en DB) y, para
-    /// Hotel, tambien sobre <c>HotelName</c>. Score null (no es una medida real de similitud).
+    /// Agrega los parametros de cada palabra: <c>@t{i}</c> la palabra tal cual (para
+    /// <c>word_similarity</c>) y <c>@p{i}</c> el patron <c>%palabra%</c> (para ILIKE). Los dos son
+    /// VALORES de parametro: nunca se concatenan al texto del SQL.
     /// </summary>
-    private async Task<IReadOnlyList<CatalogCandidate>> FetchCatalogCandidatesLinqAsync(
-        string serviceType, string normalizedQuery, bool isHotel, CancellationToken ct)
+    private static void AddCatalogTokenParameters(NpgsqlCommand command, IReadOnlyList<string> tokens)
     {
-        var ids = await _db.Rates
+        for (var index = 0; index < tokens.Count; index++)
+        {
+            command.Parameters.Add(new NpgsqlParameter($"t{index}", tokens[index]));
+            command.Parameters.Add(new NpgsqlParameter($"p{index}", $"%{tokens[index]}%"));
+        }
+    }
+
+    /// <summary>
+    /// Fallback para motores no relacionales (EF Core InMemory en los tests unitarios): no hay SQL
+    /// crudo ni pg_trgm. Trae los productos de los 5 tipos y filtra EN MEMORIA por substring del
+    /// texto entero o de cualquiera de las palabras. Score null (no es una medida real de similitud).
+    ///
+    /// <para>Traer y filtrar en memoria seria una mala idea contra Postgres, pero este camino SOLO
+    /// corre con el proveedor InMemory de los tests (decenas de filas): es preferible eso a armar un
+    /// arbol de expresiones dinamico que nadie pueda leer.</para>
+    /// </summary>
+    private async Task<IReadOnlyList<CatalogCandidate>> FetchCatalogCandidatesInMemoryAsync(
+        string normalizedQuery, IReadOnlyList<string> tokens, CancellationToken ct)
+    {
+        var rows = await _db.Rates
             .AsNoTracking()
-            .Where(rate => rate.ServiceType == serviceType
-                && rate.IsActive
+            .Where(rate => rate.IsActive
                 && rate.SearchName != null
-                && (rate.SearchName.Contains(normalizedQuery)
-                    || (isHotel && rate.HotelName != null && rate.HotelName.ToLower().Contains(normalizedQuery))))
-            .Select(rate => rate.Id)
-            .Take(CatalogSearchCandidateFetchLimit)
+                && CatalogSearchServiceTypes.Contains(rate.ServiceType))
+            .Select(rate => new
+            {
+                rate.Id,
+                rate.SearchName,
+                rate.HotelName,
+                rate.City
+            })
             .ToListAsync(ct);
 
-        return ids.Select(id => new CatalogCandidate(id, null)).ToList();
+        var candidates = new List<CatalogCandidate>();
+        foreach (var row in rows)
+        {
+            var searchName = row.SearchName ?? string.Empty;
+            var hotelName = TextNormalizer.NormalizeForCatalog(row.HotelName);
+            var city = TextNormalizer.NormalizeForCatalog(row.City);
+
+            var matchesWholeText = searchName.Contains(normalizedQuery, StringComparison.Ordinal)
+                || hotelName.Contains(normalizedQuery, StringComparison.Ordinal);
+
+            var matchesAnyToken = tokens.Any(token =>
+                CatalogSearchTokens.TokenMatches(token, searchName)
+                || CatalogSearchTokens.TokenMatches(token, hotelName)
+                || CatalogSearchTokens.TokenMatches(token, city));
+
+            if (matchesWholeText || matchesAnyToken)
+            {
+                candidates.Add(new CatalogCandidate(row.Id, null));
+            }
+
+            if (candidates.Count == CatalogSearchCandidateFetchLimit) break;
+        }
+
+        return candidates;
     }
 
     /// <summary>Lee el reader de candidatos (Id + score). Abre/cierra la conexion como estaba.</summary>
@@ -1297,6 +1485,58 @@ public partial class RateService : IRateService
             .ToDictionary(
                 group => group.Key,
                 group => group.OrderByDescending(sale => sale.SoldAt).First());
+    }
+
+    /// <summary>
+    /// Los nombres de operador de cada producto candidato (2026-08-10). Sirven SOLO para el filtro
+    /// fino en memoria: es lo que hace que "sheraton ola" encuentre el Sheraton que se le compra a
+    /// Ola, aunque la palabra "ola" no este en ningun lado del nombre del producto.
+    ///
+    /// <para>Junta dos fuentes: los operadores que aprendio de las ventas
+    /// (<c>RateSupplierSales</c>, salteando las filas que una union escondio — misma invariante que
+    /// <see cref="LoadLatestSalesAsync"/>) y el operador cargado a mano en la tarifa vieja
+    /// (<c>Rate.Supplier</c>). Son dos consultas fijas, no una por producto (nada de N+1).</para>
+    ///
+    /// <para>NO se toca <see cref="LoadLatestSalesAsync"/>: esa decide QUE precio se sugiere, y
+    /// mezclarle esta lectura cambiaria la sugerencia de plata que ve el vendedor.</para>
+    /// </summary>
+    private async Task<Dictionary<int, List<string>>> LoadSupplierNamesAsync(
+        IReadOnlyList<int> rateIds, CancellationToken ct)
+    {
+        var namesFromSales = await _db.RateSupplierSales
+            .AsNoTracking()
+            .Where(sale => rateIds.Contains(sale.RateId)
+                && sale.AbsorbedByTidyUpActionId == null
+                && sale.Supplier != null)
+            .Select(sale => new { sale.RateId, SupplierName = sale.Supplier!.Name })
+            .ToListAsync(ct);
+
+        var namesFromRate = await _db.Rates
+            .AsNoTracking()
+            .Where(rate => rateIds.Contains(rate.Id) && rate.Supplier != null)
+            .Select(rate => new { RateId = rate.Id, SupplierName = rate.Supplier!.Name })
+            .ToListAsync(ct);
+
+        var namesByRateId = new Dictionary<int, List<string>>();
+        foreach (var row in namesFromSales.Concat(namesFromRate))
+        {
+            var normalizedName = TextNormalizer.NormalizeForCatalog(row.SupplierName);
+            if (normalizedName.Length == 0) continue;
+
+            if (!namesByRateId.TryGetValue(row.RateId, out var names))
+            {
+                names = new List<string>();
+                namesByRateId[row.RateId] = names;
+            }
+
+            // El mismo operador puede venir por las dos fuentes: guardamos uno solo.
+            if (!names.Contains(normalizedName, StringComparer.Ordinal))
+            {
+                names.Add(normalizedName);
+            }
+        }
+
+        return namesByRateId;
     }
 
     /// <summary>Arma el DTO de un resultado: identidad + sugerencia (ultima venta o fallback del Rate).</summary>
@@ -1383,46 +1623,188 @@ public partial class RateService : IRateService
     }
 
     /// <summary>
-    /// Deduplica los resultados (ADR §2.4 / m1): un mismo producto cargado N veces en el tarifario
-    /// legacy aparece UNA sola vez. Representante = el de venta mas reciente; el score del grupo es el
-    /// mayor (todas las tarifas del producto compiten por el mismo q).
+    /// Los textos del producto contra los que se busca cada palabra escrita: el nombre, el subtitulo
+    /// (ciudad o ruta), los operadores y la palabra del tipo ("hotel", "aereo", ...). Gracias a esta
+    /// ultima, escribir "aereo bue" achica la lista a los aereos sin necesidad de ningun filtro.
+    /// Todos vienen normalizados (minuscula, sin tildes) porque las palabras buscadas tambien lo estan.
     /// </summary>
-    private static IReadOnlyList<CatalogSearchItemDto> DedupeCatalogItems(
-        IReadOnlyList<CatalogSearchItemDto> items, bool isHotel)
+    private static IReadOnlyList<string> BuildCatalogHaystacks(
+        CatalogSearchItemDto item, List<string>? supplierNames)
     {
-        var deduped = new List<CatalogSearchItemDto>();
+        var haystacks = new List<string>
+        {
+            TextNormalizer.NormalizeForCatalog(item.Name),
+            TextNormalizer.NormalizeForCatalog(item.Subtitle),
+            TextNormalizer.NormalizeForCatalog(item.ServiceType)
+        };
 
-        foreach (var group in items.GroupBy(item => BuildDedupeKey(item, isHotel)))
+        if (supplierNames != null)
+        {
+            haystacks.AddRange(supplierNames);
+        }
+
+        return haystacks;
+    }
+
+    /// <summary>
+    /// El "todas las palabras" con degrade: si ALGUN producto cubre todo lo que se escribio, se
+    /// muestran solo esos (es la faceta escondida del buscador: "sheraton ola" = nombre + operador).
+    /// Si ninguno cubre todo, no se esconde nada — se devuelven todos y el orden final pone adelante
+    /// a los que cubren mas. Nunca se deja al vendedor con la lista vacia teniendo candidatos.
+    /// </summary>
+    private static IReadOnlyList<CatalogMatch> KeepBestTokenCoverage(
+        IReadOnlyList<CatalogMatch> matches, int tokenCount)
+    {
+        if (tokenCount == 0)
+        {
+            return matches;
+        }
+
+        var fullCoverage = matches.Where(match => match.MatchedTokens == tokenCount).ToList();
+        return fullCoverage.Count > 0 ? fullCoverage : matches;
+    }
+
+    /// <summary>
+    /// Pone el puntaje final de cada resultado. El puntaje NO es cosmetico: la ficha resalta como "el
+    /// mas parecido" al primero que llega a 0.65, y con ese mismo numero decide no molestar al motor
+    /// de IA. Por eso cubrir TODAS las palabras tal cual como se escribieron vale 0.7 (arriba del
+    /// corte) y cubrirlas perdonando errores de tipeo vale 0.55 (abajo del corte, sigue siendo una
+    /// sugerencia). El parecido que midio Postgres solo puede ganar si el resultado cubre todas las
+    /// palabras: con cobertura parcial se lo recorta a 0.64 (abajo del corte), porque word_similarity
+    /// infla textos cortos contra nombres largos ("sheraton eze" daria 0.69 cubriendo 1 de 2).
+    ///
+    /// <para><b>internal (no private)</b>: asi el test unitario del recorte puede llamarlo directo con
+    /// un <see cref="CatalogMatch"/> armado a mano, sin tener que levantar Postgres —
+    /// <c>InternalsVisibleTo("TravelApi.Tests")</c> ya esta configurado en el csproj.</para>
+    /// </summary>
+    internal static void ApplyCoverageScores(IReadOnlyList<CatalogMatch> matches, int tokenCount)
+    {
+        foreach (var match in matches)
+        {
+            var coversAllTokens = tokenCount > 0 && match.MatchedTokens == tokenCount;
+
+            var coverageScore = 0d;
+            if (tokenCount > 0 && match.ExactMatchedTokens == tokenCount)
+            {
+                coverageScore = CatalogSearchFullCoverageExactScore;
+            }
+            else if (coversAllTokens)
+            {
+                coverageScore = CatalogSearchFullCoverageFuzzyScore;
+            }
+
+            var sqlScore = match.Item.Score ?? 0d;
+            if (tokenCount > 0 && !coversAllTokens)
+            {
+                // C-2: cobertura PARCIAL nunca puede parecer "un parecido fuerte" (ver el comentario
+                // de CatalogSearchPartialCoverageScoreCap, mas arriba). Se recorta el score que vino
+                // de SQL ANTES de competir con el coverageScore de abajo.
+                sqlScore = Math.Min(sqlScore, CatalogSearchPartialCoverageScoreCap);
+            }
+
+            match.Item.Score = Math.Max(sqlScore, coverageScore);
+        }
+    }
+
+    /// <summary>
+    /// Deduplica los resultados (ADR §2.4 / m1): un mismo producto cargado N veces en el tarifario
+    /// legacy aparece UNA sola vez. Representante = el de venta mas reciente; el score y la cobertura
+    /// del grupo son los mayores (todas las tarifas del producto compiten por el mismo texto escrito).
+    /// </summary>
+    private static IReadOnlyList<CatalogMatch> DedupeCatalogItems(IReadOnlyList<CatalogMatch> matches)
+    {
+        var deduped = new List<CatalogMatch>();
+
+        foreach (var group in matches.GroupBy(match => BuildDedupeKey(match.Item)))
         {
             var representative = group
-                .OrderByDescending(item => item.LastSale?.SoldAt ?? DateTime.MinValue)
-                .ThenByDescending(item => item.Score ?? -1d)
+                .OrderByDescending(match => match.Item.LastSale?.SoldAt ?? DateTime.MinValue)
+                .ThenByDescending(match => match.Item.Score ?? -1d)
                 .First();
-            representative.Score = group.Max(item => item.Score);
-            deduped.Add(representative);
+
+            representative.Item.Score = group.Max(match => match.Item.Score);
+
+            deduped.Add(representative with
+            {
+                MatchedTokens = group.Max(match => match.MatchedTokens),
+                ExactMatchedTokens = group.Max(match => match.ExactMatchedTokens)
+            });
         }
 
         return deduped;
     }
 
     /// <summary>
-    /// Clave de dedupe: el nombre normalizado (con NormalizeForCatalog, autoritativo). Para Hotel suma
-    /// la City normalizada — dos hoteles homonimos de ciudades distintas son productos distintos.
+    /// Clave de dedupe: TIPO + nombre normalizado (con NormalizeForCatalog, autoritativo). Para Hotel
+    /// suma la City normalizada — dos hoteles homonimos de ciudades distintas son productos distintos.
+    ///
+    /// <para><b>Por que el tipo va en la clave</b> (2026-08-10): desde que la busqueda cruza tipos, en
+    /// la misma lista pueden convivir un Hotel y un Paquete que se llaman igual ("Bariloche"). Sin el
+    /// tipo adelante, el dedupe los tomaria por el mismo producto y haria desaparecer uno de los dos.
+    /// El "es hotel" tambien se decide por producto (antes venia del tipo de la busqueda, que ahora ya
+    /// no filtra nada).</para>
     /// </summary>
-    private static string BuildDedupeKey(CatalogSearchItemDto item, bool isHotel)
+    private static string BuildDedupeKey(CatalogSearchItemDto item)
     {
+        var typeKey = TextNormalizer.NormalizeForCatalog(item.ServiceType);
         var nameKey = TextNormalizer.NormalizeForCatalog(item.Name);
-        if (!isHotel)
+
+        if (!string.Equals(typeKey, "hotel", StringComparison.Ordinal))
         {
-            return nameKey;
+            return $"{typeKey}|{nameKey}";
         }
 
         var cityKey = TextNormalizer.NormalizeForCatalog(item.Subtitle);
-        return $"{nameKey}|{cityKey}";
+        return $"{typeKey}|{nameKey}|{cityKey}";
+    }
+
+    /// <summary>
+    /// Orden final del dropdown: (1) el que cubre mas palabras de lo escrito; (2) el mas parecido,
+    /// dandole un empujon al tipo de la solapa donde esta parado el vendedor; (3) a igual todo, la
+    /// venta mas reciente.
+    ///
+    /// <para>El empujon del tipo se suma SOLO para ordenar: el <c>Score</c> que viaja en el DTO queda
+    /// limpio, para que la ficha no resalte como "el mas parecido" a un producto flojo solo por estar
+    /// en la solapa correcta.</para>
+    /// </summary>
+    private static IReadOnlyList<CatalogSearchItemDto> SortCatalogResults(
+        IReadOnlyList<CatalogMatch> matches, string preferredServiceType)
+    {
+        return matches
+            .OrderByDescending(match => match.MatchedTokens)
+            .ThenByDescending(match => (match.Item.Score ?? 0d) + PreferredTypeBoost(match.Item, preferredServiceType))
+            .ThenByDescending(match => match.Item.LastSale?.SoldAt ?? DateTime.MinValue)
+            .Take(CatalogSearchResultLimit)
+            .Select(match => match.Item)
+            .ToList();
+    }
+
+    private static double PreferredTypeBoost(CatalogSearchItemDto item, string preferredServiceType)
+    {
+        if (preferredServiceType.Length == 0)
+        {
+            return 0d;
+        }
+
+        var itemType = TextNormalizer.NormalizeForCatalog(item.ServiceType);
+        return string.Equals(itemType, preferredServiceType, StringComparison.Ordinal)
+            ? CatalogSearchPreferredTypeBoost
+            : 0d;
     }
 
     /// <summary>Candidato crudo del buscador: id del Rate + score difuso (null si vino de un fallback).</summary>
     private sealed record CatalogCandidate(int RateId, double? Score);
+
+    /// <summary>
+    /// Un resultado con su medida de "que tan completo" es: cuantas palabras de lo escrito cubre
+    /// (<paramref name="MatchedTokens"/>, perdonando errores de tipeo) y cuantas cubre tal cual
+    /// (<paramref name="ExactMatchedTokens"/>). El DTO de adentro es el que termina viajando al front.
+    ///
+    /// <para>internal (no private, fix C-2): para que el test unitario del clamp de
+    /// <see cref="ApplyCoverageScores"/> pueda armar uno a mano sin pasar por Postgres.</para>
+    /// </summary>
+    internal sealed record CatalogMatch(
+        CatalogSearchItemDto Item, int MatchedTokens, int ExactMatchedTokens);
 
     /// <summary>Snapshot de la ultima venta de un Rate (para el contexto "ultima vez" del dropdown).</summary>
     private sealed record CatalogLatestSale(

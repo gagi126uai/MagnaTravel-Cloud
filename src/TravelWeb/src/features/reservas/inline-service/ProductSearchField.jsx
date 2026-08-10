@@ -17,14 +17,22 @@
  *
  * Se usa dentro de ServiceInlineCard para el tab Hotel (y en el futuro los otros 4 tipos).
  *
- * MATCHER ANTI-DUPLICADOS INVISIBLE (decisión de Gastón, 2026-08-09): cuando la búsqueda
- * normal de acá arriba NO encuentra un parecido fuerte, este componente consulta en
- * SILENCIO al motor (POST /linea-inteligente) para traer mejores candidatos y evitar que
- * el vendedor cree un producto duplicado (P7). Los candidatos se mezclan en el MISMO
- * dropdown de siempre, sin ningún estilo nuevo — la lista solo "mejora". Si el motor no
- * contesta nada útil (sin clave, caído, tardó), la pantalla es exactamente la de hoy: ni
- * un cartel, ni un "pensando" distinto. Ver `useProductDedupMatch.js` y
- * `productDedupMatchLogic.js` para la lógica completa.
+ * MATCHER ANTI-DUPLICADOS (decisión de Gastón, 2026-08-09; ampliado por la spec FIRMADA
+ * del buscador versátil, 2026-08-10, D1..D13): cuando conviene (gate: `busquedaLocalDebil`
+ * o `pareceLineaCompleta`), este componente consulta en SILENCIO al motor (POST
+ * /linea-inteligente) para traer mejores candidatos y evitar que el vendedor cree un
+ * producto duplicado (P7). Los candidatos se mezclan en el MISMO dropdown de siempre. Si
+ * hay una duda GRANDE, aparece como una línea gris con ✨ (D12); si el vendedor tiró la
+ * frase completa, lo que el motor entendió (operador/fechas) viaja al elegir un producto
+ * (D13). Si el motor no contesta nada útil (sin clave, caído, tardó), la pantalla es
+ * exactamente la de hoy. Ver `useProductDedupMatch.js` y `productDedupMatchLogic.js`.
+ *
+ * BUSCADOR VERSÁTIL (D1..D9): las filas de OTRO tipo de servicio (ej: un traslado
+ * mientras se busca en la solapa Hotel) también aparecen, con una chapita gris con el
+ * nombre del tipo — primero las del tipo activo, después las demás (partición dura, D9).
+ * Elegir una de otro tipo dispara `onSelectOtherType` en vez de `onSelectExisting`, para
+ * que `ServiceInlineCard` salte de solapa sola (D3). En modo edición (`esEdicion`) esto
+ * se apaga: el buscador queda limitado a su propio tipo (D6). Ver `crossTypeSearchLogic.js`.
  */
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
@@ -34,11 +42,16 @@ import { hasPermission } from "../../../auth";
 import { formatDate, formatCurrency } from "../../../lib/utils";
 import { useProductDedupMatch } from "./useProductDedupMatch";
 import {
-    hayParecidoFuerte,
+    debeDispararDedupMatch,
     mergearCandidatosDedup,
     resolverTextoDeCrear,
     resolverListaParaMostrar,
+    contarOpcionesNavegables,
+    busquedaLocalDebil,
+    pareceLineaCompleta,
+    debeMostrarDuda,
 } from "./productDedupMatchLogic";
+import { esResultadoDeOtroTipo, particionarPorTipo, filtrarPorTipoActivo } from "./crossTypeSearchLogic";
 
 // Mínimo de caracteres para lanzar la búsqueda (igual al backend)
 const MIN_QUERY_LENGTH = 2;
@@ -68,8 +81,14 @@ function formatSoldDate(isoDate) {
  * Una fila del dropdown. Muestra nombre, subtítulo, última venta y etiqueta verde.
  * Si `isStrongMatch` es true, el fondo es azul claro (el más parecido).
  * Si `isKeyboardFocused` es true, el fondo es azul oscuro (navegación con teclado).
+ *
+ * `otherTypeLabel` (D1/D2/D8, spec 2026-08-10): cuando el resultado es de OTRO tipo de
+ * servicio que la solapa activa, trae la palabra del negocio ("Aéreo", "Traslado"...) y
+ * se pinta una chapita GRIS a la izquierda de la verde "En tu tarifario" — misma forma y
+ * tamaño, ninguna caja nueva. Si es del tipo activo, `otherTypeLabel` viene null (D1: la
+ * solapa ya dice el tipo, repetirlo en cada fila sería decir lo mismo dos veces).
  */
-function SearchResultItem({ result, onSelect, isStrongMatch, canSeeCost, isKeyboardFocused, optionId }) {
+function SearchResultItem({ result, onSelect, isStrongMatch, canSeeCost, isKeyboardFocused, optionId, otherTypeLabel }) {
     // Construye la línea de última venta: "Ola Mayorista · $48.000/noche · 22/05/2026"
     const lastSaleInfo = (() => {
         const sale = result.lastSale || result.rateFallback;
@@ -123,9 +142,19 @@ function SearchResultItem({ result, onSelect, isStrongMatch, canSeeCost, isKeybo
                     <div className="text-xs text-slate-400 mt-0.5">{lastSaleInfo}</div>
                 )}
             </div>
-            <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
-                En tu tarifario
-            </span>
+            <div className="shrink-0 flex items-center gap-1.5">
+                {otherTypeLabel && (
+                    <span
+                        className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600"
+                        data-testid="catalog-search-result-type-badge"
+                    >
+                        {otherTypeLabel}
+                    </span>
+                )}
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                    En tu tarifario
+                </span>
+            </div>
         </button>
     );
 }
@@ -146,6 +175,23 @@ const NOMBRE_TIPO_SERVICIO = {
 
 function nombreTipoServicio(serviceType) {
     return NOMBRE_TIPO_SERVICIO[serviceType] || "servicio";
+}
+
+/**
+ * Mismo mapa que NOMBRE_TIPO_SERVICIO, pero con la palabra tal como se escribe en las
+ * solapas ("Hotel", "Aéreo"...) — para la chapita gris de fila-de-otro-tipo (D2/D8): "no
+ * un valor interno, nunca una sigla, nunca una explicación al lado".
+ */
+const NOMBRE_TIPO_SERVICIO_CHAPITA = {
+    Aereo: "Aéreo",
+    Hotel: "Hotel",
+    Traslado: "Traslado",
+    Paquete: "Paquete",
+    Asistencia: "Asistencia",
+};
+
+function nombreTipoServicioChapita(serviceType) {
+    return NOMBRE_TIPO_SERVICIO_CHAPITA[serviceType] || null;
 }
 
 /**
@@ -185,6 +231,11 @@ export function ProductSearchField({
     value,
     onChange,
     onSelectExisting,
+    // D2/D3 (spec 2026-08-10): cuando el vendedor elige una fila de OTRO tipo de
+    // servicio, este callback (result, interpretacion) reemplaza a onSelectExisting —
+    // ServiceInlineCard lo usa para saltar de solapa sola. Opcional: si no se pasa (o el
+    // form está en modo edición), el cruce de tipos simplemente no aplica.
+    onSelectOtherType,
     onCreateNew,
     disabled,
     label,
@@ -193,6 +244,10 @@ export function ProductSearchField({
     // comportamiento que si el motor estuviera caído) — este campo funciona igual que
     // siempre para quien no lo pase.
     reservaId,
+    // D6 (spec 2026-08-10): editando un servicio ya cargado no se puede cambiar de tipo
+    // — el cruce de tipos se apaga (se filtra al tipo activo) y elegir una fila nunca
+    // dispara onSelectOtherType, aunque el backend siga mandando resultados mezclados.
+    esEdicion,
 }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
@@ -210,6 +265,14 @@ export function ProductSearchField({
     const blurTimer = useRef(null);
     // Identificador único para el listbox (a11y: aria-owns)
     const listboxId = useRef(`catalog-listbox-${Math.random().toString(36).slice(2)}`);
+
+    // Fix C-6 (review 2026-08-10, D12 "no reaparece al volver al campo"): Esc o blur
+    // cierran el desplegable, pero `dedupResult.duda` sigue viva ahí adentro (nada la
+    // invalida hasta que el texto cambie) — sin este ref, un refoco reabriría el
+    // desplegable con la MISMA duda ya descartada. Se prende en Esc/blur, se apaga en
+    // cuanto el vendedor sigue tipeando (texto nuevo = duda vieja ya no aplica de todos
+    // modos). Ver `debeMostrarDuda` (productDedupMatchLogic.js) para la decisión pura.
+    const dudaDescartadaRef = useRef(false);
 
     // Índice de navegación por teclado:
     //   -1 = ninguno seleccionado (cursor en el input)
@@ -274,9 +337,12 @@ export function ProductSearchField({
     // Limpiar el timer de blur al desmontar para no hacer setState en componente muerto
     useEffect(() => () => clearTimeout(blurTimer.current), []);
 
-    // ─── Matcher anti-duplicados INVISIBLE (P7, decisión 2026-08-09) ──────────────────
-    // Solo tiene sentido consultar al motor cuando la búsqueda normal de acá arriba
-    // TODAVÍA no encontró un parecido fuerte — si ya lo encontró, no hay nada que mejorar.
+    // ─── Matcher anti-duplicados (P7, decisión 2026-08-09) ────────────────────────────
+    // Gate D5 (spec 2026-08-10, "llamarlo MENOS"): antes disparaba con cualquier texto
+    // sin parecido fuerte local; ahora hace falta ADEMÁS que la búsqueda local haya
+    // venido floja (`busquedaLocalDebil`) O que el texto "parezca una frase completa"
+    // (`pareceLineaCompleta`, D13) — una frase puede traer fechas/operador que valen la
+    // pena interpretar aunque el nombre del producto YA haya matcheado fuerte por sí solo.
     // Fix menor (revisor funcional, 2ª vuelta): también se apaga mientras
     // `skipNextSearch` está activo — ese flag significa "el vendedor ACABA de elegir o
     // crear un producto", momento en el que la identidad ya quedó resuelta y consultar
@@ -285,7 +351,8 @@ export function ProductSearchField({
         userHasInteracted.current &&
         !isSearching &&
         !skipNextSearch.current &&
-        !hayParecidoFuerte(results, STRONG_MATCH_THRESHOLD);
+        debeDispararDedupMatch(value) &&
+        (busquedaLocalDebil(results) || pareceLineaCompleta(value));
     const dedupResult = useProductDedupMatch({
         reservaId,
         serviceType,
@@ -300,9 +367,18 @@ export function ProductSearchField({
     // metía un render de por medio, y en ESE render `hasNoResults` alcanzaba a leer la
     // lista vieja — flasheaba "No encontramos..." una fracción de segundo antes de cada
     // lista exitosa, incluso sin IA de por medio: regresión visible vs 0d94e806).
-    const resultadosFrescos = useMemo(
+    const resultadosMergeados = useMemo(
         () => (dedupResult ? mergearCandidatosDedup(results, dedupResult.productCandidates, MAX_DISPLAY_RESULTS) : results),
         [results, dedupResult]
+    );
+
+    // Buscador versátil (spec 2026-08-10, D1..D9): desde acá el backend ya no filtra por
+    // `serviceType` (es solo una preferencia de orden), así que el cruce de tipos se
+    // resuelve del lado del front. Editando (D6) el buscador queda limitado a su propio
+    // tipo; fuera de edición, partición dura (D9): primero el tipo de la solapa activa.
+    const resultadosFrescos = useMemo(
+        () => (esEdicion ? filtrarPorTipoActivo(resultadosMergeados, serviceType) : particionarPorTipo(resultadosMergeados, serviceType)),
+        [resultadosMergeados, serviceType, esEdicion]
     );
 
     // Bug bloqueante B2 (revisor funcional): si el vendedor está navegando el dropdown
@@ -331,10 +407,25 @@ export function ProductSearchField({
     const textoParaCrear = resolverTextoDeCrear(dedupResult?.productSearchText, value);
 
     const handleSelectExisting = (result) => {
+        // Mismo housekeeping de cierre en los dos caminos (mismo tipo u otro tipo): el
+        // dropdown se cierra y no queda ninguna búsqueda vieja al acecho.
         skipNextSearch.current = true;
         setKeyboardIndex(-1);
-        onSelectExisting(result);
         setShowDropdown(false);
+
+        // D13: lo que el motor entendió de LA FRASE tipeada (operador/fechas) viaja junto
+        // con la selección, sea del mismo tipo o de otro — se lee acá (no más abajo) para
+        // capturar el valor VIGENTE de este render, antes de que `skipNextSearch` recién
+        // puesto apague el matcher y borre `dedupResult` en el próximo render.
+        const interpretacionVigente = dedupResult?.interpretacion || null;
+
+        // D2/D3: si la fila es de OTRO tipo de servicio, no se carga acá — se avisa al
+        // padre para que salte de solapa solo. En modo edición (D6) esto nunca aplica.
+        if (!esEdicion && esResultadoDeOtroTipo(result, serviceType)) {
+            onSelectOtherType?.(result, interpretacionVigente);
+            return;
+        }
+        onSelectExisting(result, interpretacionVigente);
     };
 
     const handleCreateNew = (text) => {
@@ -366,13 +457,22 @@ export function ProductSearchField({
         blurTimer.current = setTimeout(() => {
             setShowDropdown(false);
             setKeyboardIndex(-1);
+            // C-6: perder el foco también cierra/descarta la duda — "ni reaparece al
+            // volver al campo" (D12). Si el click SÍ era sobre un resultado, esto no
+            // importa: la fila ya se eligió y el desplegable de todos modos se cierra.
+            dudaDescartadaRef.current = true;
         }, 150);
     };
 
-    // Cantidad total de opciones navegables: resultados existentes + opción "crear"
-    // La opción "crear" solo aparece cuando el texto es suficientemente largo y no está buscando.
+    // Cantidad total de opciones navegables: resultados existentes + opción "crear".
+    // La opción "crear" solo aparece cuando el texto es suficientemente largo y no está
+    // buscando. La línea con ✨ (D12) NUNCA entra acá — contarOpcionesNavegables ni
+    // siquiera la recibe como parámetro, así que estructuralmente no puede sumar.
     const showCreateOption = !isSearching && (value || "").trim().length >= MIN_QUERY_LENGTH;
-    const totalOptions = resultadosParaMostrar.length + (showCreateOption ? 1 : 0);
+    const totalOptions = contarOpcionesNavegables({
+        cantidadResultados: resultadosParaMostrar.length,
+        hayOpcionCrear: showCreateOption,
+    });
 
     // Maneja la navegación con teclado dentro del dropdown (↑↓ Enter Esc).
     // Esto permite que usuarios de teclado / lectores de pantalla usen el buscador sin mouse.
@@ -398,6 +498,9 @@ export function ProductSearchField({
             event.preventDefault();
             setShowDropdown(false);
             setKeyboardIndex(-1);
+            // C-6: Esc descarta la duda con ✨ para siempre en este texto — un refoco
+            // después no puede resucitarla (D12).
+            dudaDescartadaRef.current = true;
         }
     };
 
@@ -423,6 +526,10 @@ export function ProductSearchField({
                         skipNextSearch.current = false;
                         // El usuario empezó a escribir: habilitamos las búsquedas desde ahora.
                         userHasInteracted.current = true;
+                        // C-6: seguir tipeando re-arma la posibilidad de la ✨ (D12: "se
+                        // va sola al seguir tipeando" — pero también puede volver, con
+                        // una duda NUEVA, para el texto nuevo).
+                        dudaDescartadaRef.current = false;
                         onChange(event.target.value);
                     }}
                     onFocus={handleFocus}
@@ -459,6 +566,27 @@ export function ProductSearchField({
                         </div>
                     )}
 
+                    {/* La duda con ✨ (D11/D12, spec 2026-08-10): un renglón gris de UNA
+                        línea, arriba de todo dentro del desplegable, pegado abajo del
+                        casillero. NO es una opción — no lleva optionId, no es clickeable,
+                        no entra en totalOptions (ver contarOpcionesNavegables más arriba).
+                        Se contesta eligiendo la fila de abajo, que es la respuesta.
+                        `debeMostrarDuda` (fix C-4/C-6) ya filtró que sea de PRODUCTO (las
+                        otras 3 dudas del motor tienen su propio mecanismo, D12-bis) y que
+                        no haya sido descartada con Esc/blur (dudaDescartadaRef). Se apaga
+                        sola en cuanto el vendedor sigue tipeando (dedupResult se reinicia
+                        y el ref se re-arma) o cierra el desplegable. */}
+                    {debeMostrarDuda({ duda: dedupResult?.duda, isSearching, dudaDescartada: dudaDescartadaRef.current }) && (
+                        <div
+                            className="px-4 py-2 text-xs text-slate-500 bg-slate-50 border-b border-slate-100"
+                            role="status"
+                            data-testid="catalog-search-duda"
+                        >
+                            <span aria-hidden="true">✨ </span>
+                            {dedupResult.duda.question}
+                        </div>
+                    )}
+
                     {!isSearching && resultadosParaMostrar.length > 0 && resultadosParaMostrar.map((result, index) => (
                         <SearchResultItem
                             key={result.ratePublicId || index}
@@ -469,6 +597,13 @@ export function ProductSearchField({
                             canSeeCost={canSeeCost}
                             isKeyboardFocused={keyboardIndex === index}
                             optionId={getOptionId(index)}
+                            // Chapita gris (D1/D2/D8): solo en filas de OTRO tipo, y nunca
+                            // en modo edición (ahí el buscador ya viene filtrado a su tipo).
+                            otherTypeLabel={
+                                !esEdicion && esResultadoDeOtroTipo(result, serviceType)
+                                    ? nombreTipoServicioChapita(result.serviceType)
+                                    : null
+                            }
                         />
                     ))}
 

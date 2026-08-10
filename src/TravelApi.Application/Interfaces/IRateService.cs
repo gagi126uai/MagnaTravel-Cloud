@@ -27,10 +27,20 @@ public interface IRateService
     Task<RateDuplicateCheckResponse> FindDuplicateCandidatesAsync(RateDuplicateCheckRequest request, CancellationToken ct);
 
     /// <summary>
-    /// ADR-017 F1.2 (catalogo find-or-create, buscador): busca productos del catalogo (Rates) del
-    /// <paramref name="serviceType"/> pedido cuyo nombre se parece a <paramref name="query"/> (difuso,
-    /// pg_trgm). Es supplier-AGNOSTICO (el producto manda, no el operador) y deduplica las N tarifas
-    /// legacy del mismo producto en un solo resultado. Cada item trae el contexto de la "ultima vez".
+    /// ADR-017 F1.2 (catalogo find-or-create, buscador): busca productos del catalogo (Rates) que se
+    /// parezcan a <paramref name="query"/>. Es supplier-AGNOSTICO (el producto manda, no el operador)
+    /// y deduplica las N tarifas legacy del mismo producto en un solo resultado. Cada item trae el
+    /// contexto de la "ultima vez".
+    ///
+    /// <para><b>Como busca</b> (mejora 2026-08-10): parte lo escrito en palabras y busca cada una por
+    /// separado en el nombre del producto, la ciudad, el nombre del hotel y los operadores con los que
+    /// se vendio; tolera errores de tipeo. Si algun producto cubre TODAS las palabras, muestra solo
+    /// esos; si ninguno, muestra los que cubren mas primero.</para>
+    ///
+    /// <para><b>El <paramref name="serviceType"/> ya NO filtra</b>: es el tipo PREFERIDO (la solapa
+    /// donde esta parado el vendedor) y solo empuja esos productos arriba en la lista. La busqueda
+    /// recorre los 5 tipos de la ficha (Hotel, Aereo, Traslado, Paquete, Asistencia); puede venir
+    /// vacio. Antes, sin tipo devolvia lista vacia y con tipo escondia todo lo demas.</para>
     ///
     /// <para><b>Sin llave desde el 2026-08-06</b> (spec firmada de Tarifario, P8=A): el buscador esta
     /// disponible para todos los que pueden ver el tarifario. Devuelve siempre una lista (puede ser vacia).</para>

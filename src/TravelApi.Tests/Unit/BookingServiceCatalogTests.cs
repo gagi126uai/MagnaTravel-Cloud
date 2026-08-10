@@ -299,6 +299,211 @@ public class BookingServiceCatalogTests
         await Assert.ThrowsAsync<ArgumentException>(() => service.CreateHotelAsync(reserva.Id, req, CancellationToken.None));
     }
 
+    // ===================== candado de tipo (2026-08-10) =====================
+    // El buscador del tarifario ahora puede devolver resultados CRUZADOS entre tipos (buscando desde
+    // la solapa Hotel puede aparecer un Paquete). Estos tests verifican el candado que impide guardar
+    // un servicio tipado apuntando a un Rate de OTRO tipo de servicio.
+
+    private static async Task<Rate> SeedPackageRateAsync(AppDbContext context, int supplierId)
+    {
+        var rate = new Rate
+        {
+            SupplierId = supplierId, ServiceType = "Paquete", ProductName = "Bariloche 7 noches",
+            SearchName = "bariloche 7 noches", NetCost = 500m, Tax = 0m, SalePrice = 800m, Commission = 300m,
+            Currency = "ARS", IsActive = true
+        };
+        context.Rates.Add(rate);
+        await context.SaveChangesAsync();
+        return rate;
+    }
+
+    [Fact]
+    public async Task CreateHotelAsync_WithRateIdFromDifferentServiceType_IsRejected()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        // El vendedor esta en la solapa Hotel pero el buscador le devolvio (y el eligio) un Paquete.
+        var packageRate = await SeedPackageRateAsync(context, supplierA.Id);
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+
+        var req = HotelWithRate(supplierA.PublicId.ToString(), packageRate.PublicId.ToString(), 200m, 300m);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => service.CreateHotelAsync(reserva.Id, req, CancellationToken.None));
+
+        // El mensaje es para el vendedor: nada de nombres tecnicos ni el Id del producto (P-1).
+        Assert.DoesNotContain("Rate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ServiceType", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(packageRate.PublicId.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(packageRate.Id.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // El candado corta ANTES de persistir: no queda ningun hotel a medio guardar.
+        Assert.Equal(0, await context.HotelBookings.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateHotelAsync_WithRateIdFromSameServiceType_IsAccepted()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var hotelRate = await SeedHotelRateAsync(context, supplierA.Id);
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+
+        var req = HotelWithRate(supplierA.PublicId.ToString(), hotelRate.PublicId.ToString(), 200m, 300m);
+
+        var created = await service.CreateHotelAsync(reserva.Id, req, CancellationToken.None);
+
+        Assert.NotNull(created);
+        var stored = await context.HotelBookings.SingleAsync();
+        Assert.Equal(hotelRate.Id, stored.RateId);
+    }
+
+    [Fact]
+    public async Task UpdateHotelAsync_WithRateIdFromDifferentServiceType_IsRejected()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var hotelRate = await SeedHotelRateAsync(context, supplierA.Id);
+        var packageRate = await SeedPackageRateAsync(context, supplierA.Id);
+        var hotel = new HotelBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplierA.Id,
+            RateId = hotelRate.Id,
+            HotelName = "Hotel Maitei",
+            City = "Posadas",
+            CheckIn = DateTime.UtcNow.Date.AddDays(10),
+            CheckOut = DateTime.UtcNow.Date.AddDays(12),
+            Nights = 2,
+            RoomType = "Doble",
+            MealPlan = "Desayuno",
+            Rooms = 1,
+            Adults = 2,
+            Children = 0,
+            NetCost = 200m,
+            SalePrice = 300m,
+            Commission = 100m,
+            Currency = "ARS",
+        };
+        context.HotelBookings.Add(hotel);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+        // El vendedor edita el hotel y, por error (o por un resultado cruzado del buscador), elige el
+        // Paquete en vez de otro hotel.
+        var request = new UpdateHotelRequest(
+            supplierA.PublicId.ToString(),
+            "Hotel Maitei",
+            4,
+            "Posadas",
+            "Argentina",
+            hotel.CheckIn,
+            hotel.CheckOut,
+            "Doble",
+            "Desayuno",
+            2,
+            0,
+            1,
+            null,
+            240m,
+            888m,
+            648m,
+            "Solicitado",
+            null,
+            null,
+            packageRate.PublicId.ToString(),
+            "Solicitado");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => service.UpdateHotelAsync(reserva.Id, hotel.Id, request, CancellationToken.None));
+
+        Assert.DoesNotContain("Rate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ServiceType", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // El RateId original NO se toco: el candado corta antes de guardar el cambio.
+        var stored = await context.HotelBookings.SingleAsync();
+        Assert.Equal(hotelRate.Id, stored.RateId);
+    }
+
+    // C-3b (review 2026-08-1x): el candado se probo entero solo para Hotel. Estos dos repiten
+    // create+update para PAQUETE (al reves: un Hotel elegido donde iba un Paquete), para dejar
+    // constancia de que el candado es el MISMO en los otros 4 tipos, no algo especial de Hotel.
+
+    [Fact]
+    public async Task CreatePackageAsync_WithRateIdFromDifferentServiceType_IsRejected()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        // El vendedor esta en la solapa Paquete pero el buscador le devolvio (y el eligio) un Hotel.
+        var hotelRate = await SeedHotelRateAsync(context, supplierA.Id);
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+
+        var req = PackageWithRate(supplierA.PublicId.ToString(), hotelRate.PublicId.ToString(), 1200m, 2000m, tax: 100m);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => service.CreatePackageAsync(reserva.Id, req, CancellationToken.None));
+
+        Assert.DoesNotContain("Rate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ServiceType", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, await context.PackageBookings.CountAsync());
+    }
+
+    [Fact]
+    public async Task UpdatePackageAsync_WithRateIdFromDifferentServiceType_IsRejected()
+    {
+        await using var context = CreateContext();
+        var mapper = CreateMapper();
+        var (reserva, supplierA, _) = await SeedAsync(context);
+        var packageRate = await SeedPackageRateAsync(context, supplierA.Id);
+        var hotelRate = await SeedHotelRateAsync(context, supplierA.Id);
+        var package = new PackageBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplierA.Id,
+            RateId = packageRate.Id,
+            PackageName = "Caribe Magico",
+            Destination = "Caribe",
+            StartDate = DateTime.UtcNow.Date.AddDays(10),
+            EndDate = DateTime.UtcNow.Date.AddDays(17),
+            Adults = 2,
+            Children = 0,
+            NetCost = 500m,
+            SalePrice = 800m,
+            Commission = 300m,
+            Currency = "ARS",
+        };
+        context.PackageBookings.Add(package);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, mapper, flagOn: true, canSeeCost: true);
+        // El vendedor edita el paquete y, por un resultado cruzado del buscador, elige el Hotel.
+        var request = new UpdatePackageRequest(
+            SupplierId: supplierA.PublicId.ToString(),
+            PackageName: "Caribe Magico",
+            Destination: "Caribe",
+            StartDate: package.StartDate,
+            EndDate: package.EndDate,
+            IncludesHotel: true, IncludesFlight: true, IncludesTransfer: false, IncludesExcursions: false, IncludesMeals: false,
+            Adults: 2, Children: 0, Itinerary: null, ConfirmationNumber: null,
+            NetCost: 600m, SalePrice: 900m, Commission: 300m,
+            Status: "Solicitado", Notes: null,
+            RateId: hotelRate.PublicId.ToString());
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => service.UpdatePackageAsync(reserva.Id, package.Id, request, CancellationToken.None));
+
+        Assert.DoesNotContain("Rate", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ServiceType", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // El RateId original NO se toco: el candado corta antes de guardar el cambio.
+        var stored = await context.PackageBookings.SingleAsync();
+        Assert.Equal(packageRate.Id, stored.RateId);
+    }
+
     // ===================== R6/R3 — unitarizacion del producto nuevo =====================
 
     [Fact]

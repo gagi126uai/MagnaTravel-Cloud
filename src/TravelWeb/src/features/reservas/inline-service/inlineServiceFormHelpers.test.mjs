@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers.js";
+import {
+    resolverCamposALimpiarAlCrearNuevo,
+    aplicarInterpretacionComoSugerencia,
+    resolverNombreEnCasillero,
+    resolverPatchDeVentaDelCatalogo,
+} from "./inlineServiceFormHelpers.js";
 
 // ─── resolverCamposALimpiarAlCrearNuevo (Bug #28, Tanda 4, 2026-07-24) ────────────────
 // "Crear nuevo" en el buscador solo debe limpiar los campos que TODAVÍA son sugerencias
@@ -75,5 +80,210 @@ describe("resolverCamposALimpiarAlCrearNuevo", () => {
         const resultado = resolverCamposALimpiarAlCrearNuevo(valoresActuales, camposSugeridos, valoresPorDefecto);
 
         assert.deepEqual(Object.keys(resultado).sort(), Object.keys(valoresPorDefecto).sort());
+    });
+});
+
+// ─── aplicarInterpretacionComoSugerencia (D13, spec FIRMADA 2026-08-10) ───────────────
+// El "hack" de la frase completa: lo que el motor entendió (operador, fechas) se agrega
+// como sugerencia amarilla, sin pisar nunca lo que la venta real del producto ya trajo.
+
+describe("aplicarInterpretacionComoSugerencia", () => {
+    const FORM_VACIO = { supplierId: "", checkIn: "", checkOut: "" };
+
+    it("sin interpretación (motor no entendió/no disparó): no agrega nada", () => {
+        const resultado = aplicarInterpretacionComoSugerencia(null, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO });
+        assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
+    });
+
+    it("con operador y fechas, form vacío (sin venta que ya trajera operador): agrega los tres", () => {
+        const interpretacion = {
+            supplier: { supplierPublicId: "sup-1", name: "Delfos" },
+            dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" },
+        };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO });
+        assert.deepEqual(resultado.patch, {
+            supplierId: "sup-1",
+            supplierName: "Delfos",
+            checkIn: "2026-02-10",
+            checkOut: "2026-02-15",
+        });
+        assert.deepEqual(resultado.sugeridos, { supplierId: true, checkIn: true, checkOut: true });
+    });
+
+    it("la venta real YA trajo operador (yaHaySupplierDeLaVenta=true): NUNCA pisa, aunque la interpretación tenga uno", () => {
+        const interpretacion = { supplier: { supplierPublicId: "sup-1", name: "Delfos" }, dates: null };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO });
+        assert.equal(resultado.patch.supplierId, undefined);
+        assert.equal(resultado.sugeridos.supplierId, undefined);
+    });
+
+    it("fix C-5(a): el vendedor YA tiene un operador tipeado a mano en el form — la interpretación NO lo pisa", () => {
+        const interpretacion = { supplier: { supplierPublicId: "sup-1", name: "Delfos" }, dates: null };
+        const formConOperadorAMano = { supplierId: "sup-manual", checkIn: "", checkOut: "" };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConOperadorAMano });
+        assert.equal(resultado.patch.supplierId, undefined);
+        assert.equal(resultado.sugeridos.supplierId, undefined);
+    });
+
+    it("fix C-5(a): el vendedor YA tiene checkIn tipeado a mano — la interpretación NO lo pisa, pero checkOut (vacío) sí se completa", () => {
+        const interpretacion = { supplier: null, dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" } };
+        const formConFechaAMano = { supplierId: "", checkIn: "2026-03-01", checkOut: "" };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConFechaAMano });
+        assert.equal(resultado.patch.checkIn, undefined);
+        assert.equal(resultado.sugeridos.checkIn, undefined);
+        assert.equal(resultado.patch.checkOut, "2026-02-15");
+        assert.equal(resultado.sugeridos.checkOut, true);
+    });
+
+    it("fix C-5(a): las DOS fechas ya tipeadas a mano — la interpretación no toca ninguna", () => {
+        const interpretacion = { supplier: null, dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" } };
+        const formConAmbasFechas = { supplierId: "", checkIn: "2026-03-01", checkOut: "2026-03-05" };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConAmbasFechas });
+        assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
+    });
+
+    it("Traslado: un solo campo de fecha (sin 'hasta') — 'to' de la interpretación se ignora", () => {
+        const interpretacion = { supplier: null, dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" } };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["pickupDate"], formActual: { supplierId: "", pickupDate: "" } });
+        assert.deepEqual(resultado.patch, { pickupDate: "2026-02-10" });
+        assert.deepEqual(resultado.sugeridos, { pickupDate: true });
+    });
+
+    it("solo 'to' sin 'from': se aplica el campo que corresponde nomás", () => {
+        const interpretacion = { supplier: null, dates: { from: null, to: "2026-02-15T00:00:00Z" } };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO });
+        assert.deepEqual(resultado.patch, { checkOut: "2026-02-15" });
+        assert.deepEqual(resultado.sugeridos, { checkOut: true });
+    });
+
+    it("interpretación sin nada utilizable (supplier y dates en null): no agrega nada", () => {
+        const resultado = aplicarInterpretacionComoSugerencia({ supplier: null, dates: null }, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO });
+        assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
+    });
+
+    it("formActual null/undefined no revienta: se trata como form vacío", () => {
+        const interpretacion = { supplier: { supplierPublicId: "sup-1", name: "Delfos" }, dates: null };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: null });
+        assert.equal(resultado.patch.supplierId, "sup-1");
+    });
+});
+
+// ─── resolverPatchDeVentaDelCatalogo (fix C-5(b), review 2026-08-10) ──────────────────
+// Camino normal: la venta real SIEMPRE pisa (comportamiento de siempre). Camino de
+// selección PENDIENTE (salto de solapa): solo escribe lo que está VACÍO en el form.
+
+describe("resolverPatchDeVentaDelCatalogo", () => {
+    const sale = { supplierPublicId: "sup-1", supplierName: "Delfos", salePrice: 100, netCost: 60, currency: "USD" };
+
+    it("camino NORMAL (esSeleccionPendiente=false): pisa TODO, aunque el form ya tuviera algo cargado", () => {
+        const formConDatosViejos = { supplierId: "sup-viejo", unitSalePrice: "999", unitNetCost: "500", currency: "ARS" };
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true, formActual: formConDatosViejos, esSeleccionPendiente: false,
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+        assert.deepEqual(resultado.patch, {
+            supplierId: "sup-1", supplierName: "Delfos",
+            unitSalePrice: "100", unitNetCost: "60", currency: "USD",
+        });
+        assert.deepEqual(resultado.sugeridos, { supplierId: true, unitSalePrice: true, unitNetCost: true, currency: true });
+    });
+
+    it("camino de selección PENDIENTE: el form YA tiene TODO cargado a mano — no pisa nada", () => {
+        const formConDatosAMano = { supplierId: "sup-manual", unitSalePrice: "999", unitNetCost: "500", currency: "ARS" };
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true, formActual: formConDatosAMano, esSeleccionPendiente: true,
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+        assert.deepEqual(resultado.patch, {});
+        assert.deepEqual(resultado.sugeridos, {});
+    });
+
+    it("camino de selección PENDIENTE: form vacío — se completa todo igual que el camino normal", () => {
+        const formVacio = { supplierId: "", unitSalePrice: "", unitNetCost: "", currency: "" };
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true, formActual: formVacio, esSeleccionPendiente: true,
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+        assert.deepEqual(resultado.patch, {
+            supplierId: "sup-1", supplierName: "Delfos",
+            unitSalePrice: "100", unitNetCost: "60", currency: "USD",
+        });
+    });
+
+    it("camino de selección PENDIENTE: mezcla — solo el precio de venta estaba vacío; la MONEDA viaja pegada al precio (fix moneda fantasma)", () => {
+        // Repro exacto del bug: currency arranca "ARS" de fábrica en los 5
+        // buildXFormInitial() (nunca vacía, a diferencia del precio que arranca "") —
+        // antes del fix, `libre("currency")` daba false SIEMPRE en este camino y la
+        // moneda real de la venta (USD) nunca se escribía.
+        const formMixto = { supplierId: "sup-manual", unitSalePrice: "", unitNetCost: "500", currency: "ARS" };
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true, formActual: formMixto, esSeleccionPendiente: true,
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+        assert.deepEqual(resultado.patch, { unitSalePrice: "100", currency: "USD" });
+        assert.deepEqual(resultado.sugeridos, { unitSalePrice: true, currency: true });
+    });
+
+    it("camino de selección PENDIENTE: el precio de venta YA estaba tipeado a mano — ni el precio NI la moneda se tocan", () => {
+        const formConPrecioAMano = { supplierId: "", unitSalePrice: "80", unitNetCost: "", currency: "ARS" };
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true, formActual: formConPrecioAMano, esSeleccionPendiente: true,
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+        assert.equal(resultado.patch.unitSalePrice, undefined);
+        assert.equal(resultado.patch.currency, undefined);
+        assert.equal(resultado.sugeridos.unitSalePrice, undefined);
+        assert.equal(resultado.sugeridos.currency, undefined);
+        // El costo SÍ estaba vacío: eso no depende de la moneda, se completa igual.
+        assert.equal(resultado.patch.unitNetCost, "60");
+    });
+
+    it("sin permiso de ver costos (canSeeCost=false): el campo de costo nunca se toca, ni en el camino normal", () => {
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: false, formActual: { supplierId: "", unitSalePrice: "", unitNetCost: "", currency: "" }, esSeleccionPendiente: false,
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+        assert.equal(resultado.patch.unitNetCost, undefined);
+        assert.equal(resultado.sugeridos.unitNetCost, undefined);
+    });
+
+    it("Aéreo/Traslado: nombres de campo netCost/salePrice (sin prefijo 'unit')", () => {
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true, formActual: { supplierId: "", salePrice: "", netCost: "", currency: "" }, esSeleccionPendiente: false,
+            campoVenta: "salePrice", campoCosto: "netCost",
+        });
+        assert.equal(resultado.patch.salePrice, "100");
+        assert.equal(resultado.patch.netCost, "60");
+    });
+
+    it("sale sin datos (rateFallback vacío): patch queda con valores por defecto ('' / 'ARS'), sugeridos en false", () => {
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale: {}, canSeeCost: true, formActual: { supplierId: "", unitSalePrice: "", unitNetCost: "", currency: "" }, esSeleccionPendiente: false,
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+        assert.deepEqual(resultado.patch, { supplierId: "", supplierName: null, unitSalePrice: "", unitNetCost: "", currency: "ARS" });
+        assert.deepEqual(resultado.sugeridos, { supplierId: false, unitSalePrice: false, unitNetCost: false, currency: false });
+    });
+});
+
+// ─── resolverNombreEnCasillero (D13: nunca la frase entera queda como nombre) ─────────
+
+describe("resolverNombreEnCasillero", () => {
+    it("con resultado elegido: usa su nombre limpio, no el texto tipeado", () => {
+        const resultado = resolverNombreEnCasillero({ name: "Llao Llao" }, "llao llao del 10/02 al 15/02 con delfos");
+        assert.equal(resultado, "Llao Llao");
+    });
+
+    it("resultado sin name (forma rara del backend): cae al texto actual", () => {
+        assert.equal(resolverNombreEnCasillero({}, "sheraton"), "sheraton");
+    });
+
+    it("sin resultado (null/undefined): cae al texto actual", () => {
+        assert.equal(resolverNombreEnCasillero(null, "sheraton"), "sheraton");
+        assert.equal(resolverNombreEnCasillero(undefined, "sheraton"), "sheraton");
+    });
+
+    it("ni resultado ni texto actual: string vacío, nunca undefined", () => {
+        assert.equal(resolverNombreEnCasillero(null, null), "");
     });
 });

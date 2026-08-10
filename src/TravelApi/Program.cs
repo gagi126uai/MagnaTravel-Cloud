@@ -590,6 +590,9 @@ builder.Services.AddSingleton(new ServiceLineInterpretationOptions
     TimeoutSeconds = ReadIntConfig(
         builder.Configuration, "Ai:ServiceLineTimeoutSeconds", "Ai__ServiceLineTimeoutSeconds", defaultValue: 8),
 });
+// Cache de respuestas de la linea inteligente (obra "prompt mas barato", 2026-08-10): Singleton
+// porque es una cache en memoria de todo el proceso, no algo por-pedido (ver ServiceLineInterpretationCache).
+builder.Services.AddSingleton<ServiceLineInterpretationCache>();
 builder.Services.AddScoped<IServiceLineInterpreter, ServiceLineInterpreter>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();

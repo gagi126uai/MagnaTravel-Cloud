@@ -105,9 +105,14 @@ public class RatesController : ControllerBase
     }
 
     /// <summary>
-    /// ADR-017 F1.2 (catalogo find-or-create, buscador): busca productos del catalogo del tipo pedido
-    /// cuyo nombre se parece a <paramref name="q"/> (difuso). Es supplier-agnostico (el producto manda)
-    /// y deduplica las tarifas legacy del mismo producto. Cada item trae el contexto de la "ultima vez".
+    /// ADR-017 F1.2 (catalogo find-or-create, buscador): busca productos del catalogo que se parecen a
+    /// <paramref name="q"/> (difuso, palabra por palabra). Es supplier-agnostico (el producto manda) y
+    /// deduplica las tarifas legacy del mismo producto. Cada item trae el contexto de la "ultima vez".
+    ///
+    /// <para><b>El <paramref name="serviceType"/> ya no filtra</b> (mejora 2026-08-10): es el tipo
+    /// PREFERIDO — la solapa donde esta parado el vendedor — y solo empuja esos productos arriba. La
+    /// busqueda recorre los 5 tipos de la ficha y el parametro puede venir vacio. El nombre del
+    /// parametro NO cambia (contrato del front intacto).</para>
     ///
     /// <para>Mismo gate que los creates de bookings (<c>[Authorize]</c> de clase, NO Admin-only). El
     /// costo se enmascara para callers sin <c>cobranzas.see_cost</c> (R1/D1). Ya no hay llave que lo

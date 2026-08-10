@@ -25,9 +25,19 @@ import { Package, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
-import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
+import {
+    resolverCamposALimpiarAlCrearNuevo,
+    aplicarInterpretacionComoSugerencia,
+    resolverNombreEnCasillero,
+    resolverPatchDeVentaDelCatalogo,
+} from "./inlineServiceFormHelpers";
 import { buildLastSaleHintText } from "./lastSaleHintLogic";
 import { LastSaleHint } from "./LastSaleHint";
+import { useSeleccionPendienteDelTipo } from "./useSeleccionPendienteDelTipo";
+
+// D13 (spec 2026-08-10): campos de fecha de ESTE form, [desde, hasta] — Paquete tiene
+// salida/fin.
+const CAMPOS_FECHA_PAQUETE = ["startDate", "endDate"];
 
 // ─── Clases CSS ───────────────────────────────────────────────────────────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -96,7 +106,17 @@ function NewPackageBox({ newProduct, onChange, suppliers }) {
 
 // ─── Componente principal PackageInlineForm ───────────────────────────────────
 
-export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditing }) {
+export function PackageInlineForm({
+    reservaId,
+    form,
+    setForm,
+    suppliers,
+    isEditing,
+    // Salto de solapa (spec 2026-08-10, D1..D13) — ver ServiceInlineCard.jsx.
+    onSelectOtherType,
+    seleccionPendiente,
+    onConsumirSeleccionPendiente,
+}) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // Cantidad de pasajeros (mínimo 1 para el cálculo)
@@ -118,6 +138,10 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
         unitNetCost: false,
         unitSalePrice: false,
         currency: false,
+        // startDate/endDate (D13, spec 2026-08-10): amarillo cuando salen de la
+        // interpretación de la frase completa tipeada en el buscador.
+        startDate: false,
+        endDate: false,
     });
 
     // Renglón gris "Último precio" (spec 2026-08-06, §3.2, P9=A) — ver HotelInlineForm.
@@ -143,33 +167,57 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult) => {
+    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
-        const supplierPublicId = sale.supplierPublicId || "";
-        const unitSalePrice = sale.salePrice != null ? String(sale.salePrice) : "";
-        const unitNetCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost;
-        const currency = sale.currency || "ARS";
+
+        // Fix C-5(b) (review 2026-08-10): en el camino de selección PENDIENTE (salto de
+        // solapa) no se pisa lo que el vendedor ya había tipeado a mano en esta solapa.
+        const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
+            sale,
+            canSeeCost,
+            formActual: form,
+            esSeleccionPendiente,
+            campoVenta: "unitSalePrice",
+            campoCosto: "unitNetCost",
+        });
+
+        // Fix C-5(a) (review 2026-08-10): tampoco pisa lo tipeado a mano la precarga de
+        // la frase (D13).
+        const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
+            interpretacion,
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_PAQUETE, formActual: form }
+        );
 
         setForm((prev) => ({
             ...prev,
-            packageName: catalogResult.name || prev.packageName,
+            // D13: nombre limpio del producto elegido, nunca la frase entera.
+            packageName: resolverNombreEnCasillero(catalogResult, prev.packageName),
             rateId: catalogResult.ratePublicId,
             newCatalogProduct: null,
-            supplierId: supplierPublicId,
-            supplierName: sale.supplierName || null,
-            unitSalePrice,
-            unitNetCost: canSeeCost ? unitNetCost : prev.unitNetCost,
-            currency,
+            ...patchVenta,
+            ...patchFrase,
         }));
 
         setCamposSugeridos({
-            supplierId: Boolean(supplierPublicId),
-            unitNetCost: canSeeCost && sale.netCost != null,
-            unitSalePrice: Boolean(sale.salePrice),
-            currency: Boolean(sale.currency),
+            supplierId: false,
+            unitNetCost: false,
+            unitSalePrice: false,
+            currency: false,
+            startDate: false,
+            endDate: false,
+            ...sugeridosVenta,
+            ...sugeridosFrase,
         });
         setUltimoPrecioSugerido(catalogResult);
     };
+
+    // Salto de solapa (D3/D7, spec 2026-08-10): pendiente elegida desde OTRA solapa.
+    useSeleccionPendienteDelTipo({
+        seleccionPendiente,
+        serviceType: "Paquete",
+        onSeleccionar: handleSelectExisting,
+        onConsumida: onConsumirSeleccionPendiente,
+    });
 
     const handleCreateNew = (searchText) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
@@ -187,7 +235,7 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
             ...camposLimpios,
         }));
-        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, startDate: false, endDate: false });
         setUltimoPrecioSugerido(null);
     };
 
@@ -199,7 +247,7 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
         if (!texto) {
-            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, startDate: false, endDate: false });
         }
         setUltimoPrecioSugerido(null);
     };
@@ -214,8 +262,10 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                 value={form.packageName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
+                onSelectOtherType={onSelectOtherType}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
+                esEdicion={isEditing}
                 label="Paquete"
                 placeholder="Ej: Iguazú 7 noches, Cancún todo incluido..."
             />
@@ -271,9 +321,14 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                     <input
                         id="package-salida"
                         type="date"
-                        className={INPUT_NORMAL}
+                        // Amarillo (D13, spec 2026-08-10) cuando la fecha salió de la frase
+                        // tipeada en el buscador.
+                        className={camposSugeridos.startDate ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.startDate || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, startDate: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, startDate: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, startDate: false }));
+                        }}
                         data-testid="package-salida"
                         aria-label="Fecha de salida del paquete"
                     />
@@ -292,9 +347,12 @@ export function PackageInlineForm({ reservaId, form, setForm, suppliers, isEditi
                     <input
                         id="package-fin"
                         type="date"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.endDate ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.endDate || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, endDate: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, endDate: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, endDate: false }));
+                        }}
                         data-testid="package-end-date"
                         aria-label="Fecha de fin del paquete"
                     />

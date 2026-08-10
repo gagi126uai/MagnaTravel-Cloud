@@ -7,6 +7,12 @@ import {
   mergearCandidatosDedup,
   resolverTextoDeCrear,
   resolverListaParaMostrar,
+  contarOpcionesNavegables,
+  busquedaLocalDebil,
+  pareceLineaCompleta,
+  extraerInterpretacionParaPrecarga,
+  esDudaDeProducto,
+  debeMostrarDuda,
 } from "./productDedupMatchLogic.js";
 
 describe("debeDispararDedupMatch", () => {
@@ -158,5 +164,173 @@ describe("resolverListaParaMostrar (bloqueante: no sorprender a quien navega con
   it("listas null/undefined no revientan, devuelve array vacío", () => {
     assert.deepEqual(resolverListaParaMostrar({ keyboardIndex: 0, listaCongelada: null, listaFresca: null }), []);
     assert.deepEqual(resolverListaParaMostrar({ keyboardIndex: -1, listaCongelada: null, listaFresca: null }), []);
+  });
+});
+
+describe("contarOpcionesNavegables (D12: la ✨ NUNCA es una opción más)", () => {
+  it("resultados + 'crear': suma los dos", () => {
+    assert.equal(contarOpcionesNavegables({ cantidadResultados: 3, hayOpcionCrear: true }), 4);
+  });
+
+  it("sin opción crear: solo los resultados", () => {
+    assert.equal(contarOpcionesNavegables({ cantidadResultados: 3, hayOpcionCrear: false }), 3);
+  });
+
+  it("la función ni siquiera RECIBE la duda con ✨: no hay forma de que la cuente", () => {
+    // Esta prueba documenta la garantía estructural: contarOpcionesNavegables no tiene
+    // ningún parámetro para la duda, así que agregarla en el dropdown (spec D12) nunca
+    // puede sumar una opción de más ni correr el índice del teclado.
+    assert.equal(contarOpcionesNavegables({ cantidadResultados: 0, hayOpcionCrear: true }), 1);
+  });
+
+  it("sin resultados y sin crear: cero", () => {
+    assert.equal(contarOpcionesNavegables({ cantidadResultados: 0, hayOpcionCrear: false }), 0);
+  });
+});
+
+describe("busquedaLocalDebil (gate D5: cuándo vale la pena llamar al motor)", () => {
+  it("sin resultados locales: floja", () => {
+    assert.equal(busquedaLocalDebil([]), true);
+    assert.equal(busquedaLocalDebil(null), true);
+  });
+
+  it("primer resultado con score bajo (< 0.45): floja", () => {
+    assert.equal(busquedaLocalDebil([{ ratePublicId: "r1", score: 0.2 }]), true);
+  });
+
+  it("primer resultado con score alto (>= 0.45): NO es floja", () => {
+    assert.equal(busquedaLocalDebil([{ ratePublicId: "r1", score: 0.9 }]), false);
+    assert.equal(busquedaLocalDebil([{ ratePublicId: "r1", score: 0.45 }]), false);
+  });
+
+  it("primer resultado sin score (backend no lo mandó): NO se considera floja", () => {
+    assert.equal(busquedaLocalDebil([{ ratePublicId: "r1" }]), false);
+  });
+});
+
+describe("pareceLineaCompleta (gate D5: ¿esto es una frase, no un nombre suelto?)", () => {
+  it("frase con fecha en números y operador: sí (trae dígitos)", () => {
+    assert.equal(pareceLineaCompleta("llao llao del 10/02 al 15/02 con delfos"), true);
+  });
+
+  it("una palabra sola (nombre de producto): no", () => {
+    assert.equal(pareceLineaCompleta("sheraton"), false);
+  });
+
+  it("4+ palabras significativas sin dígitos ni mes: sí", () => {
+    assert.equal(pareceLineaCompleta("hotel de la cañada cordoba"), true);
+  });
+
+  it("texto vacío o solo espacios: no", () => {
+    assert.equal(pareceLineaCompleta(""), false);
+    assert.equal(pareceLineaCompleta("   "), false);
+    assert.equal(pareceLineaCompleta(null), false);
+    assert.equal(pareceLineaCompleta(undefined), false);
+  });
+
+  it("menciona un mes en español, sin dígitos: sí", () => {
+    assert.equal(pareceLineaCompleta("hotel sheraton febrero con delfos"), true);
+  });
+
+  it("patrón 'del ... al ...' sin dígitos (fechas en palabras): sí", () => {
+    assert.equal(pareceLineaCompleta("del lunes al viernes en cordoba"), true);
+  });
+
+  it("dos palabras cortas, sin dígitos/mes/patrón: no llega al piso de 4 palabras", () => {
+    assert.equal(pareceLineaCompleta("sheraton iguazu"), false);
+  });
+});
+
+describe("extraerInterpretacionParaPrecarga (D13: el hack de la frase completa)", () => {
+  it("con operador y fechas: devuelve los dos", () => {
+    const respuesta = {
+      interpreted: true,
+      supplier: { supplierPublicId: "sup-1", name: "Delfos", confidence: "alta" },
+      dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z", confidence: "alta" },
+    };
+    const resultado = extraerInterpretacionParaPrecarga(respuesta);
+    assert.deepEqual(resultado, {
+      supplier: { supplierPublicId: "sup-1", name: "Delfos" },
+      dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" },
+    });
+  });
+
+  it("solo fecha, sin operador reconocido: supplier queda null", () => {
+    const respuesta = { interpreted: true, supplier: null, dates: { from: "2026-02-10T00:00:00Z", to: null } };
+    const resultado = extraerInterpretacionParaPrecarga(respuesta);
+    assert.equal(resultado.supplier, null);
+    assert.deepEqual(resultado.dates, { from: "2026-02-10T00:00:00Z", to: null });
+  });
+
+  it("supplier sin supplierPublicId (forma rara): se descarta, no revienta", () => {
+    const respuesta = { interpreted: true, supplier: { name: "sin id" }, dates: null };
+    assert.equal(extraerInterpretacionParaPrecarga(respuesta), null);
+  });
+
+  it("nada utilizable (todo null): devuelve null, no un objeto vacío", () => {
+    assert.equal(extraerInterpretacionParaPrecarga({ interpreted: true, supplier: null, dates: null }), null);
+  });
+
+  it("respuesta null/undefined: no revienta, devuelve null", () => {
+    assert.equal(extraerInterpretacionParaPrecarga(null), null);
+    assert.equal(extraerInterpretacionParaPrecarga(undefined), null);
+  });
+});
+
+// ─── esDudaDeProducto (fix C-4, review 2026-08-10) ────────────────────────────────
+// El motor emite 4 tipos de duda; la ✨ del desplegable es SOLO para la de PRODUCTO.
+// Las otras 3 (precio/operador/fechas) tienen su propio mecanismo firmado (D12-bis).
+
+describe("esDudaDeProducto", () => {
+  it("field='producto' (productoAmbiguo): SÍ es duda de producto", () => {
+    assert.equal(esDudaDeProducto({ code: "productoAmbiguo", field: "producto", question: "¿Cuál de los dos?" }), true);
+  });
+
+  it("field='precio' (precioPorNoche): NO es duda de producto", () => {
+    assert.equal(esDudaDeProducto({ code: "precioPorNoche", field: "precio", question: "¿Es por noche?" }), false);
+  });
+
+  it("field='operador' (operadorAmbiguo): NO es duda de producto", () => {
+    assert.equal(esDudaDeProducto({ code: "operadorAmbiguo", field: "operador", question: "¿El operador es X?" }), false);
+  });
+
+  it("field='fechas' (anioDeFechas): NO es duda de producto", () => {
+    assert.equal(esDudaDeProducto({ code: "anioDeFechas", field: "fechas", question: "¿Es este año?" }), false);
+  });
+
+  it("sin duda (null/undefined): false, sin romper", () => {
+    assert.equal(esDudaDeProducto(null), false);
+    assert.equal(esDudaDeProducto(undefined), false);
+  });
+
+  it("duda sin field (forma rara): false", () => {
+    assert.equal(esDudaDeProducto({ code: "productoAmbiguo", question: "¿Cuál?" }), false);
+  });
+});
+
+// ─── debeMostrarDuda (fix C-4 + C-6, review 2026-08-10) ───────────────────────────
+
+describe("debeMostrarDuda", () => {
+  const dudaDeProducto = { code: "productoAmbiguo", field: "producto", question: "¿Cuál de los dos?" };
+  const dudaDePrecio = { code: "precioPorNoche", field: "precio", question: "¿Es por noche?" };
+
+  it("duda de producto, no buscando, no descartada: se muestra", () => {
+    assert.equal(debeMostrarDuda({ duda: dudaDeProducto, isSearching: false, dudaDescartada: false }), true);
+  });
+
+  it("duda de precio (no de producto): NUNCA se muestra en esta línea, aunque no esté descartada", () => {
+    assert.equal(debeMostrarDuda({ duda: dudaDePrecio, isSearching: false, dudaDescartada: false }), false);
+  });
+
+  it("todavía buscando (isSearching=true): no se muestra aunque sea duda de producto", () => {
+    assert.equal(debeMostrarDuda({ duda: dudaDeProducto, isSearching: true, dudaDescartada: false }), false);
+  });
+
+  it("fix C-6: duda descartada con Esc/blur: no se muestra aunque siga siendo de producto", () => {
+    assert.equal(debeMostrarDuda({ duda: dudaDeProducto, isSearching: false, dudaDescartada: true }), false);
+  });
+
+  it("sin duda: no se muestra", () => {
+    assert.equal(debeMostrarDuda({ duda: null, isSearching: false, dudaDescartada: false }), false);
   });
 });

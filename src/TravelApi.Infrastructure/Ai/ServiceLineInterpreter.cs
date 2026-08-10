@@ -44,6 +44,7 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
     private readonly IRateService _rateService;
     private readonly IAiAssistantService _assistant;
     private readonly IAiConnectionResolver _connectionResolver;
+    private readonly ServiceLineInterpretationCache _cache;
     private readonly ServiceLineInterpretationOptions _options;
     private readonly IHttpContextAccessor? _httpContextAccessor;
     private readonly IUserPermissionResolver? _permissionResolver;
@@ -69,11 +70,20 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
     /// <summary>Confianza declarada por el modelo que hace que el motor DESCARTE el dato.</summary>
     private const string LowConfidence = "baja";
 
+    /// <summary>
+    /// Cuanto se tienen que parecer dos nombres de producto para tratarlos como "el mismo hotel, lugar
+    /// distinto" en <see cref="TryBuildProductDoubt"/>. 0.85 es alto a proposito: agarra variaciones de
+    /// tipeo chicas ("Panamericano" / "Panamericano Hotel") pero NO junta dos productos que apenas
+    /// comparten una palabra ("Sheraton Iguazu" / "Sheraton Buenos Aires" da ~0.55, queda afuera).
+    /// </summary>
+    private const double ProductNameSimilarityThreshold = 0.85;
+
     public ServiceLineInterpreter(
         AppDbContext db,
         IRateService rateService,
         IAiAssistantService assistant,
         IAiConnectionResolver connectionResolver,
+        ServiceLineInterpretationCache cache,
         ServiceLineInterpretationOptions options,
         ILogger<ServiceLineInterpreter> logger,
         IHttpContextAccessor? httpContextAccessor = null,
@@ -83,6 +93,7 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
         _rateService = rateService;
         _assistant = assistant;
         _connectionResolver = connectionResolver;
+        _cache = cache;
         _options = options;
         _logger = logger;
         _httpContextAccessor = httpContextAccessor;
@@ -103,7 +114,9 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
         }
 
         // Sin configuracion utilizable ni se arma el prompt: nos ahorramos las consultas a la base y,
-        // sobre todo, esta instalacion simplemente trabaja sin las ayudas (no es un error).
+        // sobre todo, esta instalacion simplemente trabaja sin las ayudas (no es un error). Esto NO se
+        // cachea: si el dueño recien cargo la configuracion de IA, el vendedor tiene que verla andar en
+        // el proximo pedido, no dos minutos despues (mismo criterio de M-30: nada de IA queda "viejo").
         if (!await _connectionResolver.IsUsableAsync(cancellationToken))
         {
             return ServiceLineInterpretationDto.NotInterpreted();
@@ -111,10 +124,11 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
 
         try
         {
-            var context = await BuildCatalogContextAsync(type, text, cancellationToken);
-            var request = ServiceLinePromptBuilder.Build(text, type, context, DateTime.UtcNow.Date);
-
-            var payload = await AskModelAsync(request, cancellationToken);
+            // Lo UNICO cacheable es lo que dijo el modelo (ver GetModelExtractionAsync y C-1 en
+            // ServiceLineInterpretationCache). Todo lo que sigue — buscar en el tarifario, enmascarar
+            // costos, armar la duda — se recalcula ACA ABAJO en cada pedido, con el permiso y los datos
+            // de AHORA, aunque la extraccion haya venido de la cache.
+            var payload = await GetModelExtractionAsync(text, type, cancellationToken);
             if (payload is null)
             {
                 return ServiceLineInterpretationDto.NotInterpreted();
@@ -138,13 +152,35 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
         }
     }
 
+    /// <summary>
+    /// Consigue la extraccion del modelo para esta frase — de la cache si ya se le pregunto hace poco,
+    /// o preguntandole de verdad si no. Es el UNICO paso cacheable de todo el recorrido (ver C-1 en
+    /// <see cref="ServiceLineInterpretationCache"/>): no toca la base ni sabe quien esta preguntando.
+    /// </summary>
+    private async Task<ServiceLineAiPayload?> GetModelExtractionAsync(
+        string text, string type, CancellationToken ct)
+    {
+        var cacheKey = ServiceLineInterpretationCache.BuildKey(type, text);
+        if (_cache.TryGet(cacheKey, out var cachedPayload))
+        {
+            return cachedPayload;
+        }
+
+        var context = await BuildCatalogContextAsync(type, text, ct);
+        var request = ServiceLinePromptBuilder.Build(text, type, context, DateTime.UtcNow.Date);
+        var payload = await AskModelAsync(request, ct);
+
+        _cache.Set(cacheKey, payload);
+        return payload;
+    }
+
     // ============================================================
     // Paso 2 — el contexto acotado que se le presta al modelo (M-21)
     // ============================================================
 
     /// <summary>
     /// Junta los nombres que le sirven al modelo para reconocer lo escrito: productos parecidos del
-    /// tarifario, operadores de la agencia y nombres de habitacion/vehiculo del TARIFARIO.
+    /// tarifario y operadores de la agencia.
     ///
     /// <para><b>Lo que NO entra, y es lo importante</b>: pasajeros, clientes, documentos, telefonos,
     /// mails, numeros de reserva e importes. Nada de eso ayuda a entender "sheraton iguazu doble" y
@@ -163,62 +199,12 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
             .Take(ServiceLinePromptBuilder.MaxSupplierNames)
             .ToListAsync(ct);
 
-        var variantNames = await LoadTarifarioVariantNamesAsync(serviceType, ct);
-
-        return new ServiceLineCatalogContext(productNames, supplierNames, variantNames);
-    }
-
-    /// <summary>
-    /// Los nombres finos de habitacion y los vehiculos que estan cargados EN EL TARIFARIO.
-    ///
-    /// <para><b>Por que NO se usa aca la memoria de nombres del sistema</b> (<c>M-19</c>,
-    /// <c>CatalogVariantNameMemory</c>, que es la que alimenta las sugerencias mientras se escribe):
-    /// esa memoria incluye, ademas del tarifario, lo tipeado a mano DENTRO de las reservas
-    /// (<c>HotelBooking.RoomCategory</c>, <c>TransferBooking.VehicleType</c>). Son casillas de texto
-    /// libre donde un vendedor apurado escribe cualquier cosa — "Suite flia Peralta 27345678" es un
-    /// ejemplo real de lo que termina ahi. Mandar eso a un proveedor de afuera seria filtrar el
-    /// apellido y el documento de un pasajero. El tarifario, en cambio, es catalogo: nombres de
-    /// producto, no de personas.</para>
-    ///
-    /// <para>Se pierde poco y se gana mucho: lo que el modelo necesita es reconocer "sup" como
-    /// "Superior", y para eso el tarifario alcanza. La unificacion fina con lo escrito en ventas sigue
-    /// pasando DESPUES, del lado nuestro, sin salir del servidor.</para>
-    /// </summary>
-    private async Task<IReadOnlyList<string>> LoadTarifarioVariantNamesAsync(
-        string serviceType, CancellationToken ct)
-    {
-        var typeKey = TextNormalizer.NormalizeForMatch(serviceType);
-        List<string?> names;
-
-        if (typeKey == "hotel")
-        {
-            names = await _db.Rates.AsNoTracking()
-                .Where(rate => rate.ServiceType.ToLower() == "hotel"
-                    && rate.RoomCategory != null && rate.RoomCategory != "")
-                .Select(rate => rate.RoomCategory)
-                .ToListAsync(ct);
-        }
-        else if (typeKey == "traslado")
-        {
-            names = await _db.Rates.AsNoTracking()
-                .Where(rate => rate.ServiceType.ToLower() == "traslado"
-                    && rate.VehicleType != null && rate.VehicleType != "")
-                .Select(rate => rate.VehicleType)
-                .ToListAsync(ct);
-        }
-        else
-        {
-            // Aereo, paquete y asistencia no tienen nombre fino que ofrecer.
-            return Array.Empty<string>();
-        }
-
-        return names
-            .Select(name => name!.Trim())
-            .Where(name => name.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase)
-            .Take(ServiceLinePromptBuilder.MaxVariantNames)
-            .ToList();
+        // Los nombres de habitacion/vehiculo del tarifario YA NO viajan al prompt (obra "prompt mas
+        // barato", 2026-08-10: el dueño firmo que el modelo solo extrae producto + fechas + operador).
+        // Antes aca se consultaba el tarifario para armar esa lista; como el prompt nunca la iba a
+        // imprimir, la consulta se saco entera (ver ResolveVariantAsync, que tiene el mismo criterio
+        // para la parte de DESPUES del modelo).
+        return new ServiceLineCatalogContext(productNames, supplierNames);
     }
 
     /// <summary>
@@ -531,6 +517,19 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
         if (!CatalogVariant.AppliesTo(serviceType)) return null;
         if (IsLowConfidence(payload.Confianza?.Variante)) return null;
 
+        // Desde la obra "prompt mas barato" (2026-08-10) el modelo YA NO recibe instrucciones para
+        // devolver habitacion/regimen/nombreFino/cabina/vehiculo (el dueño solo pidio producto + fechas
+        // + operador). En el uso real estos cinco campos van a venir SIEMPRE null; si es asi, no hace
+        // falta ni tocar la base (LoadTarifarioVariantNameKeysAsync, mas abajo) para un resultado que ya
+        // sabemos que va a ser "sin variante". Se deja el resto del metodo intacto por si el modelo, de
+        // todas formas, llega a mandar algo (o el dia de mañana se le vuelve a pedir).
+        var hasAnyVariantHint = CleanUp(payload.Habitacion) != null
+            || CleanUp(payload.Regimen) != null
+            || CleanUp(payload.NombreFino) != null
+            || CleanUp(payload.Cabina) != null
+            || CleanUp(payload.Vehiculo) != null;
+        if (!hasAnyVariantHint) return null;
+
         // Cada pieza cerrada pasa por su lista blanca; lo que no esta en la lista se descarta (queda
         // vacio en la ficha), NO se muestra como si fuera una opcion valida.
         var roomType = KeepIfKnown(payload.Habitacion, CatalogVariant.IsKnownRoomType);
@@ -782,6 +781,9 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
     /// Elige la unica pregunta que se muestra. El orden NO es casual:
     ///
     /// <list type="number">
+    ///   <item><b>El producto</b> (aprobada por el dueño 2026-08-10): el buscador encontro dos
+    ///   productos con el mismo nombre en lugares distintos. Va PRIMERA porque, si no se sabe cual de
+    ///   los dos es, ninguna de las otras dudas tiene piso firme.</item>
     ///   <item><b>El precio</b>: "48 por noche" y "48 por toda la estadia" son plata bien distinta.</item>
     ///   <item><b>El operador</b>: define de quien es ese precio y a quien se le compra.</item>
     ///   <item><b>El año</b>: cambia el calendario, no la plata.</item>
@@ -796,6 +798,11 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
         bool yearWasWritten,
         ServiceLineAiPayload payload)
     {
+        // 0) El producto: dos candidatos con el mismo nombre (o casi) en lugares distintos. LOGICA
+        //    PURA sobre lo que YA devolvio el buscador — no hace falta preguntarle nada al modelo.
+        var productDoubt = TryBuildProductDoubt(response.ProductCandidates);
+        if (productDoubt != null) return productDoubt;
+
         // 1) La plata: hay precio de hotel y la frase no aclaro si es por noche.
         var isHotel = TextNormalizer.NormalizeForMatch(serviceType) == "hotel";
         if (response.Price != null && isHotel && !priceUnitWasWritten)
@@ -836,6 +843,101 @@ public sealed class ServiceLineInterpreter : IServiceLineInterpreter
 
         return null;
     }
+
+    /// <summary>
+    /// Duda de PRODUCTO (aprobada por el dueño, obra 2026-08-10): cuando el buscador devuelve dos
+    /// productos con el MISMO nombre (o casi identico) pero en LUGARES distintos — "Panamericano" en
+    /// Buenos Aires Y en Bariloche — el sistema no puede elegir por su cuenta cual precargar: la plata,
+    /// el traslado y hasta el operador pueden ser completamente distintos segun cual sea.
+    ///
+    /// <para><b>Logica PURA, cero tokens</b>: no le pregunta nada al modelo. Compara los primeros
+    /// candidatos que YA devolvio <c>_rateService.CatalogSearchAsync</c> (el MISMO buscador de la
+    /// ficha) entre si: mismo nombre + lugar distinto = duda. Si los nombres son claramente distintos,
+    /// no hay nada que preguntar (el vendedor ya eligio bien con el primero).</para>
+    ///
+    /// <para><b>Como se mide "mismo nombre"</b>: exacto (normalizado) o MUY parecido
+    /// (<see cref="CatalogSearchTokens.TrigramSimilarity"/> &gt;= <see cref="ProductNameSimilarityThreshold"/>,
+    /// la misma formula que usa el buscador del tarifario para tolerar variaciones chicas de tipeo).</para>
+    ///
+    /// <para><b>Como se mide "lugar"</b>: el <c>Subtitle</c> del candidato (la ciudad en Hotel, la ruta
+    /// en Aereo/Traslado). Si un candidato no tiene <c>Subtitle</c> cargado, se usa el operador de su
+    /// ultima venta como segundo criterio — sin ninguno de los dos, no hay forma de decir "son
+    /// distintos" y se prefiere NO preguntar antes que inventar una diferencia.</para>
+    ///
+    /// <para>Maximo DOS alternativas nombradas en la pregunta: se compara solo el primer candidato
+    /// (el mejor, <c>candidates[0]</c>) contra el resto, y se corta en el primer par que resulte
+    /// ambiguo.</para>
+    ///
+    /// <para><b>C-3c (review 2026-08-1x) — candidatos de tipos DISTINTOS</b>: el buscador cruza los 5
+    /// tipos (Hotel/Aereo/Traslado/Paquete/Asistencia), asi que los dos candidatos comparados pueden
+    /// no ser del mismo tipo ("Panamericano" hotel en Buenos Aires vs "Panamericano" paquete en
+    /// Bariloche). En ese caso la pregunta nombra el tipo de la SEGUNDA alternativa en palabras del
+    /// negocio ("¿Panamericano de Buenos Aires o el paquete de Bariloche?", via
+    /// <see cref="CatalogDisplayLabels.TheProduct"/>) — sin eso, dos productos de tipos distintos con
+    /// el mismo nombre sonarian como el mismo producto en dos lugares, cuando en realidad ni siquiera
+    /// es el mismo TIPO de servicio.</para>
+    /// </summary>
+    private static ServiceLineDoubtDto? TryBuildProductDoubt(IReadOnlyList<CatalogSearchItemDto> candidates)
+    {
+        if (candidates.Count < 2) return null;
+
+        var best = candidates[0];
+        // NormalizeForCatalog (no NormalizeForMatch): es la misma normalizacion "autoritativa" que usa
+        // el buscador del tarifario para todo lo que compara con TrigramSimilarity (ver el comentario
+        // de esa clase). Usar otra formula de un lado y otra del otro haria que la duda dijera "son
+        // distintos" o "son iguales" segun quien pregunte, sin ninguna logica visible.
+        var bestNameKey = TextNormalizer.NormalizeForCatalog(best.Name);
+        if (bestNameKey.Length == 0) return null;
+
+        var bestPlace = DistinguishingPlace(best);
+        if (bestPlace == null) return null;
+
+        for (var index = 1; index < candidates.Count; index++)
+        {
+            var other = candidates[index];
+            var otherNameKey = TextNormalizer.NormalizeForCatalog(other.Name);
+            var namesLookAlike = bestNameKey == otherNameKey
+                || CatalogSearchTokens.TrigramSimilarity(bestNameKey, otherNameKey) >= ProductNameSimilarityThreshold;
+            if (!namesLookAlike) continue;
+
+            var otherPlace = DistinguishingPlace(other);
+            if (otherPlace == null) continue;
+
+            var samePlace = string.Equals(
+                TextNormalizer.NormalizeForMatch(bestPlace), TextNormalizer.NormalizeForMatch(otherPlace),
+                StringComparison.Ordinal);
+            if (samePlace) continue;
+
+            // C-3c: si son del MISMO tipo, la segunda alternativa queda como siempre ("el de
+            // Bariloche"). Si son de tipos DISTINTOS, se nombra el tipo de la segunda ("el paquete de
+            // Bariloche") para que no suene como el mismo producto en otro lugar.
+            var sameType = string.Equals(
+                TextNormalizer.NormalizeForMatch(best.ServiceType), TextNormalizer.NormalizeForMatch(other.ServiceType),
+                StringComparison.Ordinal);
+            var secondAlternative = sameType
+                ? $"el de {otherPlace}"
+                : $"{CatalogDisplayLabels.TheProduct(other.ServiceType)} de {otherPlace}";
+
+            return new ServiceLineDoubtDto
+            {
+                Code = ServiceLineDoubtCodes.AmbiguousProduct,
+                Question = $"¿{best.Name} de {bestPlace} o {secondAlternative}?",
+                Field = ServiceLineDoubtFields.Product,
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Lo que distingue a un candidato de otro con el mismo nombre: primero la ciudad/ruta
+    /// (<c>Subtitle</c>); si el producto no la tiene cargada, el operador de su ultima venta. Devuelve
+    /// <c>null</c> cuando no hay ninguno de los dos — sin dato, no se arma una pregunta a ciegas.
+    /// </summary>
+    private static string? DistinguishingPlace(CatalogSearchItemDto candidate)
+        => !string.IsNullOrWhiteSpace(candidate.Subtitle)
+            ? candidate.Subtitle
+            : candidate.LastSale?.SupplierName;
 
     // ============================================================
     // Ayudas chicas

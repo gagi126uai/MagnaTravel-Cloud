@@ -35,11 +35,21 @@ import { Hotel, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { formatCurrency } from "../../../lib/utils";
 import { ProductSearchField } from "./ProductSearchField";
-import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
+import {
+    resolverCamposALimpiarAlCrearNuevo,
+    aplicarInterpretacionComoSugerencia,
+    resolverNombreEnCasillero,
+    resolverPatchDeVentaDelCatalogo,
+} from "./inlineServiceFormHelpers";
 import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemoryField";
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
 import { resolverCamposAlCambiarVariante } from "./variantPriceSuggestionLogic";
 import { VariantSuggestionHint } from "./VariantSuggestionHint";
+import { useSeleccionPendienteDelTipo } from "./useSeleccionPendienteDelTipo";
+
+// D13 (spec 2026-08-10): campos de fecha de ESTE form, en el orden [desde, hasta] que
+// espera aplicarInterpretacionComoSugerencia — Hotel tiene rango (entrada/salida).
+const CAMPOS_FECHA_HOTEL = ["checkIn", "checkOut"];
 
 // ─── Helpers de formato ──────────────────────────────────────────────────────
 
@@ -162,7 +172,17 @@ function NewHotelBox({ newProduct, onChange, suppliers }) {
 
 // ─── Componente principal HotelInlineForm ─────────────────────────────────────
 
-export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing }) {
+export function HotelInlineForm({
+    reservaId,
+    form,
+    setForm,
+    suppliers,
+    isEditing,
+    // Salto de solapa (spec 2026-08-10, D1..D13) — ver ServiceInlineCard.jsx.
+    onSelectOtherType,
+    seleccionPendiente,
+    onConsumirSeleccionPendiente,
+}) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // Noches calculadas automáticamente a partir de las fechas (guía UX: "le gusta el conteo")
@@ -195,6 +215,10 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
         unitNetCost: false,
         unitSalePrice: false,
         currency: false,
+        // checkIn/checkOut (D13, spec 2026-08-10): amarillo cuando salen de la
+        // interpretación de la frase completa tipeada en el buscador.
+        checkIn: false,
+        checkOut: false,
     });
 
     // ─── Sugerencia POR HABITACIÓN (spec 2026-08-07, §3.3 / M-15 / V9=A / V10=A) ───────
@@ -293,39 +317,57 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult) => {
+    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
         // Tomamos la sugerencia del lastSale (venta real) o del rateFallback (campos del Rate)
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
 
-        const supplierPublicId = sale.supplierPublicId || "";
-        const unitSalePrice = sale.salePrice != null ? String(sale.salePrice) : "";
-        // Si no tiene permiso de ver costos, netCost viene null del backend → no tocar el campo
-        const unitNetCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost;
-        const currency = sale.currency || "ARS";
+        // Fix C-5(b) (review 2026-08-10): en el camino NORMAL, la venta real siempre
+        // pisa (comportamiento de toda la vida). En el camino de SELECCIÓN PENDIENTE
+        // (salto de solapa, D3), el form puede traer campos que el vendedor ya había
+        // tipeado a mano en esta solapa ANTES de irse — ahí solo se escribe lo vacío.
+        const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
+            sale,
+            canSeeCost,
+            formActual: form,
+            esSeleccionPendiente,
+            campoVenta: "unitSalePrice",
+            campoCosto: "unitNetCost",
+        });
+
+        // Fix C-5(a) (review 2026-08-10): la precarga de la frase (D13) tampoco pisa un
+        // campo que el vendedor ya tenía cargado a mano — ni la venta real (chequeado
+        // acá con Boolean(sale.supplierPublicId)) ni lo que ya estaba escrito en `form`.
+        const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
+            interpretacion,
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_HOTEL, formActual: form }
+        );
 
         setForm((prev) => ({
             ...prev,
-            // El nombre y la ciudad del hotel ya se mostraban en el campo de búsqueda;
-            // al elegir, confirmamos nombre + ciudad del resultado del catálogo
-            hotelName: catalogResult.name || prev.hotelName,
+            // D13: el casillero se queda con el nombre LIMPIO del producto elegido, nunca
+            // con la frase entera que haya tipeado el vendedor.
+            hotelName: resolverNombreEnCasillero(catalogResult, prev.hotelName),
             city: catalogResult.subtitle || prev.city,
             rateId: catalogResult.ratePublicId,
             // Limpiamos el modo "producto nuevo" porque ahora el usuario eligió uno existente
             newCatalogProduct: null,
-            supplierId: supplierPublicId,
-            // Guardamos el nombre del proveedor sugerido (C5) por si no está en la lista de la reserva
-            supplierName: sale.supplierName || null,
-            unitSalePrice,
-            unitNetCost: canSeeCost ? unitNetCost : prev.unitNetCost,
-            currency,
+            ...patchVenta,
+            ...patchFrase,
         }));
 
-        // Marcamos los campos que vinieron como sugerencia para pintar el fondo amarillo
+        // Marcamos los campos que vinieron como sugerencia para pintar el fondo amarillo.
+        // Arrancamos TODO en false (default explícito, no implícito): en el camino de
+        // selección pendiente, `sugeridosVenta`/`sugeridosFrase` pueden no traer todas
+        // las claves (los campos que NO se escribieron por estar ya cargados a mano).
         setCamposSugeridos({
-            supplierId: Boolean(supplierPublicId),
-            unitNetCost: canSeeCost && sale.netCost != null,
-            unitSalePrice: Boolean(sale.salePrice),
-            currency: Boolean(sale.currency),
+            supplierId: false,
+            unitNetCost: false,
+            unitSalePrice: false,
+            currency: false,
+            checkIn: false,
+            checkOut: false,
+            ...sugeridosVenta,
+            ...sugeridosFrase,
         });
         // Producto NUEVO recién elegido: ninguno de los dos campos fue tocado todavía en
         // esta decisión — el sistema vuelve a tener vía libre para acomodarlos solos.
@@ -334,6 +376,16 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
         // El renglón gris de abajo ya NO sale de acá: lo arma la sugerencia POR HABITACIÓN
         // (useVariantPriceSuggestion), que se dispara sola apenas rateId queda seteado.
     };
+
+    // Salto de solapa (D3/D7, spec 2026-08-10): si el vendedor eligió, desde OTRA solapa,
+    // un hotel en el buscador, la pendiente llega acá y se aplica exactamente como si se
+    // hubiera elegido del propio buscador de Hotel.
+    useSeleccionPendienteDelTipo({
+        seleccionPendiente,
+        serviceType: "Hotel",
+        onSeleccionar: handleSelectExisting,
+        onConsumida: onConsumirSeleccionPendiente,
+    });
 
     const handleCreateNew = (searchText) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
@@ -358,7 +410,8 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
         }));
         // Los campos que quedaron limpios dejan de ser "sugeridos"; los preservados ya
         // estaban en false (si no, se habrían limpiado), así que todo queda en false.
-        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+        // checkIn/checkOut (D13) también pierden el amarillo: son de OTRO producto.
+        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, checkIn: false, checkOut: false });
         setPrecioTocadoPorElUsuario(false);
         setMonedaTocadaPorElUsuario(false);
         // "Crear nuevo" no tiene rateId: la sugerencia por habitación se apaga sola (el hook
@@ -380,7 +433,7 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
         }));
         // Si borra el texto, también limpiamos los sugeridos (no hay producto seleccionado)
         if (!texto) {
-            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, checkIn: false, checkOut: false });
             setPrecioTocadoPorElUsuario(false);
             setMonedaTocadaPorElUsuario(false);
         }
@@ -396,8 +449,10 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
                 value={form.hotelName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
+                onSelectOtherType={onSelectOtherType}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing} // Al editar, el producto no cambia (solo los datos del servicio)
+                esEdicion={isEditing}
                 label="Hotel"
                 placeholder="Escribí el nombre del hotel..."
             />
@@ -451,9 +506,14 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
                     <input
                         id="hotel-checkin"
                         type="date"
-                        className={INPUT_NORMAL}
+                        // Amarillo (D13, spec 2026-08-10) cuando la fecha salió de la frase
+                        // tipeada en el buscador — tocarla a mano la saca del amarillo.
+                        className={camposSugeridos.checkIn ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.checkIn || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, checkIn: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, checkIn: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, checkIn: false }));
+                        }}
                         data-testid="hotel-checkin"
                         aria-label="Fecha de entrada"
                     />
@@ -466,9 +526,12 @@ export function HotelInlineForm({ reservaId, form, setForm, suppliers, isEditing
                     <input
                         id="hotel-checkout"
                         type="date"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.checkOut ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.checkOut || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, checkOut: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, checkOut: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, checkOut: false }));
+                        }}
                         min={form.checkIn || undefined}
                         data-testid="hotel-checkout"
                         aria-label="Fecha de salida"

@@ -56,6 +56,37 @@ public sealed class ServiceLineAiPayload
 
     /// <summary>Que tan seguro esta el modelo de cada dato.</summary>
     public ServiceLineAiConfidence? Confianza { get; set; }
+
+    /// <summary>
+    /// Copia todos los campos a un objeto NUEVO. Se usa al guardar en
+    /// <see cref="ServiceLineInterpretationCache"/> (fix C-1, 2026-08-1x): la cache tiene que quedarse
+    /// con SU PROPIA copia, nunca con la referencia que sigue viva del lado de quien pregunto. Hoy nada
+    /// en el codigo escribe estos campos despues de deserializar el JSON del modelo, pero clonar cuesta
+    /// nada y evita que el dia de mañana un cambio en otra parte termine mutando lo que hay cacheado
+    /// (y con eso, la respuesta que reciben TODOS los que pidan la misma frase despues).
+    /// </summary>
+    public ServiceLineAiPayload Clone() => new()
+    {
+        Producto = Producto,
+        Operador = Operador,
+        Habitacion = Habitacion,
+        Regimen = Regimen,
+        NombreFino = NombreFino,
+        Cabina = Cabina,
+        Vehiculo = Vehiculo,
+        Precio = Precio,
+        Moneda = Moneda,
+        FechaDesde = FechaDesde,
+        FechaHasta = FechaHasta,
+        Confianza = Confianza == null ? null : new ServiceLineAiConfidence
+        {
+            Producto = Confianza.Producto,
+            Operador = Confianza.Operador,
+            Variante = Confianza.Variante,
+            Precio = Confianza.Precio,
+            Fechas = Confianza.Fechas,
+        },
+    };
 }
 
 /// <summary>

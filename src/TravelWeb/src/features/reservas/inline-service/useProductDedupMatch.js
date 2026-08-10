@@ -1,20 +1,22 @@
 /**
- * Matcher anti-duplicados INVISIBLE (decisión de Gastón, 2026-08-09 — reemplaza a la
- * "línea inteligente" visible que se revirtió entera). Cuando el buscador normal del
- * catálogo NO encuentra un parecido fuerte, este hook consulta al motor EN SILENCIO
- * para traer mejores candidatos y evitar que el vendedor cree un producto duplicado
- * (P7). El vendedor nunca se entera de que esta consulta existe.
+ * Matcher anti-duplicados (decisión de Gastón, 2026-08-09 — reemplaza a la "línea
+ * inteligente" visible que se revirtió entera; ampliado por la spec FIRMADA del
+ * buscador versátil, 2026-08-10, D11..D13). Cuando conviene (ver el gate en
+ * `ProductSearchField.jsx`: `busquedaLocalDebil`/`pareceLineaCompleta`), este hook
+ * consulta al motor EN SILENCIO para: (a) traer mejores candidatos y evitar un producto
+ * duplicado (P7); (b) si hay una duda GRANDE, dejarla lista para la línea con ✨ (D12);
+ * y (c) si el vendedor tiró la frase completa, guardar lo que el motor entendió de esa
+ * frase (operador, fechas) para la precarga amarilla al elegir el producto (D13).
  *
  * POST /api/reservas/{reservaId}/linea-inteligente — el mismo endpoint que ya usaba la
  * línea inteligente (SIEMPRE responde 200; sin clave, con el proveedor caído o con
- * demora, contesta `interpreted:false`, nunca un error). Acá se usan SOLO DOS campos de
- * la respuesta (`productCandidates` y `productSearchText`) — todo lo demás (operador,
- * variante, precio, fechas, duda) se descarta a propósito, ni siquiera llega al llamador.
+ * demora, contesta `interpreted:false`, nunca un error).
  *
  * Reglas duras (degradación total, mismo criterio que tenía la línea inteligente):
- *   - Debounce de 600ms y UNA sola consulta en vuelo: si el texto cambió antes de que
- *     volviera la respuesta, esa respuesta se descarta (patrón "clave vigente", igual
- *     que `useVariantPriceSuggestion.js`).
+ *   - Debounce de 900ms (subido desde 600ms el 2026-08-10: llamar MENOS al motor,
+ *     spec D5) y UNA sola consulta en vuelo: si el texto cambió antes de que volviera
+ *     la respuesta, esa respuesta se descarta (patrón "clave vigente", igual que
+ *     `useVariantPriceSuggestion.js`).
  *   - Corte del lado del front a los 8.5s, contado desde que el PEDIDO REAL sale (no
  *     desde el debounce) — el motor ya corta a 8s (ADR-016 F0a).
  *   - Cualquier error (red caída, 4xx/5xx, timeout) se trata EXACTAMENTE igual que
@@ -23,17 +25,27 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../api";
-import { debeDispararDedupMatch, esRespuestaUtilizable } from "./productDedupMatchLogic";
+import {
+  debeDispararDedupMatch,
+  esRespuestaUtilizable,
+  extraerInterpretacionParaPrecarga,
+  esDudaDeProducto,
+} from "./productDedupMatchLogic";
 
-const DEBOUNCE_MS = 600;
+const DEBOUNCE_MS = 900;
 // Margen sobre el corte de 8s que ya aplica el motor (ver comentario de arriba).
 const TIMEOUT_MS = 8500;
 
 /**
  * @param {{reservaId:string, serviceType:string, text:string, enabled:boolean}} params
- * @returns {{productCandidates:object[], productSearchText:string}|null}
+ * @returns {{productCandidates:object[], productSearchText:string, duda:object|null, interpretacion:object|null}|null}
  *   null cuando todavía no hay nada utilizable (incluye "no disparó", "no entendió" y
  *   "falló"): el llamador lo trata como "no hay ayuda extra, seguí con la lista de siempre".
+ *   `duda` es el `Doubt` del motor YA FILTRADO a solo duda de PRODUCTO (`esDudaDeProducto`)
+ *   — las otras 3 clases de duda se descartan acá adentro, nunca llegan al llamador — la
+ *   línea con ✨ (D12) es SOLO para esta.
+ *   `interpretacion` es lo que sacó `extraerInterpretacionParaPrecarga` (operador/fechas
+ *   de la frase, o null) — la precarga-hack de D13.
  */
 export function useProductDedupMatch({ reservaId, serviceType, text, enabled }) {
   const [dedupResult, setDedupResult] = useState(null);
@@ -52,9 +64,9 @@ export function useProductDedupMatch({ reservaId, serviceType, text, enabled }) 
 
     // Fix menor (revisor funcional, 2ª vuelta): también se limpia ACÁ, al entrar a la
     // rama que SÍ va a disparar una consulta nueva — sin esto, el resultado de la
-    // consulta ANTERIOR (para un texto distinto) seguía visible durante los 600ms de
-    // debounce de la consulta nueva. Un Enter rápido en ese instante podía crear un
-    // producto usando el nombre limpio de la búsqueda vieja, no de la actual.
+    // consulta ANTERIOR (para un texto distinto) seguía visible durante los DEBOUNCE_MS
+    // de la consulta nueva. Un Enter rápido en ese instante podía crear un producto
+    // usando el nombre limpio de la búsqueda vieja, no de la actual.
     setDedupResult(null);
 
     let cancelado = false;
@@ -77,11 +89,19 @@ export function useProductDedupMatch({ reservaId, serviceType, text, enabled }) 
         );
         if (cancelado || claveConsultada !== claveVigenteRef.current) return;
         if (esRespuestaUtilizable(respuesta)) {
-          // SOLO estos dos campos viajan hacia afuera — el resto de la respuesta
-          // (operador/variante/precio/fechas/duda) se descarta acá mismo, a propósito.
+          // `duda` SOLO se guarda si es de PRODUCTO (fix C-4, review 2026-08-10): el
+          // motor puede mandar otras 3 (precio por noche, operador ambiguo, año de
+          // fechas) que tienen su propio mecanismo firmado (D12-bis, Sí/No debajo del
+          // campo) — esta obra las descarta en silencio, no le corresponde pintarlas.
+          // `interpretacion` es el resumen de operador/fechas que arma
+          // extraerInterpretacionParaPrecarga para la precarga-hack (D13). El precio
+          // de la respuesta se ignora A PROPÓSITO ahí adentro (puede venir armado, pero
+          // D13 quedó firmado "sin precio en v1") — no porque el motor lo mande null.
           setDedupResult({
             productCandidates: respuesta.productCandidates || [],
             productSearchText: respuesta.productSearchText || "",
+            duda: esDudaDeProducto(respuesta.doubt) ? respuesta.doubt : null,
+            interpretacion: extraerInterpretacionParaPrecarga(respuesta),
           });
         } else {
           setDedupResult(null);

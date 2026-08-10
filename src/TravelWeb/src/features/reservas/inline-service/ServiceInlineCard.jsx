@@ -396,6 +396,49 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     const [formPaquete, setFormPaquete] = useState(() => buildPackageFormInitial(serviceToEdit?.recordKind === "package" ? serviceToEdit : null));
     const [formAsistencia, setFormAsistencia] = useState(() => buildAssistanceFormInitial(serviceToEdit?.recordKind === "assistance" ? serviceToEdit : null));
 
+    // ─── Buscador versátil: salto de solapa (spec FIRMADA 2026-08-10, D1..D13) ───────
+    // Cuando el vendedor elige, en el buscador de CUALQUIER solapa, una fila de OTRO
+    // tipo de servicio, la ficha salta de solapa sola (D3, silencioso e inmediato) y deja
+    // la selección "pendiente" acá hasta que el formulario del tipo destino la consuma
+    // (con `useSeleccionPendienteDelTipo`, ver los 5 Inline*Form.jsx).
+    const [seleccionPendiente, setSeleccionPendiente] = useState(null);
+
+    // Limpia SOLO el campo de búsqueda de producto del form de ORIGEN (nombre/rateId/
+    // newCatalogProduct) — D10: nada más de lo que el vendedor haya tipeado en esa
+    // solapa se toca; si vuelve, todo lo demás lo encuentra intacto.
+    const limpiarBusquedaDelFormOrigen = useCallback((tabOrigen) => {
+        if (tabOrigen === "Hotel") {
+            setFormHotel((prev) => ({ ...prev, hotelName: "", rateId: null, newCatalogProduct: null }));
+        } else if (tabOrigen === "Aereo") {
+            setFormVuelo((prev) => ({ ...prev, routeName: "", rateId: null, newCatalogProduct: null }));
+        } else if (tabOrigen === "Traslado") {
+            setFormTraslado((prev) => ({ ...prev, routeName: "", rateId: null, newCatalogProduct: null }));
+        } else if (tabOrigen === "Paquete") {
+            setFormPaquete((prev) => ({ ...prev, packageName: "", rateId: null, newCatalogProduct: null }));
+        } else if (tabOrigen === "Asistencia") {
+            setFormAsistencia((prev) => ({ ...prev, planName: "", rateId: null, newCatalogProduct: null }));
+        }
+    }, []);
+
+    // Handler que reciben los 5 buscadores (`onSelectOtherType` de ProductSearchField):
+    // guarda la selección como pendiente, salta de solapa y limpia el buscador de origen.
+    // Guard: si el resultado trajera un tipo que no está entre las 5 solapas de esta
+    // ficha (no debería pasar con el contrato actual del backend), no hace nada — más
+    // vale una selección ignorada que un salto a una solapa que no existe.
+    const handleSelectOtherType = useCallback((result, interpretacion) => {
+        const tipoDestino = result?.serviceType;
+        if (!tipoDestino || !TAB_ENDPOINTS[tipoDestino]) return;
+        limpiarBusquedaDelFormOrigen(tabActiva);
+        setSeleccionPendiente({ serviceType: tipoDestino, result, interpretacion });
+        setTabActiva(tipoDestino);
+    }, [tabActiva, limpiarBusquedaDelFormOrigen]);
+
+    // Cada formulario avisa acá cuando ya aplicó su pendiente — así no queda colgada
+    // para el próximo salto de solapa.
+    const handleConsumirSeleccionPendiente = useCallback(() => {
+        setSeleccionPendiente(null);
+    }, []);
+
     // Estado de guardado
     const [guardando, setGuardando] = useState(false);
     // Error CORTO de validación de un campo (lo calcula validarForm() antes de llamar a la
@@ -904,6 +947,10 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             </div>
 
             {/* CONTENIDO DE LA PESTAÑA ACTIVA */}
+            {/* `seleccionPendiente`/`onSelectOtherType`/`onConsumirSeleccionPendiente`
+                (spec 2026-08-10, D1..D13): cableado del salto de solapa — ver el estado
+                y los handlers más arriba. Cada form usa `useSeleccionPendienteDelTipo`
+                para mirar si la pendiente le corresponde a ÉL. */}
             <div role="tabpanel">
                 {tabActiva === "Hotel" && (
                     <HotelInlineForm
@@ -912,6 +959,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         setForm={setFormHotel}
                         suppliers={suppliers}
                         isEditing={esEdicion}
+                        onSelectOtherType={handleSelectOtherType}
+                        seleccionPendiente={seleccionPendiente}
+                        onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
                     />
                 )}
                 {tabActiva === "Aereo" && (
@@ -921,6 +971,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         setForm={setFormVuelo}
                         suppliers={suppliers}
                         isEditing={esEdicion}
+                        onSelectOtherType={handleSelectOtherType}
+                        seleccionPendiente={seleccionPendiente}
+                        onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
                     />
                 )}
                 {tabActiva === "Traslado" && (
@@ -930,6 +983,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         setForm={setFormTraslado}
                         suppliers={suppliers}
                         isEditing={esEdicion}
+                        onSelectOtherType={handleSelectOtherType}
+                        seleccionPendiente={seleccionPendiente}
+                        onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
                     />
                 )}
                 {tabActiva === "Paquete" && (
@@ -939,6 +995,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         setForm={setFormPaquete}
                         suppliers={suppliers}
                         isEditing={esEdicion}
+                        onSelectOtherType={handleSelectOtherType}
+                        seleccionPendiente={seleccionPendiente}
+                        onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
                     />
                 )}
                 {tabActiva === "Asistencia" && (
@@ -948,6 +1007,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         setForm={setFormAsistencia}
                         suppliers={suppliers}
                         isEditing={esEdicion}
+                        onSelectOtherType={handleSelectOtherType}
+                        seleccionPendiente={seleccionPendiente}
+                        onConsumirSeleccionPendiente={handleConsumirSeleccionPendiente}
                     />
                 )}
             </div>

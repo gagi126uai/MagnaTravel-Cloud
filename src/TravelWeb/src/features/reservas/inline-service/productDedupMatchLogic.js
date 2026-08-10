@@ -1,15 +1,16 @@
 /**
- * Lógica pura del "matcher anti-duplicados" (decisión de Gastón, 2026-08-09): la IA de la
- * ficha de carga deja de ser una ayuda visible ("línea inteligente" con amarillos y
- * dudas — esa obra se revirtió entera) y pasa a ser INVISIBLE, con un solo objetivo:
- * evitar que se cree un producto duplicado en el tarifario (P7, "prevención de
- * repetidos como prioridad absoluta").
+ * Lógica pura del "matcher anti-duplicados" (decisión de Gastón, 2026-08-09; ampliado por
+ * la spec FIRMADA del buscador versátil, 2026-08-10, D11..D13): la IA de la ficha de carga
+ * sigue sin ser una pantalla aparte — nunca se nombra, nunca hay un cartel "pensando" — pero
+ * ya no es 100% invisible: cuando hay una duda GRANDE que cambia qué producto es, se ve como
+ * una línea gris con ✨ (nunca la palabra "IA"); y si el vendedor tira la frase completa en
+ * el buscador ("llao llao del 10/02 al 15/02 con delfos"), lo que el motor entendió de esa
+ * frase (operador, fechas) se aprovecha como precarga amarilla al elegir el producto.
  *
- * Cómo se usa (ver `useProductDedupMatch.js` y `ProductSearchField.jsx`): cuando el
- * buscador normal del catálogo NO encuentra un parecido fuerte, se consulta al motor en
- * silencio y — si contesta algo útil — sus candidatos se MEZCLAN en el mismo desplegable
- * de toda la vida. El vendedor nunca se entera de que hubo una consulta extra: no hay
- * amarillo, no hay "pensando", no hay pregunta. Si el motor no contesta nada útil, la
+ * Cómo se usa (ver `useProductDedupMatch.js` y `ProductSearchField.jsx`): cuando conviene
+ * (ver `busquedaLocalDebil`/`pareceLineaCompleta` más abajo — el gate que evita llamar al
+ * motor de más), se consulta en silencio y — si contesta algo útil — sus candidatos se
+ * MEZCLAN en el mismo desplegable de toda la vida. Si el motor no contesta nada útil, la
  * pantalla es exactamente la de siempre.
  */
 
@@ -128,4 +129,155 @@ export function resolverTextoDeCrear(productSearchText, textoOriginal) {
 export function resolverListaParaMostrar({ keyboardIndex, listaCongelada, listaFresca }) {
   if (keyboardIndex >= 0) return listaCongelada || [];
   return listaFresca || [];
+}
+
+// ─── Cuenta de opciones navegables (la ✨ NUNCA entra acá) ───────────────────────
+
+/**
+ * Cantidad de opciones que el teclado (↑↓/Enter) puede recorrer: los resultados que se
+ * ven + la opción "crear" si está visible. La línea con ✨ (spec D12, 2026-08-10) NO es
+ * un parámetro de esta cuenta — a propósito: es un aviso, no una opción, así que nunca
+ * puede sumar al total ni correr el índice del teclado.
+ *
+ * @param {{cantidadResultados:number, hayOpcionCrear:boolean}} params
+ */
+export function contarOpcionesNavegables({ cantidadResultados, hayOpcionCrear }) {
+  return (cantidadResultados || 0) + (hayOpcionCrear ? 1 : 0);
+}
+
+// ─── Gate del matcher/motor (spec D5, 2026-08-10): llamarlo MENOS ────────────────
+
+// Umbral de "parecido flojo" para la búsqueda LOCAL (catalog-search de siempre): un
+// primer resultado con score bajo significa que el nombre tipeado no se parece bien a
+// nada del tarifario — ahí SÍ vale la pena gastar una consulta al motor.
+const UMBRAL_PARECIDO_FLOJO = 0.45;
+
+/**
+ * La búsqueda local (catalog-search) vino "floja": o no encontró nada, o el primer
+ * resultado tiene un score bajo (no hay con qué confiar). En cualquiera de los dos
+ * casos, consultar al motor puede aportar algo que el buscador de nombres solo no
+ * encuentra (sinónimos, typos grandes, orden de palabras raro).
+ *
+ * @param {object[]} results — mismos `results` de catalog-search que ya mira `hayParecidoFuerte`
+ */
+export function busquedaLocalDebil(results) {
+  const lista = results || [];
+  if (lista.length === 0) return true;
+  const primerScore = lista[0]?.score;
+  return primerScore != null && primerScore < UMBRAL_PARECIDO_FLOJO;
+}
+
+// Meses en español, para detectar que el vendedor escribió una fecha en palabras
+// ("15 de febrero") y no solo con números.
+const MESES_EN_ESPANIOL = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+];
+
+// Cuántas "palabras significativas" hacen falta para que el texto cuente como frase
+// completa (no una palabra suelta tipo "sheraton"). Nota de calibración: para que
+// frases como "hotel de la cañada cordoba" (con conectores cortos "de"/"la") cuenten
+// como completas, el largo mínimo de palabra "significativa" quedó en 2 caracteres —
+// alcanza para descartar ruido de una sola letra sin descartar conectores reales.
+const CANTIDAD_MINIMA_DE_PALABRAS = 4;
+const LARGO_MINIMO_DE_PALABRA_SIGNIFICATIVA = 2;
+
+/**
+ * ¿El texto tipeado "parece una frase completa" (con fechas/operador mezclados), y no
+ * solo el nombre suelto de un producto? Si es así, vale la pena consultar al motor
+ * aunque la búsqueda local ya haya encontrado un parecido fuerte por nombre — la frase
+ * puede traer, además del producto, datos (fechas, operador) que el buscador de
+ * nombres nunca mira.
+ *
+ * Cualquiera de estas señales alcanza:
+ *   - trae números (fechas tipo 10/02, precios, años);
+ *   - menciona un mes en español;
+ *   - tiene el patrón "del ... al ..." (rango de fechas en palabras);
+ *   - tiene 4 palabras significativas o más (una frase, no un nombre suelto).
+ *
+ * @param {string} texto — lo que el vendedor tipeó en el buscador
+ */
+export function pareceLineaCompleta(texto) {
+  const limpio = (texto || "").trim();
+  if (!limpio) return false;
+
+  if (/\d/.test(limpio)) return true;
+
+  const normalizado = limpio.toLowerCase();
+  if (MESES_EN_ESPANIOL.some((mes) => normalizado.includes(mes))) return true;
+  if (/\bdel\b[\s\S]*\bal\b/.test(normalizado)) return true;
+
+  const palabrasSignificativas = limpio
+    .split(/\s+/)
+    .filter((palabra) => palabra.length >= LARGO_MINIMO_DE_PALABRA_SIGNIFICATIVA);
+  return palabrasSignificativas.length >= CANTIDAD_MINIMA_DE_PALABRAS;
+}
+
+// ─── La interpretación de la frase, para la precarga-hack (D13, 2026-08-10) ──────
+
+/**
+ * De la respuesta completa del motor (`POST /linea-inteligente`), separa SOLO lo que
+ * esta obra necesita para la precarga-hack de D13: el operador y las fechas que sacó de
+ * la frase. El precio SÍ puede venir armado en la respuesta (el motor lo calcula igual),
+ * pero acá se ignora A PROPÓSITO: decisión de Gastón del 2026-08-10 (D13 quedó firmado
+ * "sin precio en v1" — pidió textual "hotel + operador y fecha"; el precio además se
+ * cruza con el permiso de ver costos, complejidad que se dejó afuera de esta vuelta).
+ *
+ * Devuelve `null` cuando no hay NADA utilizable, para que el llamador pueda tratarlo
+ * igual que "no hay interpretación" sin mirar cada campo por separado.
+ *
+ * @param {object|null} respuestaDelMotor — la respuesta cruda de `/linea-inteligente`
+ * @returns {{supplier:{supplierPublicId:string,name:string}|null, dates:{from:string,to:string|null}|null}|null}
+ */
+export function extraerInterpretacionParaPrecarga(respuestaDelMotor) {
+  if (!respuestaDelMotor) return null;
+
+  const supplierCrudo = respuestaDelMotor.supplier || null;
+  const supplier = supplierCrudo?.supplierPublicId
+    ? { supplierPublicId: supplierCrudo.supplierPublicId, name: supplierCrudo.name || null }
+    : null;
+
+  const datesCrudo = respuestaDelMotor.dates || null;
+  const dates = datesCrudo?.from || datesCrudo?.to
+    ? { from: datesCrudo.from || null, to: datesCrudo.to || null }
+    : null;
+
+  if (!supplier && !dates) return null;
+  return { supplier, dates };
+}
+
+// ─── La ✨ es SOLO para la duda de PRODUCTO (fix C-4, review 2026-08-10) ──────────
+
+/**
+ * El motor emite 4 tipos de duda (`ServiceLineDoubtCodes` en el backend):
+ * "productoAmbiguo" (¿cuál de los dos Panamericanos es?), "precioPorNoche",
+ * "operadorAmbiguo" y "anioDeFechas". La línea con ✨ del desplegable (D11/D12) es
+ * SOLO para la primera — las otras tres son dudas sobre un DATO ya cargado y tienen su
+ * propio mecanismo firmado (D12-bis: debajo del campo, con Sí/No), que NO es esta obra.
+ * Mostrarlas acá sería inventar una segunda pantalla para algo que ya tiene la suya.
+ *
+ * @param {{field?:string}|null|undefined} duda — el `Doubt` tal cual lo manda el motor
+ */
+export function esDudaDeProducto(duda) {
+  return Boolean(duda && duda.field === "producto");
+}
+
+// ─── Cuándo se pinta la ✨ en pantalla (fix C-6, review 2026-08-10) ───────────────
+
+/**
+ * Decide si corresponde pintar la línea con ✨ en ESTE render. Además de ser una duda
+ * de producto (`esDudaDeProducto`) y de no estar buscando, tiene que NO haber sido
+ * descartada por el vendedor: D12 dice "no queda pegada después de elegir, ni reaparece
+ * al volver al campo" — si el vendedor la cerró con Esc o perdió el foco (blur), un
+ * refoco NO puede resucitarla aunque `dedupResult` siga teniendo la misma duda adentro
+ * (nada la invalida hasta que el texto cambie). `dudaDescartada` es ese flag: lo maneja
+ * `ProductSearchField.jsx` con un ref (se prende en Esc/blur, se apaga al seguir
+ * tipeando) — acá solo se USA la decisión, sin acoplarse a cómo se guarda.
+ *
+ * @param {{duda:object|null, isSearching:boolean, dudaDescartada:boolean}} params
+ */
+export function debeMostrarDuda({ duda, isSearching, dudaDescartada }) {
+  if (isSearching) return false;
+  if (dudaDescartada) return false;
+  return esDudaDeProducto(duda);
 }

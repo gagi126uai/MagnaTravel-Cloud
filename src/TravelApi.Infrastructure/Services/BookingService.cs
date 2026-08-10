@@ -327,6 +327,49 @@ public partial class BookingService : IBookingService
     }
 
     /// <summary>
+    /// Resuelve un Rate del catalogo por su Id publico Y valida que sea del MISMO tipo de servicio que
+    /// se esta cargando o editando (Hotel/Aereo/Traslado/Paquete/Asistencia). Devuelve <c>null</c> si el
+    /// request no trae RateId (nada que resolver), igual que <see cref="GetRateAsync"/>.
+    ///
+    /// <para><b>Por que hace falta este candado</b> (obra 2026-08-10): el buscador del tarifario ahora
+    /// puede devolver resultados CRUZADOS entre tipos — buscando desde la solapa Hotel puede aparecer un
+    /// Paquete. Sin este chequeo, guardar ese RateId dejaria un HotelBooking apuntando a un producto de
+    /// Paquete: el servicio queda con una referencia que no tiene sentido y la memoria de precios/ventas
+    /// del tarifario (RateSupplierSale) termina con datos mezclados de dos tipos distintos (P7).</para>
+    ///
+    /// <para>Es el UNICO lugar donde se hace esta comparacion: lo usan los 5 <c>Create*WithCatalogAsync</c>
+    /// y 4 de los 5 <c>Update*Async</c> (Hotel edita distinto porque ya necesitaba cargar el Rate entero
+    /// para el snapshot de atributos; ahi se llama a <see cref="EnsureRateMatchesServiceType"/> directo).</para>
+    /// </summary>
+    private async Task<Rate?> GetRateForServiceTypeAsync(
+        string? ratePublicIdOrLegacyId, string expectedServiceType, CancellationToken ct)
+    {
+        var rate = await GetRateAsync(ratePublicIdOrLegacyId, ct);
+        if (rate != null)
+        {
+            EnsureRateMatchesServiceType(rate, expectedServiceType);
+        }
+
+        return rate;
+    }
+
+    /// <summary>
+    /// El chequeo puro del candado de arriba: corta si el Rate no es del tipo de servicio esperado.
+    /// Separado en su propio metodo para que Hotel (que ya cargaba el Rate por otro motivo) lo pueda
+    /// reusar sin resolver el Id publico dos veces.
+    /// </summary>
+    private static void EnsureRateMatchesServiceType(Rate rate, string expectedServiceType)
+    {
+        if (!string.Equals(rate.ServiceType, expectedServiceType, StringComparison.OrdinalIgnoreCase))
+        {
+            // Mensaje en criollo (P-1): nada de "Rate", "ServiceType" ni Ids. Al vendedor solo le
+            // interesa que se equivoco de solapa buscando el producto.
+            throw new ArgumentException(
+                "El producto elegido es de otro tipo de servicio. Buscalo desde su solapa.");
+        }
+    }
+
+    /// <summary>
     /// ADR-020 F4 (candado): aplica la regla de candado a un write-path de servicio tipado.
     /// Resuelve el actor del HttpContext (null en tests) y delega en <see cref="ReservaLockGuard"/>.
     /// Si la reserva esta confirmada y no hay autorizacion viva, lanza
@@ -993,7 +1036,9 @@ public partial class BookingService : IBookingService
         // Si viene un RateId nuevo, solo se re-vincula la tarifa (RateId). OJO: NO se
         // re-aplican precios del tarifario en el update — los costos ya quedaron resueltos
         // arriba segun el permiso del caller (ResolveUpdateCostFieldsAsync).
-        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        // GetRateForServiceTypeAsync corta si el RateId elegido es de OTRO tipo de servicio
+        // (obra 2026-08-10, riesgo del buscador cross-tipo — ver el comentario en ese metodo).
+        var rateId = (await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Aereo, ct))?.Id;
         if (rateId.HasValue)
             flight.RateId = rateId.Value;
 
@@ -1233,6 +1278,13 @@ public partial class BookingService : IBookingService
         var requestedRate = isRateChanged
             ? await _db.Set<Rate>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == requestedRateId.Value, ct)
             : null;
+        // Candado 2026-08-10: el RateId elegido tiene que ser de tipo Hotel. Se chequea aca (y no con
+        // GetRateForServiceTypeAsync) porque el Rate ya se cargo arriba por otro motivo (el snapshot de
+        // atributos de mas abajo) y no tiene sentido resolverlo dos veces.
+        if (requestedRate != null)
+        {
+            EnsureRateMatchesServiceType(requestedRate, CatalogServiceTypes.Hotel);
+        }
         var supplierId = requestedRate?.SupplierId
             ?? (!string.IsNullOrWhiteSpace(req.SupplierId)
                 ? await ResolveSupplierIdAsync(req.SupplierId, ct)
@@ -1500,7 +1552,9 @@ public partial class BookingService : IBookingService
             requestNetCost: req.NetCost, requestTax: req.Tax,
             requestCommission: req.Commission, requestSalePrice: req.SalePrice, ct: ct);
 
-        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        // GetRateForServiceTypeAsync corta si el RateId elegido es de OTRO tipo de servicio
+        // (obra 2026-08-10, riesgo del buscador cross-tipo — ver el comentario en ese metodo).
+        var rateId = (await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Paquete, ct))?.Id;
         if (rateId.HasValue)
             package.RateId = rateId.Value;
 
@@ -1737,7 +1791,9 @@ public partial class BookingService : IBookingService
         if (req.OperatorPaymentDeadline.HasValue)
             transfer.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
-        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        // GetRateForServiceTypeAsync corta si el RateId elegido es de OTRO tipo de servicio
+        // (obra 2026-08-10, riesgo del buscador cross-tipo — ver el comentario en ese metodo).
+        var rateId = (await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Traslado, ct))?.Id;
         if (rateId.HasValue)
             transfer.RateId = rateId.Value;
 
@@ -2002,7 +2058,9 @@ public partial class BookingService : IBookingService
         // Si viene un RateId nuevo, solo se re-vincula la tarifa (RateId), igual que en
         // Flight/Package. OJO: NO se re-aplica el snapshot de precios en el update — los
         // costos ya quedaron resueltos arriba segun el permiso del caller.
-        var rateId = await ResolveRateIdAsync(req.RateId, ct);
+        // GetRateForServiceTypeAsync corta si el RateId elegido es de OTRO tipo de servicio
+        // (obra 2026-08-10, riesgo del buscador cross-tipo — ver el comentario en ese metodo).
+        var rateId = (await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Asistencia, ct))?.Id;
         if (rateId.HasValue)
             assistance.RateId = rateId.Value;
 

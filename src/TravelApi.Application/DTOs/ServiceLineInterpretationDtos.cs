@@ -46,12 +46,20 @@ public static class InterpretationConfidence
 }
 
 /// <summary>
-/// Los codigos de DUDA GRANDE (§4 / M-22). Los decide el MOTOR, nunca el modelo: son las tres
-/// situaciones donde el sistema no puede resolver solo algo que cambia la plata o la identidad
-/// del producto.
+/// Los codigos de DUDA GRANDE (§4 / M-22, + duda de producto 2026-08-10). Los decide el MOTOR, nunca
+/// el modelo: son las situaciones donde el sistema no puede resolver solo algo que cambia la plata o
+/// la identidad del producto.
 /// </summary>
 public static class ServiceLineDoubtCodes
 {
+    /// <summary>
+    /// El buscador encontro DOS productos con el mismo nombre (o casi) pero en lugares distintos
+    /// ("Panamericano" en Buenos Aires Y en Bariloche). Es la duda ESTRELLA (aprobada por el dueño
+    /// 2026-08-10): gana sobre las otras tres porque, sin saber cual de los dos es, cualquier otro dato
+    /// (precio, operador, fechas) podria estar respondiendo sobre el producto equivocado.
+    /// </summary>
+    public const string AmbiguousProduct = "productoAmbiguo";
+
     /// <summary>El texto trae un numero pero no dice si es por noche o por toda la estadia.</summary>
     public const string PricePerNight = "precioPorNoche";
 
@@ -65,6 +73,7 @@ public static class ServiceLineDoubtCodes
 /// <summary>Que campo de la ficha toca la duda. La pantalla lo usa para saber cual vaciar si el vendedor dice "No".</summary>
 public static class ServiceLineDoubtFields
 {
+    public const string Product = "producto";
     public const string Price = "precio";
     public const string Supplier = "operador";
     public const string Dates = "fechas";

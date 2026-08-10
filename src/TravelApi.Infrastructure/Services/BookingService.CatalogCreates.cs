@@ -107,7 +107,9 @@ public partial class BookingService
                 ? await ResolveSupplierIdAsync(req.NewCatalogProduct!.SupplierPublicId, ct)
                 : await ResolveSupplierIdAsync(req.SupplierId, ct);
 
-            var existingRate = isNewProduct ? null : await GetRateAsync(req.RateId, ct);
+            var existingRate = isNewProduct
+                ? null
+                : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Hotel, ct);
 
             var hotel = _mapper.Map<HotelBooking>(req);
             hotel.ReservaId = reservaId;
@@ -223,7 +225,9 @@ public partial class BookingService
                 ? await ResolveSupplierIdAsync(req.NewCatalogProduct!.SupplierPublicId, ct)
                 : await ResolveSupplierIdAsync(req.SupplierId, ct);
 
-            var existingRate = isNewProduct ? null : await GetRateAsync(req.RateId, ct);
+            var existingRate = isNewProduct
+                ? null
+                : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Aereo, ct);
 
             var flight = _mapper.Map<FlightSegment>(req);
             flight.ReservaId = reservaId;
@@ -312,7 +316,9 @@ public partial class BookingService
                 ? await ResolveSupplierIdAsync(req.NewCatalogProduct!.SupplierPublicId, ct)
                 : await ResolveSupplierIdAsync(req.SupplierId, ct);
 
-            var existingRate = isNewProduct ? null : await GetRateAsync(req.RateId, ct);
+            var existingRate = isNewProduct
+                ? null
+                : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Traslado, ct);
 
             var transfer = _mapper.Map<TransferBooking>(req);
             transfer.ReservaId = reservaId;
@@ -401,7 +407,9 @@ public partial class BookingService
                 ? await ResolveSupplierIdAsync(req.NewCatalogProduct!.SupplierPublicId, ct)
                 : await ResolveSupplierIdAsync(req.SupplierId, ct);
 
-            var existingRate = isNewProduct ? null : await GetRateAsync(req.RateId, ct);
+            var existingRate = isNewProduct
+                ? null
+                : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Paquete, ct);
 
             var package = _mapper.Map<PackageBooking>(req);
             package.ReservaId = reservaId;
@@ -483,7 +491,9 @@ public partial class BookingService
                 ? await ResolveSupplierIdAsync(req.NewCatalogProduct!.SupplierPublicId, ct)
                 : await ResolveSupplierIdAsync(req.SupplierId, ct);
 
-            var existingRate = isNewProduct ? null : await GetRateAsync(req.RateId, ct);
+            var existingRate = isNewProduct
+                ? null
+                : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Asistencia, ct);
 
             var assistance = _mapper.Map<AssistanceBooking>(req);
             assistance.ReservaId = reservaId;

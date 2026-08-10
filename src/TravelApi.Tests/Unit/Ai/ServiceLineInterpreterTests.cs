@@ -364,8 +364,12 @@ public class ServiceLineInterpreterTests
     {
         // Regresion del agujero que encontro la review de seguridad: la lista de nombres de habitacion
         // salia de la memoria general (M-19), que incluye HotelBooking.RoomCategory — una casilla de
-        // texto libre DENTRO de una reserva, donde termina escrito cualquier cosa. Ahora esa lista sale
-        // SOLO del tarifario.
+        // texto libre DENTRO de una reserva, donde termina escrito cualquier cosa.
+        //
+        // Desde la obra "prompt mas barato" (2026-08-10) esa lista NI SIQUIERA se arma (el modelo ya no
+        // recibe nombres de habitacion/vehiculo, ver ServiceLinePromptBuilder.MaxVariantNames = 0): el
+        // riesgo que este test cubria desaparecio por completo, no solo se filtro mejor. El test queda
+        // como candado de que nunca vuelva a colarse un dato de una reserva ajena.
         await using var db = BuildDb();
         SeedTarifario(db);
         db.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-2026-9002", Name = "Viaje" });
@@ -387,8 +391,6 @@ public class ServiceLineInterpreterTests
 
         Assert.DoesNotContain("Peralta", enviado, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("27345678", enviado, StringComparison.Ordinal);
-        // El nombre fino que SI esta cargado en el tarifario viaja normal.
-        Assert.Contains("Superior", enviado, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -796,6 +798,333 @@ public class ServiceLineInterpreterTests
     }
 
     // ============================================================
+    // Obra "prompt mas barato" (2026-08-10) — cache de respuestas + prompt recortado
+    // ============================================================
+
+    [Fact]
+    public async Task Dos_pedidos_identicos_usan_la_cache_y_llaman_al_modelo_una_sola_vez()
+    {
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        // UN solo resultado cargado a proposito: si el motor le preguntara al modelo dos veces, el
+        // segundo pedido se queda sin script y el fake devuelve degradado (ver FakeAiChatProvider) —
+        // el test fallaria por el segundo Assert, no por una excepcion rara.
+        var provider = new FakeAiChatProvider(AiChatResult.Success(ModelAnswer(producto: "Sheraton Iguazu")));
+        var cache = new ServiceLineInterpretationCache();
+        var interpreter = BuildInterpreter(db, provider, cache: cache);
+
+        var primero = await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+        // Misma frase, pero con mayusculas y espacios distintos: la clave de cache normaliza
+        // (TextNormalizer.NormalizeForMatch), asi que tiene que pegarle a la MISMA entrada.
+        var segundo = await interpreter.InterpretAsync("  " + Frase.ToUpperInvariant() + "  ", "hotel", CancellationToken.None);
+
+        Assert.Equal(1, provider.CallCount);
+        Assert.True(primero.Interpreted);
+        Assert.True(segundo.Interpreted);
+        Assert.Equal(primero.Product?.Name, segundo.Product?.Name);
+    }
+
+    [Fact]
+    public async Task Pedidos_con_clave_distinta_llaman_al_modelo_de_nuevo()
+    {
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        var provider = new FakeAiChatProvider(
+            AiChatResult.Success(ModelAnswer(producto: "Sheraton Iguazu")),
+            AiChatResult.Success(ModelAnswer(producto: "Sheraton Iguazu")));
+        var cache = new ServiceLineInterpretationCache();
+        var interpreter = BuildInterpreter(db, provider, cache: cache);
+
+        await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+        // Otra frase: es OTRA clave de cache (no una variacion cosmetica de la misma), asi que se le
+        // vuelve a preguntar al modelo.
+        await interpreter.InterpretAsync("sheraton iguazu otra vez distinto", "Hotel", CancellationToken.None);
+
+        Assert.Equal(2, provider.CallCount);
+    }
+
+    [Fact]
+    public async Task Pasado_el_ttl_la_cache_vence_y_se_vuelve_a_llamar_al_modelo()
+    {
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        var provider = new FakeAiChatProvider(
+            AiChatResult.Success(ModelAnswer(producto: "Sheraton Iguazu")),
+            AiChatResult.Success(ModelAnswer(producto: "Sheraton Iguazu")));
+        // TTL de milisegundos SOLO para este test (constructor interno, ver ServiceLineInterpretationCache):
+        // asi se prueba el vencimiento de verdad sin esperar los 10 minutos reales.
+        var cache = new ServiceLineInterpretationCache(
+            interpretedTtl: TimeSpan.FromMilliseconds(30), notInterpretedTtl: TimeSpan.FromMilliseconds(30));
+        var interpreter = BuildInterpreter(db, provider, cache: cache);
+
+        await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+        await Task.Delay(200);
+        await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        Assert.Equal(2, provider.CallCount);
+    }
+
+    [Fact]
+    public async Task El_prompt_ya_no_pide_variante_ni_precio_pero_la_duda_sigue_viajando_en_la_respuesta()
+    {
+        // El pedido al modelo se achico a producto + fechas + operador (obra 2026-08-10). La DUDA
+        // nunca fue un campo que se le pidiera al modelo — la arma el MOTOR en C# (PickSingleDoubt) a
+        // partir de lo que YA extrajo, asi que este recorte no le toca nada a esa parte.
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        // "ola" es un pedazo del nombre del operador (no el nombre entero): dispara la duda.
+        var provider = new FakeAiChatProvider(AiChatResult.Success(ModelAnswer(
+            producto: "Sheraton Iguazu", operador: "ola")));
+        var interpreter = BuildInterpreter(db, provider);
+
+        var result = await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        var enviado = string.Join("\n", provider.LastRequest!.Messages.Select(message => message.Content));
+
+        // El prompt ya NO pide estos campos (comparado con las claves JSON exactas, no con la palabra
+        // suelta: "precio" sigue apareciendo en la regla "el producto va sin el precio").
+        Assert.DoesNotContain("\"habitacion\"", enviado, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"regimen\"", enviado, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"nombreFino\"", enviado, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"cabina\"", enviado, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"vehiculo\"", enviado, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"precio\"", enviado, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"moneda\"", enviado, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"variante\"", enviado, StringComparison.Ordinal);
+
+        // Y sin embargo la duda sigue viajando en la respuesta, igual que siempre.
+        Assert.NotNull(result.Doubt);
+        Assert.Equal(ServiceLineDoubtCodes.AmbiguousSupplier, result.Doubt!.Code);
+        Assert.Equal("¿El operador es Ola Mayorista?", result.Doubt.Question);
+    }
+
+    // ============================================================
+    // C-1 (bloqueante, review 2026-08-1x) — la cache SOLO guarda lo que dijo el modelo
+    // ============================================================
+
+    [Fact]
+    public async Task Un_cache_hit_no_filtra_costos_entre_quien_ve_y_quien_no_ve()
+    {
+        // Regresion del hallazgo de la review: ANTES la cache guardaba la RESPUESTA ENTERA, con los
+        // costos ya enmascarados segun el permiso del PRIMERO que pregunto. Un vendedor sin permiso
+        // heredaba el costo real que vio un administrador (fuga F-14). Ahora la cache solo guarda la
+        // extraccion del modelo; el enmascarado se recalcula EN CADA PEDIDO con el permiso de quien
+        // pregunta, cache hit o no.
+        await using var db = BuildDb();
+        SeedTarifario(db);
+        db.RateSupplierSales.Add(new RateSupplierSale
+        {
+            Id = 1,
+            RateId = 1,
+            SupplierId = 1,
+            LastSoldAt = DateTime.UtcNow.AddDays(-1),
+            LastNetCost = 100m,
+            LastSalePrice = 160m,
+            LastCurrency = "USD",
+            LastPriceUnit = "noche_habitacion",
+            SalesCount = 1,
+        });
+        await db.SaveChangesAsync();
+
+        var cache = new ServiceLineInterpretationCache();
+        var provider = new FakeAiChatProvider(AiChatResult.Success(ModelAnswer(
+            producto: "Sheraton Iguazu", precio: 48, moneda: "USD")));
+
+        // Pregunta primero un vendedor CON permiso de ver costos: es el que "llena" la cache.
+        var interpreterConCosto = BuildInterpreter(db, provider, canSeeCost: true, cache: cache);
+        var resultConCosto = await interpreterConCosto.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        // Pregunta EXACTAMENTE lo mismo un vendedor SIN permiso: hit de cache en la extraccion del
+        // modelo, pero la respuesta se arma de nuevo con SU permiso (F-14).
+        var interpreterSinCosto = BuildInterpreter(db, provider, canSeeCost: false, cache: cache);
+        var resultSinCosto = await interpreterSinCosto.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        // El hit de cache evito la segunda llamada al modelo (eso SI se cachea).
+        Assert.Equal(1, provider.CallCount);
+
+        // El que tiene permiso ve el precio y el costo de la ultima venta.
+        Assert.NotNull(resultConCosto.Price);
+        Assert.NotNull(resultConCosto.ProductCandidates.Single().LastSale?.NetCost);
+
+        // El que NO tiene permiso no ve NINGUNO de los dos, pese al cache hit.
+        Assert.Null(resultSinCosto.Price);
+        Assert.Null(resultSinCosto.ProductCandidates.Single().LastSale?.NetCost);
+    }
+
+    [Fact]
+    public async Task Un_producto_creado_entre_dos_pedidos_identicos_aparece_en_el_segundo()
+    {
+        // Regresion del hallazgo de la review: ANTES la cache congelaba tambien los candidatos del
+        // tarifario por 10 minutos, asi que un producto recien cargado no aparecia -> se duplicaba
+        // (P7). Ahora la BUSQUEDA de catalogo se recalcula siempre, aunque la extraccion venga de cache.
+        await using var db = BuildDb();
+        // Arranca SIN nada en el tarifario todavia.
+        await db.SaveChangesAsync();
+
+        var cache = new ServiceLineInterpretationCache();
+        var provider = new FakeAiChatProvider(AiChatResult.Success(ModelAnswer(producto: "Sheraton Iguazu")));
+        var interpreter = BuildInterpreter(db, provider, cache: cache);
+
+        var primero = await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+        Assert.Empty(primero.ProductCandidates);
+
+        // Entre pedido y pedido, alguien carga el producto en el tarifario (misma reserva o no, da igual).
+        SeedTarifario(db);
+        await db.SaveChangesAsync();
+
+        var segundo = await interpreter.InterpretAsync(Frase, "Hotel", CancellationToken.None);
+
+        // La extraccion vino de cache (no se le volvio a preguntar al modelo)...
+        Assert.Equal(1, provider.CallCount);
+        // ...pero el candidato SI aparece: la busqueda al tarifario es SIEMPRE fresca.
+        Assert.Single(segundo.ProductCandidates);
+        Assert.Equal("Sheraton Iguazu", segundo.Product?.Name);
+    }
+
+    // ============================================================
+    // Duda de PRODUCTO (aprobada por el dueño, 2026-08-10) — logica pura, sin modelo
+    // ============================================================
+
+    private static Rate BuildHotelRate(int id, string name, string city)
+        => new()
+        {
+            Id = id,
+            ServiceType = "Hotel",
+            ProductName = name,
+            HotelName = name,
+            City = city,
+            Currency = "USD",
+            PriceUnit = "noche_habitacion",
+            IsActive = true,
+            SearchName = TextNormalizer.NormalizeForCatalog(name),
+        };
+
+    [Fact]
+    public async Task Dos_candidatos_con_el_mismo_nombre_en_ciudades_distintas_disparan_duda_de_producto()
+    {
+        await using var db = BuildDb();
+        db.Rates.Add(BuildHotelRate(1, "Panamericano", "Buenos Aires"));
+        db.Rates.Add(BuildHotelRate(2, "Panamericano", "Bariloche"));
+        await db.SaveChangesAsync();
+
+        var interpreter = BuildInterpreter(db, ModelAnswer(producto: "Panamericano"));
+
+        var result = await interpreter.InterpretAsync("panamericano", "Hotel", CancellationToken.None);
+
+        Assert.Equal(2, result.ProductCandidates.Count);
+        Assert.NotNull(result.Doubt);
+        Assert.Equal(ServiceLineDoubtCodes.AmbiguousProduct, result.Doubt!.Code);
+        Assert.Equal(ServiceLineDoubtFields.Product, result.Doubt.Field);
+        Assert.Contains("Panamericano", result.Doubt.Question, StringComparison.Ordinal);
+        Assert.Contains("Buenos Aires", result.Doubt.Question, StringComparison.Ordinal);
+        Assert.Contains("Bariloche", result.Doubt.Question, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Dos_filas_del_mismo_hotel_y_la_misma_ciudad_no_disparan_duda()
+    {
+        // El buscador YA las unifica en un solo candidato (dedupe por nombre+ciudad, ver RateService):
+        // sin dos candidatos distintos, la duda de producto ni se evalua.
+        await using var db = BuildDb();
+        db.Rates.Add(BuildHotelRate(1, "Panamericano", "Buenos Aires"));
+        db.Rates.Add(BuildHotelRate(2, "Panamericano", "Buenos Aires"));
+        await db.SaveChangesAsync();
+
+        var interpreter = BuildInterpreter(db, ModelAnswer(producto: "Panamericano"));
+
+        var result = await interpreter.InterpretAsync("panamericano", "Hotel", CancellationToken.None);
+
+        Assert.Single(result.ProductCandidates);
+        Assert.Null(result.Doubt);
+    }
+
+    [Fact]
+    public async Task Candidatos_con_nombres_distintos_no_disparan_duda_de_producto()
+    {
+        await using var db = BuildDb();
+        db.Rates.Add(BuildHotelRate(1, "Panamericano", "Buenos Aires"));
+        db.Rates.Add(BuildHotelRate(2, "Alvear Palace", "Buenos Aires"));
+        await db.SaveChangesAsync();
+
+        var interpreter = BuildInterpreter(db, ModelAnswer(producto: "panamericano alvear"));
+
+        var result = await interpreter.InterpretAsync(
+            "panamericano alvear ambos hoteles", "Hotel", CancellationToken.None);
+
+        // Los dos nombres son suficientemente distintos: el buscador los devuelve juntos (cada uno
+        // cubre una palabra de la busqueda) pero NO son "el mismo hotel en otro lugar".
+        Assert.Equal(2, result.ProductCandidates.Count);
+        Assert.Null(result.Doubt);
+    }
+
+    [Fact]
+    public async Task La_duda_de_producto_gana_sobre_la_duda_de_operador()
+    {
+        await using var db = BuildDb();
+        db.Suppliers.Add(BuildSupplier(1, "Ola Mayorista"));
+        db.Rates.Add(BuildHotelRate(1, "Panamericano", "Buenos Aires"));
+        db.Rates.Add(BuildHotelRate(2, "Panamericano", "Bariloche"));
+        await db.SaveChangesAsync();
+
+        // "ola" es un pedazo del nombre del operador: por si sola dispararia la duda de operador
+        // (ver "Cuando_el_operador_se_reconocio_por_un_pedazo_del_nombre_se_pregunta"). Con el
+        // producto TAMBIEN ambiguo, tiene que ganar el producto — es una sola duda a la vez.
+        var interpreter = BuildInterpreter(db, ModelAnswer(producto: "Panamericano", operador: "ola"));
+
+        var result = await interpreter.InterpretAsync("panamericano ola", "Hotel", CancellationToken.None);
+
+        Assert.NotNull(result.Supplier);
+        Assert.Equal(InterpretationConfidence.Medium, result.Supplier!.Confidence);
+        Assert.NotNull(result.Doubt);
+        Assert.Equal(ServiceLineDoubtCodes.AmbiguousProduct, result.Doubt!.Code);
+    }
+
+    [Fact]
+    public async Task Dos_candidatos_de_tipos_distintos_nombran_el_tipo_en_la_pregunta()
+    {
+        // C-3c (review 2026-08-1x): el buscador cruza tipos, asi que "Panamericano" puede aparecer
+        // como Hotel Y como Paquete. Sin nombrar el tipo, la pregunta sonaria como el mismo producto en
+        // dos ciudades — pero ni siquiera es el mismo TIPO de servicio.
+        await using var db = BuildDb();
+        db.Rates.Add(BuildHotelRate(1, "Panamericano", "Buenos Aires"));
+        db.Rates.Add(new Rate
+        {
+            Id = 2,
+            ServiceType = "Paquete",
+            ProductName = "Panamericano",
+            // Paquete no tiene City: el subtitulo del buscador sale de Destination (BuildCatalogSubtitle).
+            Destination = "Bariloche",
+            Currency = "USD",
+            PriceUnit = "pasajero",
+            IsActive = true,
+            SearchName = TextNormalizer.NormalizeForCatalog("Panamericano"),
+        });
+        await db.SaveChangesAsync();
+
+        var interpreter = BuildInterpreter(db, ModelAnswer(producto: "Panamericano"));
+
+        var result = await interpreter.InterpretAsync("panamericano", "Hotel", CancellationToken.None);
+
+        Assert.Equal(2, result.ProductCandidates.Count);
+        Assert.NotNull(result.Doubt);
+        Assert.Equal(ServiceLineDoubtCodes.AmbiguousProduct, result.Doubt!.Code);
+        Assert.Contains("Panamericano", result.Doubt.Question, StringComparison.Ordinal);
+        Assert.Contains("Buenos Aires", result.Doubt.Question, StringComparison.Ordinal);
+        Assert.Contains("Bariloche", result.Doubt.Question, StringComparison.Ordinal);
+        // El tipo del PAQUETE (la segunda alternativa, el que no es del tipo de la solapa Hotel) se
+        // nombra en criollo, minuscula, con articulo — igual que CatalogDisplayLabels.TheProduct.
+        Assert.Contains("el paquete de Bariloche", result.Doubt.Question, StringComparison.Ordinal);
+    }
+
+    // ============================================================
     // Andamiaje
     // ============================================================
 
@@ -888,16 +1217,18 @@ public class ServiceLineInterpreterTests
         string modelAnswer,
         bool aiUsable = true,
         bool canSeeCost = true,
-        int timeoutSeconds = 8)
+        int timeoutSeconds = 8,
+        ServiceLineInterpretationCache? cache = null)
         => BuildInterpreter(
-            db, new FakeAiChatProvider(AiChatResult.Success(modelAnswer)), aiUsable, canSeeCost, timeoutSeconds);
+            db, new FakeAiChatProvider(AiChatResult.Success(modelAnswer)), aiUsable, canSeeCost, timeoutSeconds, cache);
 
     private static ServiceLineInterpreter BuildInterpreter(
         AppDbContext db,
         IAiChatProvider provider,
         bool aiUsable = true,
         bool canSeeCost = true,
-        int timeoutSeconds = 8)
+        int timeoutSeconds = 8,
+        ServiceLineInterpretationCache? cache = null)
     {
         const string userId = "vendedor-test";
         var accessor = BuildHttpContextAccessor(userId);
@@ -920,6 +1251,9 @@ public class ServiceLineInterpreterTests
             rateService,
             assistant,
             new FakeAiConnectionResolver(aiUsable),
+            // Cada test arranca con una cache PROPIA (nueva) salvo que explicitamente quiera compartir
+            // una entre dos pedidos — eso es justamente lo que prueban los tests de cache mas abajo.
+            cache ?? new ServiceLineInterpretationCache(),
             new ServiceLineInterpretationOptions { TimeoutSeconds = timeoutSeconds },
             NullLogger<ServiceLineInterpreter>.Instance,
             accessor,

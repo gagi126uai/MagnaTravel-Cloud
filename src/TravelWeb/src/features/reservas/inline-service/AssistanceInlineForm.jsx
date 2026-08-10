@@ -25,9 +25,19 @@ import { ShieldCheck, ChevronDown, ChevronUp, Calendar, Users } from "lucide-rea
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
-import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
+import {
+    resolverCamposALimpiarAlCrearNuevo,
+    aplicarInterpretacionComoSugerencia,
+    resolverNombreEnCasillero,
+    resolverPatchDeVentaDelCatalogo,
+} from "./inlineServiceFormHelpers";
 import { buildLastSaleHintText } from "./lastSaleHintLogic";
 import { LastSaleHint } from "./LastSaleHint";
+import { useSeleccionPendienteDelTipo } from "./useSeleccionPendienteDelTipo";
+
+// D13 (spec 2026-08-10): campos de fecha de ESTE form, [desde, hasta] — Asistencia
+// tiene vigencia desde/hasta.
+const CAMPOS_FECHA_ASISTENCIA = ["validFrom", "validTo"];
 
 // ─── Clases CSS ───────────────────────────────────────────────────────────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -112,7 +122,17 @@ function NewAssistanceBox({ newProduct, onChange, suppliers }) {
 
 // ─── Componente principal AssistanceInlineForm ────────────────────────────────
 
-export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEditing }) {
+export function AssistanceInlineForm({
+    reservaId,
+    form,
+    setForm,
+    suppliers,
+    isEditing,
+    // Salto de solapa (spec 2026-08-10, D1..D13) — ver ServiceInlineCard.jsx.
+    onSelectOtherType,
+    seleccionPendiente,
+    onConsumirSeleccionPendiente,
+}) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // Días calculados automáticamente desde vigencia desde/hasta
@@ -139,6 +159,10 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
         unitNetCost: false,
         unitSalePrice: false,
         currency: false,
+        // validFrom/validTo (D13, spec 2026-08-10): amarillo cuando salen de la
+        // interpretación de la frase completa tipeada en el buscador.
+        validFrom: false,
+        validTo: false,
     });
 
     // Renglón gris "Último precio" (spec 2026-08-06, §3.2, P9=A) — ver HotelInlineForm.
@@ -164,33 +188,57 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
           ]
         : suppliers;
 
-    const handleSelectExisting = (catalogResult) => {
+    const handleSelectExisting = (catalogResult, interpretacion, { esSeleccionPendiente } = {}) => {
         const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
-        const supplierPublicId = sale.supplierPublicId || "";
-        const unitSalePrice = sale.salePrice != null ? String(sale.salePrice) : "";
-        const unitNetCost = canSeeCost && sale.netCost != null ? String(sale.netCost) : form.unitNetCost;
-        const currency = sale.currency || "ARS";
+
+        // Fix C-5(b) (review 2026-08-10): en el camino de selección PENDIENTE (salto de
+        // solapa) no se pisa lo que el vendedor ya había tipeado a mano en esta solapa.
+        const { patch: patchVenta, sugeridos: sugeridosVenta } = resolverPatchDeVentaDelCatalogo({
+            sale,
+            canSeeCost,
+            formActual: form,
+            esSeleccionPendiente,
+            campoVenta: "unitSalePrice",
+            campoCosto: "unitNetCost",
+        });
+
+        // Fix C-5(a) (review 2026-08-10): tampoco pisa lo tipeado a mano la precarga de
+        // la frase (D13).
+        const { patch: patchFrase, sugeridos: sugeridosFrase } = aplicarInterpretacionComoSugerencia(
+            interpretacion,
+            { yaHaySupplierDeLaVenta: Boolean(sale.supplierPublicId), camposFecha: CAMPOS_FECHA_ASISTENCIA, formActual: form }
+        );
 
         setForm((prev) => ({
             ...prev,
-            planName: catalogResult.name || prev.planName,
+            // D13: nombre limpio del producto elegido, nunca la frase entera.
+            planName: resolverNombreEnCasillero(catalogResult, prev.planName),
             rateId: catalogResult.ratePublicId,
             newCatalogProduct: null,
-            supplierId: supplierPublicId,
-            supplierName: sale.supplierName || null,
-            unitSalePrice,
-            unitNetCost: canSeeCost ? unitNetCost : prev.unitNetCost,
-            currency,
+            ...patchVenta,
+            ...patchFrase,
         }));
 
         setCamposSugeridos({
-            supplierId: Boolean(supplierPublicId),
-            unitNetCost: canSeeCost && sale.netCost != null,
-            unitSalePrice: Boolean(sale.salePrice),
-            currency: Boolean(sale.currency),
+            supplierId: false,
+            unitNetCost: false,
+            unitSalePrice: false,
+            currency: false,
+            validFrom: false,
+            validTo: false,
+            ...sugeridosVenta,
+            ...sugeridosFrase,
         });
         setUltimoPrecioSugerido(catalogResult);
     };
+
+    // Salto de solapa (D3/D7, spec 2026-08-10): pendiente elegida desde OTRA solapa.
+    useSeleccionPendienteDelTipo({
+        seleccionPendiente,
+        serviceType: "Asistencia",
+        onSeleccionar: handleSelectExisting,
+        onConsumida: onConsumirSeleccionPendiente,
+    });
 
     const handleCreateNew = (searchText) => {
         // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
@@ -208,7 +256,7 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
             ...camposLimpios,
         }));
-        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+        setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, validFrom: false, validTo: false });
         setUltimoPrecioSugerido(null);
     };
 
@@ -220,7 +268,7 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
             newCatalogProduct: texto ? prev.newCatalogProduct : null,
         }));
         if (!texto) {
-            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
+            setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false, validFrom: false, validTo: false });
         }
         setUltimoPrecioSugerido(null);
     };
@@ -235,8 +283,10 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                 value={form.planName || ""}
                 onChange={handleSearchChange}
                 onSelectExisting={handleSelectExisting}
+                onSelectOtherType={onSelectOtherType}
                 onCreateNew={handleCreateNew}
                 disabled={isEditing}
+                esEdicion={isEditing}
                 label="Plan / cobertura"
                 placeholder="Ej: AC 150, Assist Card, Fullcard..."
             />
@@ -288,9 +338,14 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                     <input
                         id="assistance-desde"
                         type="date"
-                        className={INPUT_NORMAL}
+                        // Amarillo (D13, spec 2026-08-10) cuando la fecha salió de la frase
+                        // tipeada en el buscador.
+                        className={camposSugeridos.validFrom ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.validFrom || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, validFrom: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, validFrom: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, validFrom: false }));
+                        }}
                         data-testid="assistance-desde"
                         aria-label="Vigencia desde"
                     />
@@ -303,10 +358,13 @@ export function AssistanceInlineForm({ reservaId, form, setForm, suppliers, isEd
                     <input
                         id="assistance-hasta"
                         type="date"
-                        className={INPUT_NORMAL}
+                        className={camposSugeridos.validTo ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.validTo || ""}
                         min={form.validFrom || undefined}
-                        onChange={(event) => setForm((prev) => ({ ...prev, validTo: event.target.value }))}
+                        onChange={(event) => {
+                            setForm((prev) => ({ ...prev, validTo: event.target.value }));
+                            setCamposSugeridos((prev) => ({ ...prev, validTo: false }));
+                        }}
                         data-testid="assistance-hasta"
                         aria-label="Vigencia hasta"
                     />
