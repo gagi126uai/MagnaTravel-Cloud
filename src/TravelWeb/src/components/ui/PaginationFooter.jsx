@@ -49,7 +49,7 @@ export function PaginationFooter({
 
         <div className="flex items-center justify-end gap-2">
           <span className="text-sm text-slate-500 dark:text-slate-400">
-            Pagina {safePage} de {Math.max(Number(totalPages || 0), 1)}
+            Página {safePage} de {Math.max(Number(totalPages || 0), 1)}
           </span>
           <button
             type="button"

@@ -623,7 +623,7 @@ export function ReservaHeader({
                                             : "El cliente aceptó el presupuesto — arranca la gestión con los operadores"
                                     }
                                 >
-                                    El cliente acepto
+                                    El cliente aceptó
                                 </button>
                                 {/* P8 (Tanda 3 del rediseño, 2026-08-03, maqueta sección 6 — "el callejón sin
                                     salida, resuelto"): antes este texto explicaba el motivo pero no llevaba a
