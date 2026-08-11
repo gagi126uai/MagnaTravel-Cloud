@@ -157,6 +157,33 @@ public static class EstadoReserva
     };
 
     /// <summary>
+    /// Decision del dueño (2026-08-11): estados que cuentan para el numero "VENDIDO" del listado de
+    /// Reservas. Vendido = lo que la agencia REALMENTE vendio: la reserva ya esta confirmada, en viaje
+    /// o finalizada.
+    ///
+    /// <para><b>Por que es una lista propia y no un alias</b> (leccion ADR-033 "no mezclar sets de
+    /// estados"): se parece a las otras tres pero no es ninguna.
+    /// <see cref="SaleFirmStatuses"/> trae <see cref="InManagement"/> y no trae
+    /// <see cref="Traveling"/>; aca es al reves. <see cref="CreditExposureStatuses"/> tambien trae
+    /// InManagement. Reusar cualquiera de esas listas haria que el KPI mienta.</para>
+    ///
+    /// <para><b>Por que queda afuera "En gestion"</b>: en gestion el cliente ya acepto pero los
+    /// servicios todavia se estan gestionando con los operadores — todavia puede caerse. Y por
+    /// supuesto quedan afuera Cotizacion y Presupuesto (bug reportado en la prueba con navegador del
+    /// 2026-08-11: un presupuesto sin confirmar inflaba el "vendido"), Perdida, Archivada y las
+    /// anuladas (<see cref="VoidedStatuses"/>: una venta sin efecto no es una venta).</para>
+    ///
+    /// <para><b>Por que SI entra Finalizada</b>: el viaje ya paso, pero se vendio igual. Sacarla
+    /// haria que el vendido se desinfle solo con el tiempo.</para>
+    /// </summary>
+    public static readonly string[] SoldKpiStatuses =
+    {
+        Confirmed,
+        Traveling,
+        Closed
+    };
+
+    /// <summary>
     /// ADR-032 (2026-06-15): FUENTE UNICA de la regla "se puede cobrar / tocar plata en este estado".
     /// Antes esta pregunta estaba escrita de tres formas distintas (PaymentService solo bloqueaba Budget,
     /// el endpoint anidado no bloqueaba nada, y la cobranza/FC4 usaban la lista canonica). Ahora los tres

@@ -25,12 +25,14 @@ import { Package, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
+import { MoneyInput } from "../../../components/ui/MoneyInput";
 import {
     resolverCamposALimpiarAlCrearNuevo,
     aplicarInterpretacionComoSugerencia,
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
     resolverOperadorSugeridoParaProductoNuevo,
+    sanitizarCantidadPositiva,
 } from "./inlineServiceFormHelpers";
 import { buildLastSaleHintText } from "./lastSaleHintLogic";
 import { LastSaleHint } from "./LastSaleHint";
@@ -403,11 +405,11 @@ export function PackageInlineForm({
                     </label>
                     <input
                         id="package-pasajeros"
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
                         className={INPUT_NORMAL}
                         value={form.passengers || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: event.target.value }))}
+                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: sanitizarCantidadPositiva(event.target.value) }))}
                         placeholder="1"
                         data-testid="package-pasajeros"
                         aria-label="Cantidad de pasajeros"
@@ -441,19 +443,15 @@ export function PackageInlineForm({
                 {canSeeCost && (
                     <div>
                         <label className={LABEL_BASE} htmlFor="package-costo-persona">Costo por persona</label>
-                        <input
+                        <MoneyInput
                             id="package-costo-persona"
-                            type="number"
-                            min={0}
-                            step="0.01"
                             className={camposSugeridos.unitNetCost ? INPUT_SUGERIDO : INPUT_NORMAL}
                             value={form.unitNetCost || ""}
-                            onChange={(event) => {
-                                setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
+                            onChange={(nuevoValor) => {
+                                setForm((prev) => ({ ...prev, unitNetCost: nuevoValor }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
                                 setCamposTocadosAMano((prev) => ({ ...prev, unitNetCost: true }));
                             }}
-                            placeholder="0,00"
                             data-testid="package-costo-persona"
                             aria-label="Costo por persona"
                         />
@@ -462,19 +460,15 @@ export function PackageInlineForm({
                 )}
                 <div>
                     <label className={LABEL_BASE} htmlFor="package-venta-persona">Venta por persona</label>
-                    <input
+                    <MoneyInput
                         id="package-venta-persona"
-                        type="number"
-                        min={0}
-                        step="0.01"
                         className={camposSugeridos.unitSalePrice ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.unitSalePrice || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, unitSalePrice: event.target.value }));
+                        onChange={(nuevoValor) => {
+                            setForm((prev) => ({ ...prev, unitSalePrice: nuevoValor }));
                             setCamposSugeridos((prev) => ({ ...prev, unitSalePrice: false }));
                             setCamposTocadosAMano((prev) => ({ ...prev, unitSalePrice: true }));
                         }}
-                        placeholder="0,00"
                         required
                         data-testid="package-venta-persona"
                         aria-label="Precio de venta por persona"

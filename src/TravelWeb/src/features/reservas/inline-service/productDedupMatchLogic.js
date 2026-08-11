@@ -145,14 +145,26 @@ function palabrasSignificativasDeCrear(texto) {
  *
  * Fix H-3 (2026-08-11): el motor a veces "limpia de más" — con "hotel e3" devolvía solo
  * "hotel", perdiendo la parte que en realidad SÍ distingue al producto (no era ni fecha
- * ni operador, el motor simplemente no la reconoció). Antes de confiar en el texto
- * limpio, se exige UNA de estas dos condiciones:
+ * ni operador, el motor simplemente no la reconoció).
+ *
+ * Fix Bug 3 (QA 11/08/2026): el umbral del 60% de H-3 era demasiado permisivo — con un
+ * nombre corto de 3 palabras ("Hotel Robot QA"), perder UNA sola ("QA", el motor la
+ * confundió con un código) sigue conservando el 66%, así que pasaba el umbral y el alta
+ * nueva se ofrecía como "Hotel Robot", comiéndose una palabra real del nombre. La regla
+ * ahora es más estricta: el texto limpio del motor SOLO se usa cuando hay algo legítimo
+ * para limpiar — una fecha/número mezclado en la frase que el motor separó del nombre
+ * ("iberostar waves del 10/02 al 15/02" → "iberostar waves"). Si el vendedor tipeó un
+ * nombre de producto SUELTO, sin fecha ni número (como "Hotel Robot QA"), no hay nada
+ * legítimo que limpiar — cualquier achique del motor ahí es una apuesta sobre el nombre,
+ * no una limpieza real, así que se usa SIEMPRE el texto tal cual lo tipeó el vendedor.
+ *
+ * Con fecha/número en el crudo, se sigue exigiendo UNA de estas dos condiciones (igual
+ * que H-3, sin cambios) para confiar en el limpio:
  *   1. conserva al menos el 60% de las "palabras significativas" del texto crudo
  *      (`palabrasSignificativasDeCrear` — sin conectores, sin números sueltos); o
- *   2. es una FRASE (2 o más palabras) y el texto crudo traía fechas/números — ahí el
- *      motor típicamente separó bien "esto es el producto" de "esto es fecha/precio",
- *      aunque la proporción de palabras no llegue al 60% (una frase larga con pocas
- *      palabras de producto real es normal, ej. "iberostar waves del 10/02 al 15/02").
+ *   2. es una FRASE (2 o más palabras) — ahí el motor típicamente separó bien "esto es
+ *      el producto" de "esto es fecha/precio", aunque la proporción no llegue al 60%
+ *      (una frase larga con pocas palabras de producto real es normal).
  * Si ninguna se cumple, se usa el texto crudo tal cual — la opción segura, nunca peor
  * que lo que el vendedor mismo escribió.
  *
@@ -165,6 +177,24 @@ export function resolverTextoDeCrear(productSearchText, textoOriginal) {
   if (!limpio) return crudo;
 
   const significativasCrudo = palabrasSignificativasDeCrear(crudo);
+
+  // Sin fecha ni importe DE VERDAD en lo que tipeó el vendedor no hay nada legítimo
+  // que el motor pueda estar "limpiando" (no hay fecha/precio/operador que separar) —
+  // cualquier texto más corto que el motor devuelva acá es una apuesta sobre el
+  // nombre, el mismo riesgo que ya cazó H-3. Preferimos siempre lo que el vendedor
+  // tipeó — pero solo cuando el crudo efectivamente TIENE palabras que proteger (si no
+  // trajo ninguna palabra significativa, no hay nada que perder y seguimos de largo a
+  // la lógica de siempre, más abajo).
+  //
+  // Fix I3 (review): /\d/.test(crudo) — CUALQUIER dígito — era demasiado ancho: un
+  // nombre de producto real como "Hotel 5 Estrellas" tiene un dígito (la "5") sin ser
+  // ni fecha ni precio, y caía en la rama permisiva de abajo, volviendo el mismo bug
+  // del lavado que este fix arregla (perdía "Robot QA" del final). Ahora se exige que
+  // el dígito tenga PINTA de fecha ("10/02", "05-03") o de importe (3+ dígitos
+  // seguidos, como "48000" o "91000") — un solo dígito suelto ("5 Estrellas") no cuenta.
+  const pareceFechaOImporte = /\d{1,2}[/-]\d{1,2}/.test(crudo) || /\d{3,}/.test(crudo);
+  if (!pareceFechaOImporte && significativasCrudo.length > 0) return crudo;
+
   const significativasLimpio = palabrasSignificativasDeCrear(limpio);
   // Sin palabras significativas en el crudo (raro: solo números/conectores) no hay nada
   // que "perder" — el límite del 60% no aplica, se confía en el limpio.
@@ -174,8 +204,7 @@ export function resolverTextoDeCrear(productSearchText, textoOriginal) {
       : significativasLimpio.length / significativasCrudo.length >= 0.6;
 
   const cantidadPalabrasDelLimpio = limpio.split(/\s+/).filter(Boolean).length;
-  const crudoTraeFechaONumero = /\d/.test(crudo);
-  const esCasoFrase = cantidadPalabrasDelLimpio >= 2 && crudoTraeFechaONumero;
+  const esCasoFrase = cantidadPalabrasDelLimpio >= 2;
 
   return conserva60Porciento || esCasoFrase ? limpio : crudo;
 }
@@ -287,6 +316,11 @@ export function pareceLineaCompleta(texto) {
 
 // ─── La interpretación de la frase, para la precarga-hack (D13, 2026-08-10) ──────
 
+// Mismo código que ServiceLineDoubtCodes.DatesYear en el backend (ver
+// ServiceLineInterpretationDtos.cs) — no hay un import compartido entre API y
+// frontend, así que el string literal se repite ahí y acá.
+const DOUBT_CODE_ANIO_DE_FECHAS = "anioDeFechas";
+
 /**
  * De la respuesta completa del motor (`POST /linea-inteligente`), separa SOLO lo que
  * esta obra necesita para la precarga-hack de D13: el operador y las fechas que sacó de
@@ -298,8 +332,18 @@ export function pareceLineaCompleta(texto) {
  * Devuelve `null` cuando no hay NADA utilizable, para que el llamador pueda tratarlo
  * igual que "no hay interpretación" sin mirar cada campo por separado.
  *
+ * `anioAmbiguo` (fix dominio, review 11/08/2026): el backend (`ServiceLineDoubtCodes.
+ * DatesYear = "anioDeFechas"`, ver ServiceLineInterpretationDtos.cs) manda esta duda
+ * puntual CUANDO el motor tuvo que elegir un año porque la frase no lo traía escrito
+ * ("del 05/03 al 12/03" sin decir 2026 o 2027). Si esa duda NO está presente mientras
+ * SÍ hay fechas, es porque el motor está seguro del año (vino explícito en la frase, ej.
+ * "del 05/03/2027 al 12/03/2027") — una carga retroactiva LEGÍTIMA (ej. cargar en agosto
+ * un viaje de marzo que YA VIAJÓ) no se puede "corregir" al futuro sin pisar la intención
+ * real del vendedor. `clampearFechasSugeridasAlFuturo` (inlineServiceFormHelpers.js) usa
+ * esta bandera para clampear SOLO cuando el año es realmente ambiguo.
+ *
  * @param {object|null} respuestaDelMotor — la respuesta cruda de `/linea-inteligente`
- * @returns {{supplier:{supplierPublicId:string,name:string}|null, dates:{from:string,to:string|null}|null}|null}
+ * @returns {{supplier:{supplierPublicId:string,name:string}|null, dates:{from:string,to:string|null}|null, anioAmbiguo:boolean}|null}
  */
 export function extraerInterpretacionParaPrecarga(respuestaDelMotor) {
   if (!respuestaDelMotor) return null;
@@ -315,7 +359,9 @@ export function extraerInterpretacionParaPrecarga(respuestaDelMotor) {
     : null;
 
   if (!supplier && !dates) return null;
-  return { supplier, dates };
+
+  const anioAmbiguo = respuestaDelMotor.doubt?.code === DOUBT_CODE_ANIO_DE_FECHAS;
+  return { supplier, dates, anioAmbiguo };
 }
 
 // ─── Duda de producto LOCAL, sin motor (H-1, 2026-08-11) ─────────────────────────

@@ -716,15 +716,21 @@ export function ReservaHeader({
                             Finalizada (y desde Confirmada/En viaje) sin reabrir ni destrabar nada.
                             El botón "Facturar" se habilita por capability del backend. */}
 
-                        {/* Archivar: botón gris cuando no puede, y AHORA (P9, 2026-08-03) con el
-                            motivo del motor escrito debajo — mismo patrón que ya usa el listado
-                            (ReservaTable/ReservaMobileList, P-9/P-13⭐): nunca escondido en un
-                            tooltip. Antes de esta tanda el motivo existía pero no se mostraba;
-                            ese cambio queda documentado en adr035FeedbackVisual.test.mjs.
+                        {/* Archivar: botón gris cuando no puede.
+                            Motivo bloqueado (decisión del dueño, 11/08/2026 — REEMPLAZA la de
+                            2026-08-03, enmienda P-9 el mismo día tras el review B1): va en el
+                            `title`, no escrito debajo — mismo criterio que el listado de
+                            escritorio (ReservaTable). Ese cambio de criterio queda documentado
+                            en adr035FeedbackVisual.test.mjs.
+                            Fix B1 (review): el `title` vive en el <span> que ENVUELVE al botón,
+                            no en el <button> — un elemento deshabilitado no siempre dispara el
+                            hover que necesita el navegador para mostrar el tooltip (mismo
+                            problema que el Button de shadcn en ReservaTable.jsx); el envoltorio
+                            sí lo recibe siempre.
                             Guía UX 2026-06-22: ocultar en Traveling — archivar es para estados
                             terminales (Finalizada/Perdida/Anulada), no para algo en curso. */}
                         {!esTraveling && (
-                            <div className="flex flex-col items-start gap-1">
+                            <span title={archiveBlockReason || undefined}>
                                 <button
                                     onClick={canArchive ? onArchive : undefined}
                                     disabled={!canArchive}
@@ -734,12 +740,7 @@ export function ReservaHeader({
                                     <span aria-hidden="true">🗄</span>
                                     Archivar
                                 </button>
-                                {archiveBlockReason && (
-                                    <span className="max-w-[220px] text-[11px] leading-tight text-slate-400 dark:text-slate-500">
-                                        {archiveBlockReason}
-                                    </span>
-                                )}
-                            </div>
+                            </span>
                         )}
 
                         {/* Menú "⋯" de acciones de excepción (P9): agrupa "Volver atrás",

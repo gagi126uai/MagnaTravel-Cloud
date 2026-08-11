@@ -966,6 +966,9 @@ public partial class BookingService : IBookingService
     {
         ValidateFlightTimes(req.DepartureTime, req.ArrivalTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // QA con navegador en PROD (2026-08-11): las cantidades entraban en negativo. Mismo minimo
+        // que en el alta — editar no puede ser la puerta de atras para dejar un -1 guardado.
+        ServiceQuantityRules.EnsurePassengersAtLeastOneWhenInformed(req.PassengerCount);
         var flight = await _flightRepo.GetByIdAsync(id, ct);
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
@@ -1243,6 +1246,10 @@ public partial class BookingService : IBookingService
     {
         ValidateHotelStay(req.CheckIn, req.CheckOut);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // QA con navegador en PROD (2026-08-11): asi entro el hotel con Habitaciones = -1. Mismo
+        // minimo que en el alta — editar no puede ser la puerta de atras.
+        ServiceQuantityRules.EnsureRoomsAtLeastOne(req.Rooms);
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Adults, req.Children);
         var hotel = await _hotelRepo.GetByIdAsync(id, ct);
         if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
@@ -1523,6 +1530,8 @@ public partial class BookingService : IBookingService
     {
         ValidatePackageDates(req.StartDate, req.EndDate);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // QA con navegador en PROD (2026-08-11): mismo minimo que en el alta, tambien al editar.
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Adults, req.Children);
         var package = await _packageRepo.GetByIdAsync(id, ct);
         if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
@@ -1751,6 +1760,8 @@ public partial class BookingService : IBookingService
     {
         ValidateTransferTimes(req.PickupDateTime, req.ReturnDateTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // QA con navegador en PROD (2026-08-11): mismo minimo que en el alta, tambien al editar.
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Passengers);
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
         if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
@@ -2025,6 +2036,8 @@ public partial class BookingService : IBookingService
     {
         ValidateAssistanceValidity(req.ValidFrom, req.ValidTo);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // QA con navegador en PROD (2026-08-11): mismo minimo que en el alta, tambien al editar.
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Adults, req.Children);
         var assistance = await _assistanceRepo.GetByIdAsync(id, ct);
         if (assistance == null || assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada");
 

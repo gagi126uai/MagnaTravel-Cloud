@@ -263,19 +263,25 @@ test("C2 motivo: botón Anular reserva apagado → capability tiene reason pero 
     assert.equal(seRenderizoReason, false, "el texto del motivo NO se muestra bajo el botón");
 });
 
-// P9 (Tanda 2 del rediseño de Reservas, 2026-08-03, regla firmada — maqueta sección 5,
-// nota "Archivar apagado"): CAMBIA la decisión de 2026-06-19 para este botón puntual.
-// Ahora el motivo SÍ se escribe debajo, siempre a la vista — mismo patrón que ya usa
-// el listado (ReservaTable/ReservaMobileList, regla P-9/P-13⭐). "Antes había que apoyar
-// el mouse para enterarte, y eso está prohibido" (texto de la maqueta firmada).
-test("P9 (Tanda 2, 2026-08-03): botón Archivar deshabilitado → el motivo SÍ se muestra debajo", () => {
+// P9 — historial de este botón puntual (tres cambios de criterio del dueño):
+//   2026-06-19: sin motivo a la vista.
+//   2026-08-03: motivo escrito debajo, siempre visible ("antes había que apoyar el
+//     mouse para enterarte, y eso está prohibido" — texto de la maqueta de esa fecha).
+//   2026-08-11 (QA, VIGENTE — reemplaza la de 2026-08-03, enmendada el mismo día tras
+//     el review B1): vuelve a tooltip (title nativo) al pasar el mouse — la ficha es
+//     de escritorio (sin equivalente táctil propio hoy), así que sigue el mismo
+//     criterio que ReservaTable.jsx (listado de escritorio).
+//   Fix B1 (review, mismo día): el `title` NO va en el <button> — un botón
+//     deshabilitado no siempre dispara hover (mismo problema detectado en el Button de
+//     shadcn de ReservaTable.jsx) — va en un <span> que ENVUELVE al botón.
+test("P9 (11/08/2026, VIGENTE): botón Archivar deshabilitado → el motivo va en el title del ENVOLTORIO (tooltip), no escrito debajo ni en el botón mismo", () => {
     const archiveBlockReason = "Solo se pueden archivar reservas en viaje o finalizadas.";
     const canArchive = !archiveBlockReason;
     assert.equal(canArchive, false, "el botón va disabled");
-    // ReservaHeader.jsx (Botonera de acciones → botón Archivar) renderiza un <span>
-    // con archiveBlockReason cada vez que la capability lo trae — igual que ReservaTable.
-    const seRenderizaReason = Boolean(archiveBlockReason);
-    assert.equal(seRenderizaReason, true, "el motivo del motor se muestra debajo del botón Archivar");
+    // ReservaHeader.jsx (Botonera de acciones → botón Archivar) pasa archiveBlockReason
+    // como `title` de un <span> que envuelve al <button> — igual patrón que ReservaTable.jsx.
+    const tituloDelEnvoltorio = canArchive ? undefined : archiveBlockReason;
+    assert.equal(tituloDelEnvoltorio, archiveBlockReason, "el motivo del motor queda disponible en el title (tooltip) del envoltorio del botón Archivar");
 });
 
 // ─── ADR-036: chip "Debe — no viaja" (ReservaStatusChips) ────────────────────

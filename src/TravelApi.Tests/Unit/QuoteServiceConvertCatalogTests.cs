@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -191,6 +192,55 @@ public class QuoteServiceConvertCatalogTests
         Assert.True(reservaId > 0);
         // El helper de upsert se saltea silenciosamente supplier <= 0 (evita FK rota / filas basura).
         Assert.Equal(0, await context.RateSupplierSales.CountAsync());
+    }
+
+    /// <summary>
+    /// Cantidades minimas (QA con navegador en PROD, 2026-08-11): la conversion arma el hotel a mano,
+    /// sin pasar por BookingService, asi que es un escritor mas que puede dejar un servicio con
+    /// cantidades imposibles. Un item de presupuesto con cantidad 0 frena la conversion ENTERA con el
+    /// mismo texto que ve el vendedor en la ficha de carga.
+    /// </summary>
+    [Fact]
+    public async Task ConvertToFile_HotelItemWithZeroQuantity_IsRejected_WithTheUserText()
+    {
+        await using var context = CreateContext();
+        var quoteId = await SeedQuoteWithItemAsync(context, "Hotel", rateId: null, itemSupplierId: null, quantity: 0);
+        var service = CreateService(context, flagOn: false);
+
+        var error = await Assert.ThrowsAsync<ServiceQuantityValidationException>(() =>
+            service.ConvertToFileAsync(quoteId, CancellationToken.None));
+
+        Assert.Equal("Las habitaciones tienen que ser al menos 1.", error.Message);
+        // Y la cotizacion NO queda marcada como convertida: el vinculo se escribe recien despues de
+        // recorrer todos los items, asi que el rechazo la deja intacta para corregirla y reintentar.
+        var quote = await context.Quotes.SingleAsync(q => q.Id == quoteId);
+        Assert.Null(quote.ConvertedReservaId);
+    }
+
+    /// <summary>
+    /// Gemelo del anterior por el otro lado del guard: las habitaciones estan bien, pero los
+    /// pasajeros del presupuesto son imposibles.
+    ///
+    /// <para>Se usa MENORES en negativo y no "0 adultos" a proposito: la conversion tiene un
+    /// fallback historico (<c>quote.Adults &gt; 0 ? quote.Adults : 2</c>) que tapa el cero de
+    /// adultos, asi que ese camino no llega nunca al guard. Los menores, en cambio, se copian
+    /// tal cual.</para>
+    /// </summary>
+    [Fact]
+    public async Task ConvertToFile_QuoteWithImpossiblePassengers_IsRejected_WithTheUserText()
+    {
+        await using var context = CreateContext();
+        var quoteId = await SeedQuoteWithItemAsync(context, "Hotel", rateId: null, itemSupplierId: null);
+        var quote = await context.Quotes.FindAsync(quoteId);
+        quote!.Adults = 2;
+        quote.Children = -5;
+        await context.SaveChangesAsync();
+        var service = CreateService(context, flagOn: false);
+
+        var error = await Assert.ThrowsAsync<ServiceQuantityValidationException>(() =>
+            service.ConvertToFileAsync(quoteId, CancellationToken.None));
+
+        Assert.Equal("Los pasajeros tienen que ser al menos 1.", error.Message);
     }
 
     [Fact]

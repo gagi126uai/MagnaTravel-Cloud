@@ -2200,6 +2200,9 @@ DÓNDE viven esos textos, nunca QUÉ dicen.
   la confirmación de siempre (frase + contraseña + motivo ≥10), fiel a lo firmado el 2026-07-29.
   Solo puede haber **una ficha abierta a la vez**. El motivo por el que un botón está apagado va
   **siempre a la vista, debajo, nombrando la acción** (P-9/P-10, nunca tooltip).
+  **Enmienda 2026-08-11 (firmada):** en los LISTADOS, donde el mismo motivo se repetía en cada fila,
+  pasa a globito al apoyar el mouse (sobre un envoltorio del botón apagado); en celular sigue escrito.
+  Ver la enmienda de P-9 en la constitución.
 
 - **(2026-07-30, P12=A) Se ELIMINA el bloque "Qué hace cada acción" (las tres viñetas).** Si un botón
   necesita un párrafo al lado para entenderse, el problema es el botón (P-15). Cada acción se explica

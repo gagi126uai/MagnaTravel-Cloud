@@ -2730,22 +2730,33 @@ public class ReservaService : IReservaService
         };
 
         // Tanda 1 rediseño listado (2026-08-04, plan A1): "activas" via patron NEGATIVO (todo lo que
-        // NO esta cerrado/cancelado/archivado/perdido) — MISMO alcance que antes usaban los escalares
-        // TotalSaleActive/TotalPendingBalance que este resumen reemplaza. ADR-040 (review B4): el
-        // "por cobrar" de la cartera ACTIVA excluye Closed a proposito (esa deuda vive en la cuenta
-        // corriente del cliente / AR canonico, no en este contador — ver FinancePositionService).
+        // NO esta cerrado/cancelado/archivado/perdido) — MISMO alcance que antes usaba el escalar
+        // TotalPendingBalance que este resumen reemplaza. ADR-040 (review B4): el "por cobrar" de la
+        // cartera ACTIVA excluye Closed a proposito (esa deuda vive en la cuenta corriente del
+        // cliente / AR canonico, no en este contador — ver FinancePositionService).
+        // OJO (2026-08-11): esto es SOLO el alcance del "por cobrar". El "vendido" dejo de usarlo
+        // (ver vendidoReservasQuery unas lineas mas abajo).
         var activeReservasQuery = summaryBaseQuery.Where(r =>
             r.Status != EstadoReserva.Closed &&
             r.Status != EstadoReserva.Cancelled &&
             r.Status != EstadoReserva.Lost &&
             r.Status != "Archived");
 
+        // Decision del dueño (2026-08-11, hallazgo de la prueba con navegador en PROD): "VENDIDO" es
+        // SOLO venta firme — confirmada, en viaje o finalizada (ver EstadoReserva.SoldKpiStatuses).
+        // Antes usaba el mismo alcance "activas" de aca arriba, asi que un PRESUPUESTO sin confirmar
+        // (o una reserva todavia en gestion) inflaba el numero: la pantalla decia que la agencia
+        // habia vendido plata que nadie compro. Es un alcance DISTINTO del de "por cobrar" (que sigue
+        // mirando la cartera activa), por eso son dos consultas separadas y no una sola.
+        var vendidoReservasQuery = summaryBaseQuery.Where(r =>
+            EstadoReserva.SoldKpiStatuses.Contains(r.Status));
+
         // P-3⭐: nunca se suman pesos y dolares. En vez de un escalar unico, se agrupa por moneda
         // leyendo la tabla hija materializada ReservaMoneyByCurrency (misma fuente que ya usa el
         // desglose PorMoneda de cada fila — no se inventa un segundo camino de calculo).
         summary.VendidoPorMoneda = await (
             from money in _context.ReservaMoneyByCurrency.AsNoTracking()
-            join reservaActiva in activeReservasQuery on money.ReservaId equals reservaActiva.Id
+            join reservaVendida in vendidoReservasQuery on money.ReservaId equals reservaVendida.Id
             group money.TotalSale by money.Currency into porMoneda
             select new ReservaSummaryAmountByCurrencyDto { Currency = porMoneda.Key, Amount = porMoneda.Sum() }
         ).ToListAsync(cancellationToken);
@@ -2769,17 +2780,27 @@ public class ReservaService : IReservaService
         // ARS"). Anti-join (GroupJoin + "sin filas") en vez de un Any() correlacionado: mismo estilo de
         // join explicito que el resto del archivo, se banca igual en Postgres y en el proveedor InMemory
         // de los tests.
+        //
+        // Son DOS anti-joins y no uno solo porque desde el 2026-08-11 el vendido y el por-cobrar ya
+        // no miran el mismo conjunto de reservas (ver el comentario del vendido, mas arriba).
+        var reservasVendidasSinFilasHijas = await (
+            from reservaVendida in vendidoReservasQuery
+            join money in _context.ReservaMoneyByCurrency.AsNoTracking() on reservaVendida.Id equals money.ReservaId into filasDeEstaReserva
+            where !filasDeEstaReserva.Any()
+            select reservaVendida.TotalSale)
+            .ToListAsync(cancellationToken);
+
         var reservasActivasSinFilasHijas = await (
             from reservaActiva in activeReservasQuery
             join money in _context.ReservaMoneyByCurrency.AsNoTracking() on reservaActiva.Id equals money.ReservaId into filasDeEstaReserva
             where !filasDeEstaReserva.Any()
-            select new { reservaActiva.TotalSale, reservaActiva.Balance })
+            select reservaActiva.Balance)
             .ToListAsync(cancellationToken);
 
-        var vendidoLegacyEnArs = reservasActivasSinFilasHijas.Sum(r => r.TotalSale);
+        var vendidoLegacyEnArs = reservasVendidasSinFilasHijas.Sum();
         var porCobrarLegacyEnArs = reservasActivasSinFilasHijas
-            .Where(r => r.Balance > 0)
-            .Sum(r => r.Balance);
+            .Where(balance => balance > 0)
+            .Sum();
 
         AgregarMontoALaLineaDeMoneda(summary.VendidoPorMoneda, Monedas.ARS, vendidoLegacyEnArs);
         AgregarMontoALaLineaDeMoneda(summary.PorCobrarPorMoneda, Monedas.ARS, porCobrarLegacyEnArs);

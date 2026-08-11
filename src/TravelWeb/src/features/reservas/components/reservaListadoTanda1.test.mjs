@@ -7,9 +7,12 @@
  * sin importar el archivo .jsx.
  *
  * Cubre dos reglas de la constitución que están firmadas para el listado:
- *   - P-9/P-13⭐: el botón "Archivar" bloqueado muestra el motivo del motor escrito
- *     debajo, tal cual — a diferencia de la ficha (ReservaHeader.jsx), donde ese
- *     mismo motivo NO se muestra (decisión de 2026-06-19, sigue vigente ahí).
+ *   - P-9 (enmendada 11/08/2026 tras el review B1/B2 de esta misma tanda): el botón
+ *     "Archivar" bloqueado muestra el motivo del motor, pero el CÓMO depende del
+ *     dispositivo — en escritorio (ReservaTable.jsx) va de globito (title nativo) al
+ *     pasar el mouse, sobre un <span> que ENVUELVE al botón (los botones deshabilitados
+ *     no disparan hover); en táctil (ReservaMobileList.jsx) no hay hover, así que ahí
+ *     sigue ESCRITO a la vista, debajo del botón, como texto plano.
  *   - El candado 🔒 del chip de estado solo aparece en "Confirmada", y solo cuando
  *     el llamador lo pide explícitamente (mostrarCandado=true) — el listado de
  *     Reservas es el único que lo prende hoy.
@@ -41,15 +44,42 @@ test("candado: mostrarCandado=false (default) -> nunca se muestra, aunque el sta
   assert.equal(resolverCandado("Confirmed", undefined), false);
 });
 
-// ─── Replica de ReservaTable.jsx/ReservaMobileList.jsx: motivo de Archivar ─────
+// ─── Replica de ReservaTable.jsx (escritorio): motivo de Archivar en TOOLTIP ───
 
 /**
- * A diferencia de la ficha (ReservaHeader.jsx, feedback 2026-06-19: "sin texto de
- * motivo debajo"), el listado SÍ muestra el motivo tal cual lo manda el motor
- * (P-9/P-13⭐: un botón vedado tiene que decir por qué, a la vista, nunca solo en
- * un tooltip). Esta función replica esa decisión de render.
+ * Escritorio (ReservaTable.jsx): el motivo del motor va en el `title` de un <span>
+ * que ENVUELVE al botón (fix B1, review 11/08/2026) — un <button disabled> nunca
+ * dispara hover, así que un title puesto directo en él no se vería jamás.
  */
-function resolverBloqueArchivar(archiveBlockReason) {
+function resolverBloqueArchivarEscritorio(archiveBlockReason) {
+  const canArchive = !archiveBlockReason;
+  return {
+    botonHabilitado: canArchive,
+    // undefined (no null) cuando SÍ se puede archivar: el envoltorio no debe mostrar
+    // un tooltip vacío al pasar el mouse.
+    tituloDelEnvoltorio: canArchive ? undefined : archiveBlockReason,
+  };
+}
+
+test("escritorio: sin bloqueo -> botón habilitado, sin tooltip", () => {
+  const resultado = resolverBloqueArchivarEscritorio(null);
+  assert.deepEqual(resultado, { botonHabilitado: true, tituloDelEnvoltorio: undefined });
+});
+
+test("escritorio: bloqueado -> botón deshabilitado Y el motivo del motor queda en el title del envoltorio (tooltip)", () => {
+  const motivo = "No se puede archivar una reserva con saldo pendiente.";
+  const resultado = resolverBloqueArchivarEscritorio(motivo);
+  assert.deepEqual(resultado, { botonHabilitado: false, tituloDelEnvoltorio: motivo });
+});
+
+// ─── Replica de ReservaMobileList.jsx (táctil): motivo de Archivar ESCRITO ─────
+
+/**
+ * Táctil (ReservaMobileList.jsx, fix B2, review 11/08/2026): sin hover, un tooltip
+ * nunca se vería — el motivo sigue escrito a la vista, debajo del botón, como texto
+ * plano (mismo criterio que regía desde 2026-08-04, sin cambios acá).
+ */
+function resolverBloqueArchivarTactil(archiveBlockReason) {
   const canArchive = !archiveBlockReason;
   return {
     botonHabilitado: canArchive,
@@ -58,13 +88,13 @@ function resolverBloqueArchivar(archiveBlockReason) {
   };
 }
 
-test("motivo de archivar: sin bloqueo -> botón habilitado, sin texto debajo", () => {
-  const resultado = resolverBloqueArchivar(null);
+test("táctil: sin bloqueo -> botón habilitado, sin texto debajo", () => {
+  const resultado = resolverBloqueArchivarTactil(null);
   assert.deepEqual(resultado, { botonHabilitado: true, muestraMotivoDebajo: false, textoMotivo: null });
 });
 
-test("motivo de archivar: bloqueado -> botón deshabilitado Y el motivo del motor se muestra tal cual (P-13⭐)", () => {
+test("táctil: bloqueado -> botón deshabilitado Y el motivo del motor se muestra escrito debajo (sin hover disponible)", () => {
   const motivo = "No se puede archivar una reserva con saldo pendiente.";
-  const resultado = resolverBloqueArchivar(motivo);
+  const resultado = resolverBloqueArchivarTactil(motivo);
   assert.deepEqual(resultado, { botonHabilitado: false, muestraMotivoDebajo: true, textoMotivo: motivo });
 });

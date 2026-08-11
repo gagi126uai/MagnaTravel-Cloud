@@ -80,6 +80,76 @@ export function formatCurrency(amount, currency, { withSymbol = true } = {}) {
 }
 
 /**
+ * Convierte lo que un vendedor TIPEÓ en un campo de plata (formato argentino: coma
+ * decimal, punto de miles) a un número de JS. Es el contrario de formatCurrency():
+ * formatCurrency() muestra, esta función entiende lo que el usuario escribió.
+ *
+ * Bug real en PROD (QA 11/08/2026): los campos de plata de la ficha de carga eran
+ * &lt;input type="number"&gt; nativos — el navegador usa SIEMPRE punto decimal en
+ * ese tipo de input, así que tipear "250,50" (como se factura, como se habla en la
+ * agencia) dejaba el campo directamente VACÍO. Ver también MoneyInput.jsx (components/ui),
+ * que usa esta función para reemplazar esos inputs nativos por un campo de texto que
+ * entiende los dos formatos.
+ *
+ * Acepta:
+ *   "250,50"    → 250.5   (coma decimal, el uso normal en Argentina)
+ *   "1.250,50"  → 1250.5  (punto de miles + coma decimal)
+ *   "250.50"    → 250.5   (con punto — por si el vendedor pega un valor copiado)
+ *   "1.250"     → 1250    (un solo punto con 3 dígitos después: lo tomamos como miles)
+ *   "250"       → 250
+ *   ""          → null
+ *   "abc"       → null
+ *
+ * Devuelve `null` (nunca NaN) cuando el texto no tiene ningún número interpretable,
+ * para que quien la llama pueda distinguir fácil "vacío/inválido" de "cero" (=== null).
+ *
+ * @param {string|null|undefined} texto — lo que hay tipeado en el campo
+ * @returns {number|null}
+ */
+export function parseArgentineMoneyInput(texto) {
+    if (texto === null || texto === undefined) return null;
+    const limpio = String(texto).trim();
+    if (limpio === "") return null;
+
+    const tieneComa = limpio.includes(",");
+    const tienePunto = limpio.includes(".");
+
+    let normalizado;
+    if (tieneComa && tienePunto) {
+        // Aparecen los dos separadores: el que aparece MÁS TARDE en el texto es el
+        // decimal (entiende tanto "1.250,50" como, si alguien tipeó al revés,
+        // "1,250.50"). El otro separador es de miles y se descarta.
+        const ultimaComa = limpio.lastIndexOf(",");
+        const ultimoPunto = limpio.lastIndexOf(".");
+        normalizado = ultimaComa > ultimoPunto
+            ? limpio.replace(/\./g, "").replace(",", ".")
+            : limpio.replace(/,/g, "");
+    } else if (tieneComa) {
+        // Solo coma: es el decimal (formato es-AR de siempre). Si el vendedor tipeó
+        // más de una por error, nos quedamos con la ÚLTIMA como separador decimal.
+        const partes = limpio.split(",");
+        const decimales = partes.pop();
+        normalizado = partes.join("") + "." + decimales;
+    } else if (tienePunto) {
+        // Solo punto: ambiguo entre miles ("1.250" = mil doscientos cincuenta) y
+        // decimal ("250.50" = doscientos cincuenta con cincuenta centavos). Mismo
+        // criterio que usaría un cajero: si después del ÚLTIMO punto quedan
+        // exactamente 3 dígitos, es separador de miles; si quedan 1 o 2, es un
+        // decimal (alguien tipeando con punto en vez de coma).
+        const partes = limpio.split(".");
+        const ultimaParte = partes[partes.length - 1];
+        normalizado = partes.length > 1 && ultimaParte.length === 3
+            ? limpio.replace(/\./g, "")
+            : limpio;
+    } else {
+        normalizado = limpio;
+    }
+
+    const numero = Number(normalizado);
+    return Number.isNaN(numero) ? null : numero;
+}
+
+/**
  * Devuelve el día calendario "de hoy" en Argentina (America/Argentina/Buenos_Aires), como
  * string "YYYY-MM-DD" — el mismo formato que espera el value de un &lt;input type="date"&gt;.
  *

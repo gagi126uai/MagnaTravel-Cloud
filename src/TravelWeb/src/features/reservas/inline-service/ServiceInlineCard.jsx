@@ -661,6 +661,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             const noches = calcularNoches(formHotel.checkIn, formHotel.checkOut);
             if (noches <= 0) return "La fecha de salida debe ser posterior a la de entrada.";
             if (!formHotel.unitSalePrice || Number(formHotel.unitSalePrice) <= 0) return "Ingresá el precio de venta por noche.";
+            // Bug 2 (QA 11/08/2026): el campo dejaba tipear "-1" y el guardado pasaba
+            // igual (silenciosamente se guardaba como 1 — ver buildPayload más abajo).
+            // Acá lo frenamos con un mensaje claro ANTES de llegar a guardar nada.
+            if (formHotel.rooms !== "" && Number(formHotel.rooms) < 1) return "Las habitaciones tienen que ser al menos 1.";
+            if (formHotel.passengers !== "" && Number(formHotel.passengers) < 1) return "Los pasajeros tienen que ser al menos 1.";
             // RoomType y MealPlan son obligatorios en el backend (non-nullable). Los selects
             // tienen defaults así que esto solo puede pasar si el estado se cargó mal externamente.
             if (!formHotel.mealPlan) return "Seleccioná el régimen del hotel.";
@@ -677,6 +682,8 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             if (!formVuelo.routeName?.trim()) return "Escribí la ruta o aerolínea.";
             if (!formVuelo.departureDate) return "Elegí la fecha de ida.";
             if (!formVuelo.salePrice || Number(formVuelo.salePrice) <= 0) return "Ingresá el precio de venta.";
+            // Bug 2 (QA 11/08/2026): mismo agujero que Hotel, acá con pasajeros.
+            if (formVuelo.passengers !== "" && Number(formVuelo.passengers) < 1) return "Los pasajeros tienen que ser al menos 1.";
             if (!formVuelo.newCatalogProduct && !formVuelo.supplierId) return "Elegí el operador o consolidador.";
             if (formVuelo.newCatalogProduct) {
                 if (!formVuelo.newCatalogProduct.name?.trim()) return "Ingresá el nombre de la ruta nueva.";
@@ -688,6 +695,8 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             if (!formTraslado.routeName?.trim()) return "Escribí el trayecto del traslado.";
             if (!formTraslado.pickupDate) return "Elegí la fecha del traslado.";
             if (!formTraslado.salePrice || Number(formTraslado.salePrice) <= 0) return "Ingresá el precio de venta.";
+            // Bug 2 (QA 11/08/2026): mismo agujero que Hotel, acá con pasajeros.
+            if (formTraslado.passengers !== "" && Number(formTraslado.passengers) < 1) return "Los pasajeros tienen que ser al menos 1.";
             if (!formTraslado.newCatalogProduct && !formTraslado.supplierId) return "Elegí el operador.";
             if (formTraslado.newCatalogProduct) {
                 if (!formTraslado.newCatalogProduct.name?.trim()) return "Ingresá el nombre del trayecto nuevo.";
@@ -704,6 +713,8 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 return "La fecha de fin no puede ser anterior a la salida.";
             }
             if (!formPaquete.unitSalePrice || Number(formPaquete.unitSalePrice) <= 0) return "Ingresá el precio de venta por persona.";
+            // Bug 2 (QA 11/08/2026): mismo agujero que Hotel, acá con pasajeros.
+            if (formPaquete.passengers !== "" && Number(formPaquete.passengers) < 1) return "Los pasajeros tienen que ser al menos 1.";
             if (!formPaquete.newCatalogProduct && !formPaquete.supplierId) return "Elegí el operador.";
             if (formPaquete.newCatalogProduct) {
                 if (!formPaquete.newCatalogProduct.name?.trim()) return "Ingresá el nombre del paquete nuevo.";
@@ -716,6 +727,8 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             if (!formAsistencia.validFrom) return "Elegí la fecha de inicio de vigencia.";
             if (!formAsistencia.validTo) return "Elegí la fecha de fin de vigencia.";
             if (!formAsistencia.unitSalePrice || Number(formAsistencia.unitSalePrice) <= 0) return "Ingresá el precio de venta por persona/día.";
+            // Bug 2 (QA 11/08/2026): mismo agujero que Hotel, acá con pasajeros.
+            if (formAsistencia.passengers !== "" && Number(formAsistencia.passengers) < 1) return "Los pasajeros tienen que ser al menos 1.";
             if (!formAsistencia.newCatalogProduct && !formAsistencia.supplierId) return "Elegí el proveedor.";
             if (formAsistencia.newCatalogProduct) {
                 if (!formAsistencia.newCatalogProduct.name?.trim()) return "Ingresá el nombre del plan nuevo.";
@@ -743,7 +756,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 checkOut: formHotel.checkOut,
                 nights: noches,
                 rooms: habitaciones,
-                adults: Number(formHotel.passengers) || 1,
+                // Bug 2 (QA 11/08/2026): Math.max(...,1) en vez de "|| 1" — con "|| 1" un
+                // valor negativo ("-1") es TRUTHY en JS, así que se colaba tal cual al
+                // backend. validarForm() ya frena esto en pantalla; este clamp es la red
+                // final, mismo criterio que ya usa `habitaciones` (línea de arriba).
+                adults: Math.max(Number(formHotel.passengers) || 1, 1),
                 children: 0,
                 supplierId: formHotel.supplierId || null,
                 netCost: canSeeCost ? netCostTotal : 0,
@@ -780,7 +797,10 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 // Hora de pared sin conversión UTC (véase ServiceFormModal línea ~2286)
                 departureTime: formVuelo.departureDate ? `${formVuelo.departureDate}T00:00:00` : null,
                 arrivalTime: formVuelo.returnDate ? `${formVuelo.returnDate}T00:00:00` : null,
-                passengerCount: formVuelo.passengers ? Number(formVuelo.passengers) : null,
+                // Bug 2 (QA 11/08/2026): Math.max(...,1) — sin esto, un "-1" tipeado a mano
+                // (o pegado con el mouse) viajaba tal cual al backend. validarForm() ya lo
+                // frena en pantalla; esto es la red final, antes de armar el payload.
+                passengerCount: formVuelo.passengers ? Math.max(Number(formVuelo.passengers), 1) : null,
                 supplierId: formVuelo.supplierId || null,
                 netCost: canSeeCost ? redondearDinero(Number(formVuelo.netCost) || 0) : 0,
                 salePrice: redondearDinero(Number(formVuelo.salePrice) || 0),
@@ -821,7 +841,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 pickupDateTime: formTraslado.pickupDate
                     ? `${formTraslado.pickupDate}T${formTraslado.pickupTime || "00:00"}:00`
                     : null,
-                passengers: formTraslado.passengers ? Number(formTraslado.passengers) : null,
+                // Bug 2 (QA 11/08/2026): mismo clamp que Aéreo — Math.max(...,1), nunca un
+                // negativo tipeado/pegado a mano.
+                passengers: formTraslado.passengers ? Math.max(Number(formTraslado.passengers), 1) : null,
                 supplierId: formTraslado.supplierId || null,
                 netCost: canSeeCost ? redondearDinero(Number(formTraslado.netCost) || 0) : 0,
                 salePrice: redondearDinero(Number(formTraslado.salePrice) || 0),
@@ -908,7 +930,10 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 // (BookingService), que acepta tanto con Z como sin Z — pero unificamos el contrato.
                 validFrom: formAsistencia.validFrom ? `${formAsistencia.validFrom}T00:00:00` : null,
                 validTo: formAsistencia.validTo ? `${formAsistencia.validTo}T00:00:00` : null,
-                adults: formAsistencia.passengers ? Number(formAsistencia.passengers) : 1,
+                // Bug 2 (QA 11/08/2026): Math.max(...,1) — mismo clamp que ya usa
+                // calcularTotalesAsistencia() para el total de venta/costo (arriba), así
+                // `adults` nunca queda desincronizado con la cuenta que el vendedor ve.
+                adults: Math.max(Number(formAsistencia.passengers) || 1, 1),
                 children: 0,
                 supplierId: formAsistencia.supplierId || null,
                 netCost: canSeeCost ? (totales.costoTotal ?? 0) : 0,

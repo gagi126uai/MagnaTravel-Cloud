@@ -417,6 +417,15 @@ public class QuoteService : IQuoteService
                     Currency = rate?.Currency,
                     CreatedAt = DateTime.UtcNow
                 };
+                // Cantidades minimas (QA PROD 2026-08-11): esta conversion arma el hotel A MANO, sin
+                // pasar por BookingService, asi que necesita su propia llamada al mismo guard. Las
+                // habitaciones salen de la cantidad del item del presupuesto (dato cargado a mano en
+                // el cotizador, que hoy no tiene tope), y los pasajeros de la cabecera del
+                // presupuesto: si cualquiera de los dos viene en 0 o negativo, la conversion se frena
+                // ENTERA en vez de dejar una reserva nueva con un servicio roto adentro.
+                ServiceQuantityRules.EnsureRoomsAtLeastOne(hotel.Rooms);
+                ServiceQuantityRules.EnsurePassengersAtLeastOne(hotel.Adults, hotel.Children);
+
                 _db.Set<HotelBooking>().Add(hotel);
                 specializedCreated = true;
                 if (item.RateId.HasValue)
@@ -520,6 +529,10 @@ public class QuoteService : IQuoteService
                     Children = quote.Children,
                     CreatedAt = DateTime.UtcNow
                 };
+                // Mismo guard de cantidades que el hotel de arriba: el paquete tambien se arma a mano
+                // aca y toma los pasajeros de la cabecera del presupuesto.
+                ServiceQuantityRules.EnsurePassengersAtLeastOne(package.Adults, package.Children);
+
                 _db.Set<PackageBooking>().Add(package);
                 specializedCreated = true;
                 if (item.RateId.HasValue)

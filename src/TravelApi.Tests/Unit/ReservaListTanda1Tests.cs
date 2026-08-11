@@ -107,9 +107,11 @@ public class ReservaListTanda1Tests
     public async Task Summary_SeparatesArsAndUsd_NeverMixesCurrencies()
     {
         using var context = CreateContext();
-        // Reserva 1 vende en ARS, Reserva 2 vende en USD, ambas activas (InManagement).
-        context.Reservas.Add(new Reserva { Id = 1, Name = "R1", NumeroReserva = "R-1", Status = EstadoReserva.InManagement, TotalSale = 1000m });
-        context.Reservas.Add(new Reserva { Id = 2, Name = "R2", NumeroReserva = "R-2", Status = EstadoReserva.InManagement, TotalSale = 500m });
+        // Reserva 1 vende en ARS, Reserva 2 vende en USD. Las dos CONFIRMADAS: asi cuentan a la vez
+        // en el "vendido" (venta firme, decision del dueño 2026-08-11) y en el "por cobrar" (cartera
+        // activa) — el foco de este test es que las monedas no se mezclen, no el alcance de estados.
+        context.Reservas.Add(new Reserva { Id = 1, Name = "R1", NumeroReserva = "R-1", Status = EstadoReserva.Confirmed, TotalSale = 1000m });
+        context.Reservas.Add(new Reserva { Id = 2, Name = "R2", NumeroReserva = "R-2", Status = EstadoReserva.Confirmed, TotalSale = 500m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", TotalSale = 1000m, ConfirmedSale = 1000m, Balance = 300m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 2, Currency = "USD", TotalSale = 500m, ConfirmedSale = 500m, Balance = 200m });
         await context.SaveChangesAsync();
@@ -128,11 +130,11 @@ public class ReservaListTanda1Tests
     }
 
     [Fact]
-    public async Task Summary_ExcludesClosedCancelledLostArchived_FromVendidoYPorCobrar()
+    public async Task Summary_PorCobrar_ExcludesClosed_ButVendidoIncludesIt()
     {
         using var context = CreateContext();
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Activa", NumeroReserva = "R-1", Status = EstadoReserva.InManagement, TotalSale = 1000m });
-        context.Reservas.Add(new Reserva { Id = 2, Name = "Cerrada", NumeroReserva = "R-2", Status = EstadoReserva.Closed, TotalSale = 1000m });
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Confirmada", NumeroReserva = "R-1", Status = EstadoReserva.Confirmed, TotalSale = 1000m });
+        context.Reservas.Add(new Reserva { Id = 2, Name = "Finalizada", NumeroReserva = "R-2", Status = EstadoReserva.Closed, TotalSale = 1000m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", TotalSale = 1000m, Balance = 100m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", TotalSale = 1000m, Balance = 100m });
         await context.SaveChangesAsync();
@@ -141,20 +143,59 @@ public class ReservaListTanda1Tests
         var page = await service.GetReservasAsync(new ReservaListQuery(), CancellationToken.None);
         var summary = page.Summary;
 
-        // Solo la Id=1 (activa) aporta: la Cerrada queda afuera del patron negativo de "activas".
+        // VENDIDO (decision del dueño 2026-08-11): las dos vendieron, la Finalizada tambien —
+        // el viaje ya paso pero la venta existio. 1000 + 1000.
         var vendidoArs = Assert.Single(summary.VendidoPorMoneda);
-        Assert.Equal(1000m, vendidoArs.Amount);
+        Assert.Equal(2000m, vendidoArs.Amount);
+
+        // POR COBRAR: sigue siendo cartera ACTIVA, y ahi la Finalizada no entra (esa deuda vive en la
+        // cuenta corriente del cliente). Solo los 100 de la Confirmada.
+        var porCobrarArs = Assert.Single(summary.PorCobrarPorMoneda);
+        Assert.Equal(100m, porCobrarArs.Amount);
+    }
+
+    [Fact]
+    public async Task Summary_Vendido_IgnoresBudgetsAndInManagement()
+    {
+        // Bug encontrado en la prueba con navegador contra PROD (2026-08-11): un PRESUPUESTO sin
+        // confirmar sumaba al "vendido" del listado — la pantalla decia que se habia vendido plata
+        // que nadie compro todavia. Decision del dueño: vendido = Confirmada, En viaje o Finalizada.
+        using var context = CreateContext();
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Presupuesto", NumeroReserva = "R-1", Status = EstadoReserva.Budget, TotalSale = 900m });
+        context.Reservas.Add(new Reserva { Id = 2, Name = "Cotizacion", NumeroReserva = "R-2", Status = EstadoReserva.Quotation, TotalSale = 800m });
+        context.Reservas.Add(new Reserva { Id = 3, Name = "En gestion", NumeroReserva = "R-3", Status = EstadoReserva.InManagement, TotalSale = 700m });
+        context.Reservas.Add(new Reserva { Id = 4, Name = "Anulada", NumeroReserva = "R-4", Status = EstadoReserva.Cancelled, TotalSale = 600m });
+        context.Reservas.Add(new Reserva { Id = 5, Name = "Perdida", NumeroReserva = "R-5", Status = EstadoReserva.Lost, TotalSale = 500m });
+        context.Reservas.Add(new Reserva { Id = 6, Name = "Confirmada", NumeroReserva = "R-6", Status = EstadoReserva.Confirmed, TotalSale = 400m });
+        context.Reservas.Add(new Reserva { Id = 7, Name = "En viaje", NumeroReserva = "R-7", Status = EstadoReserva.Traveling, TotalSale = 300m });
+        // Cada una con su fila de plata por moneda (el camino normal del resumen).
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", TotalSale = 900m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", TotalSale = 800m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 3, Currency = "ARS", TotalSale = 700m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 4, Currency = "ARS", TotalSale = 600m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 5, Currency = "ARS", TotalSale = 500m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 6, Currency = "ARS", TotalSale = 400m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 7, Currency = "ARS", TotalSale = 300m });
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+        var page = await service.GetReservasAsync(new ReservaListQuery(), CancellationToken.None);
+
+        // Solo la Confirmada (400) y la En viaje (300).
+        var vendidoArs = Assert.Single(page.Summary.VendidoPorMoneda);
+        Assert.Equal(700m, vendidoArs.Amount);
     }
 
     [Fact]
     public async Task Summary_LegacyReservaWithoutMoneyRows_FallsBackToScalarInArs_WithoutDoubleCounting()
     {
         using var context = CreateContext();
-        // Reserva 1: legacy, activa, SIN ninguna fila en ReservaMoneyByCurrency (nunca paso por el
+        // Reserva 1: legacy, SIN ninguna fila en ReservaMoneyByCurrency (nunca paso por el
         // persister) — debe entrar por el fallback de escalar asumiendo ARS.
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Legacy sin filas", NumeroReserva = "R-1", Status = EstadoReserva.InManagement, TotalSale = 800m, Balance = 300m });
-        // Reserva 2: activa, CON su fila ARS — debe entrar por el camino normal (ReservaMoneyByCurrency).
-        context.Reservas.Add(new Reserva { Id = 2, Name = "Con fila ARS", NumeroReserva = "R-2", Status = EstadoReserva.InManagement, TotalSale = 1000m, Balance = 100m });
+        // Confirmadas las dos: asi entran a la vez al vendido (venta firme) y al por cobrar (activas).
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Legacy sin filas", NumeroReserva = "R-1", Status = EstadoReserva.Confirmed, TotalSale = 800m, Balance = 300m });
+        // Reserva 2: CON su fila ARS — debe entrar por el camino normal (ReservaMoneyByCurrency).
+        context.Reservas.Add(new Reserva { Id = 2, Name = "Con fila ARS", NumeroReserva = "R-2", Status = EstadoReserva.Confirmed, TotalSale = 1000m, Balance = 100m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", TotalSale = 1000m, Balance = 100m });
         await context.SaveChangesAsync();
 
@@ -174,16 +215,19 @@ public class ReservaListTanda1Tests
     }
 
     [Fact]
-    public async Task Summary_WithNoActiveReservas_ReturnsEmptyLists_NotAZeroLine()
+    public async Task Summary_WithNothingSoldAndNothingToCollect_ReturnsEmptyLists_NotAZeroLine()
     {
         using var context = CreateContext();
-        context.Reservas.Add(new Reserva { Id = 1, Name = "Cerrada", NumeroReserva = "R-1", Status = EstadoReserva.Closed, TotalSale = 1000m });
+        // Un presupuesto sin confirmar y sin saldo: no es venta (no va al vendido) y no debe nada
+        // (no va al por cobrar). Antes este test usaba una Cerrada, pero desde el 2026-08-11 una
+        // Finalizada SI cuenta como vendida.
+        context.Reservas.Add(new Reserva { Id = 1, Name = "Presupuesto", NumeroReserva = "R-1", Status = EstadoReserva.Budget, TotalSale = 1000m });
         await context.SaveChangesAsync();
 
         var service = CreateService(context);
         var page = await service.GetReservasAsync(new ReservaListQuery(), CancellationToken.None);
 
-        // "Monedas con 0 no viajan": sin reservas activas, las listas vienen VACIAS (no una linea en $0).
+        // "Monedas con 0 no viajan": sin nada vendido ni por cobrar, las listas vienen VACIAS.
         Assert.Empty(page.Summary.VendidoPorMoneda);
         Assert.Empty(page.Summary.PorCobrarPorMoneda);
     }
@@ -398,13 +442,13 @@ public class ReservaListTanda1Tests
     public async Task GlobalSearch_True_AlsoMakesVendidoPorMoneda_IgnorePeriod()
     {
         using var context = CreateContext();
-        // Creada hace 2 años (fuera de "este mes"), pero activa y con venta.
+        // Creada hace 2 años (fuera de "este mes"), confirmada y con venta.
         context.Reservas.Add(new Reserva
         {
             Id = 1,
             Name = "Viaje viejo a Bariloche",
             NumeroReserva = "R-1",
-            Status = EstadoReserva.InManagement,
+            Status = EstadoReserva.Confirmed,
             TotalSale = 1000m,
             CreatedAt = DateTime.UtcNow.AddYears(-2)
         });

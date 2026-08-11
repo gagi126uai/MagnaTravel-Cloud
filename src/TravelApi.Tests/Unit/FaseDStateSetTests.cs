@@ -231,16 +231,18 @@ public class FaseDStateSetTests
     }
 
     // =====================================================================
-    // (b) Sold y ToSettle SI cuentan en revenue/AR (patron NEGATIVO)
+    // (b) Que estados cuentan en el resumen del listado.
     //     Fijamos la decision de negocio para que no se rompa por accidente.
     // =====================================================================
 
     [Fact]
-    public async Task ReservaSummary_RevenueNegativePattern_CountsFirmStates_NotClosedOrCancelled()
+    public async Task ReservaSummary_Vendido_CountsOnlyFirmSale_AndActiveCountKeepsItsOwnRule()
     {
         using var context = new AppDbContext(NewDbOptions());
-        // ADR-036: venta activa = InManagement/Confirmed/Traveling (patron != Closed && != Cancelled &&
-        // != Archived). Closed y Cancelled NO cuentan. ToSettle murio.
+        // Dos ejes DISTINTOS conviviendo en el mismo resumen:
+        //  - "Reservas activas" (ADR-036): InManagement / Confirmed / Traveling.
+        //  - "Vendido" (decision del dueño, 2026-08-11): Confirmed / Traveling / Closed. En gestion
+        //    todavia no es una venta hecha, y una anulada nunca lo fue.
         context.Reservas.Add(new Reserva { Id = 1, Name = "S", NumeroReserva = "R-1", Status = EstadoReserva.InManagement, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 2, Name = "T", NumeroReserva = "R-2", Status = EstadoReserva.Traveling, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 3, Name = "C", NumeroReserva = "R-3", Status = EstadoReserva.Closed, TotalSale = 1000m });
@@ -250,6 +252,8 @@ public class FaseDStateSetTests
         // escalar TotalSale de arriba no alcanza para que el nuevo resumen tenga datos.
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", TotalSale = 1000m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", TotalSale = 1000m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 3, Currency = "ARS", TotalSale = 1000m });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 4, Currency = "ARS", TotalSale = 1000m });
         await context.SaveChangesAsync();
 
         var service = BuildReservaService(context);
@@ -257,11 +261,11 @@ public class FaseDStateSetTests
         var page = await service.GetReservasAsync(new ReservaListQuery(), CancellationToken.None);
         var summary = page.Summary;
 
-        // Solo InManagement + Traveling aportan al vendido activo (2 x 1000 ARS). Closed/Cancelled afuera.
+        // Vendido: En viaje + Finalizada (2 x 1000 ARS). En gestion y Anulada quedan afuera.
         var vendidoEnArs = Assert.Single(summary.VendidoPorMoneda);
         Assert.Equal("ARS", vendidoEnArs.Currency);
         Assert.Equal(2000m, vendidoEnArs.Amount);
-        // Y ambos cuentan como "activas".
+        // "Reservas activas" sigue con SU regla: En gestion + En viaje.
         Assert.Equal(2, summary.ActiveCount);
     }
 

@@ -34,6 +34,7 @@ import { useState, useEffect } from "react";
 import { Hotel, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { formatCurrency } from "../../../lib/utils";
+import { MoneyInput } from "../../../components/ui/MoneyInput";
 import { ProductSearchField } from "./ProductSearchField";
 import {
     resolverCamposALimpiarAlCrearNuevo,
@@ -41,6 +42,7 @@ import {
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
     resolverOperadorSugeridoParaProductoNuevo,
+    sanitizarCantidadPositiva,
 } from "./inlineServiceFormHelpers";
 import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemoryField";
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
@@ -643,11 +645,16 @@ export function HotelInlineForm({
                     <label className={LABEL_BASE} htmlFor="hotel-habitaciones">Habitaciones</label>
                     <input
                         id="hotel-habitaciones"
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
                         className={INPUT_NORMAL}
                         value={form.rooms || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, rooms: event.target.value }))}
+                        // Bug 2 (QA 11/08/2026): el min={1} de un <input type="number"> nativo
+                        // es solo decorativo — el navegador igual deja tipear "-1". Filtramos a
+                        // mano: nunca deja pasar un signo "-" ni una coma/punto (se cuenta en
+                        // enteros). validarForm() en ServiceInlineCard.jsx es la última red,
+                        // por si igual llega un valor viejo/pegado con el pegado del mouse.
+                        onChange={(event) => setForm((prev) => ({ ...prev, rooms: sanitizarCantidadPositiva(event.target.value) }))}
                         placeholder="1"
                         data-testid="hotel-habitaciones"
                         aria-label="Cantidad de habitaciones"
@@ -660,11 +667,11 @@ export function HotelInlineForm({
                     </label>
                     <input
                         id="hotel-pasajeros"
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
                         className={INPUT_NORMAL}
                         value={form.passengers || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: event.target.value }))}
+                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: sanitizarCantidadPositiva(event.target.value) }))}
                         placeholder="1"
                         data-testid="hotel-pasajeros"
                         aria-label="Cantidad de pasajeros"
@@ -740,15 +747,12 @@ export function HotelInlineForm({
                 {canSeeCost && (
                     <div>
                         <label className={LABEL_BASE} htmlFor="hotel-costo-noche">Costo por noche</label>
-                        <input
+                        <MoneyInput
                             id="hotel-costo-noche"
-                            type="number"
-                            min={0}
-                            step="0.01"
                             className={camposSugeridos.unitNetCost ? INPUT_SUGERIDO : INPUT_NORMAL}
                             value={form.unitNetCost || ""}
-                            onChange={(event) => {
-                                setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
+                            onChange={(nuevoValor) => {
+                                setForm((prev) => ({ ...prev, unitNetCost: nuevoValor }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
                                 setCamposTocadosAMano((prev) => ({ ...prev, unitNetCost: true }));
                                 // Con permiso de costos, "costo" ES el campo que la variante
@@ -756,7 +760,6 @@ export function HotelInlineForm({
                                 // mano lo saca del territorio del sistema para siempre.
                                 setPrecioTocadoPorElUsuario(true);
                             }}
-                            placeholder="0,00"
                             data-testid="hotel-costo-noche"
                             aria-label="Costo por noche"
                         />
@@ -768,15 +771,12 @@ export function HotelInlineForm({
                 )}
                 <div>
                     <label className={LABEL_BASE} htmlFor="hotel-venta-noche">Venta por noche</label>
-                    <input
+                    <MoneyInput
                         id="hotel-venta-noche"
-                        type="number"
-                        min={0}
-                        step="0.01"
                         className={camposSugeridos.unitSalePrice ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.unitSalePrice || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, unitSalePrice: event.target.value }));
+                        onChange={(nuevoValor) => {
+                            setForm((prev) => ({ ...prev, unitSalePrice: nuevoValor }));
                             setCamposSugeridos((prev) => ({ ...prev, unitSalePrice: false }));
                             setCamposTocadosAMano((prev) => ({ ...prev, unitSalePrice: true }));
                             // "Venta" solo es la variante rastreada por el sistema para quien
@@ -784,7 +784,6 @@ export function HotelInlineForm({
                             // permiso de costos es un campo aparte, ajeno a la sugerencia.
                             if (!canSeeCost) setPrecioTocadoPorElUsuario(true);
                         }}
-                        placeholder="0,00"
                         required
                         data-testid="hotel-venta-noche"
                         aria-label="Precio de venta por noche"

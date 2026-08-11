@@ -21,12 +21,14 @@ import { Car, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
+import { MoneyInput } from "../../../components/ui/MoneyInput";
 import {
     resolverCamposALimpiarAlCrearNuevo,
     aplicarInterpretacionComoSugerencia,
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
     resolverOperadorSugeridoParaProductoNuevo,
+    sanitizarCantidadPositiva,
 } from "./inlineServiceFormHelpers";
 import { FreeTextWithMemoryField } from "../../rates/components/FreeTextWithMemoryField";
 import { useVariantPriceSuggestion } from "./useVariantPriceSuggestion";
@@ -434,11 +436,11 @@ export function TransferInlineForm({
                     </label>
                     <input
                         id="transfer-pasajeros"
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
                         className={INPUT_NORMAL}
                         value={form.passengers || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: event.target.value }))}
+                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: sanitizarCantidadPositiva(event.target.value) }))}
                         placeholder="1"
                         data-testid="transfer-pasajeros"
                         aria-label="Cantidad de pasajeros"
@@ -485,22 +487,18 @@ export function TransferInlineForm({
                 {canSeeCost && (
                     <div>
                         <label className={LABEL_BASE} htmlFor="transfer-costo">Costo</label>
-                        <input
+                        <MoneyInput
                             id="transfer-costo"
-                            type="number"
-                            min={0}
-                            step="0.01"
                             className={camposSugeridos.netCost ? INPUT_SUGERIDO : INPUT_NORMAL}
                             value={form.netCost || ""}
-                            onChange={(event) => {
-                                setForm((prev) => ({ ...prev, netCost: event.target.value }));
+                            onChange={(nuevoValor) => {
+                                setForm((prev) => ({ ...prev, netCost: nuevoValor }));
                                 setCamposSugeridos((prev) => ({ ...prev, netCost: false }));
                                 setCamposTocadosAMano((prev) => ({ ...prev, netCost: true }));
                                 // Con permiso de costos, "costo" ES el campo que la variante
                                 // sigue (campoPrecioVariante === "netCost").
                                 setPrecioTocadoPorElUsuario(true);
                             }}
-                            placeholder="0,00"
                             data-testid="transfer-costo"
                             aria-label="Costo del traslado"
                         />
@@ -511,15 +509,12 @@ export function TransferInlineForm({
                 )}
                 <div>
                     <label className={LABEL_BASE} htmlFor="transfer-venta">Venta</label>
-                    <input
+                    <MoneyInput
                         id="transfer-venta"
-                        type="number"
-                        min={0}
-                        step="0.01"
                         className={camposSugeridos.salePrice ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.salePrice || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, salePrice: event.target.value }));
+                        onChange={(nuevoValor) => {
+                            setForm((prev) => ({ ...prev, salePrice: nuevoValor }));
                             setCamposSugeridos((prev) => ({ ...prev, salePrice: false }));
                             setCamposTocadosAMano((prev) => ({ ...prev, salePrice: true }));
                             // "Venta" solo es la variante rastreada para quien NO ve costos
@@ -527,7 +522,6 @@ export function TransferInlineForm({
                             // es un campo aparte, ajeno a la sugerencia.
                             if (!canSeeCost) setPrecioTocadoPorElUsuario(true);
                         }}
-                        placeholder="0,00"
                         required
                         data-testid="transfer-venta"
                         aria-label="Precio de venta del traslado"

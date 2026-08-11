@@ -5,6 +5,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 
 namespace TravelApi.Controllers;
 
@@ -93,6 +94,17 @@ public class QuotesController : ControllerBase
     [RequireOwnership(OwnedEntity.Quote, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<QuoteConversionResultDto>> ConvertToFile(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
-        return Ok(await _quoteService.ConvertToFileAsync(publicIdOrLegacyId, cancellationToken));
+        try
+        {
+            return Ok(await _quoteService.ConvertToFileAsync(publicIdOrLegacyId, cancellationToken));
+        }
+        catch (ServiceQuantityValidationException ex)
+        {
+            // Cantidades minimas (QA PROD 2026-08-11): un item del presupuesto con 0 habitaciones (o
+            // sin ningun pasajero) frena la conversion. El Message ya viene escrito para el usuario.
+            // Hace falta atraparlo ACA: sin este catch, el manejador global lo trataria como un error
+            // inesperado y el vendedor veria "Ocurrió un error inesperado" en vez del motivo real.
+            return BadRequest(new { message = ex.Message });
+        }
     }
 }

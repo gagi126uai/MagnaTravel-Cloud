@@ -8,6 +8,8 @@ import {
     resolverOperadorSugeridoParaProductoNuevo,
     resolverRateIdDeEdicion,
     resolverTocadosAManoTrasLimpiarOrigen,
+    sanitizarCantidadPositiva,
+    clampearFechasSugeridasAlFuturo,
 } from "./inlineServiceFormHelpers.js";
 
 // ─── resolverRateIdDeEdicion (fix #3, auditoría 2026-08-10, GRAVE) ────────────────
@@ -153,7 +155,7 @@ describe("aplicarInterpretacionComoSugerencia", () => {
     const NADA_TOCADO = { supplierId: false, checkIn: false, checkOut: false };
 
     it("sin interpretación (motor no entendió/no disparó): no agrega nada", () => {
-        const resultado = aplicarInterpretacionComoSugerencia(null, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO });
+        const resultado = aplicarInterpretacionComoSugerencia(null, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-01-01" });
         assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
     });
 
@@ -162,7 +164,7 @@ describe("aplicarInterpretacionComoSugerencia", () => {
             supplier: { supplierPublicId: "sup-1", name: "Delfos" },
             dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" },
         };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-01-01" });
         assert.deepEqual(resultado.patch, {
             supplierId: "sup-1",
             supplierName: "Delfos",
@@ -174,7 +176,7 @@ describe("aplicarInterpretacionComoSugerencia", () => {
 
     it("la venta real YA trajo operador (yaHaySupplierDeLaVenta=true): NUNCA pisa, aunque la interpretación tenga uno", () => {
         const interpretacion = { supplier: { supplierPublicId: "sup-1", name: "Delfos" }, dates: null };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-01-01" });
         assert.equal(resultado.patch.supplierId, undefined);
         assert.equal(resultado.sugeridos.supplierId, undefined);
     });
@@ -183,7 +185,7 @@ describe("aplicarInterpretacionComoSugerencia", () => {
         const interpretacion = { supplier: { supplierPublicId: "sup-1", name: "Delfos" }, dates: null };
         const formConOperadorAMano = { supplierId: "sup-manual", checkIn: "", checkOut: "" };
         const tocados = { supplierId: true, checkIn: false, checkOut: false };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConOperadorAMano, camposTocadosAMano: tocados });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConOperadorAMano, camposTocadosAMano: tocados, hoy: "2026-01-01" });
         assert.equal(resultado.patch.supplierId, undefined);
         assert.equal(resultado.sugeridos.supplierId, undefined);
     });
@@ -195,7 +197,7 @@ describe("aplicarInterpretacionComoSugerencia", () => {
         const interpretacion = { supplier: { supplierPublicId: "sup-B", name: "Ola" }, dates: null };
         const formConOperadorDeOtraSeleccion = { supplierId: "sup-A", checkIn: "", checkOut: "" };
         const tocados = { supplierId: false, checkIn: false, checkOut: false }; // nunca tocado a mano
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConOperadorDeOtraSeleccion, camposTocadosAMano: tocados });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConOperadorDeOtraSeleccion, camposTocadosAMano: tocados, hoy: "2026-01-01" });
         assert.equal(resultado.patch.supplierId, "sup-B");
         assert.equal(resultado.sugeridos.supplierId, true);
     });
@@ -204,7 +206,7 @@ describe("aplicarInterpretacionComoSugerencia", () => {
         const interpretacion = { supplier: null, dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" } };
         const formConFechaAMano = { supplierId: "", checkIn: "2026-03-01", checkOut: "" };
         const tocados = { supplierId: false, checkIn: true, checkOut: false };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConFechaAMano, camposTocadosAMano: tocados });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConFechaAMano, camposTocadosAMano: tocados, hoy: "2026-01-01" });
         assert.equal(resultado.patch.checkIn, undefined);
         assert.equal(resultado.sugeridos.checkIn, undefined);
         // checkOut SÍ estaba vacío: se completa igual
@@ -216,32 +218,63 @@ describe("aplicarInterpretacionComoSugerencia", () => {
         const interpretacion = { supplier: null, dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" } };
         const formConAmbasFechas = { supplierId: "", checkIn: "2026-03-01", checkOut: "2026-03-05" };
         const tocados = { supplierId: false, checkIn: true, checkOut: true };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConAmbasFechas, camposTocadosAMano: tocados });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: formConAmbasFechas, camposTocadosAMano: tocados, hoy: "2026-01-01" });
         assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
     });
 
     it("Traslado: un solo campo de fecha (sin 'hasta') — 'to' de la interpretación se ignora", () => {
         const interpretacion = { supplier: null, dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" } };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["pickupDate"], formActual: { supplierId: "", pickupDate: "" }, camposTocadosAMano: { supplierId: false, pickupDate: false } });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["pickupDate"], formActual: { supplierId: "", pickupDate: "" }, camposTocadosAMano: { supplierId: false, pickupDate: false }, hoy: "2026-01-01" });
         assert.deepEqual(resultado.patch, { pickupDate: "2026-02-10" });
         assert.deepEqual(resultado.sugeridos, { pickupDate: true });
     });
 
     it("solo 'to' sin 'from': se aplica el campo que corresponde nomás", () => {
         const interpretacion = { supplier: null, dates: { from: null, to: "2026-02-15T00:00:00Z" } };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-01-01" });
         assert.deepEqual(resultado.patch, { checkOut: "2026-02-15" });
         assert.deepEqual(resultado.sugeridos, { checkOut: true });
     });
 
+    // ─── Fix dominio (review 11/08/2026): el clamp de año SOLO corre cuando el motor ──
+    // marcó el año como ambiguo (interpretacion.anioAmbiguo) — nunca sobre una fecha con
+    // año EXPLÍCITO (carga retroactiva legítima de un viaje que ya viajó).
+
+    it("anioAmbiguo:true + fecha en el pasado -> SÍ se clampea al futuro (mismo Bug 4 de siempre)", () => {
+        const interpretacion = {
+            supplier: null,
+            dates: { from: "2026-03-05T00:00:00Z", to: null },
+            anioAmbiguo: true,
+        };
+        // hoy 2026-08-11 (el real de esta sesión): "2026-03-05" ya pasó.
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-08-11" });
+        assert.equal(resultado.patch.checkIn, "2027-03-05", "con año ambiguo, se corrige al futuro");
+    });
+
+    it("anioAmbiguo:false (año EXPLÍCITO en la frase) + fecha en el pasado -> NO se toca (carga retroactiva legítima)", () => {
+        const interpretacion = {
+            supplier: null,
+            dates: { from: "2026-03-05T00:00:00Z", to: null },
+            anioAmbiguo: false,
+        };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-08-11" });
+        assert.equal(resultado.patch.checkIn, "2026-03-05", "con año explícito, se respeta tal cual aunque quede en el pasado");
+    });
+
+    it("sin anioAmbiguo (interpretación vieja, campo ausente) + fecha en el pasado -> tratado como año explícito, NO se clampea", () => {
+        const interpretacion = { supplier: null, dates: { from: "2026-03-05T00:00:00Z", to: null } };
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-08-11" });
+        assert.equal(resultado.patch.checkIn, "2026-03-05");
+    });
+
     it("interpretación sin nada utilizable (supplier y dates en null): no agrega nada", () => {
-        const resultado = aplicarInterpretacionComoSugerencia({ supplier: null, dates: null }, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO });
+        const resultado = aplicarInterpretacionComoSugerencia({ supplier: null, dates: null }, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: FORM_VACIO, camposTocadosAMano: NADA_TOCADO, hoy: "2026-01-01" });
         assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
     });
 
     it("formActual/camposTocadosAMano null/undefined no revientan: se tratan como vacíos/no tocados", () => {
         const interpretacion = { supplier: { supplierPublicId: "sup-1", name: "Delfos" }, dates: null };
-        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: null, camposTocadosAMano: null });
+        const resultado = aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta: false, camposFecha: ["checkIn", "checkOut"], formActual: null, camposTocadosAMano: null, hoy: "2026-01-01" });
         assert.equal(resultado.patch.supplierId, "sup-1");
     });
 });
@@ -642,7 +675,7 @@ describe("D13-bis: crear-nuevo con interpretación — fechas vía aplicarInterp
         // campo genérico `supplierId` (oculto mientras se crea un producto nuevo) — va
         // aparte, al recuadro del producto nuevo, vía resolverOperadorSugeridoParaProductoNuevo.
         const resultado = aplicarInterpretacionComoSugerencia(interpretacionCompleta, {
-            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formVacio, camposTocadosAMano: { checkIn: false, checkOut: false },
+            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formVacio, camposTocadosAMano: { checkIn: false, checkOut: false }, hoy: "2026-01-01",
         });
         assert.deepEqual(resultado.patch, { checkIn: "2026-02-10", checkOut: "2026-02-15" });
         assert.deepEqual(resultado.sugeridos, { checkIn: true, checkOut: true });
@@ -653,7 +686,7 @@ describe("D13-bis: crear-nuevo con interpretación — fechas vía aplicarInterp
     it("el vendedor YA tocó una fecha a mano ANTES de crear nuevo: esa no se pisa", () => {
         const formConFechaAMano = { supplierId: "", checkIn: "2026-05-01", checkOut: "" };
         const resultado = aplicarInterpretacionComoSugerencia(interpretacionCompleta, {
-            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formConFechaAMano, camposTocadosAMano: { checkIn: true, checkOut: false },
+            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formConFechaAMano, camposTocadosAMano: { checkIn: true, checkOut: false }, hoy: "2026-01-01",
         });
         assert.equal(resultado.patch.checkIn, undefined);
         assert.equal(resultado.sugeridos.checkIn, undefined);
@@ -665,7 +698,7 @@ describe("D13-bis: crear-nuevo con interpretación — fechas vía aplicarInterp
     it("sin interpretación (motor no entendió/no disparó): crear-nuevo queda igual que siempre, sin agregar nada", () => {
         const formVacio = { supplierId: "", checkIn: "", checkOut: "" };
         const resultado = aplicarInterpretacionComoSugerencia(null, {
-            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formVacio, camposTocadosAMano: {},
+            yaHaySupplierDeLaVenta: true, camposFecha: ["checkIn", "checkOut"], formActual: formVacio, camposTocadosAMano: {}, hoy: "2026-01-01",
         });
         assert.deepEqual(resultado, { patch: {}, sugeridos: {} });
         assert.equal(resolverOperadorSugeridoParaProductoNuevo(null), "");
@@ -674,7 +707,7 @@ describe("D13-bis: crear-nuevo con interpretación — fechas vía aplicarInterp
     it("Traslado (un solo campo de fecha, sin 'hasta'): se completa igual que en handleSelectExisting", () => {
         const formVacio = { supplierId: "", pickupDate: "" };
         const resultado = aplicarInterpretacionComoSugerencia(interpretacionCompleta, {
-            yaHaySupplierDeLaVenta: true, camposFecha: ["pickupDate"], formActual: formVacio, camposTocadosAMano: { pickupDate: false },
+            yaHaySupplierDeLaVenta: true, camposFecha: ["pickupDate"], formActual: formVacio, camposTocadosAMano: { pickupDate: false }, hoy: "2026-01-01",
         });
         assert.deepEqual(resultado.patch, { pickupDate: "2026-02-10" });
         assert.deepEqual(resultado.sugeridos, { pickupDate: true });
@@ -757,5 +790,77 @@ describe("Secuencia: tocar el precio a mano → saltar de solapa y volver → el
         assert.equal(resultado.patch.unitSalePrice, undefined, "el precio tipeado a mano sigue protegido tras el salto de solapa");
         assert.equal(resultado.patch.currency, undefined, "la moneda tampoco se toca: viaja pegada al precio protegido");
         assert.equal(resultado.patch.supplierId, "sup-7", "el operador (nunca tocado) sí se completa con el de la venta real");
+    });
+});
+
+// ─── Bug 2 (QA 11/08/2026): "habitaciones"/"pasajeros" aceptaban -1 ──────────────
+// El min={1} de un <input type="number"> nativo es solo decorativo — sanitizarCantidadPositiva
+// es el filtro que de verdad impide tipear un signo "-" (o cualquier cosa que no sea dígito).
+
+describe("sanitizarCantidadPositiva", () => {
+    it("deja pasar dígitos tal cual", () => {
+        assert.equal(sanitizarCantidadPositiva("12"), "12");
+    });
+
+    it("saca el signo menos: '-1' → '1'", () => {
+        assert.equal(sanitizarCantidadPositiva("-1"), "1");
+    });
+
+    it("fix I2 (review): coma/punto se tratan como decimales de una cantidad que NO los tiene — se queda con la parte ENTERA, nunca pega los dígitos de los dos lados", () => {
+        // Bug real: antes "1,5" pegaba los dígitos y daba "15" (x10 la cantidad real,
+        // grave en pasajeros de Paquete/Asistencia, que multiplican el precio).
+        assert.equal(sanitizarCantidadPositiva("1,5"), "1");
+        assert.equal(sanitizarCantidadPositiva("1.5"), "1");
+        assert.equal(sanitizarCantidadPositiva("12,99"), "12");
+    });
+
+    it("saca letras sueltas", () => {
+        assert.equal(sanitizarCantidadPositiva("1a2"), "12");
+    });
+
+    it("vacío/null/undefined → vacío (el vendedor puede borrar todo para reescribir)", () => {
+        assert.equal(sanitizarCantidadPositiva(""), "");
+        assert.equal(sanitizarCantidadPositiva(null), "");
+        assert.equal(sanitizarCantidadPositiva(undefined), "");
+    });
+});
+
+// ─── Bug 4 (QA 11/08/2026): la frase no puede sugerir un viaje en el pasado ──────
+// "aep igr latam del 05/03 al 12/03" precargó una fecha de ida YA PASADA — el motor no
+// tiene forma de estar seguro de qué año quiso decir el vendedor. clampearFechasSugeridasAlFuturo
+// es el ajuste determinístico que corre ANTES de pintar la sugerencia en amarillo.
+
+describe("clampearFechasSugeridasAlFuturo", () => {
+    it("caso 1 (repro del bug): fecha de inicio en el pasado → le suma años hasta caer en el futuro", () => {
+        const resultado = clampearFechasSugeridasAlFuturo({ from: "2026-03-05", to: null, hoy: "2026-08-11" });
+        assert.deepEqual(resultado, { from: "2027-03-05", to: null });
+    });
+
+    it("caso 2: rango que cruza de año (28/12 al 03/01) — el fin también se corrige para seguir siendo posterior al inicio", () => {
+        // El inicio (28/12) todavía no pasó respecto de "hoy" (11/08) en el mismo año,
+        // así que queda igual — pero el fin (03/01) sí quedó ANTES del inicio corregido
+        // y hay que empujarlo un año para adelante.
+        const resultado = clampearFechasSugeridasAlFuturo({ from: "2026-12-28", to: "2026-01-03", hoy: "2026-08-11" });
+        assert.deepEqual(resultado, { from: "2026-12-28", to: "2027-01-03" });
+    });
+
+    it("caso 3: fecha ya futura queda intacta (no se le suma nada de más)", () => {
+        const resultado = clampearFechasSugeridasAlFuturo({ from: "2027-01-15", to: "2027-01-20", hoy: "2026-08-11" });
+        assert.deepEqual(resultado, { from: "2027-01-15", to: "2027-01-20" });
+    });
+
+    it("sin 'from' (solo 'to'): el 'to' se compara contra 'hoy' nomás", () => {
+        const resultado = clampearFechasSugeridasAlFuturo({ from: null, to: "2026-03-05", hoy: "2026-08-11" });
+        assert.deepEqual(resultado, { from: null, to: "2027-03-05" });
+    });
+
+    it("sin 'to': no rompe, devuelve null", () => {
+        const resultado = clampearFechasSugeridasAlFuturo({ from: "2026-03-05", to: null, hoy: "2026-08-11" });
+        assert.equal(resultado.to, null);
+    });
+
+    it("fecha exactamente hoy: no se toca (no está en el pasado)", () => {
+        const resultado = clampearFechasSugeridasAlFuturo({ from: "2026-08-11", to: null, hoy: "2026-08-11" });
+        assert.equal(resultado.from, "2026-08-11");
     });
 });

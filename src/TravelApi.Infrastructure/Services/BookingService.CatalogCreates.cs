@@ -91,6 +91,11 @@ public partial class BookingService
     {
         ValidateHotelStay(req.CheckIn, req.CheckOut);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // QA con navegador en PROD (2026-08-11): se guardo un hotel con Habitaciones = -1. Las
+        // cantidades multiplican la plata (ver CatalogUnitization), asi que el minimo se exige aca,
+        // en el motor, aunque la ficha ya lo frene en pantalla (T-3).
+        ServiceQuantityRules.EnsureRoomsAtLeastOne(req.Rooms);
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Adults, req.Children);
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: true);
 
         var currency = NormalizeCurrency(req.Currency);
@@ -209,6 +214,9 @@ public partial class BookingService
     {
         ValidateFlightTimes(req.DepartureTime, req.ArrivalTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // Mismo agujero de cantidades que el hotel (QA PROD 2026-08-11). En el aereo la cantidad es
+        // OPCIONAL: "sin informar" sigue siendo valido, pero si viene tiene que ser al menos 1.
+        ServiceQuantityRules.EnsurePassengersAtLeastOneWhenInformed(req.PassengerCount);
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: false);
 
         var currency = NormalizeCurrency(req.Currency);
@@ -300,6 +308,8 @@ public partial class BookingService
     {
         ValidateTransferTimes(req.PickupDateTime, req.ReturnDateTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // Mismo agujero de cantidades que el hotel (QA PROD 2026-08-11).
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Passengers);
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: false);
 
         var currency = NormalizeCurrency(req.Currency);
@@ -391,6 +401,8 @@ public partial class BookingService
     {
         ValidatePackageDates(req.StartDate, req.EndDate);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // Mismo agujero de cantidades que el hotel (QA PROD 2026-08-11).
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Adults, req.Children);
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: false);
 
         var currency = NormalizeCurrency(req.Currency);
@@ -475,6 +487,8 @@ public partial class BookingService
     {
         ValidateAssistanceValidity(req.ValidFrom, req.ValidTo);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
+        // Mismo agujero de cantidades que el hotel (QA PROD 2026-08-11).
+        ServiceQuantityRules.EnsurePassengersAtLeastOne(req.Adults, req.Children);
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: false);
 
         var currency = NormalizeCurrency(req.Currency);

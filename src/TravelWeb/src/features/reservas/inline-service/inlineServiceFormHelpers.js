@@ -5,6 +5,8 @@
  * lógica repetida entre los 5 forms si aparece más en el futuro.
  */
 
+import { hoyArgentina } from "../../../lib/utils.js";
+
 // ─── Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) ───────────────────────────
 
 /**
@@ -91,18 +93,21 @@ export function resolverCamposALimpiarAlCrearNuevo(valoresActuales, camposTocado
  *
  * @param {{supplier:{supplierPublicId:string,name:string}|null, dates:{from:string,to:string|null}|null}|null} interpretacion
  *   lo que devolvió `extraerInterpretacionParaPrecarga` (productDedupMatchLogic.js), o null
- * @param {{yaHaySupplierDeLaVenta:boolean, camposFecha:string[], formActual:Record<string,any>, camposTocadosAMano:Record<string,boolean>}} opciones
+ * @param {{yaHaySupplierDeLaVenta:boolean, camposFecha:string[], formActual:Record<string,any>, camposTocadosAMano:Record<string,boolean>, hoy?:string}} opciones
  *   `yaHaySupplierDeLaVenta` = la venta real (`sale`) ya trae operador (esa SIEMPRE gana).
  *   `camposFecha` son los nombres de campo del form para [desde] o [desde, hasta] — por
  *   ejemplo `["checkIn","checkOut"]` en Hotel, o solo `["pickupDate"]` en Traslado (un
  *   único campo de fecha, sin rango). `formActual` es el form ANTES de esta selección.
  *   `camposTocadosAMano` dice cuáles de esos valores actuales son del vendedor (no se
- *   pisan) y cuáles vinieron de una selección anterior (reemplazables).
+ *   pisan) y cuáles vinieron de una selección anterior (reemplazables). `hoy` (Bug 4,
+ *   QA 11/08/2026) es "YYYY-MM-DD" y solo existe para que los tests puedan fijar una
+ *   fecha de referencia reproducible — en producción SIEMPRE se usa el día real
+ *   (default `hoyArgentina()`), nunca se pasa a mano desde los 5 formularios.
  * @returns {{patch: Record<string, any>, sugeridos: Record<string, boolean>}}
  *   `patch` se mezcla (spread) en el `setForm`; `sugeridos` se mezcla en `camposSugeridos`
  *   para que esos campos se pinten de amarillo con el mismo estilo de siempre
  */
-export function aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta, camposFecha, formActual, camposTocadosAMano }) {
+export function aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySupplierDeLaVenta, camposFecha, formActual, camposTocadosAMano, hoy = hoyArgentina() }) {
     const patch = {};
     const sugeridos = {};
     if (!interpretacion) return { patch, sugeridos };
@@ -124,17 +129,104 @@ export function aplicarInterpretacionComoSugerencia(interpretacion, { yaHaySuppl
     // Las fechas del motor vienen como datetime ISO ("2026-02-10T00:00:00Z"); los campos
     // <input type="date"> del form solo entienden la parte de fecha (YYYY-MM-DD) — mismo
     // recorte que ya usan buildXFormInitial() en ServiceInlineCard.jsx para servicios editados.
+    //
+    // Bug 4 (QA 11/08/2026): el motor arma esta interpretación SIN certeza del año ("del
+    // 05/03 al 12/03" puede ser de este año o del que viene) y a veces erró para el lado
+    // del pasado — precargaba un viaje que ya sucedió. El año de una fecha SUGERIDA no
+    // puede quedar a criterio del modelo: lo corregimos acá ANTES de pintarla en amarillo
+    // (clampearFechasSugeridasAlFuturo, más abajo en este archivo) — PERO solo cuando el
+    // año realmente es una adivinanza del motor (`interpretacion.anioAmbiguo`, ver
+    // productDedupMatchLogic.js). Fix dominio (review 11/08/2026): si el vendedor escribió
+    // el año explícito en la frase ("del 05/03/2025 al 12/03/2025", carga retroactiva de
+    // un viaje que YA VIAJÓ — situación legítima), el sistema NO puede "corregirla" al
+    // futuro sin pisar lo que el vendedor quiso decir a propósito.
     const [campoDesde, campoHasta] = camposFecha || [];
-    if (campoDesde && libre(campoDesde) && interpretacion.dates?.from) {
-        patch[campoDesde] = String(interpretacion.dates.from).split("T")[0];
+    const fechaDesdeCruda = interpretacion.dates?.from ? String(interpretacion.dates.from).split("T")[0] : null;
+    const fechaHastaCruda = interpretacion.dates?.to ? String(interpretacion.dates.to).split("T")[0] : null;
+    const { from: fechaDesdeAjustada, to: fechaHastaAjustada } = interpretacion.anioAmbiguo === true
+        ? clampearFechasSugeridasAlFuturo({ from: fechaDesdeCruda, to: fechaHastaCruda, hoy })
+        : { from: fechaDesdeCruda, to: fechaHastaCruda };
+    if (campoDesde && libre(campoDesde) && fechaDesdeAjustada) {
+        patch[campoDesde] = fechaDesdeAjustada;
         sugeridos[campoDesde] = true;
     }
-    if (campoHasta && libre(campoHasta) && interpretacion.dates?.to) {
-        patch[campoHasta] = String(interpretacion.dates.to).split("T")[0];
+    if (campoHasta && libre(campoHasta) && fechaHastaAjustada) {
+        patch[campoHasta] = fechaHastaAjustada;
         sugeridos[campoHasta] = true;
     }
 
     return { patch, sugeridos };
+}
+
+// ─── Bug 4 (QA 11/08/2026): la frase no puede sugerir un viaje en el pasado ──────
+
+/**
+ * Le suma años a una fecha "YYYY-MM-DD" hasta que deje de ser anterior al mínimo
+ * pedido. Se usa para que la precarga de la frase (D13) nunca sugiera una fecha ya
+ * pasada: si el motor interpretó "05/03" sin decir el año y hoy ya es agosto, la
+ * fecha ingenua (05/03 de ESTE año) quedó atrás — le sumamos años hasta que caiga en
+ * el futuro (o en hoy mismo).
+ *
+ * @param {string} fechaISO — "YYYY-MM-DD"
+ * @param {Date} minimo — fecha (hora 00:00) que el resultado no puede ser anterior a
+ * @returns {string} la fecha ajustada, mismo formato "YYYY-MM-DD"
+ */
+function sumarAniosHastaNoQuedarEnElPasado(fechaISO, minimo) {
+    const fecha = new Date(`${fechaISO}T00:00:00`);
+    if (Number.isNaN(fecha.getTime())) return fechaISO; // fecha rara: mejor no tocarla
+
+    // Tope de seguridad: nunca debería hacer falta más de un par de vueltas, pero
+    // evita un loop infinito si algún día llega una fecha corrupta.
+    let vueltas = 0;
+    while (fecha < minimo && vueltas < 100) {
+        fecha.setFullYear(fecha.getFullYear() + 1);
+        vueltas += 1;
+    }
+
+    // Fix I1 (review): NUNCA fecha.toISOString() acá — ese método siempre convierte a
+    // UTC, y `fecha` es un Date construido en hora LOCAL (mismo patrón anti-bug que ya
+    // documenta hoyArgentina() en lib/utils.js). En una máquina con offset UTC positivo
+    // (ej. corriendo un test en un CI en otro huso), la medianoche local cae en el DÍA
+    // ANTERIOR en UTC — cada fecha ajustada salía un día antes. Armamos el string a
+    // mano con los getters LOCALES (getFullYear/getMonth/getDate), que no pasan por UTC.
+    const anio = fecha.getFullYear();
+    const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+    const dia = String(fecha.getDate()).padStart(2, "0");
+    return `${anio}-${mes}-${dia}`;
+}
+
+/**
+ * Bug 4 (QA 11/08/2026, decisión del dueño): "aep igr latam del 05/03 al 12/03"
+ * precargó una fecha de ida que YA HABÍA PASADO (el motor no tiene forma de estar
+ * seguro de qué año quiso decir el vendedor). El año de una fecha SUGERIDA no puede
+ * quedar a criterio del modelo — acá se lo corrige, siempre, de forma determinística:
+ *
+ *   1. Si la fecha de INICIO sugerida quedó en el pasado, se le suman años hasta que
+ *      sea hoy o futura.
+ *   2. La fecha de FIN nunca puede quedar antes que el inicio YA corregido — si el
+ *      ajuste del punto 1 hace que el rango "cruce de año" (ej. sugerido 28/12 al
+ *      03/01), el fin también se corrige para seguir siendo posterior al inicio.
+ *
+ * Regla P-21 (el sistema sugiere, nunca decide) sigue vigente: esto NO reemplaza el
+ * amarillo editable, solo evita que la sugerencia amarilla sea, de entrada, un
+ * absurdo (un viaje que ya sucedió). Nunca toca una fecha tipeada A MANO por el
+ * vendedor — eso ya lo filtra `libre(campo)` en `aplicarInterpretacionComoSugerencia`
+ * antes de llegar acá; esta función solo conoce fechas SUGERIDAS.
+ *
+ * @param {{from:string|null, to:string|null, hoy:string}} params — `from`/`to` en
+ *   "YYYY-MM-DD" (o null si el motor no sugirió esa punta), `hoy` = hoyArgentina()
+ * @returns {{from:string|null, to:string|null}}
+ */
+export function clampearFechasSugeridasAlFuturo({ from, to, hoy }) {
+    const minimoDeHoy = new Date(`${hoy}T00:00:00`);
+    const fromAjustado = from ? sumarAniosHastaNoQuedarEnElPasado(from, minimoDeHoy) : from;
+
+    // El fin no puede quedar antes que el inicio YA corregido — si no hay inicio
+    // sugerido en este mismo llamado, lo comparamos contra hoy nomás.
+    const minimoParaElFin = fromAjustado ? new Date(`${fromAjustado}T00:00:00`) : minimoDeHoy;
+    const toAjustado = to ? sumarAniosHastaNoQuedarEnElPasado(to, minimoParaElFin) : to;
+
+    return { from: fromAjustado, to: toAjustado };
 }
 
 // ─── Regla transversal (auditoría de coherencia 2026-08-10, #1/#2/#7) ─────────────
@@ -297,4 +389,34 @@ export function resolverNombreEnCasillero(catalogResult, textoActual) {
  */
 export function resolverOperadorSugeridoParaProductoNuevo(interpretacion) {
     return interpretacion?.supplier?.supplierPublicId || "";
+}
+
+// ─── Bug 2 (QA 11/08/2026): "habitaciones"/"pasajeros" aceptaban -1 ──────────────
+
+/**
+ * Filtra lo que el vendedor tipeó en un campo de CANTIDAD (habitaciones, pasajeros) —
+ * son cosas que se CUENTAN, nunca plata ni algo negativo. El min={1} de un
+ * <input type="number"> nativo es solo decorativo (el navegador igual deja escribir
+ * "-1", como reportó QA); acá sacamos cualquier caracter que no sea un dígito, así el
+ * campo nunca puede terminar en negativo, con coma ni con letras. Dejamos pasar el
+ * string vacío para que el vendedor pueda borrar todo y volver a escribir.
+ *
+ * Esto es SOLO el reflejo en pantalla (T-3): el mínimo real de "al menos 1" lo exige
+ * validarForm() en ServiceInlineCard.jsx antes de guardar (con el mensaje que ve el
+ * vendedor), y buildPayload() lo vuelve a garantizar como red final antes de mandar
+ * al backend — el backend sigue siendo quien manda la última palabra.
+ *
+ * @param {string} textoTipeado
+ * @returns {string} el mismo texto, sin nada que no sea un dígito
+ */
+export function sanitizarCantidadPositiva(textoTipeado) {
+    const texto = textoTipeado || "";
+    // Fix I2 (review): antes sacábamos CUALQUIER separador y pegábamos los dígitos de
+    // los dos lados ("1,5" → "15") — bug real: un vendedor que se equivoca y tipea
+    // "1,5 pasajeros" terminaba mandando 15 pasajeros, x10 el valor real. Una cantidad
+    // no tiene decimales, así que ante una coma o un punto nos quedamos con la parte
+    // ENTERA de ADELANTE nomás ("1,5" → "1"), y de ahí sacamos cualquier cosa que no
+    // sea dígito (signo "-", espacios sueltos, etc.).
+    const parteEntera = texto.split(/[.,]/)[0];
+    return parteEntera.replace(/[^\d]/g, "");
 }

@@ -24,8 +24,18 @@ import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSE
  * mostrar el DESTINO en vez del nombre autogenerado ("Reserva F-2026-…"), la
  * columna Finanzas separa cada moneda en su propia línea (P-3⭐) y la única
  * acción por fila es "Archivar" con la palabra al lado del ícono y, si está
- * bloqueada, el motivo del motor escrito debajo (P-9/P-10/P-13⭐) — se elimina
- * el botón de chat, que solo repetía lo que ya hace un clic en la fila.
+ * bloqueada, el motivo del motor (P-9) — se elimina el botón de chat, que solo
+ * repetía lo que ya hace un clic en la fila.
+ *
+ * Motivo de "Archivar" bloqueado (decisión del dueño, 11/08/2026 — REEMPLAZA la de
+ * 2026-08-04, y enmendada el mismo día en P-9 de la constitución tras el review B1/B2):
+ * en listados de ESCRITORIO va como globito nativo (`title`) al pasar el mouse, en vez
+ * del texto fijo debajo de cada fila — con muchas reservas en la tabla, el motivo
+ * repetido en cada renglón era ruido visual (P-16: un dato no se dice dos veces). El
+ * `title` vive en un <span> que ENVUELVE al botón, no en el botón mismo: el Button de
+ * shadcn tiene `disabled:pointer-events-none`, así que un botón deshabilitado nunca
+ * dispara hover — el envoltorio sí lo recibe. En mobile/táctil (ReservaMobileList.jsx)
+ * no hay hover, así que ahí el motivo sigue escrito a la vista, sin cambios.
  *
  * `emptyState`: nodo opcional que reemplaza el cartel por default cuando no hay
  * filas. ReservasPage arma un mensaje distinto según el motivo (mes sin datos,
@@ -152,14 +162,15 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, clas
                 </DataGridCell>
                 <DataGridActionCell
                   align="center"
-                  // whitespace-normal pisa el "nowrap" default de la celda de acciones:
-                  // el motivo del motor bajo "Archivar" tiene que poder partirse en
-                  // 2-3 líneas en vez de estirar la columna y generar scroll horizontal
-                  // fantasma en la tabla (bug reportado por Gaston viendo PROD en 1600px).
-                  className="whitespace-normal"
                   onClick={(event) => event.stopPropagation()}
                 >
-                  <div className="flex flex-col items-center gap-1">
+                  {/* Fix B1 (review): el Button de shadcn tiene disabled:pointer-events-none
+                      en su clase base — con el botón deshabilitado, el navegador NUNCA
+                      dispara el hover sobre él, así que un title puesto directo en el
+                      <button> no se ve jamás. Envolvemos en un <span> (sí recibe hover) y
+                      el title vive ahí — patrón "envoltorio", enmienda P-9 (11/08/2026):
+                      en listados de escritorio el globito va sobre un envoltorio del botón. */}
+                  <span title={archiveBlockReason || undefined}>
                     <Button
                       variant="outline"
                       size="sm"
@@ -174,14 +185,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, clas
                       <Archive className="h-3.5 w-3.5" />
                       Archivar
                     </Button>
-                    {archiveBlockReason ? (
-                      // P-9/P-13⭐: el motivo va escrito debajo del botón, tal cual lo
-                      // manda el motor — nunca escondido en un tooltip.
-                      <span className="max-w-[130px] text-center text-[10px] leading-tight text-slate-400 dark:text-slate-500">
-                        {archiveBlockReason}
-                      </span>
-                    ) : null}
-                  </div>
+                  </span>
                 </DataGridActionCell>
               </DataGridRow>
             );

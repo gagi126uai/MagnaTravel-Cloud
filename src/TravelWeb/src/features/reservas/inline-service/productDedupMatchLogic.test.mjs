@@ -181,6 +181,38 @@ describe("resolverTextoDeCrear", () => {
     const resultado = resolverTextoDeCrear("iberostar waves", "iberostar waves del 10/02 al 15/02");
     assert.equal(resultado, "iberostar waves");
   });
+
+  // ─── Bug 3 (QA 11/08/2026): nombre corto SIN fecha/número — nunca se achica ──────
+
+  it("Bug 3 (repro real QA): 'Hotel Robot QA' sin fecha/número — usa SIEMPRE el crudo, aunque el limpio conserve el 66%", () => {
+    // Antes: el limpio "Hotel Robot" conservaba 2 de las 3 palabras significativas
+    // (66% >= 60%) y pasaba el umbral viejo, comiéndose "QA" del nombre tipeado.
+    const resultado = resolverTextoDeCrear("Hotel Robot", "Hotel Robot QA");
+    assert.equal(resultado, "Hotel Robot QA");
+  });
+
+  it("Bug 3: nombre suelto de una sola palabra sin fecha/número — el limpio nunca gana", () => {
+    const resultado = resolverTextoDeCrear("Sheraton", "Sheraton Iguazú");
+    assert.equal(resultado, "Sheraton Iguazú");
+  });
+
+  it("Fix I3 (review): un dígito SUELTO en el nombre ('Hotel 5 Estrellas Robot QA') no cuenta como fecha/importe — sigue usando el crudo completo", () => {
+    // Antes de I3, /\d/.test(crudo) ya daba true con la "5" de "5 Estrellas" (sin ser
+    // fecha ni precio) y el texto caía en la rama vieja del 60%, volviendo a comerse
+    // "Robot QA" del nombre real. Ahora un dígito suelto no alcanza: hace falta pinta
+    // de fecha ("10/02") o de importe (3+ dígitos seguidos, "48000").
+    const resultado = resolverTextoDeCrear("Hotel 5 Estrellas Robot", "Hotel 5 Estrellas Robot QA");
+    assert.equal(resultado, "Hotel 5 Estrellas Robot QA");
+  });
+
+  it("Fix I3: con importe real (3+ dígitos seguidos) SÍ entra a la lógica de siempre (60%/frase), no al atajo nuevo", () => {
+    // Acá "48000" SÍ es un importe real: no aplica el atajo "usar siempre el crudo" de
+    // I3 (ese es solo para dígitos sueltos como '5 Estrellas'). El limpio ("Hotel
+    // Robot", 2 palabras) cae en el caso "frase" (H-3, ya existente) y gana, igual que
+    // pasaba antes de este fix — I3 no le cambia el comportamiento a un número real.
+    const resultado = resolverTextoDeCrear("Hotel Robot", "Hotel Robot QA 48000 pesos");
+    assert.equal(resultado, "Hotel Robot");
+  });
 });
 
 describe("resolverListaParaMostrar (bloqueante: no sorprender a quien navega con teclado)", () => {
@@ -288,7 +320,7 @@ describe("pareceLineaCompleta (gate D5: ¿esto es una frase, no un nombre suelto
 });
 
 describe("extraerInterpretacionParaPrecarga (D13: el hack de la frase completa)", () => {
-  it("con operador y fechas: devuelve los dos", () => {
+  it("con operador y fechas: devuelve los dos + anioAmbiguo:false (sin duda de año)", () => {
     const respuesta = {
       interpreted: true,
       supplier: { supplierPublicId: "sup-1", name: "Delfos", confidence: "alta" },
@@ -298,6 +330,7 @@ describe("extraerInterpretacionParaPrecarga (D13: el hack de la frase completa)"
     assert.deepEqual(resultado, {
       supplier: { supplierPublicId: "sup-1", name: "Delfos" },
       dates: { from: "2026-02-10T00:00:00Z", to: "2026-02-15T00:00:00Z" },
+      anioAmbiguo: false,
     });
   });
 
@@ -320,6 +353,40 @@ describe("extraerInterpretacionParaPrecarga (D13: el hack de la frase completa)"
   it("respuesta null/undefined: no revienta, devuelve null", () => {
     assert.equal(extraerInterpretacionParaPrecarga(null), null);
     assert.equal(extraerInterpretacionParaPrecarga(undefined), null);
+  });
+
+  // ─── anioAmbiguo (fix dominio, review 11/08/2026) ──────────────────────────────
+  // El backend manda doubt.code === "anioDeFechas" SOLO cuando tuvo que elegir el año
+  // porque la frase no lo traía escrito — esa es la única señal que distingue "año
+  // adivinado" (clampeable al futuro) de "año explícito" (carga retroactiva legítima,
+  // no se toca). Ver clampearFechasSugeridasAlFuturo en inlineServiceFormHelpers.js.
+
+  it("doubt.code='anioDeFechas': anioAmbiguo=true (el motor tuvo que elegir el año)", () => {
+    const respuesta = {
+      interpreted: true,
+      supplier: null,
+      dates: { from: "2026-03-05T00:00:00Z", to: null },
+      doubt: { code: "anioDeFechas", field: "fechas", question: "¿Es este año?" },
+    };
+    const resultado = extraerInterpretacionParaPrecarga(respuesta);
+    assert.equal(resultado.anioAmbiguo, true);
+  });
+
+  it("doubt de OTRO campo (ej. 'operadorAmbiguo'): anioAmbiguo=false (esa duda no es sobre el año)", () => {
+    const respuesta = {
+      interpreted: true,
+      supplier: null,
+      dates: { from: "2026-03-05T00:00:00Z", to: null },
+      doubt: { code: "operadorAmbiguo", field: "operador", question: "¿El operador es X?" },
+    };
+    const resultado = extraerInterpretacionParaPrecarga(respuesta);
+    assert.equal(resultado.anioAmbiguo, false);
+  });
+
+  it("sin doubt (año explícito en la frase, motor seguro): anioAmbiguo=false", () => {
+    const respuesta = { interpreted: true, supplier: null, dates: { from: "2026-03-05T00:00:00Z", to: null } };
+    const resultado = extraerInterpretacionParaPrecarga(respuesta);
+    assert.equal(resultado.anioAmbiguo, false);
   });
 });
 

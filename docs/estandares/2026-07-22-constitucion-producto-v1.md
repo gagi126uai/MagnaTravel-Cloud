@@ -91,6 +91,12 @@ DeshacerMultaEmitidaInline patrón por `invariantCode`.)*
 Acción ya cumplida o que estructuralmente no aplica todavía → el botón NO aparece. Acción vedada por
 candado/permiso → botón gris + motivo al lado, siempre a la vista (nunca tooltip). *(fase4-pantalla-obedece-backend;
 regla unificada 2026-06-26; ADR-036 P3=A esconder "Eliminar" con plata viva.)*
+**ENMIENDA 2026-08-11 (firmada por el dueño, QA integral):** para el caso puntual del motivo repetido
+en cada fila de un listado (ej. "Archivar" apagado en el listado de reservas), el motivo pasa a
+globito al apoyar el mouse — el dueño lo eligió viendo ambas opciones. El globito va sobre un
+envoltorio del botón (un botón apagado no recibe el mouse). En pantallas táctiles no hay "apoyar el
+mouse", así que ahí el motivo sigue ESCRITO a la vista (la regla original). Fuera de los listados,
+P-9 sigue igual: motivo escrito al lado.
 
 **P-10 · La palabra siempre al lado del ícono, a la vista.** Cada ícono de acción muestra su texto
 pegado, sin depender de apoyar el mouse. Nada vive solo en un tooltip. *(guia-ux-gaston 2026-06-08.)*

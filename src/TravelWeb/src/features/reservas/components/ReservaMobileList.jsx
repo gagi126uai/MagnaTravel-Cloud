@@ -21,7 +21,13 @@ const ACENTO_POR_TONO = {
  * (2026-08-04, plan B6): refleja lo mismo que la tabla de escritorio — plata por
  * moneda separada (P-3⭐), destino en vez del nombre autogenerado, y "Archivar"
  * con la palabra al lado del ícono y el motivo escrito debajo cuando está
- * bloqueado (P-9/P-10/P-13⭐). Antes esta tarjeta no tenía acción de archivar.
+ * bloqueado (P-9). Antes esta tarjeta no tenía acción de archivar.
+ *
+ * Fix B2 (review 11/08/2026): en un dispositivo TÁCTIL no hay hover — un globito
+ * (`title`) ahí nunca se ve, así que en esta tarjeta el motivo sigue ESCRITO a la
+ * vista, como texto debajo del botón (nunca en tooltip). Enmienda P-9 de la
+ * constitución (11/08/2026): el globito en listados SOLO aplica a escritorio
+ * (ReservaTable.jsx) — en táctil/mobile el criterio de 2026-08-04 sigue vigente.
  */
 export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState }) {
   if (reservas.length === 0) {
@@ -116,6 +122,8 @@ export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState 
                   <Archive className="h-3.5 w-3.5" />
                   Archivar
                 </button>
+                {/* Fix B2 (review 11/08/2026): táctil no tiene hover, así que acá el
+                    motivo sigue escrito a la vista — nunca en tooltip (enmienda P-9). */}
                 {archiveBlockReason ? (
                   <span className="max-w-[140px] text-right text-[10px] leading-tight text-slate-400 dark:text-slate-500">
                     {archiveBlockReason}

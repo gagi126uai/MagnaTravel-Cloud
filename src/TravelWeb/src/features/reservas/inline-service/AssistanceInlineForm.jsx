@@ -25,12 +25,14 @@ import { ShieldCheck, ChevronDown, ChevronUp, Calendar, Users } from "lucide-rea
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
+import { MoneyInput } from "../../../components/ui/MoneyInput";
 import {
     resolverCamposALimpiarAlCrearNuevo,
     aplicarInterpretacionComoSugerencia,
     resolverNombreEnCasillero,
     resolverPatchDeVentaDelCatalogo,
     resolverOperadorSugeridoParaProductoNuevo,
+    sanitizarCantidadPositiva,
 } from "./inlineServiceFormHelpers";
 import { buildLastSaleHintText } from "./lastSaleHintLogic";
 import { LastSaleHint } from "./LastSaleHint";
@@ -429,11 +431,11 @@ export function AssistanceInlineForm({
                     </label>
                     <input
                         id="assistance-pasajeros"
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
                         className={INPUT_NORMAL}
                         value={form.passengers || ""}
-                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: event.target.value }))}
+                        onChange={(event) => setForm((prev) => ({ ...prev, passengers: sanitizarCantidadPositiva(event.target.value) }))}
                         placeholder="1"
                         data-testid="assistance-pasajeros"
                         aria-label="Cantidad de pasajeros"
@@ -446,19 +448,15 @@ export function AssistanceInlineForm({
                 {canSeeCost && (
                     <div>
                         <label className={LABEL_BASE} htmlFor="assistance-costo">Costo por persona/día</label>
-                        <input
+                        <MoneyInput
                             id="assistance-costo"
-                            type="number"
-                            min={0}
-                            step="0.01"
                             className={camposSugeridos.unitNetCost ? INPUT_SUGERIDO : INPUT_NORMAL}
                             value={form.unitNetCost || ""}
-                            onChange={(event) => {
-                                setForm((prev) => ({ ...prev, unitNetCost: event.target.value }));
+                            onChange={(nuevoValor) => {
+                                setForm((prev) => ({ ...prev, unitNetCost: nuevoValor }));
                                 setCamposSugeridos((prev) => ({ ...prev, unitNetCost: false }));
                                 setCamposTocadosAMano((prev) => ({ ...prev, unitNetCost: true }));
                             }}
-                            placeholder="0,00"
                             data-testid="assistance-costo"
                             aria-label="Costo por persona por día"
                         />
@@ -467,19 +465,15 @@ export function AssistanceInlineForm({
                 )}
                 <div>
                     <label className={LABEL_BASE} htmlFor="assistance-venta">Venta por persona/día</label>
-                    <input
+                    <MoneyInput
                         id="assistance-venta"
-                        type="number"
-                        min={0}
-                        step="0.01"
                         className={camposSugeridos.unitSalePrice ? INPUT_SUGERIDO : INPUT_NORMAL}
                         value={form.unitSalePrice || ""}
-                        onChange={(event) => {
-                            setForm((prev) => ({ ...prev, unitSalePrice: event.target.value }));
+                        onChange={(nuevoValor) => {
+                            setForm((prev) => ({ ...prev, unitSalePrice: nuevoValor }));
                             setCamposSugeridos((prev) => ({ ...prev, unitSalePrice: false }));
                             setCamposTocadosAMano((prev) => ({ ...prev, unitSalePrice: true }));
                         }}
-                        placeholder="0,00"
                         required
                         data-testid="assistance-venta"
                         aria-label="Precio de venta por persona por día"

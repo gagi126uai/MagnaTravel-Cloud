@@ -1,0 +1,318 @@
+<title>Maqueta — Reservas con el nuevo look</title>
+<style>
+  :root {
+    --papel: #fafaf9; --tinta: #1c1e21; --tinta-suave: #5b6067;
+    --linea: #e2e2df; --tarjeta: #ffffff; --acento: #1c4587;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --papel: #16181c; --tinta: #e8e9eb; --tinta-suave: #9aa1ab;
+      --linea: #2c3036; --tarjeta: #1e2126; --acento: #7ba3d8;
+    }
+  }
+  :root[data-theme="dark"] {
+    --papel: #16181c; --tinta: #e8e9eb; --tinta-suave: #9aa1ab;
+    --linea: #2c3036; --tarjeta: #1e2126; --acento: #7ba3d8;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--papel); color: var(--tinta); font-family: "Segoe UI", system-ui, sans-serif; line-height: 1.5; margin: 0; padding: 32px 20px 80px; }
+  .hoja { max-width: 1060px; margin: 0 auto; }
+  header.cab { border-bottom: 3px solid var(--tinta); padding-bottom: 18px; margin-bottom: 8px; }
+  .sobre { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tinta-suave); margin: 0 0 6px; }
+  h1 { font-size: clamp(24px, 4vw, 34px); margin: 0 0 8px; font-weight: 650; text-wrap: balance; }
+  .bajada { color: var(--tinta-suave); max-width: 68ch; margin: 0; font-size: 15px; }
+  .decis { margin: 16px 0 36px; font-size: 13.5px; color: var(--tinta-suave); }
+  .decis b { color: var(--tinta); }
+  h2.tit-pantalla { font-size: 19px; font-weight: 650; margin: 44px 0 4px; }
+  .nota-pantalla { color: var(--tinta-suave); font-size: 13.5px; margin: 0 0 14px; max-width: 75ch; }
+
+  /* ══════════ EL MARCO DE PANTALLA (siempre modo claro, como la app) ══════════ */
+  .scr { background: #f6f7f8; border: 1px solid #d5d7d9; border-radius: 10px; overflow-x: auto; color: #1f2733; font-size: 13.5px; }
+  .scr-in { min-width: 860px; }
+
+  /* topbar con la decisión 5C */
+  .topbar { display: flex; align-items: center; gap: 12px; background: #ffffff; border-bottom: 1px solid #e4e7eb; padding: 10px 18px; }
+  .topbar .burger { color: #64748b; font-size: 16px; }
+  .topbar .marca { font-weight: 700; color: #14283f; font-size: 14.5px; }
+  .modo-prueba { color: #92600a; font-size: 11.5px; background: #fdf3e0; border: 1px solid #f0d9ab; border-radius: 99px; padding: 1px 9px; font-weight: 600; }
+  .topbar .der { margin-left: auto; display: flex; align-items: center; gap: 14px; color: #94a3b8; font-size: 12.5px; }
+  .avatar { width: 26px; height: 26px; border-radius: 99px; background: #e2e8f0; color: #475569; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
+
+  .cuerpo { padding: 18px 22px 24px; }
+
+  /* botones del sistema: UNA sola jerarquía */
+  .b-ppal { height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 18px; border-radius: 7px; background: #1d4ed8; color: #fff; font-weight: 650; font-size: 13.5px; white-space: nowrap; }
+  .b-ppal.chico { height: 32px; padding: 0 13px; font-size: 12.5px; }
+  .b-texto { color: #64748b; font-weight: 550; font-size: 13.5px; white-space: nowrap; }
+  .b-texto.rojo { color: #b91c1c; }
+  .b-kebab { height: 40px; width: 34px; display: inline-flex; align-items: center; justify-content: center; color: #64748b; font-size: 17px; }
+  .b-apagado { color: #b6bdc6; font-weight: 550; font-size: 13.5px; white-space: nowrap; cursor: help; border-bottom: 1px dotted #cfd5dc; }
+  .globito { position: relative; display: inline-block; }
+  .globito .tip { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #1f2733; color: #f1f5f9; font-size: 11.5px; padding: 6px 10px; border-radius: 6px; white-space: nowrap; }
+  .globito .tip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #1f2733; }
+
+  /* chips de estado */
+  .chip { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; border-radius: 99px; padding: 1px 9px; }
+  .c-borrador { background: #eef2fb; color: #29508a; border: 1px solid #c9d8f0; }
+  .c-conf { background: #e7f4ea; color: #226237; border: 1px solid #bfe0c7; }
+  .c-viaje { background: #e0f2f4; color: #155e66; border: 1px solid #b2dde2; }
+  .c-solicitado { background: #fef3c7; color: #92600a; border: 1px solid #f0d9ab; }
+  .usd { background: #4b5563; color: #fff; font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 6px; }
+  .ars { background: #8a9199; color: #fff; font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 6px; }
+
+  /* el sello */
+  .sello { display: inline-block; transform: rotate(-8deg); border: 2.5px dashed #b4443c; color: #b4443c; border-radius: 6px; font-weight: 800; letter-spacing: 0.2em; font-size: 11px; padding: 2px 10px; opacity: 0.8; text-transform: uppercase;
+    mask-image: radial-gradient(circle at 30% 60%, black 55%, rgba(0,0,0,0.5) 78%, black 100%);
+    -webkit-mask-image: radial-gradient(circle at 30% 60%, black 55%, rgba(0,0,0,0.5) 78%, black 100%); }
+  .sello.gde { font-size: 14px; padding: 4px 14px; }
+
+  /* ══ LISTADO ══ */
+  .titulo-pag { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .titulo-pag h3 { font-size: 20px; font-weight: 700; margin: 0; color: #14283f; }
+  .titulo-pag .sub { color: #64748b; font-size: 12.5px; margin-top: 1px; }
+  .resumen { display: flex; gap: 26px; background: #ffffff; border: 1px solid #e4e7eb; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; font-size: 12px; color: #64748b; flex-wrap: wrap; }
+  .resumen b { color: #1f2733; font-size: 14px; font-variant-numeric: tabular-nums; display: block; }
+  .solapas { display: flex; gap: 2px; border-bottom: 2px solid #e4e7eb; margin-bottom: 10px; font-size: 13px; flex-wrap: wrap; }
+  .solapa { padding: 7px 12px; color: #64748b; white-space: nowrap; }
+  .solapa .n { color: #94a3b8; font-size: 11.5px; margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .solapa.activa { color: #1d4ed8; font-weight: 650; border-bottom: 2px solid #1d4ed8; margin-bottom: -2px; }
+  .buscador { display: flex; gap: 10px; margin-bottom: 10px; }
+  .buscador input { flex: 1; height: 36px; border: 1px solid #d5d9de; border-radius: 7px; padding: 0 12px; font-size: 13px; color: #1f2733; background: #fff; }
+  .buscador .filtro { height: 36px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d5d9de; border-radius: 7px; padding: 0 12px; color: #475569; background: #fff; font-size: 12.5px; white-space: nowrap; }
+
+  table.listado { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e4e7eb; border-radius: 8px; overflow: hidden; }
+  .listado th { text-align: left; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; font-weight: 650; padding: 8px 12px; border-bottom: 1px solid #e4e7eb; background: #fbfcfd; }
+  .listado td { padding: 8px 12px; border-bottom: 1px solid #eef0f2; vertical-align: middle; }
+  .listado tr:last-child td { border-bottom: none; }
+  .listado .num { font-weight: 700; color: #14283f; white-space: nowrap; }
+  .listado .dest { color: #64748b; font-size: 12px; }
+  .listado .cliente { color: #1f2733; }
+  .listado .pax { color: #94a3b8; font-size: 12px; }
+  .listado .plata { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; color: #1f2733; white-space: nowrap; }
+  .listado .sub-plata { color: #94a3b8; font-size: 11.5px; font-weight: 500; }
+  .listado .fecha { color: #475569; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .listado .acciones { text-align: right; white-space: nowrap; }
+  .pie-lista { display: flex; justify-content: space-between; align-items: center; color: #64748b; font-size: 12.5px; padding: 10px 4px 0; }
+
+  /* ══ FICHA ══ */
+  .volver { color: #64748b; font-size: 12.5px; margin-bottom: 10px; }
+  .ficha-cab { background: #fff; border: 1px solid #e4e7eb; border-radius: 8px; padding: 16px 18px; }
+  .ficha-fila1 { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+  .ficha-tit h3 { margin: 0; font-size: 19px; font-weight: 700; color: #14283f; }
+  .ficha-tit h3 .num { color: #1d4ed8; }
+  .ficha-tit .quien { color: #1f2733; font-size: 13.5px; margin-top: 3px; }
+  .ficha-tit .datos { color: #64748b; font-size: 12.5px; margin-top: 1px; }
+  .botonera { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+  .ficha-chips { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; font-size: 11.5px; color: #64748b; align-items: center; }
+  .chip-gris { background: #f1f3f5; border: 1px solid #e2e5e9; border-radius: 99px; padding: 1px 10px; color: #475569; font-size: 11px; font-weight: 600; }
+  .ficha-fechas { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: #1f2733; flex-wrap: wrap; }
+  .ficha-fechas .marco { border: 1px solid #e2e5e9; border-radius: 7px; padding: 6px 12px; background: #fbfcfd; }
+  .ficha-fechas b { font-variant-numeric: tabular-nums; }
+  .ficha-fechas .segun { color: #94a3b8; font-size: 11.5px; }
+  .ficha-plata { display: flex; gap: 24px; margin-top: 12px; font-size: 12px; color: #64748b; flex-wrap: wrap; }
+  .ficha-plata b { color: #1f2733; font-variant-numeric: tabular-nums; font-weight: 650; }
+  .aviso-etapa { margin-top: 14px; background: #f2f6fc; border: 1px solid #c9d8f0; border-radius: 7px; padding: 9px 13px; font-size: 12.5px; color: #29508a; }
+
+  .serv-caja { background: #fff; border: 1px solid #e4e7eb; border-radius: 8px; margin-top: 14px; padding: 14px 18px; }
+  .serv-cab { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 10px; }
+  .serv-cab h4 { margin: 0; font-size: 14.5px; font-weight: 700; color: #14283f; }
+  table.serv { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .serv th { text-align: left; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; font-weight: 650; padding: 6px 10px; border-bottom: 1px solid #e4e7eb; }
+  .serv td { padding: 8px 10px; border-bottom: 1px solid #eef0f2; vertical-align: middle; }
+  .serv .desc b { color: #14283f; }
+  .serv .desc .op { color: #64748b; font-size: 11.5px; }
+  .serv .plata { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .serv tfoot td { font-weight: 700; color: #14283f; border-bottom: none; padding-top: 10px; }
+
+  /* ══ CARGA ══ */
+  .carga { background: #fff; border: 1px solid #cfd8e6; border-radius: 10px; margin-top: 14px; padding: 16px 18px; }
+  .carga-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .ctab { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 13px; border-radius: 99px; border: 1px solid #d5d9de; color: #475569; font-size: 12.5px; background: #fff; white-space: nowrap; }
+  .ctab.activa { background: #1d4ed8; border-color: #1d4ed8; color: #fff; font-weight: 650; }
+  .campos { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+  .campo { display: flex; flex-direction: column; gap: 4px; }
+  .campo label { font-size: 11px; font-weight: 650; color: #64748b; letter-spacing: 0.02em; }
+  .campo .inp { height: 36px; border: 1px solid #d5d9de; border-radius: 7px; padding: 0 10px; font-size: 13px; color: #1f2733; background: #fff; display: flex; align-items: center; }
+  .campo .inp.sug { background: #fef8e7; border-color: #ecd9a8; }
+  .campo .inp.placeholder { color: #9aa3ad; }
+  .c3 { grid-column: span 3; } .c4 { grid-column: span 4; } .c6 { grid-column: span 6; } .c12 { grid-column: span 12; }
+  .leyenda-sug { font-size: 11.5px; color: #92600a; margin-top: 10px; }
+  .carga-pie { display: flex; justify-content: flex-end; align-items: center; gap: 18px; margin-top: 16px; border-top: 1px solid #eef0f2; padding-top: 14px; }
+
+  .firma { margin-top: 44px; border: 1px solid var(--linea); border-left: 4px solid var(--acento); background: var(--tarjeta); border-radius: 6px; padding: 14px 18px; font-size: 15px; }
+  @media (max-width: 720px) { .campos { grid-template-columns: repeat(6, 1fr); } .c3 { grid-column: span 3; } .c4, .c6, .c12 { grid-column: span 6; } }
+</style>
+
+<div class="hoja">
+  <header class="cab">
+    <p class="sobre">MagnaTravel · Maqueta para firmar · 11/08/2026</p>
+    <h1>Reservas con el nuevo look, todo junto</h1>
+    <p class="bajada">Las tres pantallas del piloto con tus decisiones aplicadas. Esto es lo que se programa si lo firmás — nada se toca antes.</p>
+  </header>
+  <p class="decis">Tus decisiones: <b>1A azul boleto</b> · <b>2A listas compactas</b> · <b>3A secundarios en texto</b> · <b>4A el sello</b> · <b>5C "modo prueba" al lado del logo</b> · US$ gris · "Descartar" · "+ Nueva reserva" · solapa "Borradores".</p>
+
+  <!-- ════════ PANTALLA 1: LISTADO ════════ -->
+  <h2 class="tit-pantalla">1 · El listado de reservas</h2>
+  <p class="nota-pantalla">La franja naranja desapareció: ahora "modo prueba" vive al lado del logo (tu 5C). Un solo botón azul en toda la pantalla. Filas compactas, números alineados, y la anulada con su sello. El "Archivar" apagado muestra el motivo en globito al pasar el mouse (dibujado abierto para que lo veas).</p>
+  <div class="scr"><div class="scr-in">
+    <div class="topbar"><span class="burger">☰</span><span class="marca">MagnaTravel ERP</span><span class="modo-prueba">modo prueba</span><div class="der"><span>🔍 Buscar… <kbd>Ctrl+K</kbd></span><span>🔔</span><span class="avatar">T</span></div></div>
+    <div class="cuerpo">
+      <div class="titulo-pag">
+        <div><h3>Reservas</h3><div class="sub">Administrá tus reservas, borradores y ventas.</div></div>
+        <span class="b-ppal">+ Nueva reserva</span>
+      </div>
+      <div class="resumen">
+        <span>Reservas activas<b>1</b></span>
+        <span>Por cobrar<b>$ 0,00</b></span>
+        <span>Vendido <span style="font-size:10px">(solo confirmado)</span><b>US$ 800,00</b></span>
+      </div>
+      <div class="solapas">
+        <span class="solapa activa">Todas<span class="n">3</span></span>
+        <span class="solapa">Borradores<span class="n">1</span></span>
+        <span class="solapa">En gestión<span class="n">0</span></span>
+        <span class="solapa">Confirmadas<span class="n">1</span></span>
+        <span class="solapa">En viaje<span class="n">0</span></span>
+        <span class="solapa">Finalizadas<span class="n">0</span></span>
+        <span class="solapa">Anuladas<span class="n">1</span></span>
+        <span class="solapa">Perdidas<span class="n">0</span></span>
+        <span class="solapa">Archivadas<span class="n">0</span></span>
+      </div>
+      <div class="buscador">
+        <input value="" placeholder="Buscar por N° de reserva o cliente…">
+        <span class="filtro">Por creación ▾</span><span class="filtro">Agosto de 2026 ‹ ›</span>
+      </div>
+      <table class="listado">
+        <thead><tr><th>Reserva</th><th>Cliente / pasajeros</th><th>Estado</th><th>Creada</th><th style="text-align:right">Finanzas</th><th style="text-align:right">Acciones</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><div class="num">#F-2026-1066</div><div class="dest">PLAYA DEL CARMEN · Viaja 29/08/2026</div></td>
+            <td><div class="cliente">Marisa Rosana Salafia</div><div class="pax">3 pasajeros</div></td>
+            <td><span class="chip c-conf">Confirmada 🔒</span></td>
+            <td class="fecha">06/08/2026</td>
+            <td class="plata"><span class="usd">US$</span> 800,00<div class="sub-plata">Saldado</div></td>
+            <td class="acciones"><span class="b-apagado">Archivar</span></td>
+          </tr>
+          <tr>
+            <td><div class="num">#F-2026-1065</div><div class="dest">Viaja 10/12/2026</div></td>
+            <td><div class="cliente">PI0724 Consumidor Final</div><div class="pax">1 pasajero</div></td>
+            <td><span class="sello">Anulada</span></td>
+            <td class="fecha">03/08/2026</td>
+            <td class="plata"><span class="ars">$</span> 0,00<div class="sub-plata">Sin movimientos</div></td>
+            <td class="acciones"><span class="b-apagado">Archivar</span></td>
+          </tr>
+          <tr>
+            <td><div class="num">#F-2026-1067</div><div class="dest">PUNTA CANA · Viaja 10/02/2027</div></td>
+            <td><div class="cliente">Marisa Rosana Salafia</div><div class="pax">1 pasajero</div></td>
+            <td><span class="chip c-borrador">Borrador</span></td>
+            <td class="fecha">09/08/2026</td>
+            <td class="plata"><span class="usd">US$</span> 1.450,00<div class="sub-plata">Sin movimientos</div></td>
+            <td class="acciones"><span class="globito"><span class="tip">Solo se pueden archivar reservas en viaje o finalizadas</span><span class="b-apagado">Archivar</span></span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="pie-lista"><span>1–3 de 3</span><span>Mostrar 25 ▾ &nbsp; Página 1 de 1 &nbsp; ‹ ›</span></div>
+    </div>
+  </div></div>
+
+  <!-- ════════ PANTALLA 2: FICHA ════════ -->
+  <h2 class="tit-pantalla">2 · La ficha de la reserva</h2>
+  <p class="nota-pantalla">Lo que te enojaba, resuelto: un solo botón con forma de botón — "El cliente aceptó", azul, 40 px — y "Perdida" como texto gris a su lado, nunca más grande. Las excepciones quedan en el "⋯". Las fechas del viaje aparecen como calculadas ("según los servicios"), como firmaste hoy.</p>
+  <div class="scr"><div class="scr-in">
+    <div class="topbar"><span class="burger">☰</span><span class="marca">MagnaTravel ERP</span><span class="modo-prueba">modo prueba</span><div class="der"><span>🔍 Buscar…</span><span>🔔</span><span class="avatar">T</span></div></div>
+    <div class="cuerpo">
+      <div class="volver">← Volver al listado</div>
+      <div class="ficha-cab">
+        <div class="ficha-fila1">
+          <div class="ficha-tit">
+            <h3>Reserva <span class="num">#F-2026-1067</span> &nbsp;<span class="chip c-borrador">BORRADOR</span></h3>
+            <div class="quien">Marisa Rosana Salafia</div>
+            <div class="datos">PUNTA CANA · 1 pasajero</div>
+          </div>
+          <div class="botonera">
+            <span class="b-ppal">El cliente aceptó</span>
+            <span class="b-texto">Perdida</span>
+            <span class="globito"><span class="tip">Solo se pueden archivar reservas en viaje o finalizadas</span><span class="b-apagado">Archivar</span></span>
+            <span class="b-kebab">⋯</span>
+          </div>
+        </div>
+        <div class="ficha-chips">
+          <span>PAGO:</span><span class="chip-gris">SIN MOVIMIENTOS</span>
+          <span>FACTURA:</span><span class="chip-gris">SIN FACTURAR</span>
+        </div>
+        <div class="ficha-fechas">
+          <span class="marco">📅 Del <b>10/02/2027</b> al <b>12/04/2027</b> <span class="segun">· según los servicios cargados</span></span>
+          <span class="b-texto">Fecha prometida…</span>
+        </div>
+        <div class="ficha-plata">
+          <span>Saldo a cobrar <b>$ 0,00 · US$ 0,00</b></span>
+          <span>Recaudado <b>$ 0,00 · US$ 0,00</b></span>
+          <span>Inversión <b>$ 0,00 · US$ 1.750,00</b></span>
+        </div>
+        <div class="aviso-etapa"><b>Borrador.</b> Cuando el cliente confirme, usá "El cliente aceptó" para pasar a En gestión.</div>
+      </div>
+
+      <div class="serv-caja">
+        <div class="serv-cab"><h4>Servicios contratados</h4><span class="b-ppal chico">+ Agregar servicio</span></div>
+        <table class="serv">
+          <thead><tr><th>Tipo</th><th>Descripción</th><th>Fecha</th><th>Estado</th><th style="text-align:right">Costo</th><th style="text-align:right">Venta</th><th style="text-align:right">Acciones</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>🏨 Hotel</td>
+              <td class="desc"><b>IBEROSTAR WAVES PUNTA CANA</b><div class="op">Operador: delfos</div></td>
+              <td class="fecha">10/02/2027<br><span style="color:#94a3b8">al 15/02/2027</span></td>
+              <td><span class="chip c-solicitado">Solicitado</span></td>
+              <td class="plata"><span class="usd">US$</span> 1.250,00</td>
+              <td class="plata"><span class="usd">US$</span> 1.450,00</td>
+              <td class="plata"><span class="b-texto">Editar</span> &nbsp; <span class="b-texto rojo">Borrar</span></td>
+            </tr>
+            <tr>
+              <td>🏨 Hotel</td>
+              <td class="desc"><b>Hotel Robot QA</b><div class="op">Operador: delfos</div></td>
+              <td class="fecha">10/04/2027<br><span style="color:#94a3b8">al 12/04/2027</span></td>
+              <td><span class="chip c-solicitado">Solicitado</span></td>
+              <td class="plata"><span class="ars">$</span> 0,00</td>
+              <td class="plata"><span class="ars">$</span> 140,00</td>
+              <td class="plata"><span class="b-texto">Editar</span> &nbsp; <span class="b-texto rojo">Borrar</span></td>
+            </tr>
+          </tbody>
+          <tfoot><tr><td colspan="5">TOTAL VENTA</td><td class="plata"><span class="usd">US$</span> 1.450,00 · <span class="ars">$</span> 140,00</td><td></td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+  </div></div>
+
+  <!-- ════════ PANTALLA 3: CARGA ════════ -->
+  <h2 class="tit-pantalla">3 · La ficha de carga de servicio</h2>
+  <p class="nota-pantalla">Mismos 40 px de altura para el botón principal, solapas tipo pastilla con la activa en azul, lo sugerido sigue en amarillo (tu regla de siempre), y "Cancelar" ahora dice "Descartar" para no chocar con el vocabulario del negocio.</p>
+  <div class="scr"><div class="scr-in">
+    <div class="cuerpo" style="padding-top:16px">
+      <div class="carga">
+        <div class="carga-tabs">
+          <span class="ctab activa">🏨 Hotel</span><span class="ctab">✈ Aéreo</span><span class="ctab">🚐 Traslado</span><span class="ctab">📦 Paquete</span><span class="ctab">🛡 Asistencia</span>
+        </div>
+        <div class="campos">
+          <div class="campo c12"><label>Hotel</label><div class="inp">IBEROSTAR WAVES PUNTA CANA</div></div>
+          <div class="campo c6"><label>Operador</label><div class="inp sug">delfos</div></div>
+          <div class="campo c3"><label>Entrada</label><div class="inp sug">10/02/2027</div></div>
+          <div class="campo c3"><label>Salida</label><div class="inp sug">15/02/2027</div></div>
+          <div class="campo c3"><label>Noches</label><div class="inp">5</div></div>
+          <div class="campo c3"><label>Habitaciones</label><div class="inp">1</div></div>
+          <div class="campo c3"><label>Régimen *</label><div class="inp">Desayuno ▾</div></div>
+          <div class="campo c3"><label>Tipo de habitación *</label><div class="inp">Doble ▾</div></div>
+          <div class="campo c4"><label>Costo por noche</label><div class="inp sug">250,00</div></div>
+          <div class="campo c4"><label>Venta por noche</label><div class="inp sug">290,00</div></div>
+          <div class="campo c4"><label>Moneda</label><div class="inp sug">USD (dólares) ▾</div></div>
+        </div>
+        <div class="leyenda-sug">Lo pintado de amarillo es sugerido — lo podés pisar y no vuelve solo.</div>
+        <div class="carga-pie">
+          <span class="b-texto">Descartar</span>
+          <span class="b-ppal">Guardar servicio</span>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+  <div class="firma">
+    <b>¿Se firma?</b> Contestame en el chat: <b>"firmo"</b> y esto pasa a programarse tal cual (por tandas, con capturas lado a lado de PROD contra esta maqueta). Si algo no te cierra — un color, un espacio, una palabra — decímelo y te muestro la corrección acá mismo antes de tocar código.
+  </div>
+</div>

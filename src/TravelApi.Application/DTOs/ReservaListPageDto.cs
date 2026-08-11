@@ -26,10 +26,14 @@ public class ReservaListSummaryDto
     /// Tanda 1 rediseño listado (2026-08-04, P-3⭐/T-4): reemplaza a los escalares
     /// <c>TotalSaleActive</c>/<c>TotalCostActive</c>/<c>TotalPendingBalance</c>/<c>GrossProfit</c>
     /// (eliminados: mezclaban pesos y dólares en un solo número, la regla de plata mas importante
-    /// del producto es que las monedas NUNCA se suman). "Vendido" de las reservas ACTIVAS (mismo
-    /// alcance que antes usaba TotalSaleActive: excluye Cerradas/Anuladas/Perdidas/Archivadas),
-    /// una linea por moneda. Una moneda en $0 no viaja (el front pinta "$ 0,00" gris cuando la
-    /// lista viene vacia, no hace falta mandar un cero explicito).
+    /// del producto es que las monedas NUNCA se suman). Una linea por moneda; una moneda en $0 no
+    /// viaja (el front pinta "$ 0,00" gris cuando la lista viene vacia, no hace falta mandar un cero
+    /// explicito).
+    ///
+    /// <para><b>Alcance (decision del dueño, 2026-08-11)</b>: SOLO venta firme — Confirmada, En viaje
+    /// y Finalizada (<c>EstadoReserva.SoldKpiStatuses</c>). Quedan afuera Cotizacion, Presupuesto, En
+    /// gestion, las anuladas, Perdidas y Archivadas. Antes usaba el mismo alcance "activas" que
+    /// <see cref="PorCobrarPorMoneda"/> y por eso un presupuesto sin confirmar inflaba el numero.</para>
     /// </summary>
     public List<ReservaSummaryAmountByCurrencyDto> VendidoPorMoneda { get; set; } = new();
 
