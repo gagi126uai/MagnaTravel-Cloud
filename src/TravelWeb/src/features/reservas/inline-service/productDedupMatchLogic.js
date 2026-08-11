@@ -117,21 +117,67 @@ export function mergearCandidatosDedup(resultadosActuales, candidatosDelMotor, t
 
 // ─── El texto de "crear ..." no puede nacer con basura ──────────────────────────
 
+// Conectores cortos que no aportan nada al NOMBRE del producto — no cuentan ni en el
+// crudo ni en el limpio a la hora de medir cuánto se "conservó" (H-3, 2026-08-11).
+const STOPWORDS_TEXTO_DE_CREAR = new Set(["de", "del", "la", "el", "al", "con", "a", "y", "o"]);
+
+/**
+ * Palabras que SÍ aportan al nombre de un producto: al menos 2 caracteres, no son un
+ * número puro (una fecha o un precio suelto) y no son un conector corto. Se usa para
+ * medir cuánto del texto crudo sobrevivió en el texto limpio que devolvió el motor.
+ */
+function palabrasSignificativasDeCrear(texto) {
+  return (texto || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((palabra) => palabra.length >= 2)
+    .filter((palabra) => !/^\d+$/.test(palabra))
+    .filter((palabra) => !STOPWORDS_TEXTO_DE_CREAR.has(palabra.toLowerCase()));
+}
+
 /**
  * La opción "crear {texto}" del dropdown usa, por defecto, la frase cruda que escribió
  * el vendedor — que puede traer precio, fechas y operador mezclados ("sheraton iguazu
  * doble desayuno ola 48 usd del 12 al 15/9"). Si el motor entendió cuál ES el nombre del
  * producto dentro de esa frase (`productSearchText`), se usa ESE para que un alta nueva
- * no nazca con basura en el nombre. Sin esa ayuda, el texto de crear sigue siendo el de
- * siempre: la frase tal cual la escribió el vendedor.
+ * no nazca con basura en el nombre.
+ *
+ * Fix H-3 (2026-08-11): el motor a veces "limpia de más" — con "hotel e3" devolvía solo
+ * "hotel", perdiendo la parte que en realidad SÍ distingue al producto (no era ni fecha
+ * ni operador, el motor simplemente no la reconoció). Antes de confiar en el texto
+ * limpio, se exige UNA de estas dos condiciones:
+ *   1. conserva al menos el 60% de las "palabras significativas" del texto crudo
+ *      (`palabrasSignificativasDeCrear` — sin conectores, sin números sueltos); o
+ *   2. es una FRASE (2 o más palabras) y el texto crudo traía fechas/números — ahí el
+ *      motor típicamente separó bien "esto es el producto" de "esto es fecha/precio",
+ *      aunque la proporción de palabras no llegue al 60% (una frase larga con pocas
+ *      palabras de producto real es normal, ej. "iberostar waves del 10/02 al 15/02").
+ * Si ninguna se cumple, se usa el texto crudo tal cual — la opción segura, nunca peor
+ * que lo que el vendedor mismo escribió.
  *
  * @param {string|null|undefined} productSearchText — nombre limpio que sacó el motor
  * @param {string} textoOriginal — lo que el vendedor escribió en el buscador
  */
 export function resolverTextoDeCrear(productSearchText, textoOriginal) {
   const limpio = (productSearchText || "").trim();
-  if (limpio) return limpio;
-  return (textoOriginal || "").trim();
+  const crudo = (textoOriginal || "").trim();
+  if (!limpio) return crudo;
+
+  const significativasCrudo = palabrasSignificativasDeCrear(crudo);
+  const significativasLimpio = palabrasSignificativasDeCrear(limpio);
+  // Sin palabras significativas en el crudo (raro: solo números/conectores) no hay nada
+  // que "perder" — el límite del 60% no aplica, se confía en el limpio.
+  const conserva60Porciento =
+    significativasCrudo.length === 0
+      ? true
+      : significativasLimpio.length / significativasCrudo.length >= 0.6;
+
+  const cantidadPalabrasDelLimpio = limpio.split(/\s+/).filter(Boolean).length;
+  const crudoTraeFechaONumero = /\d/.test(crudo);
+  const esCasoFrase = cantidadPalabrasDelLimpio >= 2 && crudoTraeFechaONumero;
+
+  return conserva60Porciento || esCasoFrase ? limpio : crudo;
 }
 
 // ─── No sorprender a quien está navegando el dropdown con el teclado ───────────
@@ -270,6 +316,60 @@ export function extraerInterpretacionParaPrecarga(respuestaDelMotor) {
 
   if (!supplier && !dates) return null;
   return { supplier, dates };
+}
+
+// ─── Duda de producto LOCAL, sin motor (H-1, 2026-08-11) ─────────────────────────
+
+// Saca tildes y colapsa espacios de sobra, para que "Sheratón" y "Sheraton" (o "Hotel  X"
+// con doble espacio) cuenten como el MISMO nombre al comparar.
+function normalizarNombreDeProducto(nombre) {
+  return (nombre || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // saca los acentos (quedan solo las letras base)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Duda de producto SIN depender del motor de IA: la pregunta "¿el de A o el de B?" antes
+ * solo llegaba en la respuesta de /linea-inteligente — pero el gate `busquedaLocalDebil`
+ * apaga esa consulta JUSTO cuando el buscador local ya encontró dos resultados FUERTES
+ * casi iguales (score alto en los dos), que es exactamente el caso donde más hace falta
+ * preguntar. Esta función mira los primeros 2 resultados que YA trajo el buscador de
+ * catálogo (sin llamar a nada nuevo) y arma la misma duda que armaría el motor: mismo
+ * nombre de producto, pero en dos lugares u operadores distintos.
+ *
+ * Regla espejo de la del backend (mismo espíritu que `esDudaDeProducto`): nombres
+ * DISTINTOS nunca generan duda acá — un vendedor que ve "Sheraton Iguazú" y "Hotel Colón"
+ * ya los distingue solo, no hace falta preguntarle nada.
+ *
+ * @param {object[]} results — mismos `results` de catalog-search que ya mira `hayParecidoFuerte`
+ *   (cada fila trae `name`, `subtitle` opcional, `lastSale` opcional con `supplierName`)
+ * @returns {{field:"producto", question:string}|null}
+ */
+export function dudaDeProductoLocal(results) {
+  const lista = results || [];
+  const primero = lista[0];
+  const segundo = lista[1];
+  if (!primero || !segundo) return null;
+
+  const nombreA = normalizarNombreDeProducto(primero.name);
+  const nombreB = normalizarNombreDeProducto(segundo.name);
+  // Sin nombre, o nombres distintos: no hay duda que armar (ya se distinguen solos).
+  if (!nombreA || nombreA !== nombreB) return null;
+
+  // El "lugar" que distingue a cada fila: primero la ciudad/ruta (subtitle); si no la
+  // trae, el operador de la última venta; y si tampoco (producto sin ventas), el operador
+  // de la ficha del producto (rateFallback, gate 2026-08-11).
+  const lugarA = primero.subtitle || primero.lastSale?.supplierName || primero.rateFallback?.supplierName;
+  const lugarB = segundo.subtitle || segundo.lastSale?.supplierName || segundo.rateFallback?.supplierName;
+  if (!lugarA || !lugarB || lugarA === lugarB) return null;
+
+  return {
+    field: "producto",
+    question: `¿${primero.name} de ${lugarA} o el de ${lugarB}?`,
+  };
 }
 
 // ─── La ✨ es SOLO para la duda de PRODUCTO (fix C-4, review 2026-08-10) ──────────

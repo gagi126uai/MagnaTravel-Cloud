@@ -201,7 +201,14 @@ public class AuthController : ControllerBase
 
     private void WriteSessionCookies(AuthTokensResult session)
     {
-        Response.Cookies.Append(AuthCookieNames.Access, session.AccessToken, BuildCookieOptions(session.AccessTokenExpiresAt, httpOnly: true));
+        // Bug H-5 (QA 2026-08-11): a esta cookie le faltaba "persistent: session.IsPersistent", asi
+        // que SIEMPRE quedaba con fecha de expiracion (cookie persistente, sobrevive a cerrar el
+        // navegador) aunque el usuario NO tildara "mantener sesion". Refresh/csrf de abajo ya lo
+        // hacian bien; la de acceso tiene que respetar la MISMA eleccion.
+        Response.Cookies.Append(
+            AuthCookieNames.Access,
+            session.AccessToken,
+            BuildCookieOptions(session.AccessTokenExpiresAt, httpOnly: true, persistent: session.IsPersistent));
         Response.Cookies.Append(
             AuthCookieNames.Refresh,
             session.RefreshToken,

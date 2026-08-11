@@ -13,6 +13,7 @@ import {
   extraerInterpretacionParaPrecarga,
   esDudaDeProducto,
   debeMostrarDuda,
+  dudaDeProductoLocal,
 } from "./productDedupMatchLogic.js";
 
 describe("debeDispararDedupMatch", () => {
@@ -162,6 +163,23 @@ describe("resolverTextoDeCrear", () => {
   it("recorta espacios de sobra en ambos casos", () => {
     assert.equal(resolverTextoDeCrear("  Amerian Posadas  ", ""), "Amerian Posadas");
     assert.equal(resolverTextoDeCrear(undefined, "  sheraton  "), "sheraton");
+  });
+
+  // ─── H-3 (2026-08-11): el motor "limpia de más" y pierde parte del nombre real ────
+
+  it("H-3: 'hotel e3' con limpio 'hotel' (pierde 'e3', que no era fecha ni operador) — usa el CRUDO", () => {
+    // El limpio solo conserva 1 de las 2 palabras significativas del crudo (50% < 60%)
+    // y no es una frase con fecha/número (1 sola palabra en el limpio) — se descarta.
+    const resultado = resolverTextoDeCrear("hotel", "hotel e3");
+    assert.equal(resultado, "hotel e3");
+  });
+
+  it("H-3: frase completa con fechas ('...del 10/02 al 15/02') — usa el LIMPIO aunque no llegue al 60%", () => {
+    // El limpio ("iberostar waves") solo conserva 2 de las ~4 palabras significativas
+    // del crudo, pero es una frase (2+ palabras) y el crudo trae fechas — el motor
+    // separó bien "esto es el producto" de "esto es la fecha".
+    const resultado = resolverTextoDeCrear("iberostar waves", "iberostar waves del 10/02 al 15/02");
+    assert.equal(resultado, "iberostar waves");
   });
 });
 
@@ -333,6 +351,82 @@ describe("esDudaDeProducto", () => {
 
   it("duda sin field (forma rara): false", () => {
     assert.equal(esDudaDeProducto({ code: "productoAmbiguo", question: "¿Cuál?" }), false);
+  });
+});
+
+// ─── dudaDeProductoLocal (H-1, 2026-08-11: duda de producto SIN el motor) ─────────
+// El gate `busquedaLocalDebil` apaga el motor justo cuando la búsqueda local YA
+// encontró dos resultados fuertes casi iguales — este helper arma la misma pregunta
+// mirando esos 2 resultados, sin ninguna llamada extra.
+
+describe("dudaDeProductoLocal", () => {
+  it("mismo nombre + subtitles distintos: arma la pregunta con las dos ciudades", () => {
+    const resultados = [
+      { name: "Sheraton Iguazú", subtitle: "Puerto Iguazú" },
+      { name: "Sheraton Iguazú", subtitle: "Posadas" },
+    ];
+    assert.deepEqual(dudaDeProductoLocal(resultados), {
+      field: "producto",
+      question: "¿Sheraton Iguazú de Puerto Iguazú o el de Posadas?",
+    });
+  });
+
+  it("mismo nombre (con tildes/mayúsculas/espacios distintos) + mismo subtitle: no hay duda", () => {
+    const resultados = [
+      { name: "Sheratón Iguazú", subtitle: "Puerto Iguazú" },
+      { name: "sheraton  iguazu", subtitle: "Puerto Iguazú" },
+    ];
+    assert.equal(dudaDeProductoLocal(resultados), null);
+  });
+
+  it("nombres distintos: no hay duda (el vendedor ya los distingue solo)", () => {
+    const resultados = [
+      { name: "Sheraton Iguazú", subtitle: "Puerto Iguazú" },
+      { name: "Hotel Colón", subtitle: "Posadas" },
+    ];
+    assert.equal(dudaDeProductoLocal(resultados), null);
+  });
+
+  it("sin subtitle pero operadores distintos (lastSale.supplierName): arma la pregunta con los operadores", () => {
+    const resultados = [
+      { name: "Excursión Cataratas", lastSale: { supplierName: "Ola Mayorista" } },
+      { name: "Excursión Cataratas", lastSale: { supplierName: "Delfos" } },
+    ];
+    assert.deepEqual(dudaDeProductoLocal(resultados), {
+      field: "producto",
+      question: "¿Excursión Cataratas de Ola Mayorista o el de Delfos?",
+    });
+  });
+
+  it("mismo nombre, sin subtitle NI supplierName en ninguno de los dos: no hay lugar que distinga, no hay duda", () => {
+    const resultados = [{ name: "Excursión Cataratas" }, { name: "Excursión Cataratas" }];
+    assert.equal(dudaDeProductoLocal(resultados), null);
+  });
+
+  it("solo 1 resultado o lista vacía: no hay nada que comparar", () => {
+    assert.equal(dudaDeProductoLocal([{ name: "Sheraton" }]), null);
+    assert.equal(dudaDeProductoLocal([]), null);
+    assert.equal(dudaDeProductoLocal(null), null);
+  });
+
+  it("mismo nombre, mismo subtitle en los dos, pero distinto operador: el subtitle manda (no llega a mirar el operador)", () => {
+    const resultados = [
+      { name: "Sheraton Iguazú", subtitle: "Puerto Iguazú", lastSale: { supplierName: "Ola Mayorista" } },
+      { name: "Sheraton Iguazú", subtitle: "Puerto Iguazú", lastSale: { supplierName: "Delfos" } },
+    ];
+    assert.equal(dudaDeProductoLocal(resultados), null);
+  });
+
+  it("solo mira los primeros 2 resultados: un 3er resultado con el mismo nombre no cambia nada", () => {
+    const resultados = [
+      { name: "Sheraton Iguazú", subtitle: "Puerto Iguazú" },
+      { name: "Sheraton Iguazú", subtitle: "Posadas" },
+      { name: "Sheraton Iguazú", subtitle: "Corrientes" },
+    ];
+    assert.deepEqual(dudaDeProductoLocal(resultados), {
+      field: "producto",
+      question: "¿Sheraton Iguazú de Puerto Iguazú o el de Posadas?",
+    });
   });
 });
 

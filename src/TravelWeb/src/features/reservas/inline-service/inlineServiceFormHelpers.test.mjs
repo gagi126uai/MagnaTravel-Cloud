@@ -390,6 +390,71 @@ describe("resolverPatchDeVentaDelCatalogo", () => {
     });
 });
 
+// ─── H-4-front (2026-08-11): precarga desde `rateFallback` (producto sin ventas) ──────
+// El backend ahora manda `rateFallback.supplierPublicId`/`supplierName` (el operador
+// cargado en la FICHA del producto) cuando el producto todavía no tiene ventas
+// registradas. Los 5 forms calculan `sale = catalogResult.lastSale || catalogResult.rateFallback
+// || {}` ANTES de llamar a `resolverPatchDeVentaDelCatalogo` — como esta función no le
+// pregunta a `sale` de dónde vino, la precarga amarilla funciona sola con las MISMAS
+// guardas (campo vacío/tocado a mano) que ya usa el camino de `lastSale`.
+
+describe("H-4-front: resolverPatchDeVentaDelCatalogo con sale = lastSale || rateFallback", () => {
+    it("producto sin ventas: lastSale es null, rateFallback SÍ trae operador — se precarga amarillo igual", () => {
+        const catalogResult = {
+            lastSale: null,
+            rateFallback: { supplierPublicId: "sup-fallback", supplierName: "Julia Tours", salePrice: null, netCost: null, currency: null },
+        };
+        // Mismo cálculo que hacen los 5 forms (HotelInlineForm.jsx línea 340, etc.)
+        const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
+
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true,
+            formActual: { supplierId: "", unitSalePrice: "", unitNetCost: "", currency: "" },
+            camposTocadosAMano: {},
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+
+        assert.equal(resultado.patch.supplierId, "sup-fallback");
+        assert.equal(resultado.patch.supplierName, "Julia Tours");
+        assert.equal(resultado.sugeridos.supplierId, true);
+        // El rateFallback de este caso no trae precio/moneda curados: no se escribe nada ahí.
+        assert.equal(resultado.patch.unitSalePrice, undefined);
+    });
+
+    it("ni lastSale ni rateFallback traen operador: no se escribe ni se vacía el campo", () => {
+        const catalogResult = { lastSale: null, rateFallback: null };
+        const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
+
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true,
+            formActual: { supplierId: "sup-manual", unitSalePrice: "", unitNetCost: "", currency: "" },
+            camposTocadosAMano: { supplierId: true },
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+
+        assert.deepEqual(resultado.patch, {});
+        assert.deepEqual(resultado.sugeridos, {});
+    });
+
+    it("lastSale (venta real) SÍ trae operador: gana sobre rateFallback (nunca se mira el fallback)", () => {
+        const catalogResult = {
+            lastSale: { supplierPublicId: "sup-real", supplierName: "Ola Mayorista", salePrice: 100, netCost: 60, currency: "USD" },
+            rateFallback: { supplierPublicId: "sup-fallback", supplierName: "Julia Tours" },
+        };
+        const sale = catalogResult.lastSale || catalogResult.rateFallback || {};
+
+        const resultado = resolverPatchDeVentaDelCatalogo({
+            sale, canSeeCost: true,
+            formActual: { supplierId: "", unitSalePrice: "", unitNetCost: "", currency: "" },
+            camposTocadosAMano: {},
+            campoVenta: "unitSalePrice", campoCosto: "unitNetCost",
+        });
+
+        assert.equal(resultado.patch.supplierId, "sup-real");
+        assert.equal(resultado.patch.supplierName, "Ola Mayorista");
+    });
+});
+
 // ─── Tests de SECUENCIA (regresión #1+#6, re-review 2026-08-10) ───────────────────────
 // No son réplicas de los de arriba: encadenan varias llamadas, tal cual las encadenaría
 // un form real (tipear → elegir → tipear → elegir), para probar el flujo completo tal

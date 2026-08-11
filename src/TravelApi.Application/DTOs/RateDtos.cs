@@ -304,4 +304,16 @@ public class CatalogSearchRateFallbackDto
     public string? Currency { get; set; }
     public string? PriceUnit { get; set; }
     public string? HotelPriceType { get; set; }
+
+    /// <summary>
+    /// El operador CARGADO EN LA FICHA del producto (<c>Rate.Supplier</c>), no uno aprendido de una
+    /// venta (el producto todavia no tiene ninguna, por eso esta en el fallback). Fix H-4 (review
+    /// 2026-08-11): sin esto, un producto sin ventas registradas llegaba al front sin operador en
+    /// NINGUN lado y el guardado se frenaba con "Elegi el operador" aunque la ficha SI lo tuviera
+    /// cargado. Es el mismo Id publico que ya viaja en <see cref="CatalogSearchLastSaleDto"/>, nunca
+    /// el Id interno (data-exposure).
+    /// </summary>
+    public Guid? SupplierPublicId { get; set; }
+
+    public string? SupplierName { get; set; }
 }

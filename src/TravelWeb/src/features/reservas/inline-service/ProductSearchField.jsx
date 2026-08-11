@@ -27,6 +27,13 @@
  * (D13). Si el motor no contesta nada útil (sin clave, caído, tardó), la pantalla es
  * exactamente la de hoy. Ver `useProductDedupMatch.js` y `productDedupMatchLogic.js`.
  *
+ * DUDA DE PRODUCTO LOCAL (H-1, 2026-08-11): la ✨ ahora también puede salir SIN el
+ * motor — mirando nomás los primeros 2 resultados que ya trajo el buscador de catálogo
+ * (`dudaDeProductoLocal`). Hacía falta: el gate que decide cuándo vale la pena consultar
+ * al motor (`busquedaLocalDebil`) se apaga justo cuando el buscador local ya encontró dos
+ * resultados fuertes casi iguales — el caso donde más falta hace preguntar. La duda local
+ * gana sobre la del motor cuando las dos existen.
+ *
  * BUSCADOR VERSÁTIL (D1..D9): las filas de OTRO tipo de servicio (ej: un traslado
  * mientras se busca en la solapa Hotel) también aparecen, con una chapita gris con el
  * nombre del tipo — primero las del tipo activo, después las demás (partición dura, D9).
@@ -50,6 +57,7 @@ import {
     busquedaLocalDebil,
     pareceLineaCompleta,
     debeMostrarDuda,
+    dudaDeProductoLocal,
 } from "./productDedupMatchLogic";
 import { esResultadoDeOtroTipo, particionarPorTipo, filtrarPorTipoActivo } from "./crossTypeSearchLogic";
 
@@ -427,6 +435,15 @@ export function ProductSearchField({
     // que un alta nueva no nazca con la frase entera de basura en el nombre.
     const textoParaCrear = resolverTextoDeCrear(dedupResult?.productSearchText, value);
 
+    // Duda de producto LOCAL (H-1, 2026-08-11): mira los primeros 2 resultados que YA
+    // trajo el buscador de catálogo (sin depender del motor) y arma la misma pregunta
+    // "¿el de A o el de B?" cuando hace falta. Se recalcula con useMemo cada vez que
+    // cambian los resultados mostrados — así sigue el mismo ritmo que ve el vendedor.
+    // La local GANA sobre la del motor: si el buscador local ya detectó la ambigüedad,
+    // no hace falta esperar la respuesta (más lenta) de /linea-inteligente.
+    const dudaLocal = useMemo(() => dudaDeProductoLocal(resultadosFrescos), [resultadosFrescos]);
+    const dudaVigente = dudaLocal ?? dedupResult?.duda ?? null;
+
     const handleSelectExisting = (result) => {
         // Mismo housekeeping de cierre en los dos caminos (mismo tipo u otro tipo): el
         // dropdown se cierra y no queda ninguna búsqueda vieja al acecho.
@@ -592,26 +609,29 @@ export function ProductSearchField({
                         </div>
                     )}
 
-                    {/* La duda con ✨ (D11/D12, spec 2026-08-10): un renglón gris de UNA
-                        línea, arriba de todo dentro del desplegable, pegado abajo del
-                        casillero. NO es una opción — no lleva optionId, no es clickeable,
-                        no entra en totalOptions (ver contarOpcionesNavegables más arriba).
-                        Se contesta eligiendo la fila de abajo, que es la respuesta.
-                        `debeMostrarDuda` (fix C-4/C-6/#9) ya filtró que sea de PRODUCTO (las
-                        otras 3 dudas del motor tienen su propio mecanismo, D12-bis), que
-                        no haya sido descartada con Esc/blur (dudaDescartadaRef) y que NO
-                        haya ya un producto vinculado (rateId) — con la identidad resuelta,
-                        cualquier duda vieja da vueltas de más. Se apaga sola en cuanto el
-                        vendedor sigue tipeando (dedupResult se reinicia y el ref se
-                        re-arma) o cierra el desplegable. */}
-                    {debeMostrarDuda({ duda: dedupResult?.duda, isSearching, dudaDescartada: dudaDescartadaRef.current, hayProductoVinculado: Boolean(rateId) }) && (
+                    {/* La duda con ✨ (D11/D12, spec 2026-08-10; H-1 2026-08-11): un renglón
+                        gris de UNA línea, arriba de todo dentro del desplegable, pegado
+                        abajo del casillero. NO es una opción — no lleva optionId, no es
+                        clickeable, no entra en totalOptions (ver contarOpcionesNavegables
+                        más arriba). Se contesta eligiendo la fila de abajo, que es la
+                        respuesta. `dudaVigente` prioriza la duda LOCAL (armada mirando los
+                        2 primeros resultados del buscador, sin motor) sobre la del motor —
+                        la local no depende de una consulta lenta ni de que el gate del
+                        motor la deje pasar. `debeMostrarDuda` (fix C-4/C-6/#9) filtra que
+                        sea de PRODUCTO, que no haya sido descartada con Esc/blur
+                        (dudaDescartadaRef) y que NO haya ya un producto vinculado (rateId)
+                        — con la identidad resuelta, cualquier duda vieja da vueltas de más.
+                        Se apaga sola en cuanto el vendedor sigue tipeando (los resultados
+                        cambian y dudaLocal se recalcula; dedupResult se reinicia también)
+                        o cierra el desplegable. */}
+                    {debeMostrarDuda({ duda: dudaVigente, isSearching, dudaDescartada: dudaDescartadaRef.current, hayProductoVinculado: Boolean(rateId) }) && (
                         <div
                             className="px-4 py-2 text-xs text-slate-500 bg-slate-50 border-b border-slate-100"
                             role="status"
                             data-testid="catalog-search-duda"
                         >
                             <span aria-hidden="true">✨ </span>
-                            {dedupResult.duda.question}
+                            {dudaVigente.question}
                         </div>
                     )}
 

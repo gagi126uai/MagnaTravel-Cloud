@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { setCurrentUser } from "../auth";
 import { showError, showSuccess } from "../alerts";
+import { getApiErrorMessage } from "../lib/errors";
 import { Mail, Lock, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
 import clsx from "clsx";
 
@@ -29,7 +30,10 @@ export default function LoginPage() {
       showSuccess("Bienvenido de nuevo.");
       navigate("/dashboard");
     } catch (err) {
-      showError(err.message || "Credenciales incorrectas o error de conexion.");
+      // Gate 2026-08-11: jamas mostrar el statusText crudo del servidor ("Bad
+      // Gateway" y familia). getApiErrorMessage prioriza el mensaje en criollo
+      // del backend y convierte los errores tecnicos al generico legible.
+      showError(getApiErrorMessage(err, "Credenciales incorrectas o error de conexión."));
     } finally {
       setIsLoading(false);
     }
@@ -61,7 +65,7 @@ export default function LoginPage() {
             <div className="flex gap-4 pt-4">
               <div className="flex items-center gap-2 text-sm text-slate-400">
                 <CheckCircle2 className="h-4 w-4 text-indigo-400" />
-                <span>Gestion de Expedientes</span>
+                <span>Gestión de Expedientes</span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-400">
                 <CheckCircle2 className="h-4 w-4 text-indigo-400" />
@@ -83,10 +87,10 @@ export default function LoginPage() {
               <span className="font-bold text-xl">MT</span>
             </div>
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Iniciar sesion
+              Iniciar sesión
             </h2>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-              Bienvenido de nuevo. Por favor ingresa tus datos.
+              Bienvenido de nuevo. Por favor ingresá tus datos.
             </p>
           </div>
 
@@ -111,10 +115,10 @@ export default function LoginPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Contrasena
+                  Contraseña
                 </label>
                 <a href="#" className="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">
-                  Olvidaste tu contrasena?
+                  ¿Olvidaste tu contraseña?
                 </a>
               </div>
               <div className="relative">
@@ -142,7 +146,7 @@ export default function LoginPage() {
                 htmlFor="keep-signed-in"
                 className="text-sm font-medium text-slate-600 dark:text-slate-400"
               >
-                Mantener sesion iniciada
+                Mantener sesión iniciada
               </label>
             </div>
 
@@ -177,7 +181,7 @@ export default function LoginPage() {
           </div>
 
           <div className="text-center text-sm text-slate-500 dark:text-slate-400">
-            El alta de usuarios quedo restringida a administradores.
+            El alta de usuarios quedó restringida a administradores.
           </div>
         </div>
       </div>

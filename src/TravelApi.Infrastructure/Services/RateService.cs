@@ -1451,6 +1451,11 @@ public partial class RateService : IRateService
     {
         return await _db.Rates
             .AsNoTracking()
+            // Fix H-4 (review 2026-08-11): se trae el operador CARGADO EN LA FICHA (Rate.Supplier) en
+            // la MISMA consulta acotada a los rateIds candidatos — sigue siendo UNA sola consulta (un
+            // JOIN, no una por fila), nada de N+1. Lo usa BuildCatalogSearchItem para el fallback
+            // cuando el producto todavia no tiene ventas (y por eso no hay operador en LastSale).
+            .Include(rate => rate.Supplier)
             .Where(rate => rateIds.Contains(rate.Id))
             .ToListAsync(ct);
     }
@@ -1569,14 +1574,19 @@ public partial class RateService : IRateService
         }
         else
         {
-            // Producto sin ventas registradas: fallback a los campos curados del Rate.
+            // Producto sin ventas registradas: fallback a los campos curados del Rate. El operador
+            // (H-4) sale de la ficha del producto (Rate.Supplier) porque no hay ninguna venta de la
+            // que aprenderlo todavia — es el mismo dato que el vendedor ya ve al abrir el producto en
+            // el tarifario, no una invencion.
             item.RateFallback = new CatalogSearchRateFallbackDto
             {
                 NetCost = canSeeCost ? rate.NetCost : null,
                 SalePrice = rate.SalePrice,
                 Currency = rate.Currency,
                 PriceUnit = rate.PriceUnit,
-                HotelPriceType = rate.HotelPriceType
+                HotelPriceType = rate.HotelPriceType,
+                SupplierPublicId = rate.Supplier?.PublicId,
+                SupplierName = rate.Supplier?.Name
             };
         }
 

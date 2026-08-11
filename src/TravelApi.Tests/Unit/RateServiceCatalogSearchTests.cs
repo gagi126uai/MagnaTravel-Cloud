@@ -571,6 +571,88 @@ public class RateServiceCatalogSearchTests
         Assert.Equal(160m, item.RateFallback.SalePrice);
     }
 
+    // ============================= H-4 (review 2026-08-11): operador en el fallback =============================
+
+    [Fact]
+    public async Task CatalogSearch_WithoutSales_RateFallback_IncludesSupplierFromRateFicha()
+    {
+        // Un producto activo SIN ventas registradas trae, en el fallback, el operador que ya esta
+        // cargado en su propia ficha (Rate.Supplier) — no hay ninguna venta de la que aprenderlo
+        // todavia. Sin esto, el front no tenia de donde sacar el operador y el guardado se frenaba
+        // con "Elegi el operador" aunque la ficha SI lo tuviera cargado.
+        await using var context = CreateContext();
+        var supplier = new Supplier { Id = 1, Name = "Julia Tours" };
+        context.Suppliers.Add(supplier);
+        var rate = BuildHotelRate(1, "Hotel Maitei", "Posadas");
+        rate.SupplierId = supplier.Id;
+        context.Rates.Add(rate);
+        await context.SaveChangesAsync();
+        var service = CreateService(context, catalogEnabled: true, canSeeCost: true);
+
+        var result = await service.CatalogSearchAsync("Hotel", "maitei", CancellationToken.None);
+
+        var item = Assert.Single(result!);
+        Assert.Null(item.LastSale);
+        Assert.NotNull(item.RateFallback);
+        // El Id publico, NUNCA el interno (data-exposure) — mismo trato que LastSale.SupplierPublicId.
+        Assert.Equal(supplier.PublicId, item.RateFallback!.SupplierPublicId);
+        Assert.Equal("Julia Tours", item.RateFallback.SupplierName);
+    }
+
+    [Fact]
+    public async Task CatalogSearch_WithoutSupplierOnRate_RateFallback_LeavesSupplierEmpty()
+    {
+        // Contraparte: si la ficha del producto TAMPOCO tiene operador cargado, el fallback queda sin
+        // operador — no se inventa uno. Mismo criterio "sin dato, casillero vacio" de siempre.
+        await using var context = CreateContext();
+        context.Rates.Add(BuildHotelRate(1, "Hotel Maitei", "Posadas")); // sin SupplierId
+        await context.SaveChangesAsync();
+        var service = CreateService(context, catalogEnabled: true, canSeeCost: true);
+
+        var result = await service.CatalogSearchAsync("Hotel", "maitei", CancellationToken.None);
+
+        var item = Assert.Single(result!);
+        Assert.NotNull(item.RateFallback);
+        Assert.Null(item.RateFallback!.SupplierPublicId);
+        Assert.Null(item.RateFallback.SupplierName);
+    }
+
+    [Fact]
+    public async Task CatalogSearch_WithSales_LastSaleSupplierWins_RateFallbackStaysNull()
+    {
+        // "Con ventas, LastSale manda": aunque la ficha del Rate tenga cargado OTRO operador, la
+        // venta manda y el fallback ni se arma — el Include nuevo de Rate.Supplier (H-4) no se cuela
+        // en el camino de LastSale.
+        await using var context = CreateContext();
+        var fichaSupplier = new Supplier { Id = 1, Name = "Operador viejo de la ficha" };
+        var ventaSupplier = new Supplier { Id = 2, Name = "Ola Mayorista" };
+        context.Suppliers.AddRange(fichaSupplier, ventaSupplier);
+        var rate = BuildHotelRate(1, "Hotel Maitei", "Posadas");
+        rate.SupplierId = fichaSupplier.Id;
+        context.Rates.Add(rate);
+        context.RateSupplierSales.Add(new RateSupplierSale
+        {
+            Id = 1,
+            RateId = 1,
+            SupplierId = ventaSupplier.Id,
+            LastSoldAt = new DateTime(2026, 5, 22, 0, 0, 0, DateTimeKind.Utc),
+            LastNetCost = 48000m,
+            LastSalePrice = 60000m,
+            LastCurrency = "ARS",
+            LastPriceUnit = "noche_habitacion",
+            SalesCount = 1
+        });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, catalogEnabled: true, canSeeCost: true);
+
+        var result = await service.CatalogSearchAsync("Hotel", "maitei", CancellationToken.None);
+
+        var item = Assert.Single(result!);
+        Assert.Null(item.RateFallback);
+        Assert.NotNull(item.LastSale);
+        Assert.Equal("Ola Mayorista", item.LastSale!.SupplierName);
+    }
+
     // ============================= contexto "ultima vez" =============================
 
     [Fact]

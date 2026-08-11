@@ -13,7 +13,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { formatDate } from "../../../lib/utils.js";
-import { mergearCandidatosDedup, resolverTextoDeCrear, resolverListaParaMostrar } from "./productDedupMatchLogic.js";
+import {
+    mergearCandidatosDedup,
+    resolverTextoDeCrear,
+    resolverListaParaMostrar,
+    dudaDeProductoLocal,
+    debeMostrarDuda,
+} from "./productDedupMatchLogic.js";
 
 // ─── Lógica pura extraída de ProductSearchField ───────────────────────────────
 // Estas funciones representan exactamente las reglas que el componente aplica.
@@ -324,4 +330,46 @@ test("(c) simulación completa: navegando sobre 'crear' (índice = length de la 
     // El índice 1 (donde estaba parado el vendedor) sigue siendo "crear" (length de la
     // lista mostrada), no un producto existente.
     assert.equal(keyboardIndex, listaEfectivamenteMostrada.length);
+});
+
+// ─── (d) Duda de producto LOCAL (H-1, 2026-08-11) — wiring de ProductSearchField ──
+// `dudaVigente = dudaLocal ?? dedupResult?.duda ?? null` es el merge REAL que arma el
+// componente; estos tests reproducen esa fórmula con las funciones REALES para probar
+// que la local gana y que el gate de rateId vinculado sigue apagando la ✨ igual que
+// para la duda del motor.
+
+test("(d) la duda LOCAL gana sobre la del motor: si el buscador local ya detectó la ambigüedad, no hace falta esperar al motor", () => {
+    const resultadosDelBuscador = [
+        { name: "Sheraton Iguazú", subtitle: "Puerto Iguazú" },
+        { name: "Sheraton Iguazú", subtitle: "Posadas" },
+    ];
+    const dudaDelMotor = { field: "producto", question: "¿Pregunta vieja del motor?" };
+
+    const dudaLocal = dudaDeProductoLocal(resultadosDelBuscador);
+    const dudaVigente = dudaLocal ?? dudaDelMotor;
+
+    assert.equal(dudaVigente.question, "¿Sheraton Iguazú de Puerto Iguazú o el de Posadas?");
+});
+
+test("(d) sin duda local, la del motor sigue funcionando (fallback normal)", () => {
+    const resultadosSinAmbiguedad = [{ name: "Sheraton Iguazú", subtitle: "Puerto Iguazú" }];
+    const dudaDelMotor = { field: "producto", question: "¿El de Delfos o el de Ola Mayorista?" };
+
+    const dudaLocal = dudaDeProductoLocal(resultadosSinAmbiguedad);
+    const dudaVigente = dudaLocal ?? dudaDelMotor;
+
+    assert.equal(dudaVigente, dudaDelMotor);
+});
+
+test("(d) con rateId ya vinculado, la duda local tampoco se muestra (mismo gate que la del motor)", () => {
+    const resultadosDelBuscador = [
+        { name: "Sheraton Iguazú", subtitle: "Puerto Iguazú" },
+        { name: "Sheraton Iguazú", subtitle: "Posadas" },
+    ];
+    const dudaVigente = dudaDeProductoLocal(resultadosDelBuscador);
+
+    // La duda existe (se armó bien), pero debeMostrarDuda la tapa por rateId vinculado.
+    assert.notEqual(dudaVigente, null);
+    const seMuestra = debeMostrarDuda({ duda: dudaVigente, isSearching: false, dudaDescartada: false, hayProductoVinculado: true });
+    assert.equal(seMuestra, false);
 });
