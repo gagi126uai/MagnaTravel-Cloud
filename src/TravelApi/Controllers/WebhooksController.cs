@@ -272,12 +272,12 @@ public class WebhooksController : ControllerBase
                 return Ok(new { success = true });
             }
 
-            return StatusCode((int)response.StatusCode, "Error al cerrar sesion del bot");
+            return StatusCode((int)response.StatusCode, "Error al cerrar sesión del bot");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error logging out bot");
-            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo cerrar la sesion del bot.");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo cerrar la sesión del bot.");
         }
     }
 

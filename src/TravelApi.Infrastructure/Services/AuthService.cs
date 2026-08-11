@@ -25,7 +25,7 @@ public class AuthService : IAuthService
     private static readonly SemaphoreSlim NonRelationalRefreshLock = new(1, 1);
     private static readonly TimeSpan AccessTokenLifetime = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RefreshTokenLifetime = TimeSpan.FromDays(7);
-    private const string GenericAuthFailureMessage = "No se pudo iniciar sesion con las credenciales provistas.";
+    private const string GenericAuthFailureMessage = "No se pudo iniciar sesión con las credenciales provistas.";
 
     // Hallazgo 2026-08-06 (revision de seguridad, bloqueante B2): con varias pestañas
     // compartiendo la MISMA cookie de refresh, una ráfaga de reconexion (por ejemplo, el

@@ -73,12 +73,12 @@ public class AuthController : ControllerBase
                 null, "Anonymous", null, CancellationToken.None);
 
             ClearAuthCookies();
-            return Unauthorized(new { message = "No se pudo iniciar sesion con las credenciales provistas." });
+            return Unauthorized(new { message = "No se pudo iniciar sesión con las credenciales provistas." });
         }
         catch (InvalidOperationException)
         {
             ClearAuthCookies();
-            return Unauthorized(new { message = "No se pudo iniciar sesion con las credenciales provistas." });
+            return Unauthorized(new { message = "No se pudo iniciar sesión con las credenciales provistas." });
         }
     }
 
@@ -94,7 +94,7 @@ public class AuthController : ControllerBase
         if (!Request.Cookies.TryGetValue(AuthCookieNames.Refresh, out var refreshToken) || string.IsNullOrWhiteSpace(refreshToken))
         {
             ClearAuthCookies();
-            return Unauthorized(new { message = "La sesion no pudo renovarse." });
+            return Unauthorized(new { message = "La sesión no pudo renovarse." });
         }
 
         try
@@ -106,7 +106,7 @@ public class AuthController : ControllerBase
         catch (UnauthorizedAccessException)
         {
             ClearAuthCookies();
-            return Unauthorized(new { message = "La sesion no pudo renovarse." });
+            return Unauthorized(new { message = "La sesión no pudo renovarse." });
         }
     }
 
