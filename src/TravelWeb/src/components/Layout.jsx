@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Moon, Sun, Menu, Search, AlertCircle } from "lucide-react";
+import { Moon, Sun, Menu, Search } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import Sidebar from "./Sidebar";
 import { Button } from "./ui/button";
@@ -50,6 +50,12 @@ export default function Layout({ children, onLogout, isAdmin }) {
         setTheme(theme === "dark" ? "light" : "dark");
     };
 
+    // "Modo prueba" = homologación ARCA: los comprobantes que se emiten NO tienen validez
+    // legal. afipSettings todavía no llegó (null) => no mostramos nada hasta saber de verdad
+    // en qué entorno estamos (evita el parpadeo "no está en modo prueba" que después se
+    // corrige solo, cuando en realidad sí lo está).
+    const esModoPrueba = Boolean(afipSettings && !afipSettings.isProduction);
+
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [userMenuOpen, setUserMenuOpen] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
@@ -68,14 +74,6 @@ export default function Layout({ children, onLogout, isAdmin }) {
 
     return (
         <div className="flex flex-col min-h-screen bg-background text-foreground transition-colors duration-300">
-            {afipSettings && !afipSettings.isProduction && (
-                <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 text-white text-[9px] md:text-[10px] py-1.5 px-4 text-center font-black uppercase tracking-[0.2em] shadow-lg z-[60] flex items-center justify-center gap-3 border-b border-amber-400/20">
-                    <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
-                    <span className="drop-shadow-sm">Modo Homologación Activo • Comprobantes sin validez legal</span>
-                    <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
-                </div>
-            )}
-
             <UrgentBannerStack />
 
             <div className="relative flex flex-1 min-w-0 overflow-hidden">
@@ -131,9 +129,23 @@ export default function Layout({ children, onLogout, isAdmin }) {
                                     <span className="text-sm font-bold">MT</span>
                                 </div>
                                 <span className="font-semibold text-sm">MagnaTravel</span>
+                                {/* Fix review (2026-08-11, I7): en táctil no hay hover, así que el
+                                    `title` del desktop nunca se ve — acá el aviso completo va
+                                    ESCRITO en la pastilla, no escondido en un tooltip. */}
+                                {esModoPrueba && <PastillaModoPrueba variante="mobile" />}
                             </div>
 
-                            <h1 className="text-lg font-semibold hidden md:block">MagnaTravel ERP</h1>
+                            <div className="hidden md:flex items-center gap-2">
+                                <h1 className="text-lg font-semibold">MagnaTravel ERP</h1>
+                                {/* Fix Lavado de cara (2026-08-11, decisión 5C del dueño): la franja
+                                    naranja "MODO HOMOLOGACIÓN ACTIVO..." que ocupaba todo el ancho de
+                                    la pantalla (en TODAS las pantallas) se reemplaza por esta pastilla
+                                    chica pegada al logo — el aviso sigue estando siempre visible (esta
+                                    barra vive en TODAS las pantallas, incluida donde se emiten
+                                    comprobantes), pero deja de gritar más fuerte que el trabajo del
+                                    vendedor. */}
+                                {esModoPrueba && <PastillaModoPrueba />}
+                            </div>
                         </div>
                         <div className="flex items-center gap-2">
                             <button
@@ -227,5 +239,31 @@ export default function Layout({ children, onLogout, isAdmin }) {
                 }}
             />
         </div>
+    );
+}
+
+/**
+ * Pastilla chica "modo prueba" pegada al nombre del sistema en la barra superior.
+ * Reemplaza a la franja naranja de todo el ancho que existía antes (decisión 5C del
+ * dueño, 2026-08-11, ver docs/ux/2026-08-11-maqueta-reservas-firmada.html: ".modo-prueba").
+ *
+ * `variante="desktop"` (default): la pastilla dice "modo prueba" y el texto completo
+ * ("los comprobantes no tienen validez legal") va en el `title` — funciona porque en
+ * desktop hay mouse, que dispara el hover.
+ *
+ * `variante="mobile"`: fix bloqueante de review (2026-08-11, I7) — en pantalla táctil
+ * NO existe el hover, así que un `title` ahí NUNCA se ve. Acá el aviso completo va
+ * ESCRITO en la propia pastilla, no escondido en un tooltip que nadie puede abrir.
+ */
+function PastillaModoPrueba({ variante = "desktop" }) {
+    const esMobile = variante === "mobile";
+
+    return (
+        <span
+            title={esMobile ? undefined : "Los comprobantes emitidos en este modo no tienen validez legal"}
+            className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+        >
+            {esMobile ? "modo prueba · sin validez legal" : "modo prueba"}
+        </span>
     );
 }

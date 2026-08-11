@@ -54,6 +54,8 @@ const TABS = [
   // sin filtro de estado, la vista completa para buscar cualquier reserva sin adivinar
   // en que pestaña esta.
   { value: "all", label: "Todas" },
+  // Desempate del dueño (2026-08-11, B1 — pisa el intento previo de "Borradores"):
+  // la etapa se sigue llamando Presupuesto en toda la app.
   { value: "budget", label: "Presupuestos" },
   { value: "in-management", label: "En gestión" },
   { value: "confirmed", label: "Confirmadas" },
@@ -274,14 +276,18 @@ export default function ReservasPage() {
     <div className="animate-in fade-in space-y-4 duration-500 md:space-y-6">
       <ListPageHeader
         title="Reservas"
-        subtitle="Administra tus reservas, presupuestos y ventas."
+        subtitle="Administrá tus reservas, presupuestos y ventas."
         actions={
+          // Desempate del dueño (2026-08-11, B1 — pisa el intento previo de "+ Nueva
+          // reserva"): el botón de alta se sigue llamando "+ Nuevo presupuesto",
+          // coherente con NuevaReservaInline.jsx y el resto de los botones de alta
+          // (CustomersPage/CustomerAccountPage/AdminDashboard/AgentDashboard/CRMPage).
           <Button
             onClick={() => { setClienteInicial(null); setMostrarFilaAlta(true); }}
             disabled={mostrarFilaAlta}
             className="w-full shadow-sm sm:w-auto"
           >
-            <Plus className="mr-2 h-4 w-4" /> Nuevo Presupuesto
+            <Plus className="mr-2 h-4 w-4" /> Nuevo presupuesto
           </Button>
         }
       />

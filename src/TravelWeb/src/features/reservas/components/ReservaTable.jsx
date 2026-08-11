@@ -1,5 +1,5 @@
 import React from "react";
-import { User, Users, Archive } from "lucide-react";
+import { Archive } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import {
   DataGrid,
@@ -12,11 +12,13 @@ import {
   DataGridHeaderRow,
   DataGridRow,
 } from "../../../components/ui/DataGrid";
-import { ReservaStatusBadge } from "./ReservaStatusBadge";
+import { ReservaStatusBadge, ReservaEstadoSello } from "./ReservaStatusBadge";
+import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSES } from "../lib/reservaMoneyDisplay";
+import { debeMostrarComoSello } from "../lib/reservaEstadoSelloLogic";
 
 /**
  * Tabla del listado de Reservas (versión de escritorio). Tanda 1 rediseño
@@ -41,13 +43,28 @@ import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSE
  * filas. ReservasPage arma un mensaje distinto según el motivo (mes sin datos,
  * búsqueda sin resultados) porque solo esa pantalla tiene los datos del filtro
  * activo (mes, período) para escribir un mensaje útil.
+ *
+ * Lavado de cara (2026-08-11, maqueta firmada docs/ux/2026-08-11-maqueta-reservas-
+ * firmada.html): la columna Reserva combina destino y fecha de viaje en UNA sola
+ * línea gris (antes eran dos, con un puntito índigo) · la columna Cliente/pasajeros
+ * pierde los íconos de persona (la columna ya dice "Cliente", el ícono no sumaba
+ * nada) y dice "pasajero(s)" entero en vez de la abreviatura "pax" · los importes
+ * de Finanzas llevan el cartelito de moneda (CurrencyBadge) al lado en vez del
+ * símbolo pegado al número, con las cifras en `tabular-nums` para que las comas
+ * queden alineadas leyendo la columna de arriba a abajo (P-3⭐) · el Estado de las
+ * reservas ya sin efecto (Anulada/Perdida/Finalizada) se reemplaza por el SELLO en
+ * vez del chip de color (ver `debeMostrarComoSello`/`ReservaEstadoSello`). La
+ * columna Acciones ("Archivar" + su globito) NO se tocó en esta tanda.
  */
 export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, className }) {
   return (
     // `className`: la Tanda de realineación a la maqueta (2026-08-04) mete esta tabla
     // DENTRO de la tarjeta única de ReservasPage — así que acá se le puede pisar el
     // marco propio (borde/sombra/fondo) para que no queden dos tarjetas anidadas.
-    <DataGrid minWidth="920px" className={className}>
+    // `density="compact"`: decisión 2A del dueño (2026-08-11, "listas compactas") —
+    // se pisa solo ACÁ (prop explícita), sin tocar el default "comfortable" que
+    // siguen usando el resto de las tablas de la app (proveedores, clientes, etc.).
+    <DataGrid minWidth="920px" className={className} density="compact">
       <DataGridHeader>
         <DataGridHeaderRow>
           <DataGridHeaderCell>Reserva</DataGridHeaderCell>
@@ -81,6 +98,18 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, clas
             const ventaLineas = getReservaSaleLines(reserva);
             const chips = getReservaFinanzasChips(reserva);
 
+            // Segunda línea de la columna Reserva: destino y fecha de viaje, combinados
+            // en un solo renglón gris separado por "·" (maqueta firmada). Si falta uno de
+            // los dos datos, se muestra solo el que hay; si faltan los dos, no hay segunda
+            // línea (no dejamos un "·" solo ni un renglón vacío).
+            const destinoYViaje = [
+              reserva.destino || null,
+              reserva.startDate ? `Viaja ${formatDate(reserva.startDate)}` : null,
+            ].filter(Boolean).join(" · ");
+
+            const pasajeros = reserva.passengerCount || 0;
+            const etiquetaPasajeros = pasajeros === 1 ? "pasajero" : "pasajeros";
+
             return (
               <DataGridRow
                 key={getPublicId(reserva)}
@@ -89,36 +118,40 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, clas
               >
                 <DataGridCell>
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-slate-900 transition-colors hover:text-indigo-600 dark:text-white dark:hover:text-indigo-400">
+                    {/* Fix review (2026-08-11, I5): el hover era índigo — mata el índigo
+                        suelto y usa el mismo azul boleto (token `primary`) que el resto
+                        de las acciones de la app, en vez de un tercer color a mano. */}
+                    <span className="text-sm font-bold text-slate-900 transition-colors hover:text-primary dark:text-white dark:hover:text-primary">
                       #{reserva.numeroReserva}
                     </span>
-                    {reserva.destino ? (
+                    {destinoYViaje ? (
                       <span className="mt-0.5 line-clamp-1 text-xs text-slate-500 dark:text-slate-400">
-                        {reserva.destino}
-                      </span>
-                    ) : null}
-                    {reserva.startDate ? (
-                      <span className="mt-1 flex items-center gap-1 text-[10px] font-medium text-indigo-500 dark:text-indigo-400">
-                        <span className="h-1 w-1 rounded-full bg-indigo-400" />
-                        Viaja: {formatDate(reserva.startDate)}
+                        {destinoYViaje}
                       </span>
                     ) : null}
                   </div>
                 </DataGridCell>
                 <DataGridCell>
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-                      <User className="h-3.5 w-3.5 text-slate-400" />
-                      <span className="max-w-[180px] truncate font-medium">{reserva.customerName}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
-                      <Users className="h-3.5 w-3.5" />
-                      <span>{reserva.passengerCount || 0} pax</span>
-                    </div>
+                  {/* Fix Lavado de cara: se sacan los íconos de persona/personas — la
+                      columna ya se llama "Cliente / pasajeros", el ícono no agregaba
+                      información (hallazgo de la auditoría del estándar visual, A.2). */}
+                  <div className="flex flex-col gap-0.5">
+                    <span className="max-w-[180px] truncate text-sm font-medium text-slate-700 dark:text-slate-300">
+                      {reserva.customerName}
+                    </span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {pasajeros} {etiquetaPasajeros}
+                    </span>
                   </div>
                 </DataGridCell>
                 <DataGridCell>
-                  <ReservaStatusBadge status={reserva.status} mostrarCandado />
+                  {/* El sello reemplaza al chip SOLO en Anulada/Perdida/Finalizada — los
+                      estados vivos (y Archivada) siguen con el chip de toda la vida. */}
+                  {debeMostrarComoSello(reserva) ? (
+                    <ReservaEstadoSello reserva={reserva} />
+                  ) : (
+                    <ReservaStatusBadge status={reserva.status} mostrarCandado />
+                  )}
                 </DataGridCell>
                 <DataGridCell>
                   <div className="flex flex-col">
@@ -134,19 +167,26 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, clas
                 </DataGridCell>
                 <DataGridCell align="right">
                   <div className="flex flex-col items-end gap-1">
-                    <div className="flex flex-col items-end">
+                    <div className="flex flex-col items-end gap-0.5">
                       {ventaLineas.map((linea, index) => {
                         const enCero = Number(linea.amount) === 0;
                         return (
-                          <span
-                            key={linea.currency}
-                            className={
-                              index === 0
-                                ? `text-sm font-bold ${enCero ? "text-slate-300 dark:text-slate-700" : "text-slate-900 dark:text-white"}`
-                                : `text-xs font-semibold ${enCero ? "text-slate-300 dark:text-slate-700" : "text-slate-500 dark:text-slate-400"}`
-                            }
-                          >
-                            {formatCurrency(linea.amount, linea.currency)}
+                          // Fix Lavado de cara: el símbolo de moneda pasa del texto pegado
+                          // al número ("US$800,00") a un cartelito aparte (CurrencyBadge),
+                          // mismo patrón que ya usa la tabla de servicios de la ficha —
+                          // `tabular-nums` alinea las cifras en columna (P-3⭐: cada moneda
+                          // en su propio renglón, nunca sumadas).
+                          <span key={linea.currency} className="inline-flex items-center gap-1">
+                            <CurrencyBadge currency={linea.currency} />
+                            <span
+                              className={
+                                index === 0
+                                  ? `text-sm font-bold tabular-nums ${enCero ? "text-slate-300 dark:text-slate-700" : "text-slate-900 dark:text-white"}`
+                                  : `text-xs font-semibold tabular-nums ${enCero ? "text-slate-300 dark:text-slate-700" : "text-slate-500 dark:text-slate-400"}`
+                              }
+                            >
+                              {formatCurrency(linea.amount, linea.currency, { withSymbol: false })}
+                            </span>
                           </span>
                         );
                       })}

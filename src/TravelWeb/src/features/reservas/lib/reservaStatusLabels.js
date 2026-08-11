@@ -16,6 +16,12 @@
  * Los keys son los strings persistidos en la BD, alineados con `EstadoReserva.cs`
  * (motor). "Archived" es un estado lateral (soft-delete de reservas viejas) que no está
  * como constante en `EstadoReserva.cs`, pero SÍ llega como string en `reserva.status`.
+ *
+ * Desempate del dueño (2026-08-11, decisión firmada B1 — PISA el intento previo de la
+ * misma tarde de llamarlo "Borrador"): el estado interno "Budget" se sigue llamando
+ * PRESUPUESTO en TODA la app — chapita, solapa, título y botones. La palabra "Reserva"
+ * recién aparece cuando el cliente aceptó (InManagement en adelante); eso es de la
+ * Tanda 2 del lavado de cara, acá no se toca.
  */
 export const RESERVA_STATUS_LABELS = {
   Quotation: "Cotización",

@@ -19,7 +19,14 @@
         --popover: 0 0% 100%;
         --popover-foreground: 222.2 84% 4.9%;
 
-        --primary: 243 75% 59%;
+        /* "Azul boleto" #1D4ED8 (Tailwind blue-700) — Lavado de cara, estandar visual firmado
+           2026-08-11 (docs/ux/2026-08-11-estandar-visual-y-lavado-de-cara.md, decision 1A del
+           dueno). Es el UNICO color de accion de toda la app: cualquier boton/link/elemento
+           que use --primary (via bg-primary, text-primary, etc.) pasa a este azul, para que el
+           ojo aprenda "azul = el boton que hace algo" en vez de convivir con 6 colores distintos
+           como antes (cian, indigo, verde, gris oscuro...). El dueno pidio EXPLICITAMENTE que el
+           modo oscuro use el MISMO azul (no uno mas clarito) — solo cambian tinta/papel. */
+        --primary: 224 76% 48%;
         --primary-foreground: 210 40% 98%;
 
         --secondary: 210 40% 96.1%;
@@ -36,7 +43,9 @@
 
         --border: 214.3 31.8% 91.4%;
         --input: 214.3 31.8% 91.4%;
-        --ring: 243 75% 59%;
+        /* El aro de foco (accesibilidad de teclado) sigue el mismo azul boleto que los botones:
+           un solo color de "esto es interactivo/esto esta enfocado" en toda la app. */
+        --ring: 224 76% 48%;
 
         --radius: 0.5rem;
     }
@@ -53,7 +62,9 @@
         --popover: 222.2 84% 4.9%;
         --popover-foreground: 210 40% 98%;
 
-        --primary: 243 75% 59%;
+        /* Mismo azul boleto que en claro (decision firmada 2026-08-11: "mismo azul" en los dos
+           temas, solo se invierten tinta/papel). */
+        --primary: 224 76% 48%;
         --primary-foreground: 210 40% 98%;
 
         --secondary: 217.2 32.6% 17.5%;
@@ -70,7 +81,7 @@
 
         --border: 217.2 32.6% 17.5%;
         --input: 217.2 32.6% 17.5%;
-        --ring: 243 75% 59%;
+        --ring: 224 76% 48%;
     }
 }
 

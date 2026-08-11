@@ -204,3 +204,53 @@ export function ReservaStatusBadge({ status, mostrarCandado = false, size = "sm"
         </span>
     );
 }
+
+/**
+ * El "sello" de estado — la pieza de identidad propia de MagnaTravel (estándar visual
+ * 2026-08-11, sección B.6, "prestado del sello del pasaporte"). Reemplaza al chip de
+ * color SOLO en Anulada/Perdida/Finalizada — el set EXACTO de estados que lo llevan
+ * vive en `reservaEstadoSelloLogic.js` (`debeMostrarComoSello`), un archivo .js puro
+ * que NO se duplica acá (fix bloqueante de review 2026-08-11, I1/I6): quien quiera
+ * decidir si una reserva va con sello o con chip importa esa función, no repite el
+ * criterio a mano.
+ *
+ * Fix de review (2026-08-11, I2/I3): el texto va a opacidad PLENA (contraste ≥4.5:1
+ * verificado contra fondo blanco y contra el fondo oscuro) — el estado de una reserva
+ * es un dato crítico, no se difumina. El efecto "gastado/medio borroneado" de la
+ * maqueta queda SOLO en el borde, con un `<span aria-hidden>` decorativo separado que
+ * lleva el degradé — el texto nunca pasa por esa máscara.
+ *
+ * Colores y ángulo copiados tal cual de la maqueta firmada (docs/ux/2026-08-11-maqueta-
+ * reservas-firmada.html, clase `.sello`) — no son un capricho de este componente.
+ */
+export function ReservaEstadoSello({ reserva, size = 'sm' }) {
+    const label = traducirEstadoReserva(reserva?.status);
+    const sizeClasses = size === 'lg'
+        ? 'px-3.5 py-1 text-sm'
+        : 'px-2.5 py-0.5 text-[11px]';
+
+    return (
+        // `leading-none` + padding chico: con las 3 etiquetas posibles (Anulada/Perdida/
+        // Finalizada) el sello queda bajo, así el giro de -8deg no se come el renglón de
+        // arriba/abajo en la tabla compacta (rotate no mueve el layout, pero un box más
+        // bajo deja más margen visual antes de tocar la fila vecina).
+        <span className="relative inline-block -rotate-[8deg] leading-none">
+            {/* Pieza puramente decorativa (el "gastado" de la maqueta) — separada del
+                texto a propósito, así el difuminado nunca le baja el contraste al dato. */}
+            <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 rounded-md border-2 border-dashed border-[#b4443c] dark:border-rose-400"
+                style={{
+                    maskImage: 'radial-gradient(circle at 30% 60%, black 55%, rgba(0,0,0,0.5) 78%, black 100%)',
+                    WebkitMaskImage: 'radial-gradient(circle at 30% 60%, black 55%, rgba(0,0,0,0.5) 78%, black 100%)',
+                }}
+            />
+            <span
+                data-testid="reserva-estado-sello"
+                className={`relative block whitespace-nowrap font-extrabold uppercase tracking-[0.2em] text-[#b4443c] dark:text-rose-400 ${sizeClasses}`}
+            >
+                {label}
+            </span>
+        </span>
+    );
+}

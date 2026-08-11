@@ -31,7 +31,12 @@ export function ReservaKPIs({ stats }) {
 
             <Separador />
 
-            <Kpi label="Vendido">
+            {/* "(solo confirmado)" — decisión del dueño 2026-08-11 (hallazgo de la prueba con
+                navegador en PROD): "Vendido" mezclaba presupuestos sin confirmar con venta
+                firme, mostrando plata que nadie compró todavía. El backend YA filtra por
+                estado (ver EstadoReserva.SoldKpiStatuses en ReservaService.cs) — esta
+                aclaración solo hace visible en pantalla lo que el número ya representa. */}
+            <Kpi label="Vendido" hint="(solo confirmado)">
                 <MontoPorMoneda lineas={stats.vendidoPorMoneda} colorClass="text-indigo-600 dark:text-indigo-400" />
             </Kpi>
         </div>
@@ -46,11 +51,13 @@ function Separador() {
     );
 }
 
-function Kpi({ label, children }) {
+/** `hint`: aclaración chica y opcional al lado del label (ej. "(solo confirmado)"). */
+function Kpi({ label, hint, children }) {
     return (
         <div className="flex items-baseline gap-2">
             <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
                 {label}
+                {hint ? <span className="ml-1 font-medium normal-case tracking-normal">{hint}</span> : null}
             </span>
             {children}
         </div>

@@ -27,12 +27,14 @@ const MAX_DISPLAY_RESULTS = 6;
  * pantalla de Clientes (CustomerFormModal): no se repite ese formulario acá.
  *
  * P1 sigue siendo A (ADR-048, corregido por el dueño): la reserva NACE como
- * PRESUPUESTO, como hoy. Fix de vocabulario (review frontend, 2026-08-04): el
- * título de la fila y el botón de enviar dicen "presupuesto" (no "reserva"),
- * igual que el botón "Nuevo Presupuesto" que abre esta fila — un solo nombre
- * para toda la etapa, no dos conviviendo. El POST /reservas y la navegación
- * posterior a la ficha son EXACTAMENTE los mismos que usaba el modal viejo,
- * no se tocó el motor.
+ * PRESUPUESTO, como hoy. Desempate del dueño (2026-08-11, decisión B1 — pisa el
+ * intento previo de esa misma tarde de renombrar todo a "reserva"): el título de
+ * la fila y el botón de enviar dicen "presupuesto" (no "reserva"), igual que el
+ * botón "Nuevo Presupuesto" que abre esta fila — un solo nombre para toda la
+ * etapa, no dos conviviendo. La palabra "Reserva" recién aparece cuando el
+ * cliente acepta (eso es de la Tanda 2 del lavado de cara, no se toca acá). El
+ * POST /reservas y la navegación posterior a la ficha son EXACTAMENTE los
+ * mismos que usaba el modal viejo, no se tocó el motor.
  *
  * Props:
  *   clienteInicial — { publicId, fullName, ... } precargado cuando se llega acá
@@ -194,7 +196,9 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
 
     return (
         <div
-            className="rounded-2xl border-2 border-indigo-300 bg-indigo-50/40 p-4 dark:border-indigo-700 dark:bg-indigo-950/20"
+            // Fix review (2026-08-11, I5): el marco era índigo — pasa a la familia del
+            // azul boleto (blue-*), el único color de acción del lavado de cara.
+            className="rounded-2xl border-2 border-blue-300 bg-blue-50/40 p-4 dark:border-blue-700 dark:bg-blue-950/20"
             data-testid="fila-nueva-reserva"
         >
             <div className="mb-3 text-sm font-bold text-slate-800 dark:text-slate-100">Nuevo presupuesto</div>
@@ -340,7 +344,9 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                     onClick={handleCrear}
                     disabled={creando}
                     data-testid="nueva-reserva-crear-boton"
-                    className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    // Fix review (2026-08-11, I5): el relleno era índigo — pasa al token
+                    // `primary` (azul boleto), el único color de acción de la app.
+                    className="rounded-lg bg-primary px-5 py-2 text-sm font-bold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                     {creando ? "Creando…" : "Crear presupuesto"}
                 </button>
