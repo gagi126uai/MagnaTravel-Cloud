@@ -28,6 +28,10 @@ import {
 // obra ningún code de esta lib ofrece botón, así que dejó de servir para detectar ESTE
 // motivo puntual entre cualquier otro 409.
 import { CODIGO_RECHAZO_ANULAR_SERVICIO } from "../lib/serviceCancellationGuard";
+// Opciones A/B/C (spec 2026-08-12, §3.3): detecta el rechazo puntual "queda un grupo de
+// opciones sin resolver" al intentar "El cliente aceptó" — ver el comentario largo en
+// optionGroupLogic.js sobre por qué es texto-fijo y no un code.
+import { esRechazoPorOpcionesSinResolver } from "../lib/optionGroupLogic";
 
 const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
     flightSegments: (reservaId) => `/reservas/${reservaId}/flights`,
@@ -432,17 +436,22 @@ export function useReservaDetail(reservaId, navigate) {
             showSuccess(`Estado actualizado`);
             return true;
         } catch (error) {
+            const mensajeError = getApiErrorMessage(error, "Error al cambiar estado");
             // Candado de plata pagada al operador sin factura (mismo code que "anular
             // servicio"): un toast que desaparece no alcanza — el mensaje del motor trae
             // la instrucción completa y el usuario necesita leerla con calma en un aviso
             // fijo (sin botón: en Presupuesto no se puede facturar todavía, fix B1 P4).
             // El resto de los errores sigue mostrándose como toast, igual que antes.
             if (error?.payload?.code === CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA) {
-                setStatusChangeBlockedByMoneyGuard({
-                    mensaje: getApiErrorMessage(error, "Error al cambiar estado"),
-                });
+                setStatusChangeBlockedByMoneyGuard({ mensaje: mensajeError });
+            } else if (esRechazoPorOpcionesSinResolver(mensajeError)) {
+                // Opciones A/B/C (spec 2026-08-12, §3.3): mismo aviso fijo que el candado de
+                // plata de arriba, pero ESTE SÍ lleva un botón de salida real ("Ver las
+                // opciones", armado en ReservaDetailPage) — el vendedor puede ir directo a
+                // resolver el grupo pendiente en la lista de servicios.
+                setStatusChangeBlockedByMoneyGuard({ mensaje: mensajeError, esOpcionesSinResolver: true });
             } else {
-                showError(getApiErrorMessage(error, "Error al cambiar estado"));
+                showError(mensajeError);
             }
             return false;
         }

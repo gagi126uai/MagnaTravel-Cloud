@@ -237,8 +237,10 @@ export function HotelInlineForm({
     // (por ejemplo, al editar un hotel que ya tiene confirmación o dirección cargada).
     // Régimen y Tipo de habitación ya NO están aquí: subieron a la vista principal.
     // operatorPaymentDeadline NO se chequea: el campo fue eliminado en F2 y siempre es undefined.
+    // starRating (spec 2026-08-12, §2): dato del PDF de presupuesto, opcional — también cuenta
+    // para abrir la sección sola al editar un hotel que ya lo tiene cargado.
     const tieneDetallesExistentes = Boolean(
-        form.confirmationNumber || form.address
+        form.confirmationNumber || form.address || form.starRating
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -837,6 +839,31 @@ export function HotelInlineForm({
 
                 {mostrarDetalles && (
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Estrellas del hotel (spec 2026-08-12, §2): dato descriptivo del PDF de
+                            presupuesto, va PRIMERO acá adentro — no es un dato operativo como
+                            Confirmación/Dirección. OJO: esto es DISTINTO de "Categoría" (roomCategory,
+                            a la vista arriba) — Categoría es el nombre fino de la habitación
+                            ("Superior", "Vista al mar"), Estrellas es del hotel en sí. Opcional,
+                            nunca se valida al guardar (si queda "Sin especificar" el PDF no imprime
+                            la línea — es un espejo de lo cargado, nunca inventa un dato). */}
+                        <div>
+                            <label className={LABEL_BASE} htmlFor="hotel-estrellas">Estrellas del hotel</label>
+                            <select
+                                id="hotel-estrellas"
+                                className={INPUT_NORMAL}
+                                value={form.starRating || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, starRating: event.target.value }))}
+                                data-testid="hotel-estrellas"
+                                aria-label="Estrellas del hotel"
+                            >
+                                <option value="">Sin especificar</option>
+                                <option value="1">1 estrella</option>
+                                <option value="2">2 estrellas</option>
+                                <option value="3">3 estrellas</option>
+                                <option value="4">4 estrellas</option>
+                                <option value="5">5 estrellas</option>
+                            </select>
+                        </div>
                         <div>
                             <label className={LABEL_BASE} htmlFor="hotel-confirmacion">Confirmación del operador</label>
                             <input

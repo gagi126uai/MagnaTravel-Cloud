@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
@@ -232,6 +233,30 @@ public class ReportsController : ControllerBase
         return Ok(updated);
     }
 
+    /// <summary>
+    /// Mini-tanda PDF-2a (2026-08-12): genera con IA un BORRADOR de las condiciones de UNA categoría
+    /// ("✨ Ayudame a redactarlo" de la spec de UI). El borrador NUNCA se guarda solo (regla P-21): el
+    /// dueño lo revisa en el textarea y, si le sirve, lo confirma con el PUT de arriba.
+    /// <paramref name="kind"/> es el texto de la categoría, no un número (mismo criterio que el PUT).
+    /// </summary>
+    [HttpPost("budget-conditions/{kind}/draft")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<BudgetConditionDraftDto>> GenerateBudgetConditionDraft(
+        string kind, [FromBody] GenerateBudgetConditionDraftRequest? request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var draft = await _reportService.GenerateBudgetConditionDraftAsync(kind, request?.CurrentText, cancellationToken);
+            return Ok(draft);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // La IA no está configurada o no pudo redactar: 409 con un mensaje YA en criollo, apto para
+            // mostrar tal cual (el service nunca deja pasar detalle técnico en este mensaje).
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     private static AgencySettings MapAgencySettings(AgencySettingsUpsertRequest request)
     {
         return new AgencySettings
@@ -269,3 +294,6 @@ public record AgencySettingsUpsertRequest(
     string? PdfBandColorHex = null);
 
 public record UpdateBudgetConditionBlockRequest(string? Text);
+
+/// <summary>Body opcional del POST de borrador con IA: si el dueño ya escribió algo, la IA lo usa de base.</summary>
+public record GenerateBudgetConditionDraftRequest(string? CurrentText);

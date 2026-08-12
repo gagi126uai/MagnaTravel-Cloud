@@ -5,6 +5,7 @@ using ClosedXML.Excel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using TravelApi.Application.Ai;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -39,6 +40,12 @@ public class ReportService : IReportService
     // ctor corto) — sin este servicio inyectado, UpdateAgencyLogoAsync rechaza con un mensaje claro en
     // vez de explotar con NullReferenceException.
     private readonly IFileStoragePort? _fileStoragePort;
+    // Mini-tanda PDF-2a (2026-08-12): el cerebro que redacta el BORRADOR de condiciones. Mismo criterio
+    // "opcional" que el resto: sin estos dos servicios inyectados, GenerateBudgetConditionDraftAsync
+    // simplemente contesta "IA no disponible" en vez de romper los unit tests viejos que arman
+    // ReportService con el ctor corto.
+    private readonly IAiAssistantService? _aiAssistantService;
+    private readonly IAiConnectionResolver? _aiConnectionResolver;
 
     public ReportService(
         AppDbContext dbContext,
@@ -48,7 +55,9 @@ public class ReportService : IReportService
         IFinancePositionService? financePositionService = null,
         IExchangeRateResolver? exchangeRateResolver = null,
         ILogger<ReportService>? logger = null,
-        IFileStoragePort? fileStoragePort = null)
+        IFileStoragePort? fileStoragePort = null,
+        IAiAssistantService? aiAssistantService = null,
+        IAiConnectionResolver? aiConnectionResolver = null)
     {
         _dbContext = dbContext;
         _bnaExchangeRateService = bnaExchangeRateService;
@@ -58,6 +67,8 @@ public class ReportService : IReportService
         _exchangeRateResolver = exchangeRateResolver;
         _logger = logger;
         _fileStoragePort = fileStoragePort;
+        _aiAssistantService = aiAssistantService;
+        _aiConnectionResolver = aiConnectionResolver;
     }
 
     public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
@@ -1885,6 +1896,89 @@ public class ReportService : IReportService
         await _dbContext.SaveChangesAsync(cancellationToken);
         return new BudgetConditionBlockDto(kindText, block.Text);
     }
+
+    /// <summary>Mensaje único que ve el vendedor cuando la IA no puede redactar el borrador — sin jerga técnica (data-exposure).</summary>
+    private const string AiDraftUnavailableMessage =
+        "La inteligencia artificial no está disponible ahora. Escribí el texto a mano o probá más tarde.";
+
+    /// <summary>
+    /// Mini-tanda PDF-2a (2026-08-12): genera el BORRADOR de condiciones con IA para el link "✨
+    /// Ayudame a redactarlo" de la spec de UI. Nunca persiste nada — devuelve el texto para que el
+    /// dueño lo revise en el textarea y lo confirme (o no) con el PUT de siempre (regla P-21).
+    /// </summary>
+    public async Task<BudgetConditionDraftDto> GenerateBudgetConditionDraftAsync(
+        string kindText, string? currentText, CancellationToken cancellationToken)
+    {
+        var kind = BudgetConditionBlockKindText.ParseOrNull(kindText)
+            ?? throw new ValidationException("Esa categoría de condiciones no existe.");
+
+        // Sin los dos servicios de IA inyectados, o sin conexión utilizable, no tiene sentido armar el
+        // prompt: se avisa de una directo. Mismo criterio que ServiceLineInterpreter (IsUsableAsync
+        // ANTES de gastar una consulta a la base o una llamada de red).
+        if (_aiAssistantService is null || _aiConnectionResolver is null
+            || !await _aiConnectionResolver.IsUsableAsync(cancellationToken))
+        {
+            throw new InvalidOperationException(AiDraftUnavailableMessage);
+        }
+
+        var request = BuildBudgetConditionDraftRequest(kind, currentText);
+        var result = await _aiAssistantService.CompleteAsync(request, cancellationToken);
+
+        if (!result.Succeeded || string.IsNullOrWhiteSpace(result.Text))
+        {
+            // El motivo técnico (timeout, config inválida, etc) queda SOLO en el log del servidor — a la
+            // pantalla le llega el mismo mensaje en criollo de siempre (P-17 / data-exposure).
+            _logger?.LogWarning(
+                "Borrador IA de condiciones del presupuesto: no se pudo redactar. Motivo interno: {Reason}",
+                result.DegradationReason ?? "sin detalle");
+            throw new InvalidOperationException(AiDraftUnavailableMessage);
+        }
+
+        return new BudgetConditionDraftDto(result.Text.Trim());
+    }
+
+    /// <summary>
+    /// Arma el pedido al modelo: redactar (o mejorar) las condiciones de venta de UNA categoría del
+    /// presupuesto, en español rioplatense, texto plano y acotado — listo para pegar tal cual en el PDF.
+    /// </summary>
+    private static AiChatRequest BuildBudgetConditionDraftRequest(BudgetConditionBlockKind kind, string? currentText)
+    {
+        var categoryLabel = BudgetConditionCategoryLabelForPrompt(kind);
+
+        var systemMessage = AiChatMessage.System(
+            "Sos un asistente que redacta, en español rioplatense y en tono profesional simple, las " +
+            "condiciones de venta que una agencia de viajes minorista argentina imprime al pie de un " +
+            "presupuesto en PDF. Escribís SOLO texto plano: sin títulos, sin markdown, sin asteriscos ni " +
+            "numeración con símbolos. El texto tiene que quedar listo para pegar tal cual en el PDF, con " +
+            "un largo máximo de 180 palabras.");
+
+        var trimmedCurrentText = string.IsNullOrWhiteSpace(currentText) ? null : currentText.Trim();
+        var userMessage = AiChatMessage.User(
+            trimmedCurrentText is null
+                ? $"Redactá desde cero las condiciones de venta estándar para la categoría \"{categoryLabel}\" de un presupuesto de viajes."
+                : $"Mejorá y completá este borrador de condiciones de venta para la categoría \"{categoryLabel}\" de un " +
+                  "presupuesto de viajes, conservando lo que la agencia ya decidió (no lo contradigas):\n\n" +
+                  trimmedCurrentText);
+
+        // Tope generoso de tokens para 180 palabras en español (el limite REAL de largo lo pide el
+        // prompt); temperatura baja porque esto es redaccion de un texto legal-comercial repetible, no
+        // contenido creativo.
+        var options = new AiProviderOptions { MaxTokens = 400, Temperature = 0.4 };
+
+        return new AiChatRequest(new[] { systemMessage, userMessage }, options);
+    }
+
+    /// <summary>Nombre de la categoría en palabras humanas, SOLO para el prompt (no viaja a ninguna pantalla).</summary>
+    private static string BudgetConditionCategoryLabelForPrompt(BudgetConditionBlockKind kind) => kind switch
+    {
+        BudgetConditionBlockKind.Flights => "aéreos",
+        BudgetConditionBlockKind.Hotels => "hoteles",
+        BudgetConditionBlockKind.Transfers => "traslados",
+        BudgetConditionBlockKind.Packages => "paquetes",
+        BudgetConditionBlockKind.Assistances => "asistencias al viajero",
+        BudgetConditionBlockKind.General => "condiciones generales del presupuesto",
+        _ => "condiciones generales del presupuesto",
+    };
 
     // ===== BI ANALYTICS =====
 

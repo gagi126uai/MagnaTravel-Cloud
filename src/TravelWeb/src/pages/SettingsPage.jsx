@@ -31,11 +31,13 @@ import {
   Settings2,
   ShieldAlert,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  Palette
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 import AfipSettingsTab from "../components/AfipSettingsTab";
+import BudgetPdfSettingsTab from "../components/BudgetPdfSettingsTab";
 import ApprovalPoliciesTab from "../components/ApprovalPoliciesTab";
 import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
@@ -155,6 +157,10 @@ const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
   { id: "operations", label: "Operativa y Caja", icon: Settings2 },
   { id: "afip", label: "Facturación", icon: FileText },
+  // Obra "PDF de presupuesto" (spec 2026-08-12, §4): identidad del PDF + condiciones. Sin
+  // adminOnly — mismo criterio que Facturación/Operativa (el backend SÍ es Admin-only, pero
+  // el único usuario real hoy es admin; ver el comentario largo en BudgetPdfSettingsTab.jsx).
+  { id: "budgetPdf", label: "Presupuestos y PDF", icon: Palette },
   { id: "whatsapp", label: "WhatsApp Bot", icon: Smartphone },
   // §15.1 de la spec firmada 2026-08-07: solapa nueva, al lado de Facturación y WhatsApp
   // Bot, SOLO Admin (adminOnly abajo en isTabVisible — un vendedor no la ve, ni apagada).
@@ -742,6 +748,9 @@ Ajustá cómo funciona el sistema para tu agencia.
 
         {/* --- AFIP TAB --- */}
         {activeTab === "afip" && <AfipSettingsTab />}
+
+        {/* --- PRESUPUESTOS Y PDF TAB --- */}
+        {activeTab === "budgetPdf" && <BudgetPdfSettingsTab />}
 
         {/* --- APPROVALS TAB --- */}
         {activeTab === "approvals" && <ApprovalPoliciesTab />}

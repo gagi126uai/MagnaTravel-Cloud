@@ -145,8 +145,12 @@ export function FlightInlineForm({
 
     // "Más detalles" se abre automáticamente al editar si ya hay datos en esos campos.
     // cabinClass también se considera: si viene persistido del backend, expandimos la sección.
+    // isDirect/includes* (spec 2026-08-12, §1): datos del PDF de presupuesto — también cuentan
+    // para abrir la sección sola. isDirect vive como string ("" / "true" / "false") en el form
+    // porque es el value de un <select>; los 3 casilleros son boolean.
     const tieneDetallesExistentes = Boolean(
-        form.pnr || form.ticketNumber || form.baggage || form.scheduleNotes || form.cabinClass
+        form.pnr || form.ticketNumber || form.baggage || form.scheduleNotes || form.cabinClass ||
+        form.isDirect || form.includesBackpack || form.includesCarryOn || form.includesCheckedBag
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -619,6 +623,47 @@ export function FlightInlineForm({
                                 aria-label="Equipaje incluido"
                             />
                         </div>
+                        {/* "Qué lleva incluido" (spec 2026-08-12, §1): 3 casilleros aparte del texto
+                            libre de Equipaje de arriba — son datos ESTRUCTURADOS para que el PDF de
+                            presupuesto pueda armar íconos/lista, cosa que un texto libre no permite.
+                            Ninguno es obligatorio: si quedan los 3 destildados, el PDF simplemente no
+                            muestra esa línea (nunca inventa un dato). accent-color con el ÚNICO azul
+                            de acción del sistema, igual que el resto de los checkboxes de la app. */}
+                        <div className="sm:col-span-2">
+                            <label className={LABEL_BASE}>Qué lleva incluido</label>
+                            <div className="flex flex-wrap gap-x-5 gap-y-2">
+                                <label className="inline-flex items-center gap-1.5 text-[13px] text-slate-700 dark:text-slate-300">
+                                    <input
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded border-slate-300 accent-primary dark:border-slate-600"
+                                        checked={Boolean(form.includesBackpack)}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, includesBackpack: event.target.checked }))}
+                                        data-testid="flight-incluye-mochila"
+                                    />
+                                    Mochila o bolso personal
+                                </label>
+                                <label className="inline-flex items-center gap-1.5 text-[13px] text-slate-700 dark:text-slate-300">
+                                    <input
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded border-slate-300 accent-primary dark:border-slate-600"
+                                        checked={Boolean(form.includesCarryOn)}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, includesCarryOn: event.target.checked }))}
+                                        data-testid="flight-incluye-carryon"
+                                    />
+                                    Equipaje de cabina (carry on)
+                                </label>
+                                <label className="inline-flex items-center gap-1.5 text-[13px] text-slate-700 dark:text-slate-300">
+                                    <input
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded border-slate-300 accent-primary dark:border-slate-600"
+                                        checked={Boolean(form.includesCheckedBag)}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, includesCheckedBag: event.target.checked }))}
+                                        data-testid="flight-incluye-valija"
+                                    />
+                                    Valija despachada
+                                </label>
+                            </div>
+                        </div>
                         <div>
                             {/*
                              * Cabina: opcional, igual que en el modal viejo (ServiceFormModal:377-386).
@@ -638,6 +683,25 @@ export function FlightInlineForm({
                                 <option value="Premium">Premium Economy</option>
                                 <option value="Business">Business</option>
                                 <option value="First">Primera Clase</option>
+                            </select>
+                        </div>
+                        {/* "¿Cómo es el vuelo?" (spec 2026-08-12, §1): al lado de Cabina, mismo
+                            renglón (grid de 2 columnas). Tri-estado real: "" = Sin especificar
+                            (nunca tocado), "true" = Directo, "false" = Con escala(s) — el <select>
+                            necesita strings, el payload lo traduce a bool|null. */}
+                        <div>
+                            <label className={LABEL_BASE} htmlFor="flight-es-directo">¿Cómo es el vuelo?</label>
+                            <select
+                                id="flight-es-directo"
+                                className={INPUT_NORMAL}
+                                value={form.isDirect ?? ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, isDirect: event.target.value }))}
+                                data-testid="flight-es-directo"
+                                aria-label="Si el vuelo es directo o con escalas"
+                            >
+                                <option value="">Sin especificar</option>
+                                <option value="true">Directo</option>
+                                <option value="false">Con escala(s)</option>
                             </select>
                         </div>
                     </div>

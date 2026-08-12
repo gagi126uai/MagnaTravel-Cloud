@@ -28,16 +28,22 @@
  * Cartel Emergente (traje ámbar de confirmación) con "Volver a corregir" / "Sí, confirmar".
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { formatDate } from "../../../lib/utils";
 import { Button } from "../../../components/ui/button";
-import { getReservationServicePublicId } from "../lib/reservationServiceModel";
+import { getReservationServicePublicId, getServiceMutationEndpoint } from "../lib/reservationServiceModel";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { esRechazoCostoMenorAPagado, agregarConfirmacionCostoMenorAPagado } from "../lib/costConfirmationGuard";
 import { resolverRateIdDeEdicion, resolverCamposALimpiarAlCrearNuevo, resolverTocadosAManoTrasLimpiarOrigen } from "./inlineServiceFormHelpers";
+import {
+    construirClaveServicio,
+    esServicioVivoParaOpciones,
+    calcularAsignacionDeOpcion,
+} from "../lib/optionGroupLogic";
 import { HotelInlineForm, calcularNoches, redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { FlightInlineForm, calcularTotalesVuelo } from "./FlightInlineForm";
 import { TransferInlineForm, calcularTotalesTraslado } from "./TransferInlineForm";
@@ -136,6 +142,8 @@ function buildHotelFormInitial(serviceToEdit) {
             confirmationNumber: "",
             // operatorPaymentDeadline eliminado en F2: el aviso de campanita viene del backend (firstStartDate).
             address: "",
+            // starRating (spec 2026-08-12, §2): dato del PDF de presupuesto. "" = Sin especificar.
+            starRating: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -163,6 +171,9 @@ function buildHotelFormInitial(serviceToEdit) {
         confirmationNumber: serviceToEdit.confirmationNumber || "",
         // operatorPaymentDeadline no se carga en la UI (campo eliminado en F2)
         address: serviceToEdit.address || "",
+        // Round-trip: el backend devuelve starRating (int|null) en HotelBookingDto. String vacío
+        // cuando no está cargado — el <select> necesita strings, no null/undefined.
+        starRating: serviceToEdit.starRating != null ? String(serviceToEdit.starRating) : "",
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -186,6 +197,13 @@ function buildFlightFormInitial(serviceToEdit) {
             // UpdateFlightRequest; buildPayload manda el token "SinDefinir" cuando el select
             // queda en "" (ver ServiceGeographicScopeText.Cleared en el backend).
             geographicScope: "",
+            // isDirect/includes* (spec 2026-08-12, §1): datos del PDF de presupuesto. isDirect es
+            // string ("" / "true" / "false") porque es el value de un <select> tri-estado; los 3
+            // casilleros son boolean simples, arrancan destildados.
+            isDirect: "",
+            includesBackpack: false,
+            includesCarryOn: false,
+            includesCheckedBag: false,
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -212,6 +230,13 @@ function buildFlightFormInitial(serviceToEdit) {
         // lectura, como texto legible ("Nacional"/"Internacional") o null si nunca se definió.
         // Fallback "" (Sin definir) cuando el backend devuelve null.
         geographicScope: serviceToEdit.geographicScope || "",
+        // Round-trip: FlightSegmentDto devuelve isDirect/includes* (bool|null). isDirect se guarda
+        // como string para el <select> tri-estado: "true"/"false" cuando tiene valor, "" cuando es
+        // null (nunca se cargó). Los 3 casilleros son boolean directos, con `false` de fallback.
+        isDirect: serviceToEdit.isDirect === true ? "true" : serviceToEdit.isDirect === false ? "false" : "",
+        includesBackpack: Boolean(serviceToEdit.includesBackpack),
+        includesCarryOn: Boolean(serviceToEdit.includesCarryOn),
+        includesCheckedBag: Boolean(serviceToEdit.includesCheckedBag),
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -361,6 +386,278 @@ function buildAssistanceFormInitial(serviceToEdit) {
     };
 }
 
+// ─── Payload de guardado, por tipo ─────────────────────────────────────────────
+//
+// Opciones A/B/C (spec 2026-08-12, §3.1, decisión #6 firmada): cuando el vendedor marca un
+// servicio como "alternativa de" otro servicio YA cargado que todavía no tiene grupo, hay que
+// backfillear ese OTRO servicio (el "socio") con un PUT de round-trip completo — no solo con
+// optionGroup/optionLabel, porque los demás campos del Update*Request NO son anti-clobber (si se
+// omiten, el backend los pisa con su default y se perdería el precio/nombre/fechas reales del
+// socio). Por eso `buildPayload` de acá abajo se separó en 5 funciones PURAS reusables: la misma
+// función que arma el payload del formulario ACTIVO también arma el payload del socio, a partir
+// de reconstruir su form con build*FormInitial (mismos builders de arriba). Ver
+// actualizarOptionGroupDelSocio, más abajo, donde se conectan.
+
+function buildHotelPayload(formHotel, canSeeCost) {
+    const noches = calcularNoches(formHotel.checkIn, formHotel.checkOut);
+    const habitaciones = Math.max(Number(formHotel.rooms) || 1, 1);
+    const factorTotal = Math.max(noches, 1) * habitaciones;
+    const netCostTotal = redondearDinero((Number(formHotel.unitNetCost) || 0) * factorTotal);
+    const salePriceTotal = redondearDinero((Number(formHotel.unitSalePrice) || 0) * factorTotal);
+
+    const payload = {
+        hotelName: formHotel.hotelName?.trim() || "",
+        city: formHotel.city?.trim() || "",
+        checkIn: formHotel.checkIn,
+        checkOut: formHotel.checkOut,
+        nights: noches,
+        rooms: habitaciones,
+        // Bug 2 (QA 11/08/2026): Math.max(...,1) en vez de "|| 1" — con "|| 1" un
+        // valor negativo ("-1") es TRUTHY en JS, así que se colaba tal cual al
+        // backend. validarForm() ya frena esto en pantalla; este clamp es la red
+        // final, mismo criterio que ya usa `habitaciones` (línea de arriba).
+        adults: Math.max(Number(formHotel.passengers) || 1, 1),
+        children: 0,
+        supplierId: formHotel.supplierId || null,
+        netCost: canSeeCost ? netCostTotal : 0,
+        salePrice: salePriceTotal,
+        tax: 0,
+        currency: formHotel.currency || "ARS",
+        // RoomType y MealPlan son string NO-nullables en el backend (CreateHotelRequest /
+        // UpdateHotelRequest). Con null el backend responde 400. Usamos el mismo default
+        // que el modal viejo: Doble / Desayuno. Los selects siempre tienen un valor
+        // seleccionado, así que || "X" es solo un fallback de seguridad extra.
+        mealPlan: formHotel.mealPlan || "Desayuno",
+        roomType: formHotel.roomType || "Doble",
+        // roomCategory es opcional (a diferencia de mealPlan/roomType): "" -> null,
+        // el backend la acepta como el nombre fino de la variante (spec 2026-08-07).
+        roomCategory: formHotel.roomCategory?.trim() || null,
+        confirmationNumber: formHotel.confirmationNumber || null,
+        address: formHotel.address || null,
+        // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
+        // starRating (spec 2026-08-12, §2): "" -> null (Sin especificar), string numérico -> Number.
+        starRating: formHotel.starRating ? Number(formHotel.starRating) : null,
+    };
+    if (formHotel.rateId) {
+        payload.rateId = formHotel.rateId;
+    } else if (formHotel.newCatalogProduct) {
+        payload.newCatalogProduct = { ...formHotel.newCatalogProduct };
+        payload.supplierId = formHotel.newCatalogProduct.supplierPublicId || null;
+    }
+    return payload;
+}
+
+function buildFlightPayload(formVuelo, canSeeCost) {
+    const payload = {
+        // ADR-018: la identidad del vuelo va en productName, no en description.
+        // El backend (FlightSegment) tiene columna ProductName (varchar200, nullable).
+        productName: formVuelo.routeName?.trim() || "",
+        // Hora de pared sin conversión UTC (véase ServiceFormModal línea ~2286)
+        departureTime: formVuelo.departureDate ? `${formVuelo.departureDate}T00:00:00` : null,
+        arrivalTime: formVuelo.returnDate ? `${formVuelo.returnDate}T00:00:00` : null,
+        // Bug 2 (QA 11/08/2026): Math.max(...,1) — sin esto, un "-1" tipeado a mano
+        // (o pegado con el mouse) viajaba tal cual al backend. validarForm() ya lo
+        // frena en pantalla; esto es la red final, antes de armar el payload.
+        passengerCount: formVuelo.passengers ? Math.max(Number(formVuelo.passengers), 1) : null,
+        supplierId: formVuelo.supplierId || null,
+        netCost: canSeeCost ? redondearDinero(Number(formVuelo.netCost) || 0) : 0,
+        salePrice: redondearDinero(Number(formVuelo.salePrice) || 0),
+        tax: 0,
+        currency: formVuelo.currency || "ARS",
+        // ticketingDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
+        pnr: formVuelo.pnr || null,
+        ticketNumber: formVuelo.ticketNumber || null,
+        notes: formVuelo.scheduleNotes || null,
+        baggage: formVuelo.baggage || null,
+        // cabinClass: null cuando no se eligió (backend lo relaja a opcional).
+        // Con || null: "" â†’ null, "Economy" â†’ "Economy", etc.
+        cabinClass: formVuelo.cabinClass || null,
+        // Semáforo de DNI vencido para cabotaje (2026-08-03): a diferencia de cabinClass,
+        // acá "" (Sin definir elegido en el select) NO se manda como null. El backend
+        // interpreta null/ausente como "no tocar el ámbito ya guardado" (ParseOrNull),
+        // así que un null nunca podría borrar un "Nacional" cargado por error. Por eso
+        // mandamos el token literal "SinDefinir" (ServiceGeographicScopeText.Cleared en
+        // el backend), que el backend SI reconoce como "volver a Sin definir a propósito".
+        // Como el form siempre rehidrata el valor guardado (buildFlightFormInitial),
+        // mandar el valor del select siempre refleja la intención visible del vendedor.
+        geographicScope: formVuelo.geographicScope || "SinDefinir",
+        // isDirect/includes* (spec 2026-08-12, §1): a diferencia de cabinClass, ACÁ SÍ mandamos
+        // el estado real siempre (round-trip, nunca null) — son campos anti-clobber en el
+        // backend (null = no tocar) y esta ficha YA los conoce, así que el valor visible en
+        // pantalla es siempre la intención real del vendedor (ver el comentario largo en
+        // BookingService.cs junto a estos 4 campos, que anticipa exactamente esta tanda).
+        isDirect: formVuelo.isDirect === "" || formVuelo.isDirect == null ? null : formVuelo.isDirect === "true",
+        includesBackpack: Boolean(formVuelo.includesBackpack),
+        includesCarryOn: Boolean(formVuelo.includesCarryOn),
+        includesCheckedBag: Boolean(formVuelo.includesCheckedBag),
+    };
+    if (formVuelo.rateId) {
+        payload.rateId = formVuelo.rateId;
+    } else if (formVuelo.newCatalogProduct) {
+        payload.newCatalogProduct = { ...formVuelo.newCatalogProduct };
+        payload.supplierId = formVuelo.newCatalogProduct.supplierPublicId || null;
+    }
+    return payload;
+}
+
+function buildTransferPayload(formTraslado, canSeeCost) {
+    const payload = {
+        // ADR-018: la identidad del traslado va en productName, no en description.
+        // El backend (TransferBooking) tiene columna ProductName (varchar200, nullable).
+        productName: formTraslado.routeName?.trim() || "",
+        pickupDateTime: formTraslado.pickupDate
+            ? `${formTraslado.pickupDate}T${formTraslado.pickupTime || "00:00"}:00`
+            : null,
+        // Bug 2 (QA 11/08/2026): mismo clamp que Aéreo — Math.max(...,1), nunca un
+        // negativo tipeado/pegado a mano.
+        passengers: formTraslado.passengers ? Math.max(Number(formTraslado.passengers), 1) : null,
+        supplierId: formTraslado.supplierId || null,
+        netCost: canSeeCost ? redondearDinero(Number(formTraslado.netCost) || 0) : 0,
+        salePrice: redondearDinero(Number(formTraslado.salePrice) || 0),
+        tax: 0,
+        currency: formTraslado.currency || "ARS",
+        flightNumber: formTraslado.associatedFlightNumber || null,
+        confirmationNumber: formTraslado.confirmationNumber || null,
+        // direction: "in" (llegada) o "out" (salida); el select ya almacena el valor backend.
+        direction: formTraslado.movementType || null,
+        // serviceMode: "private" o "shared"; el select ya almacena el valor backend.
+        serviceMode: formTraslado.transferType || null,
+        // vehicleType: texto libre opcional; null cuando no se especificó.
+        vehicleType: formTraslado.vehicleType || null,
+        isRoundTrip: false,
+    };
+    if (formTraslado.rateId) {
+        payload.rateId = formTraslado.rateId;
+    } else if (formTraslado.newCatalogProduct) {
+        payload.newCatalogProduct = { ...formTraslado.newCatalogProduct };
+        payload.supplierId = formTraslado.newCatalogProduct.supplierPublicId || null;
+    }
+    return payload;
+}
+
+function buildPackagePayload(formPaquete, canSeeCost) {
+    const pasajeros = Math.max(Number(formPaquete.passengers) || 1, 1);
+    const salePriceTotal = redondearDinero((Number(formPaquete.unitSalePrice) || 0) * pasajeros);
+    const netCostTotal = redondearDinero((Number(formPaquete.unitNetCost) || 0) * pasajeros);
+
+    const payload = {
+        // ADR-018: la identidad del paquete va en packageName (campo pre-existente en PackageBooking).
+        // El ADR relajó Destination y EndDate a nullable; no se mandan desde la ficha inline.
+        packageName: formPaquete.packageName?.trim() || "",
+        // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo más arriba (bug fechas
+        // corridas 2026-07-16). El backend normaliza esto con NormalizeCalendarDate
+        // (BookingService), que acepta tanto con Z como sin Z — pero unificamos el contrato.
+        startDate: formPaquete.startDate ? `${formPaquete.startDate}T00:00:00` : null,
+        // endDate es OPCIONAL en ADR-018: si el form no lo tiene, se omite. El backend coalesce a startDate.
+        endDate: formPaquete.endDate ? `${formPaquete.endDate}T00:00:00` : null,
+        adults: pasajeros,
+        children: 0,
+        supplierId: formPaquete.supplierId || null,
+        netCost: canSeeCost ? netCostTotal : 0,
+        salePrice: salePriceTotal,
+        tax: 0,
+        currency: formPaquete.currency || "ARS",
+        itinerary: formPaquete.itinerary || null,
+        // El número de file va en confirmationNumber (el backend tiene ese campo)
+        confirmationNumber: formPaquete.fileNumber || null,
+        // occupancyBase: "double", "triple", etc. El select ya almacena el valor backend.
+        occupancyBase: formPaquete.roomBase || null,
+        // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
+    };
+    if (formPaquete.rateId) {
+        payload.rateId = formPaquete.rateId;
+    } else if (formPaquete.newCatalogProduct) {
+        payload.newCatalogProduct = { ...formPaquete.newCatalogProduct };
+        payload.supplierId = formPaquete.newCatalogProduct.supplierPublicId || null;
+    }
+    return payload;
+}
+
+function buildAssistancePayload(formAsistencia, canSeeCost) {
+    // El backend espera netCost/salePrice como TOTAL de la asistencia (precio por
+    // persona/día × días de vigencia × pasajeros), igual que Hotel (noches ×
+    // habitaciones) y Paquete (pasajeros) más arriba. Reusamos calcularTotalesAsistencia
+    // (mismo cálculo que ya se muestra en pantalla en AssistanceInlineForm) para no
+    // duplicar la cuenta a mano y no desincronizarla del total que el vendedor ve.
+    const totales = calcularTotalesAsistencia({
+        unitSalePrice: formAsistencia.unitSalePrice,
+        unitNetCost: formAsistencia.unitNetCost,
+        passengers: formAsistencia.passengers,
+        validFrom: formAsistencia.validFrom,
+        validTo: formAsistencia.validTo,
+        canSeeCost,
+    });
+
+    const payload = {
+        // ADR-018: la identidad de la asistencia va en planType, no en description.
+        // El backend (AssistanceBooking) ya tenía PlanType nullable.
+        planType: formAsistencia.planName?.trim() || "",
+        // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo más arriba (bug fechas
+        // corridas 2026-07-16). El backend normaliza esto con NormalizeCalendarDate
+        // (BookingService), que acepta tanto con Z como sin Z — pero unificamos el contrato.
+        validFrom: formAsistencia.validFrom ? `${formAsistencia.validFrom}T00:00:00` : null,
+        validTo: formAsistencia.validTo ? `${formAsistencia.validTo}T00:00:00` : null,
+        // Bug 2 (QA 11/08/2026): Math.max(...,1) — mismo clamp que ya usa
+        // calcularTotalesAsistencia() para el total de venta/costo (arriba), así
+        // `adults` nunca queda desincronizado con la cuenta que el vendedor ve.
+        adults: Math.max(Number(formAsistencia.passengers) || 1, 1),
+        children: 0,
+        supplierId: formAsistencia.supplierId || null,
+        netCost: canSeeCost ? (totales.costoTotal ?? 0) : 0,
+        salePrice: totales.ventaTotal,
+        tax: 0,
+        currency: formAsistencia.currency || "ARS",
+        // policyNumber se usa para los vouchers (campo existente en el backend)
+        policyNumber: formAsistencia.voucherNumbers || null,
+        notes: formAsistencia.upgrades || null,
+        confirmationNumber: formAsistencia.confirmationNumber || null,
+    };
+    if (formAsistencia.rateId) {
+        payload.rateId = formAsistencia.rateId;
+    } else if (formAsistencia.newCatalogProduct) {
+        payload.newCatalogProduct = { ...formAsistencia.newCatalogProduct };
+        payload.supplierId = formAsistencia.newCatalogProduct.supplierPublicId || null;
+    }
+    return payload;
+}
+
+// Mapas recordKind -> builder, para reconstruir el form/payload de un servicio AJENO al tab
+// activo (el "socio" de las Opciones A/B/C — ver el comentario largo más arriba y
+// actualizarOptionGroupDelSocio, más abajo). "generic" no participa: no tiene optionGroup.
+const BUILD_FORM_INITIAL_BY_RECORD_KIND = {
+    hotel: buildHotelFormInitial,
+    flight: buildFlightFormInitial,
+    transfer: buildTransferFormInitial,
+    package: buildPackageFormInitial,
+    assistance: buildAssistanceFormInitial,
+};
+const BUILD_PAYLOAD_BY_RECORD_KIND = {
+    hotel: buildHotelPayload,
+    flight: buildFlightPayload,
+    transfer: buildTransferPayload,
+    package: buildPackagePayload,
+    assistance: buildAssistancePayload,
+};
+
+/**
+ * Opciones A/B/C (spec 2026-08-12, §3.1, decisión #6): backfillea optionGroup/optionLabel en un
+ * servicio AJENO (el "socio" elegido en el select "¿Alternativa de cuál?") que todavía era un
+ * servicio "normal", sin grupo. Reconstruye su payload de round-trip COMPLETO a partir de sus
+ * propios datos guardados (mismos builders que usa esta ficha para abrir "Editar") — así el PUT no
+ * pisa ningún campo del socio con un default vacío (varios campos del Update*Request NO son
+ * anti-clobber: NetCost/SalePrice/HotelName/etc. se aplican SIEMPRE, tal cual vengan).
+ */
+async function actualizarOptionGroupDelSocio(reservaId, socio, optionGroup, optionLabel, canSeeCost) {
+    const buildFormDelTipo = BUILD_FORM_INITIAL_BY_RECORD_KIND[socio.recordKind];
+    const buildPayloadDelTipo = BUILD_PAYLOAD_BY_RECORD_KIND[socio.recordKind];
+    if (!buildFormDelTipo || !buildPayloadDelTipo) return; // tipo genérico: no tiene optionGroup.
+
+    const formDelSocio = buildFormDelTipo(socio);
+    const payloadDelSocio = { ...buildPayloadDelTipo(formDelSocio, canSeeCost), optionGroup, optionLabel };
+    const endpoint = getServiceMutationEndpoint(reservaId, socio);
+    await api.put(endpoint, payloadDelSocio);
+}
+
 // ─── Detección de pestaña inicial cuando se edita un servicio ─────────────────
 
 /**
@@ -386,6 +683,10 @@ function detectarTabParaEdicion(serviceToEdit) {
  *   suppliers           — lista de proveedores del contexto de la reserva
  *   onGuardado          — callback que se llama con opciones después de guardar exitosamente
  *   onCancelar          — callback para cerrar la ficha sin guardar
+ *   serviciosCargados   — Opciones A/B/C (spec 2026-08-12, §3.1): lista de servicios YA cargados
+ *                         en esta reserva (normalizeReservaServices), para el select "¿Alternativa
+ *                         de cuál?". Si no llega, el checkbox igual se muestra pero el select
+ *                         queda con la lista vacía (degradación elegante).
  *
  * Obra "anular sin factura" (2026-07-23): el PUT de edición puede seguir rechazando con 409
  * cuando se reasigna el operador de un servicio pagado o se baja su estado (el servicio ya
@@ -393,7 +694,7 @@ function detectarTabParaEdicion(serviceToEdit) {
  * factura" como salida, así que este componente ya no necesita un botón de camino para ese
  * 409: el Cartel Emergente de más abajo solo muestra el mensaje real (tal cual) + "Entendido".
  */
-export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuardado, onCancelar }) {
+export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuardado, onCancelar, serviciosCargados = [] }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // La pestaña activa: si estamos editando, detectamos el tipo automáticamente.
@@ -403,6 +704,52 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // Subida acá arriba (antes vivía más abajo) porque los estados de "sugerido"/"tocado"
     // de acá abajo necesitan su valor inicial (fix #4, auditoría 2026-08-10 — ver más abajo).
     const esEdicion = Boolean(serviceToEdit);
+
+    // ─── Opciones A/B/C (spec 2026-08-12, §3.1) ───────────────────────────────────
+    // `marcarComoAlternativa`: estado del checkbox "Es una alternativa de otro servicio ya
+    // cargado". Arranca tildado SOLO si el servicio que se está editando YA pertenece a un
+    // grupo — en cualquier otro caso (alta nueva, o editar un servicio "normal") arranca
+    // destildado. `yaPerteneceAGrupo` es la foto de "cómo llegó" (no cambia con el checkbox):
+    // la usamos para decidir si mostrar el select "¿Alternativa de cuál?" (solo tiene sentido
+    // para armar un grupo NUEVO) o el texto de solo lectura de un grupo ya armado.
+    const yaPerteneceAGrupo = Boolean((serviceToEdit?.optionGroup || "").trim());
+    const [marcarComoAlternativa, setMarcarComoAlternativa] = useState(() => yaPerteneceAGrupo);
+    const [alternativaDeSeleccionada, setAlternativaDeSeleccionada] = useState("");
+
+    // Servicios elegibles para "¿Alternativa de cuál?": vivos (no anulados), del tipo con
+    // optionGroup (no genérico) y sin contar al propio servicio que se está editando.
+    const opcionesDeAlternativa = useMemo(() => {
+        const publicIdPropio = esEdicion ? getReservationServicePublicId(serviceToEdit) : null;
+        return (serviciosCargados || []).filter((servicio) => {
+            if (servicio.recordKind === "generic") return false; // sin optionGroup en el backend.
+            if (publicIdPropio && getReservationServicePublicId(servicio) === publicIdPropio) return false;
+            return esServicioVivoParaOpciones(servicio);
+        });
+    }, [serviciosCargados, esEdicion, serviceToEdit]);
+
+    // Qué cambio de optionGroup/optionLabel hay que mandar en el payload de ESTE servicio (no
+    // del socio — eso lo resuelve `enviarGuardado` más abajo). `null` = el vendedor no tocó el
+    // checkbox, no se manda nada (anti-clobber conserva lo que ya había).
+    const cambioDeOpcionPendiente = useMemo(() => {
+        if (yaPerteneceAGrupo) {
+            // Único movimiento posible sobre un servicio que YA es parte de un grupo, en esta
+            // tanda: desmarcar para sacarlo (verificado contra el backend — mandar string vacío
+            // SÍ limpia optionGroup/optionLabel, ver OptionGroupRules.Normalize + el anti-clobber
+            // de BookingService.cs: "" no es null, así que igual entra a la rama que reemplaza).
+            return marcarComoAlternativa ? null : { optionGroup: "", optionLabel: "" };
+        }
+        if (!marcarComoAlternativa || !alternativaDeSeleccionada) return null;
+        const socio = opcionesDeAlternativa.find(
+            (servicio) => construirClaveServicio(servicio) === alternativaDeSeleccionada
+        );
+        if (!socio) return null;
+        const asignacion = calcularAsignacionDeOpcion({
+            servicioSocio: socio,
+            todosLosServicios: serviciosCargados,
+            publicIdAExcluir: esEdicion ? getReservationServicePublicId(serviceToEdit) : null,
+        });
+        return { optionGroup: asignacion.optionGroup, optionLabel: asignacion.optionLabel, socio, asignacion };
+    }, [yaPerteneceAGrupo, marcarComoAlternativa, alternativaDeSeleccionada, opcionesDeAlternativa, serviciosCargados, esEdicion, serviceToEdit]);
 
     // â”€â”€â”€ Estados de formulario por tipo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Inicializamos todos con sus builders; solo el activo se usa para guardar.
@@ -743,220 +1090,24 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // â”€â”€â”€ Construir payload por tipo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     const buildPayload = useCallback(() => {
-        if (tabActiva === "Hotel") {
-            const noches = calcularNoches(formHotel.checkIn, formHotel.checkOut);
-            const habitaciones = Math.max(Number(formHotel.rooms) || 1, 1);
-            const factorTotal = Math.max(noches, 1) * habitaciones;
-            const netCostTotal = redondearDinero((Number(formHotel.unitNetCost) || 0) * factorTotal);
-            const salePriceTotal = redondearDinero((Number(formHotel.unitSalePrice) || 0) * factorTotal);
+        let payload;
+        if (tabActiva === "Hotel") payload = buildHotelPayload(formHotel, canSeeCost);
+        else if (tabActiva === "Aereo") payload = buildFlightPayload(formVuelo, canSeeCost);
+        else if (tabActiva === "Traslado") payload = buildTransferPayload(formTraslado, canSeeCost);
+        else if (tabActiva === "Paquete") payload = buildPackagePayload(formPaquete, canSeeCost);
+        else if (tabActiva === "Asistencia") payload = buildAssistancePayload(formAsistencia, canSeeCost);
+        else payload = {};
 
-            const payload = {
-                hotelName: formHotel.hotelName?.trim() || "",
-                city: formHotel.city?.trim() || "",
-                checkIn: formHotel.checkIn,
-                checkOut: formHotel.checkOut,
-                nights: noches,
-                rooms: habitaciones,
-                // Bug 2 (QA 11/08/2026): Math.max(...,1) en vez de "|| 1" — con "|| 1" un
-                // valor negativo ("-1") es TRUTHY en JS, así que se colaba tal cual al
-                // backend. validarForm() ya frena esto en pantalla; este clamp es la red
-                // final, mismo criterio que ya usa `habitaciones` (línea de arriba).
-                adults: Math.max(Number(formHotel.passengers) || 1, 1),
-                children: 0,
-                supplierId: formHotel.supplierId || null,
-                netCost: canSeeCost ? netCostTotal : 0,
-                salePrice: salePriceTotal,
-                tax: 0,
-                currency: formHotel.currency || "ARS",
-                // RoomType y MealPlan son string NO-nullables en el backend (CreateHotelRequest /
-                // UpdateHotelRequest). Con null el backend responde 400. Usamos el mismo default
-                // que el modal viejo: Doble / Desayuno. Los selects siempre tienen un valor
-                // seleccionado, así que || "X" es solo un fallback de seguridad extra.
-                mealPlan: formHotel.mealPlan || "Desayuno",
-                roomType: formHotel.roomType || "Doble",
-                // roomCategory es opcional (a diferencia de mealPlan/roomType): "" -> null,
-                // el backend la acepta como el nombre fino de la variante (spec 2026-08-07).
-                roomCategory: formHotel.roomCategory?.trim() || null,
-                confirmationNumber: formHotel.confirmationNumber || null,
-                address: formHotel.address || null,
-                // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
-            };
-            if (formHotel.rateId) {
-                payload.rateId = formHotel.rateId;
-            } else if (formHotel.newCatalogProduct) {
-                payload.newCatalogProduct = { ...formHotel.newCatalogProduct };
-                payload.supplierId = formHotel.newCatalogProduct.supplierPublicId || null;
-            }
-            return payload;
+        // Opciones A/B/C (spec 2026-08-12, §3.1): solo sumamos optionGroup/optionLabel al payload
+        // si el vendedor TOCÓ el checkbox "Es una alternativa" (marcó o desmarcó) — ver
+        // cambioDeOpcionPendiente más abajo. Si no lo tocó, no agregamos nada: el anti-clobber del
+        // backend (null = no tocar) conserva lo que ya estaba guardado.
+        if (cambioDeOpcionPendiente) {
+            payload.optionGroup = cambioDeOpcionPendiente.optionGroup;
+            payload.optionLabel = cambioDeOpcionPendiente.optionLabel;
         }
-
-        if (tabActiva === "Aereo") {
-            const payload = {
-                // ADR-018: la identidad del vuelo va en productName, no en description.
-                // El backend (FlightSegment) tiene columna ProductName (varchar200, nullable).
-                productName: formVuelo.routeName?.trim() || "",
-                // Hora de pared sin conversión UTC (véase ServiceFormModal línea ~2286)
-                departureTime: formVuelo.departureDate ? `${formVuelo.departureDate}T00:00:00` : null,
-                arrivalTime: formVuelo.returnDate ? `${formVuelo.returnDate}T00:00:00` : null,
-                // Bug 2 (QA 11/08/2026): Math.max(...,1) — sin esto, un "-1" tipeado a mano
-                // (o pegado con el mouse) viajaba tal cual al backend. validarForm() ya lo
-                // frena en pantalla; esto es la red final, antes de armar el payload.
-                passengerCount: formVuelo.passengers ? Math.max(Number(formVuelo.passengers), 1) : null,
-                supplierId: formVuelo.supplierId || null,
-                netCost: canSeeCost ? redondearDinero(Number(formVuelo.netCost) || 0) : 0,
-                salePrice: redondearDinero(Number(formVuelo.salePrice) || 0),
-                tax: 0,
-                currency: formVuelo.currency || "ARS",
-                // ticketingDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
-                pnr: formVuelo.pnr || null,
-                ticketNumber: formVuelo.ticketNumber || null,
-                notes: formVuelo.scheduleNotes || null,
-                baggage: formVuelo.baggage || null,
-                // cabinClass: null cuando no se eligió (backend lo relaja a opcional).
-                // Con || null: "" â†’ null, "Economy" â†’ "Economy", etc.
-                cabinClass: formVuelo.cabinClass || null,
-                // Semáforo de DNI vencido para cabotaje (2026-08-03): a diferencia de cabinClass,
-                // acá "" (Sin definir elegido en el select) NO se manda como null. El backend
-                // interpreta null/ausente como "no tocar el ámbito ya guardado" (ParseOrNull),
-                // así que un null nunca podría borrar un "Nacional" cargado por error. Por eso
-                // mandamos el token literal "SinDefinir" (ServiceGeographicScopeText.Cleared en
-                // el backend), que el backend SI reconoce como "volver a Sin definir a propósito".
-                // Como el form siempre rehidrata el valor guardado (buildFlightFormInitial),
-                // mandar el valor del select siempre refleja la intención visible del vendedor.
-                geographicScope: formVuelo.geographicScope || "SinDefinir",
-            };
-            if (formVuelo.rateId) {
-                payload.rateId = formVuelo.rateId;
-            } else if (formVuelo.newCatalogProduct) {
-                payload.newCatalogProduct = { ...formVuelo.newCatalogProduct };
-                payload.supplierId = formVuelo.newCatalogProduct.supplierPublicId || null;
-            }
-            return payload;
-        }
-
-        if (tabActiva === "Traslado") {
-            const payload = {
-                // ADR-018: la identidad del traslado va en productName, no en description.
-                // El backend (TransferBooking) tiene columna ProductName (varchar200, nullable).
-                productName: formTraslado.routeName?.trim() || "",
-                pickupDateTime: formTraslado.pickupDate
-                    ? `${formTraslado.pickupDate}T${formTraslado.pickupTime || "00:00"}:00`
-                    : null,
-                // Bug 2 (QA 11/08/2026): mismo clamp que Aéreo — Math.max(...,1), nunca un
-                // negativo tipeado/pegado a mano.
-                passengers: formTraslado.passengers ? Math.max(Number(formTraslado.passengers), 1) : null,
-                supplierId: formTraslado.supplierId || null,
-                netCost: canSeeCost ? redondearDinero(Number(formTraslado.netCost) || 0) : 0,
-                salePrice: redondearDinero(Number(formTraslado.salePrice) || 0),
-                tax: 0,
-                currency: formTraslado.currency || "ARS",
-                flightNumber: formTraslado.associatedFlightNumber || null,
-                confirmationNumber: formTraslado.confirmationNumber || null,
-                // direction: "in" (llegada) o "out" (salida); el select ya almacena el valor backend.
-                direction: formTraslado.movementType || null,
-                // serviceMode: "private" o "shared"; el select ya almacena el valor backend.
-                serviceMode: formTraslado.transferType || null,
-                // vehicleType: texto libre opcional; null cuando no se especificó.
-                vehicleType: formTraslado.vehicleType || null,
-                isRoundTrip: false,
-            };
-            if (formTraslado.rateId) {
-                payload.rateId = formTraslado.rateId;
-            } else if (formTraslado.newCatalogProduct) {
-                payload.newCatalogProduct = { ...formTraslado.newCatalogProduct };
-                payload.supplierId = formTraslado.newCatalogProduct.supplierPublicId || null;
-            }
-            return payload;
-        }
-
-        if (tabActiva === "Paquete") {
-            const pasajeros = Math.max(Number(formPaquete.passengers) || 1, 1);
-            const salePriceTotal = redondearDinero((Number(formPaquete.unitSalePrice) || 0) * pasajeros);
-            const netCostTotal = redondearDinero((Number(formPaquete.unitNetCost) || 0) * pasajeros);
-
-            const payload = {
-                // ADR-018: la identidad del paquete va en packageName (campo pre-existente en PackageBooking).
-                // El ADR relajó Destination y EndDate a nullable; no se mandan desde la ficha inline.
-                packageName: formPaquete.packageName?.trim() || "",
-                // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo más arriba (bug fechas
-                // corridas 2026-07-16). El backend normaliza esto con NormalizeCalendarDate
-                // (BookingService), que acepta tanto con Z como sin Z — pero unificamos el contrato.
-                startDate: formPaquete.startDate ? `${formPaquete.startDate}T00:00:00` : null,
-                // endDate es OPCIONAL en ADR-018: si el form no lo tiene, se omite. El backend coalesce a startDate.
-                endDate: formPaquete.endDate ? `${formPaquete.endDate}T00:00:00` : null,
-                adults: pasajeros,
-                children: 0,
-                supplierId: formPaquete.supplierId || null,
-                netCost: canSeeCost ? netCostTotal : 0,
-                salePrice: salePriceTotal,
-                tax: 0,
-                currency: formPaquete.currency || "ARS",
-                itinerary: formPaquete.itinerary || null,
-                // El número de file va en confirmationNumber (el backend tiene ese campo)
-                confirmationNumber: formPaquete.fileNumber || null,
-                // occupancyBase: "double", "triple", etc. El select ya almacena el valor backend.
-                occupancyBase: formPaquete.roomBase || null,
-                // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
-            };
-            if (formPaquete.rateId) {
-                payload.rateId = formPaquete.rateId;
-            } else if (formPaquete.newCatalogProduct) {
-                payload.newCatalogProduct = { ...formPaquete.newCatalogProduct };
-                payload.supplierId = formPaquete.newCatalogProduct.supplierPublicId || null;
-            }
-            return payload;
-        }
-
-        if (tabActiva === "Asistencia") {
-            // El backend espera netCost/salePrice como TOTAL de la asistencia (precio por
-            // persona/día × días de vigencia × pasajeros), igual que Hotel (noches ×
-            // habitaciones) y Paquete (pasajeros) más arriba. Reusamos calcularTotalesAsistencia
-            // (mismo cálculo que ya se muestra en pantalla en AssistanceInlineForm) para no
-            // duplicar la cuenta a mano y no desincronizarla del total que el vendedor ve.
-            const totales = calcularTotalesAsistencia({
-                unitSalePrice: formAsistencia.unitSalePrice,
-                unitNetCost: formAsistencia.unitNetCost,
-                passengers: formAsistencia.passengers,
-                validFrom: formAsistencia.validFrom,
-                validTo: formAsistencia.validTo,
-                canSeeCost,
-            });
-
-            const payload = {
-                // ADR-018: la identidad de la asistencia va en planType, no en description.
-                // El backend (AssistanceBooking) ya tenía PlanType nullable.
-                planType: formAsistencia.planName?.trim() || "",
-                // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo más arriba (bug fechas
-                // corridas 2026-07-16). El backend normaliza esto con NormalizeCalendarDate
-                // (BookingService), que acepta tanto con Z como sin Z — pero unificamos el contrato.
-                validFrom: formAsistencia.validFrom ? `${formAsistencia.validFrom}T00:00:00` : null,
-                validTo: formAsistencia.validTo ? `${formAsistencia.validTo}T00:00:00` : null,
-                // Bug 2 (QA 11/08/2026): Math.max(...,1) — mismo clamp que ya usa
-                // calcularTotalesAsistencia() para el total de venta/costo (arriba), así
-                // `adults` nunca queda desincronizado con la cuenta que el vendedor ve.
-                adults: Math.max(Number(formAsistencia.passengers) || 1, 1),
-                children: 0,
-                supplierId: formAsistencia.supplierId || null,
-                netCost: canSeeCost ? (totales.costoTotal ?? 0) : 0,
-                salePrice: totales.ventaTotal,
-                tax: 0,
-                currency: formAsistencia.currency || "ARS",
-                // policyNumber se usa para los vouchers (campo existente en el backend)
-                policyNumber: formAsistencia.voucherNumbers || null,
-                notes: formAsistencia.upgrades || null,
-                confirmationNumber: formAsistencia.confirmationNumber || null,
-            };
-            if (formAsistencia.rateId) {
-                payload.rateId = formAsistencia.rateId;
-            } else if (formAsistencia.newCatalogProduct) {
-                payload.newCatalogProduct = { ...formAsistencia.newCatalogProduct };
-                payload.supplierId = formAsistencia.newCatalogProduct.supplierPublicId || null;
-            }
-            return payload;
-        }
-
-        return {};
-    }, [tabActiva, formHotel, formVuelo, formTraslado, formPaquete, formAsistencia, canSeeCost]);
+        return payload;
+    }, [tabActiva, formHotel, formVuelo, formTraslado, formPaquete, formAsistencia, canSeeCost, cambioDeOpcionPendiente]);
 
     // â”€â”€â”€ Guardar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -967,6 +1118,21 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     const enviarGuardado = async (confirmarCostoMenor) => {
         setGuardando(true);
         try {
+            // Opciones A/B/C (spec 2026-08-12, §3.1, decisión #6): si el socio elegido en "¿Alternativa
+            // de cuál?" todavía era un servicio "normal" (sin grupo), lo backfilleamos ANTES de guardar
+            // este servicio — así, si algo falla después, el peor caso es un grupo con un solo miembro
+            // (el socio con su propio nombre como grupo), que no es ambiguo y no rompe nada; el
+            // vendedor puede reintentar y la letra se sigue calculando bien la próxima vez.
+            if (cambioDeOpcionPendiente?.asignacion?.socioNecesitaBackfill) {
+                await actualizarOptionGroupDelSocio(
+                    reservaId,
+                    cambioDeOpcionPendiente.socio,
+                    cambioDeOpcionPendiente.optionGroup,
+                    cambioDeOpcionPendiente.asignacion.socioOptionLabel,
+                    canSeeCost
+                );
+            }
+
             const payloadBase = buildPayload();
             const payload = confirmarCostoMenor
                 ? agregarConfirmacionCostoMenorAPagado(payloadBase)
@@ -1146,6 +1312,63 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         </button>
                     );
                 })}
+            </div>
+
+            {/* Opciones A/B/C (spec 2026-08-12, §3.1): A LA VISTA (no en "Más detalles" — cambia
+                cómo se relaciona este servicio con otros, no es un dato descriptivo del servicio
+                en sí). Un solo checkbox + select condicional, mismo patrón que cualquier campo
+                condicional de la app. El sistema arma el grupo y le pone letra solo (A, B, C…) —
+                no hay casillero de "grupo" ni de "letra" a la vista: sería un dato técnico que el
+                vendedor no necesita escribir. */}
+            <div className="mb-4">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                    <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-slate-300 accent-primary dark:border-slate-600"
+                        checked={marcarComoAlternativa}
+                        onChange={(event) => {
+                            setMarcarComoAlternativa(event.target.checked);
+                            if (!event.target.checked) setAlternativaDeSeleccionada("");
+                        }}
+                        data-testid="checkbox-es-alternativa"
+                    />
+                    Es una alternativa de otro servicio ya cargado
+                </label>
+
+                {marcarComoAlternativa && (
+                    yaPerteneceAGrupo ? (
+                        // Servicio que YA es parte de un grupo (venía así al abrir la ficha): en
+                        // esta tanda no se puede cambiar de socio, solo desmarcar para sacarlo del
+                        // grupo (ver el comentario largo en cambioDeOpcionPendiente más arriba).
+                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400" data-testid="texto-ya-en-grupo">
+                            Ya es una alternativa dentro de «{serviceToEdit.optionGroup}».
+                        </p>
+                    ) : (
+                        <div className="mt-2 max-w-sm">
+                            <label className="block text-[11px] font-semibold tracking-wide text-slate-500 mb-1 dark:text-slate-400" htmlFor="select-alternativa-de">
+                                ¿Alternativa de cuál?
+                            </label>
+                            <select
+                                id="select-alternativa-de"
+                                className="w-full py-2 px-2.5 text-[13px] border rounded-[7px] bg-white text-slate-800 border-slate-300 focus:outline-none focus:ring-1 focus:border-primary focus:ring-primary dark:bg-slate-900 dark:text-slate-100 dark:border-slate-600"
+                                value={alternativaDeSeleccionada}
+                                onChange={(event) => setAlternativaDeSeleccionada(event.target.value)}
+                                data-testid="select-alternativa-de"
+                            >
+                                <option value="">
+                                    {opcionesDeAlternativa.length === 0
+                                        ? "Ninguno todavía: es la primera opción"
+                                        : "Elegí un servicio ya cargado..."}
+                                </option>
+                                {opcionesDeAlternativa.map((servicio) => (
+                                    <option key={construirClaveServicio(servicio)} value={construirClaveServicio(servicio)}>
+                                        {servicio.name}{servicio.date ? ` · ${formatDate(servicio.date)}` : ""}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )
+                )}
             </div>
 
             {/* CONTENIDO DE LA PESTAÑA ACTIVA */}

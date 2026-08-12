@@ -34,10 +34,13 @@
  * handleModalCancelar, etc.) se mantienen como están por ahora, son internos.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from "react-router-dom";
-import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, X, Loader2, FileText, Ban, XSquare, UserX, Lock } from "lucide-react";
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, X, Loader2, FileText, Ban, XSquare, UserX, Lock, Check, MoreHorizontal } from "lucide-react";
 import { isAdmin, hasPermission } from "../../../auth";
+import { api } from "../../../api";
+import { Button } from "../../../components/ui/button";
+import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { CancelarVariosServiciosInline } from "./CancelarVariosServiciosInline";
 import { PasajeroInlineForm } from "./PasajeroInlineForm";
@@ -48,6 +51,16 @@ import {
     SERVICE_RECORD_KIND,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
+// Opciones A/B/C (spec 2026-08-12, §3.2): chip "OPCIÓN A/B/C" + banner de grupo pendiente +
+// acción de fila "Elegir esta opción" — ver optionGroupLogic.js para las reglas puras.
+import {
+    obtenerGruposDeOpcionesPendientes,
+    grupoPendienteDeServicio,
+    letraDeOpcion,
+    mensajeBannerGrupoPendiente,
+    mensajeConfirmarEleccionDeOpcion,
+    construirClaveServicio,
+} from "../lib/optionGroupLogic";
 import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
 import { calcularHintPorTipo, calcularSlotsFaltantesDelSet, calcularCandadoPorCoverage } from "../lib/pasajeroHint";
 import { resolverBloqueoAnularServicio, resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
@@ -773,6 +786,133 @@ function ServiceSupplierChip({ supplierName, supplierPublicId, puedeVerProveedor
 }
 
 /**
+ * Chip ámbar "OPCIÓN A/B/C" (spec 2026-08-12, §3.2): mismo molde que el chip de estado del
+ * servicio, en tono ámbar (P-20: un grupo sin resolver "pide algo") — la única excepción de
+ * tono para un chip puramente informativo, porque acá SÍ hay una acción pendiente.
+ */
+function ChipOpcionPendiente({ servicio, grupo, testId }) {
+    return (
+        <span
+            className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+            data-testid={testId}
+        >
+            Opción {letraDeOpcion(servicio, grupo)}
+        </span>
+    );
+}
+
+/**
+ * Contenido del banner ámbar de UN grupo de opciones A/B/C sin resolver (spec 2026-08-12, §3.2).
+ * Fix bloqueante de review (2026-08-12): la spec lo pide PEGADO arriba de las filas de SU grupo,
+ * no una lista aparte arriba de toda la tabla — por eso este componente es solo el contenido
+ * (la ámbar box), y cada lugar que lo usa (fila de tabla en desktop, bloque en mobile) lo inserta
+ * justo antes de la PRIMERA fila/card del grupo (ver `esPrimeraFilaDelGrupo` en los `.map()` de
+ * más abajo). La tabla NO se reordena por grupo — si las fechas intercalan las filas del grupo,
+ * el banner queda pegado a la primera y el chip "OPCIÓN X" identifica al resto (fiel a la
+ * intención de la spec sin arriesgar un reorder de la tabla). `data-testid` fijo SOLO en el
+ * primer grupo pendiente de toda la lista: es al que hace scroll ReservaDetailPage cuando "El
+ * cliente aceptó" rebota por un grupo sin resolver (spec §3.3).
+ */
+function BannerGrupoPendienteContenido({ grupo, esPrimero }) {
+    return (
+        <div
+            className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300"
+            data-testid={esPrimero ? "banner-grupo-opciones-pendiente" : undefined}
+        >
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            <span className="font-medium">{mensajeBannerGrupoPendiente(grupo)}</span>
+        </div>
+    );
+}
+
+/**
+ * Acción de fila para un servicio que pertenece a un grupo de opciones sin resolver (spec
+ * 2026-08-12, §3.2): botón secundario "Elegir esta opción" — al tocarlo, aparece EN LÍNEA
+ * pegado a esta misma fila (P-5: nunca una ventana) un mini-confirm ámbar antes de resolver de
+ * verdad (P-14: acción destructiva para las OTRAS opciones del grupo, que se borran).
+ */
+function AccionElegirOpcion({ servicio, grupo, confirmando, onAbrirConfirm, onCancelarConfirm, onConfirmar, enviando }) {
+    const idServicio = getReservationServicePublicId(servicio);
+
+    if (confirmando) {
+        return (
+            <div className="flex flex-col items-end gap-1.5" data-testid={`confirmar-opcion-${idServicio}`}>
+                <span className="max-w-[220px] text-right text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                    {mensajeConfirmarEleccionDeOpcion(grupo)}
+                </span>
+                <div className="flex gap-1.5">
+                    <Button type="button" variant="outline" size="sm" onClick={onCancelarConfirm} disabled={enviando} data-testid={`opcion-volver-${idServicio}`}>
+                        Volver
+                    </Button>
+                    <Button type="button" size="sm" onClick={onConfirmar} disabled={enviando} data-testid={`opcion-si-esta-${idServicio}`}>
+                        {enviando ? "Guardando…" : "Sí, esta"}
+                    </Button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <Button type="button" variant="outline" size="sm" onClick={onAbrirConfirm} data-testid={`btn-elegir-opcion-${idServicio}`}>
+            <Check className="w-3.5 h-3.5" aria-hidden="true" />
+            Elegir esta opción
+        </Button>
+    );
+}
+
+/**
+ * Envoltorio de la acción de fila cuando el servicio pertenece a un grupo pendiente: reemplaza
+ * el bloque normal de Editar/Borrar por "Elegir esta opción" — respeta B.5 ("una sola acción por
+ * fila"). Si la fila tenía otras acciones, quedan detrás de un "⋯" discreto (F-16) hasta que el
+ * grupo se resuelva; nunca desaparecen del todo, solo se corren de la vista principal.
+ */
+function AccionesConOpcionPendiente({ servicio, grupo, accionesOriginales, confirmando, onAbrirConfirm, onCancelarConfirm, onConfirmar, enviando }) {
+    const [mostrarMas, setMostrarMas] = useState(false);
+    const idServicio = getReservationServicePublicId(servicio);
+
+    if (confirmando) {
+        return (
+            <AccionElegirOpcion
+                servicio={servicio}
+                grupo={grupo}
+                confirmando
+                onCancelarConfirm={onCancelarConfirm}
+                onConfirmar={onConfirmar}
+                enviando={enviando}
+            />
+        );
+    }
+
+    return (
+        <div className="flex items-center justify-end gap-1">
+            <AccionElegirOpcion servicio={servicio} grupo={grupo} confirmando={false} onAbrirConfirm={onAbrirConfirm} />
+            <div className="relative">
+                <button
+                    type="button"
+                    onClick={() => setMostrarMas((previo) => !previo)}
+                    aria-label="Más acciones"
+                    aria-haspopup="menu"
+                    aria-expanded={mostrarMas}
+                    data-testid={`btn-mas-acciones-${idServicio}`}
+                    className="p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                >
+                    <MoreHorizontal className="w-4 h-4" aria-hidden="true" />
+                </button>
+                {mostrarMas && (
+                    <div
+                        role="menu"
+                        data-testid={`menu-mas-acciones-${idServicio}`}
+                        className="absolute right-0 top-full z-20 mt-1 w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                    >
+                        {accionesOriginales}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+/**
  * Mini-formulario inline que aparece debajo de un servicio cuando faltan datos de pasajeros.
  *
  * Guía UX 2026-06-15 (P4b, P5):
@@ -1124,6 +1264,47 @@ export function ServiceList({
         };
     }, [onServiceConfirmed]);
 
+    // ─── Opciones A/B/C (spec 2026-08-12, §3.2) ───────────────────────────────────
+    // Se recalcula solo cuando cambia `services` (memoizado — la lista completa se recorre en
+    // cada render si no, y esta pantalla ya recalcula bastante por servicio).
+    const gruposOpcionesPendientes = useMemo(() => obtenerGruposDeOpcionesPendientes(services), [services]);
+    // El primer grupo pendiente (orden de aparición en la lista) — es el único que lleva el
+    // data-testid fijo que usa ReservaDetailPage para el scroll (spec §3.3). `agruparServiciosPorOpcion`
+    // inserta los grupos en el Map en el mismo orden en que recorre `services`, así que el primer
+    // valor del Map YA es "el primer grupo pendiente que aparece en la tabla".
+    const primerGrupoPendiente = useMemo(() => {
+        const [primero] = gruposOpcionesPendientes.values();
+        return primero || null;
+    }, [gruposOpcionesPendientes]);
+
+    // Clave (construirClaveServicio) del servicio cuyo mini-confirm "¿Esta es la que el cliente
+    // eligió?" está abierto — solo uno a la vez tiene sentido (P-5, en línea, pegado a la fila).
+    const [servicioConfirmandoOpcion, setServicioConfirmandoOpcion] = useState(null);
+    const [resolviendoOpcion, setResolviendoOpcion] = useState(false);
+    // Rechazo del motor al resolver el grupo (400/409, ej. otra pestaña ya lo resolvió antes) —
+    // texto tal cual, en el Cartel Emergente (nunca incrustado: es un rechazo real del backend).
+    const [errorResolverOpcion, setErrorResolverOpcion] = useState(null);
+
+    const handleConfirmarOpcion = useCallback(async (servicio) => {
+        setResolviendoOpcion(true);
+        try {
+            await api.post(`/reservas/${reservaId}/option-groups/resolve`, {
+                optionGroup: servicio.optionGroup,
+                winnerServiceType: recordKindAServiceType(servicio.recordKind),
+                winnerServicePublicId: getReservationServicePublicId(servicio),
+            });
+            setServicioConfirmandoOpcion(null);
+            // El backend BORRA físicamente a los perdedores (decisión firmada 11/08 — el rastro
+            // queda en el Historial, no acá): refrescamos la reserva entera y listo, sin esperar
+            // ninguna fila "Anulada" tachada — simplemente ya no vienen en la próxima lectura.
+            onServiceResolved?.();
+        } catch (error) {
+            setErrorResolverOpcion(getApiErrorMessage(error, "No se pudo resolver el grupo de opciones."));
+        } finally {
+            setResolviendoOpcion(false);
+        }
+    }, [reservaId, onServiceResolved]);
+
     return (
         <div>
             {/* Modal de borrar vs anular: se abre al presionar la papelera de cualquier servicio.
@@ -1149,6 +1330,16 @@ export function ServiceList({
                     onClose={() => setModalBloqueo409(null)}
                 />
             )}
+
+            {/* Opciones A/B/C (spec 2026-08-12, §3.2): rechazo del motor al resolver un grupo
+                (ej. otra pestaña ya lo resolvió antes) — mensaje tal cual, en el Cartel Emergente. */}
+            <CartelEmergente
+                isOpen={Boolean(errorResolverOpcion)}
+                variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+                message={errorResolverOpcion}
+                onClose={() => setErrorResolverOpcion(null)}
+                dataTestId="resolver-opcion-rechazo"
+            />
 
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios contratados</h3>
@@ -1275,14 +1466,37 @@ export function ServiceList({
                                     const isGeneric = svc.recordKind === SERVICE_RECORD_KIND.GENERIC;
                                     const displayType = svc.displayType || svc._type || 'Servicio';
                                     const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
+                                    // Opciones A/B/C (spec 2026-08-12, §3.2): null si este servicio no
+                                    // pertenece a ningún grupo con 2+ alternativas vivas.
+                                    const grupoDeEsteServicio = grupoPendienteDeServicio(svc, gruposOpcionesPendientes);
+                                    // Fix bloqueante de review (2026-08-12): el banner va PEGADO arriba
+                                    // de la PRIMERA fila de su grupo (no arriba de toda la tabla). El
+                                    // primer miembro del grupo (grupo.miembros[0]) es, por construcción
+                                    // de agruparServiciosPorOpcion, el primero que aparece en `services`
+                                    // — comparamos por clave (no por referencia) para no depender de que
+                                    // sea EXACTAMENTE el mismo objeto en memoria.
+                                    const esPrimeraFilaDelGrupo = Boolean(
+                                        grupoDeEsteServicio &&
+                                        construirClaveServicio(grupoDeEsteServicio.miembros[0]) === construirClaveServicio(svc)
+                                    );
 
-                                    // Usamos Fragment con key para poder devolver fila + mini-formulario
+                                    // Usamos Fragment con key para poder devolver banner + fila + mini-formulario
                                     // como un bloque sin envolver en un <div> (que rompería el <tbody>).
                                     // ConCoverageDeServicio encapsula el hook de nominal-coverage (no se puede
                                     // llamar hooks dentro de un .map(), necesita un componente propio).
                                     return (
+                                        <React.Fragment key={serviceKey}>
+                                        {esPrimeraFilaDelGrupo && (
+                                            <tr data-testid={`fila-banner-opcion-${getReservationServicePublicId(svc)}`}>
+                                                <td colSpan={20} className="pt-3 pb-1 px-2.5">
+                                                    <BannerGrupoPendienteContenido
+                                                        grupo={grupoDeEsteServicio}
+                                                        esPrimero={grupoDeEsteServicio === primerGrupoPendiente}
+                                                    />
+                                                </td>
+                                            </tr>
+                                        )}
                                         <ConCoverageDeServicio
-                                            key={serviceKey}
                                             reservaId={reservaId}
                                             svc={svc}
                                             pasajerosConNombre={pasajerosConNombre}
@@ -1313,12 +1527,23 @@ export function ServiceList({
                                                 }`}>
                                                     {svc.name}
                                                 </div>
-                                                <ServiceSupplierChip
-                                                    supplierName={svc.supplierName}
-                                                    supplierPublicId={svc.supplierPublicId}
-                                                    puedeVerProveedores={puedeVerProveedores}
-                                                    testId={`chip-operador-desktop-${getReservationServicePublicId(svc)}`}
-                                                />
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    {/* Opciones A/B/C (spec 2026-08-12, §3.2): "misma línea" que el
+                                                        chip de Operador de acá al lado. */}
+                                                    {grupoDeEsteServicio && (
+                                                        <ChipOpcionPendiente
+                                                            servicio={svc}
+                                                            grupo={grupoDeEsteServicio}
+                                                            testId={`chip-opcion-desktop-${getReservationServicePublicId(svc)}`}
+                                                        />
+                                                    )}
+                                                    <ServiceSupplierChip
+                                                        supplierName={svc.supplierName}
+                                                        supplierPublicId={svc.supplierPublicId}
+                                                        puedeVerProveedores={puedeVerProveedores}
+                                                        testId={`chip-operador-desktop-${getReservationServicePublicId(svc)}`}
+                                                    />
+                                                </div>
                                                 {/* Línea de auditoría de anulación: quién y cuándo.
                                                     cancelledAt y cancelledByUserName son proyectados por el backend
                                                     en los 6 DTOs de servicio (vuelo, hotel, traslado, paquete,
@@ -1710,7 +1935,7 @@ export function ServiceList({
                                                             ? resolverBloqueoAnularServicio(svc)
                                                             : { bloqueado: false, motivo: null };
 
-                                                        return (
+                                                        const bloqueEdicionYBorrado = (
                                                         <>
                                                         <div className="flex justify-end gap-1 transition-opacity">
                                                         {puedeEditarServicios && (
@@ -1832,6 +2057,28 @@ export function ServiceList({
                                                         )}
                                                         </>
                                                         );
+
+                                                        // Opciones A/B/C (spec 2026-08-12, §3.2): mientras el grupo de
+                                                        // este servicio sigue AMBIGUO (2+ alternativas vivas sin
+                                                        // resolver), la acción de la fila pasa a ser "Elegir esta
+                                                        // opción" — Editar/Borrar se corren detrás de un "⋯" discreto
+                                                        // (F-16) hasta que el vendedor resuelva el grupo.
+                                                        if (grupoDeEsteServicio) {
+                                                            return (
+                                                                <AccionesConOpcionPendiente
+                                                                    servicio={svc}
+                                                                    grupo={grupoDeEsteServicio}
+                                                                    accionesOriginales={bloqueEdicionYBorrado}
+                                                                    confirmando={servicioConfirmandoOpcion === construirClaveServicio(svc)}
+                                                                    onAbrirConfirm={() => setServicioConfirmandoOpcion(construirClaveServicio(svc))}
+                                                                    onCancelarConfirm={() => setServicioConfirmandoOpcion(null)}
+                                                                    onConfirmar={() => handleConfirmarOpcion(svc)}
+                                                                    enviando={resolviendoOpcion}
+                                                                />
+                                                            );
+                                                        }
+
+                                                        return bloqueEdicionYBorrado;
                                                     })()}
                                                 </div>
                                             </td>
@@ -1865,6 +2112,7 @@ export function ServiceList({
                                         </React.Fragment>
                                         )}
                                         </ConCoverageDeServicio>
+                                        </React.Fragment>
                                     );
                                 })}
 
@@ -1924,12 +2172,27 @@ export function ServiceList({
                             const isGeneric = svc.recordKind === SERVICE_RECORD_KIND.GENERIC;
                             const displayType = svc.displayType || svc._type || 'Servicio';
                             const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
+                            // Opciones A/B/C (spec 2026-08-12, §3.2): mismo criterio que desktop.
+                            const grupoDeEsteServicio = grupoPendienteDeServicio(svc, gruposOpcionesPendientes);
+                            // Fix bloqueante de review (2026-08-12): mismo criterio que desktop — el
+                            // banner va pegado arriba de la primera card de su grupo, no arriba de
+                            // toda la lista.
+                            const esPrimeraFilaDelGrupo = Boolean(
+                                grupoDeEsteServicio &&
+                                construirClaveServicio(grupoDeEsteServicio.miembros[0]) === construirClaveServicio(svc)
+                            );
 
                             // ConCoverageDeServicio también envuelve la card mobile:
                             // necesitamos la coverage por servicio para el control "Para: Todos".
                             return (
+                                <React.Fragment key={serviceKey}>
+                                {esPrimeraFilaDelGrupo && (
+                                    <BannerGrupoPendienteContenido
+                                        grupo={grupoDeEsteServicio}
+                                        esPrimero={grupoDeEsteServicio === primerGrupoPendiente}
+                                    />
+                                )}
                                 <ConCoverageDeServicio
-                                    key={serviceKey}
                                     reservaId={reservaId}
                                     svc={svc}
                                     pasajerosConNombre={pasajerosConNombre}
@@ -1972,12 +2235,21 @@ export function ServiceList({
                                     }`}>
                                         {svc.name}
                                     </div>
-                                    <ServiceSupplierChip
-                                        supplierName={svc.supplierName}
-                                        supplierPublicId={svc.supplierPublicId}
-                                        puedeVerProveedores={puedeVerProveedores}
-                                        testId={`chip-operador-mobile-${getReservationServicePublicId(svc)}`}
-                                    />
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {grupoDeEsteServicio && (
+                                            <ChipOpcionPendiente
+                                                servicio={svc}
+                                                grupo={grupoDeEsteServicio}
+                                                testId={`chip-opcion-mobile-${getReservationServicePublicId(svc)}`}
+                                            />
+                                        )}
+                                        <ServiceSupplierChip
+                                            supplierName={svc.supplierName}
+                                            supplierPublicId={svc.supplierPublicId}
+                                            puedeVerProveedores={puedeVerProveedores}
+                                            testId={`chip-operador-mobile-${getReservationServicePublicId(svc)}`}
+                                        />
+                                    </div>
                                     {/* Auditoria de anulación en mobile: quién y cuándo (campos opcionales del backend) */}
                                     {esServicioAnulado(svc) &&
                                         (svc.cancelledAt || svc.cancelledByUserName) && (
@@ -2235,7 +2507,7 @@ export function ServiceList({
                                                     ? resolverBloqueoAnularServicio(svc)
                                                     : { bloqueado: false, motivo: null };
 
-                                                return (
+                                                const bloqueEdicionYBorradoMobile = (
                                                     <div className="flex flex-col items-end gap-1">
                                                     <div className="flex items-center gap-2">
                                                         {puedeEditarServicios && (
@@ -2317,6 +2589,26 @@ export function ServiceList({
                                                     )}
                                                     </div>
                                                 );
+
+                                                // Opciones A/B/C (spec 2026-08-12, §3.2): mismo criterio que
+                                                // desktop — ver el comentario largo en la rama de escritorio,
+                                                // más arriba en este archivo.
+                                                if (grupoDeEsteServicio) {
+                                                    return (
+                                                        <AccionesConOpcionPendiente
+                                                            servicio={svc}
+                                                            grupo={grupoDeEsteServicio}
+                                                            accionesOriginales={bloqueEdicionYBorradoMobile}
+                                                            confirmando={servicioConfirmandoOpcion === construirClaveServicio(svc)}
+                                                            onAbrirConfirm={() => setServicioConfirmandoOpcion(construirClaveServicio(svc))}
+                                                            onCancelarConfirm={() => setServicioConfirmandoOpcion(null)}
+                                                            onConfirmar={() => handleConfirmarOpcion(svc)}
+                                                            enviando={resolviendoOpcion}
+                                                        />
+                                                    );
+                                                }
+
+                                                return bloqueEdicionYBorradoMobile;
                                             })()}
                                         </div>
                                     </div>
@@ -2344,6 +2636,7 @@ export function ServiceList({
                             );
                             }}
                             </ConCoverageDeServicio>
+                            </React.Fragment>
                         );
                         })}
                     </div>

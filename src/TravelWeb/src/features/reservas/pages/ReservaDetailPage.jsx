@@ -1484,9 +1484,29 @@ export default function ReservaDetailPage() {
         onClose={() => setStatusChangeBlockedByMoneyGuard(null)}
         dataTestId="status-bloqueo-aviso"
         closeTestId="status-bloqueo-cerrar"
-        // Sin botón de acción: FIX B1 (2026-07-22) — el único escenario donde este aviso
-        // aparece es con la reserva en Presupuesto, donde todavía no se puede facturar
-        // (ver el comentario largo que queda arriba, en el JSX de este bloque original).
+        // Sin botón de acción por default: FIX B1 (2026-07-22) — el único escenario donde
+        // este aviso aparece es con la reserva en Presupuesto, donde todavía no se puede
+        // facturar (ver el comentario largo que queda arriba, en el JSX de este bloque
+        // original). Opciones A/B/C (spec 2026-08-12, §3.3) es la ÚNICA excepción: ese
+        // rechazo SÍ tiene una salida real (ir a resolver el grupo en la lista de
+        // servicios), así que agrega el botón "Ver las opciones".
+        action={statusChangeBlockedByMoneyGuard?.esOpcionesSinResolver ? {
+          label: "Ver las opciones",
+          onClick: () => {
+            setStatusChangeBlockedByMoneyGuard(null);
+            setActiveTab("services");
+            // El vendedor puede haber apretado "El cliente aceptó" desde OTRA solapa
+            // (el botón vive en la cabecera, siempre visible) — hay que esperar a que la
+            // solapa Servicios monte para que el banner del grupo exista en el DOM antes
+            // de hacer scroll. Un timeout chico alcanza (no hay animación de transición
+            // de solapa que esperar) y es más simple que encadenar refs entre componentes.
+            setTimeout(() => {
+              document
+                .querySelector('[data-testid="banner-grupo-opciones-pendiente"]')
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 50);
+          },
+        } : undefined}
       />
 
       <ReservaSummaryStrip reserva={reserva} />
@@ -2446,6 +2466,9 @@ export default function ReservaDetailPage() {
                   reservaId={publicId}
                   serviceToEdit={serviceToEditInline}
                   suppliers={suppliers}
+                  // Opciones A/B/C (spec 2026-08-12, §3.1): lista de servicios ya cargados en la
+                  // reserva, para el select "¿Alternativa de cuál?".
+                  serviciosCargados={allServices}
                   onGuardado={(options) => {
                     setShowInlineCard(false);
                     setServiceToEditInline(null);

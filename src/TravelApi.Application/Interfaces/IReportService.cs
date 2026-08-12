@@ -47,6 +47,20 @@ public interface IReportService
     /// <summary>Upsert del texto de UNA categoría. <paramref name="kindText"/> es uno de <see cref="BudgetConditionBlockKindText.All"/>.</summary>
     Task<BudgetConditionBlockDto> UpdateBudgetConditionBlockAsync(string kindText, string? text, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Mini-tanda PDF-2a (2026-08-12): le pide a la inteligencia artificial un BORRADOR de condiciones
+    /// para UNA categoría ("✨ Ayudame a redactarlo" de la spec de UI). <paramref name="currentText"/> es
+    /// opcional: si el dueño ya escribió algo, se lo pasa de base para que la IA lo mejore en vez de
+    /// arrancar de cero. El resultado NUNCA se persiste acá — el guardado sigue siendo, únicamente,
+    /// <see cref="UpdateBudgetConditionBlockAsync"/> (regla P-21: la IA sugiere, no decide).
+    ///
+    /// <para>Lanza <see cref="System.ComponentModel.DataAnnotations.ValidationException"/> si
+    /// <paramref name="kindText"/> no es una categoría conocida (mismo error que el PUT) e
+    /// <see cref="InvalidOperationException"/>, con un mensaje en criollo apto para mostrar tal cual al
+    /// usuario, si la inteligencia artificial no está configurada o no pudo redactar el borrador.</para>
+    /// </summary>
+    Task<BudgetConditionDraftDto> GenerateBudgetConditionDraftAsync(string kindText, string? currentText, CancellationToken cancellationToken);
+
     // BI Analytics
     Task<List<SellerRankingDto>> GetSellerRankingAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);
     Task<List<DestinationAnalyticsDto>> GetDestinationAnalyticsAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);
