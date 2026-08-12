@@ -1,6 +1,8 @@
 using System;
+using System.Data;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Tests.Fixtures;
@@ -52,6 +54,45 @@ public sealed class ReservaNumberFormatMigrationIntegrationTests
         WHERE "FileNumber" ~ '^[0-9]{4}-[0-9]+$';
         """;
 
+    /// <summary>
+    /// Corre el SQL de la migracion tal cual, SIN pasar por <c>Database.ExecuteSqlRaw</c>.
+    ///
+    /// <para><b>Por que no <c>ExecuteSqlRawAsync(sql)</c></b> (bug de CI 2026-08-11): EF Core interpreta
+    /// CUALQUIER <c>{n}</c> dentro del texto SQL como un hueco de parametro (asi es como <c>ExecuteSqlRaw</c>
+    /// recibe sus parametros: <c>"... WHERE x = {0}"</c>), sin importar si se le pasan parametros o no. El
+    /// regex de la migracion tiene cuantificadores como <c>[0-9]{4}</c> — EF lee ese <c>{4}</c> como "el
+    /// quinto parametro" y explota con <c>FormatException</c> porque no hay ningun parametro. La migracion
+    /// REAL nunca pisa este problema porque <c>migrationBuilder.Sql(...)</c> ejecuta el texto tal cual,
+    /// sin ese parseo de huecos — por eso el bug era solo del arnes de test, no de la migracion.</para>
+    ///
+    /// <para>Ejecutamos el SQL directo contra la conexion Npgsql subyacente (mismo patron que
+    /// <c>RateService.CreateRatesCommand</c>), que es exactamente lo que hace el migrador de EF al aplicar
+    /// una migracion de verdad: nada parsea <c>{n}</c>, el texto viaja intacto al servidor.</para>
+    /// </summary>
+    private static async Task ExecuteMigrationSqlVerbatimAsync(AppDbContext context, string sql)
+    {
+        var connection = (NpgsqlConnection)context.Database.GetDbConnection();
+        var connectionWasClosed = connection.State != ConnectionState.Open;
+        if (connectionWasClosed)
+        {
+            await connection.OpenAsync();
+        }
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync();
+        }
+        finally
+        {
+            if (connectionWasClosed)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
     [Fact]
     public async Task Up_RepairsPrefixedFileNumberAndNameThatMentionsIt()
     {
@@ -72,7 +113,7 @@ public sealed class ReservaNumberFormatMigrationIntegrationTests
 
         await using (var migrate = _fixture.CreateDbContext())
         {
-            await migrate.Database.ExecuteSqlRawAsync(UpSql);
+            await ExecuteMigrationSqlVerbatimAsync(migrate, UpSql);
         }
 
         await using var verify = _fixture.CreateDbContext();
@@ -102,7 +143,7 @@ public sealed class ReservaNumberFormatMigrationIntegrationTests
 
         await using (var migrate = _fixture.CreateDbContext())
         {
-            await migrate.Database.ExecuteSqlRawAsync(UpSql);
+            await ExecuteMigrationSqlVerbatimAsync(migrate, UpSql);
         }
 
         await using var verify = _fixture.CreateDbContext();
@@ -133,7 +174,7 @@ public sealed class ReservaNumberFormatMigrationIntegrationTests
 
         await using (var migrate = _fixture.CreateDbContext())
         {
-            await migrate.Database.ExecuteSqlRawAsync(UpSql);
+            await ExecuteMigrationSqlVerbatimAsync(migrate, UpSql);
         }
 
         await using var verify = _fixture.CreateDbContext();
@@ -161,10 +202,10 @@ public sealed class ReservaNumberFormatMigrationIntegrationTests
 
         await using (var migrate = _fixture.CreateDbContext())
         {
-            await migrate.Database.ExecuteSqlRawAsync(UpSql);
+            await ExecuteMigrationSqlVerbatimAsync(migrate, UpSql);
             // Segunda corrida: ya no queda ninguna fila con el prefijo "F-", asi que el WHERE
             // no matchea nada y no rompe el dato ya reparado (ej. no le vuelve a sacar un "F-").
-            await migrate.Database.ExecuteSqlRawAsync(UpSql);
+            await ExecuteMigrationSqlVerbatimAsync(migrate, UpSql);
         }
 
         await using var verify = _fixture.CreateDbContext();
@@ -193,7 +234,7 @@ public sealed class ReservaNumberFormatMigrationIntegrationTests
 
         await using (var migrate = _fixture.CreateDbContext())
         {
-            await migrate.Database.ExecuteSqlRawAsync(DownSql);
+            await ExecuteMigrationSqlVerbatimAsync(migrate, DownSql);
         }
 
         await using var verify = _fixture.CreateDbContext();
