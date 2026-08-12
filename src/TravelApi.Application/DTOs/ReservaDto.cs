@@ -353,6 +353,13 @@ public class ReservaDto
     /// </summary>
     public string? Warning { get; set; }
 
+    /// <summary>
+    /// Obra "PDF de presupuesto" (decisión #2 firmada, 2026-08-11/12): texto de "Formas de pago" propio
+    /// de ESTE presupuesto. Null = el vendedor no escribió nada puntual (el PDF usa la plantilla de
+    /// Configuración). Ver <c>TravelApi.Domain.Entities.Reserva.BudgetPaymentTermsText</c>.
+    /// </summary>
+    public string? BudgetPaymentTermsText { get; set; }
+
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience
     public decimal TotalCost { get; set; }

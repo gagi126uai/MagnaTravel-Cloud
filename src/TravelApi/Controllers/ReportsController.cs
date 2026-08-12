@@ -272,7 +272,8 @@ public class ReportsController : ControllerBase
             DefaultCommissionPercent = request.DefaultCommissionPercent,
             Currency = request.Currency,
             AgencyLicenseNumber = request.AgencyLicenseNumber,
-            PdfBandColorHex = request.PdfBandColorHex
+            PdfBandColorHex = request.PdfBandColorHex,
+            BudgetPaymentTermsTemplate = request.BudgetPaymentTermsTemplate
         };
     }
 }
@@ -291,7 +292,10 @@ public record AgencySettingsUpsertRequest(
     // Obra "PDF de presupuesto" (2026-08-11/12): legajo EVT y color de la banda del PDF. Opcionales al
     // final para no romper callers posicionales existentes (mismo patrón del resto del proyecto).
     string? AgencyLicenseNumber = null,
-    string? PdfBandColorHex = null);
+    string? PdfBandColorHex = null,
+    // TANDA 3 (fix post-review, 2026-08-12): plantilla de "Formas de pago" que se precarga en cada
+    // presupuesto nuevo (Card 3 de Configuración). Mismo patrón "opcional al final" que los 2 de arriba.
+    string? BudgetPaymentTermsTemplate = null);
 
 public record UpdateBudgetConditionBlockRequest(string? Text);
 

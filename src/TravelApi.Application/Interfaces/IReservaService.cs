@@ -39,6 +39,23 @@ public interface IReservaService
     Task<ReservaDto> UpdatePassengerCountsAsync(string reservaPublicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken ct = default);
     Task<ReservaDto> UpdateDatesAsync(string reservaPublicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken ct = default);
 
+    /// <summary>
+    /// Obra "PDF de presupuesto" (decisión #2 firmada, 2026-08-11/12): guarda/borra el texto de "Formas
+    /// de pago" propio de ESTE presupuesto (null/vacío = borra, el PDF cae a la plantilla de
+    /// Configuración). No tiene candado de estado: es texto informativo, no plata ni fecha.
+    /// </summary>
+    Task<ReservaDto> UpdateBudgetPaymentTermsAsync(string reservaPublicIdOrLegacyId, UpdateBudgetPaymentTermsRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// Obra "PDF de presupuesto" (decisión firmada del dueño, 2026-08-11/12): genera el PDF que se le
+    /// manda al cliente. SOLO en etapa Presupuesto (<see cref="TravelApi.Domain.Entities.EstadoReserva.IsPresupuestoStage"/>)
+    /// — fuera de esa etapa tira <see cref="InvalidOperationException"/> con un mensaje en criollo.
+    /// <paramref name="porPersona"/>: true = tarifa dividida por pasajero cargado; false = tarifa total.
+    /// Devuelve también <c>NumeroReserva</c> (para el nombre de archivo) sin que el controller tenga que
+    /// pedir la reserva una segunda vez.
+    /// </summary>
+    Task<(byte[] Bytes, string NumeroReserva)> GetBudgetPdfAsync(string reservaPublicIdOrLegacyId, bool porPersona, CancellationToken ct = default);
+
     // Pasajero <-> Servicio (Phase 2.1)
     Task<IReadOnlyList<PassengerServiceAssignmentDto>> GetAssignmentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default);
     Task<PassengerServiceAssignmentDto> CreateAssignmentAsync(string reservaPublicIdOrLegacyId, CreatePassengerAssignmentRequest request, CancellationToken ct = default);

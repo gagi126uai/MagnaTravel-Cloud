@@ -239,6 +239,29 @@ public static class EstadoReserva
     public static bool IsVoidedStatus(string? status)
         => ContainsStatus(VoidedStatuses, status);
 
+    /// <summary>
+    /// Obra "PDF de presupuesto" (2026-08-11/12): los DOS estados que forman la etapa "Presupuesto" del
+    /// documento (Cotizacion y Presupuesto propiamente dicho — antes de que el cliente acepte). Es la MISMA
+    /// pareja que ya usaba, en privado y sin nombre, <c>BookingService.EnsureOptionGroupOnlySetDuringPresupuesto</c>
+    /// para las opciones A/B/C. Se sube aca (junto a las otras listas de estados de esta clase) para que el
+    /// PDF de presupuesto la reuse SIN reinventar el par a mano — el criterio "que es Presupuesto" queda en
+    /// un solo lugar en vez de dos comparaciones sueltas que podrian divergir con el tiempo.
+    /// </summary>
+    public static readonly string[] PresupuestoStageStatuses =
+    {
+        Quotation,
+        Budget
+    };
+
+    /// <summary>
+    /// True si la reserva todavia esta en etapa Presupuesto (ver <see cref="PresupuestoStageStatuses"/>): el
+    /// cliente todavia NO acepto, asi que el documento que se le manda es un PRESUPUESTO (no una reserva en
+    /// firme). El PDF de presupuesto SOLO se emite en esta etapa — una vez que la reserva pasa a En gestion,
+    /// lo que corresponde mostrarle al cliente es el voucher/factura, no un presupuesto que ya quedo viejo.
+    /// </summary>
+    public static bool IsPresupuestoStage(string? status)
+        => ContainsStatus(PresupuestoStageStatuses, status);
+
     /// <summary>Busqueda case-insensitive de un estado en una lista (helper interno de las reglas de estado).</summary>
     private static bool ContainsStatus(string[] statuses, string? status)
     {
@@ -524,4 +547,20 @@ public class Reserva : IHasPublicId
         if (Balance <= 0)
             throw new InvalidOperationException(NoPendingBalanceForChargeMessage);
     }
+
+    // ============================================================================================
+    // Obra "PDF de presupuesto" (decisión #2 firmada del dueño, 2026-08-11/12), TANDA 3: texto de
+    // "Formas de pago" que el vendedor escribe A MANO para ESTE presupuesto puntual (cuotas, señas,
+    // medios aceptados). Distinto de la plantilla precargada de Configuración
+    // (<see cref="AgencySettings.BudgetPaymentTermsTemplate"/>): el PDF usa este texto si existe, y
+    // si no, cae a la plantilla — ver <c>TravelApi.Domain.Reservations.QuoteBudgetPdfRules.ResolvePaymentTermsText</c>.
+    // ============================================================================================
+
+    /// <summary>
+    /// Texto libre de "Formas de pago" para ESTE presupuesto. Null = el vendedor no escribió nada
+    /// puntual (el PDF cae a la plantilla de Configuración; si tampoco hay plantilla, la sección se
+    /// omite entera — nunca se inventa un texto).
+    /// </summary>
+    [MaxLength(4000)]
+    public string? BudgetPaymentTermsText { get; set; }
 }

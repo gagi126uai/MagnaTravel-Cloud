@@ -46,6 +46,13 @@ public class ReservaService : IReservaService
     // seguro). En runtime lo inyecta DI. No hay ciclo: BookingCancellationService NO depende de IReservaService.
     private readonly IBookingCancellationService? _cancellationService;
 
+    // Obra "PDF de presupuesto" (2026-08-11/12), TANDA 3: renderer del PDF (QuestPDF) y lector del logo
+    // de la agencia (mismo IReportService que ya usa Configuración). Opcionales para no romper los
+    // ctores de tests unitarios que instancian ReservaService con el ctor de 5 args; en runtime los
+    // inyecta DI. No hay ciclo: ni QuotePdfService ni ReportService dependen de IReservaService.
+    private readonly IQuotePdfService? _quotePdfService;
+    private readonly IReportService? _reportService;
+
     /// <summary>
     /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Se usa para
     /// EXCLUIR las NC del guard fiscal de cancelacion: una NC no es una "factura viva".
@@ -66,7 +73,9 @@ public class ReservaService : IReservaService
         IHttpContextAccessor? httpContextAccessor = null,
         ReservaAutoStateService? autoStateService = null,
         IAuditService? auditService = null,
-        IBookingCancellationService? cancellationService = null)
+        IBookingCancellationService? cancellationService = null,
+        IQuotePdfService? quotePdfService = null,
+        IReportService? reportService = null)
     {
         _context = context;
         _mapper = mapper;
@@ -80,6 +89,8 @@ public class ReservaService : IReservaService
         _autoStateService = autoStateService;
         _auditService = auditService;
         _cancellationService = cancellationService;
+        _quotePdfService = quotePdfService;
+        _reportService = reportService;
     }
 
     /// <summary>
@@ -784,6 +795,98 @@ public class ReservaService : IReservaService
         dto.Warning = await BuildDatesCoherenceWarningAsync(reservaId, reserva.StartDate, reserva.EndDate, ct);
 
         return dto;
+    }
+
+    // ============================================================================================
+    // Obra "PDF de presupuesto" (decisión #2 firmada del dueño, 2026-08-11/12), TANDA 3.
+    // ============================================================================================
+
+    /// <summary>
+    /// Guarda o borra el texto de "Formas de pago" propio de ESTE presupuesto. Texto en blanco/null lo
+    /// borra (el PDF cae a la plantilla de Configuración de la agencia). Sin candado de estado: es texto
+    /// informativo, no mueve plata ni fechas — se puede editar en cualquier etapa.
+    /// </summary>
+    public async Task<ReservaDto> UpdateBudgetPaymentTermsAsync(
+        string reservaPublicIdOrLegacyId, UpdateBudgetPaymentTermsRequest request, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        const int maxLength = 4000;
+        if (request.Text?.Trim().Length > maxLength)
+        {
+            throw new ArgumentException($"El texto de formas de pago no puede superar los {maxLength} caracteres.");
+        }
+
+        reserva.BudgetPaymentTermsText = string.IsNullOrWhiteSpace(request.Text) ? null : request.Text.Trim();
+
+        await _context.SaveChangesAsync(ct);
+        return await GetReservaByIdAsync(reservaId);
+    }
+
+    /// <summary>
+    /// Genera el PDF de presupuesto que se le manda al cliente (maqueta v2 firmada, 2026-08-11/12). SOLO
+    /// funciona en etapa Presupuesto (Cotización/Presupuesto) — ver <see cref="EstadoReserva.IsPresupuestoStage"/>:
+    /// una vez que el cliente aceptó, lo que corresponde mostrarle es el voucher/factura, no un
+    /// presupuesto que ya quedó viejo.
+    /// </summary>
+    public async Task<(byte[] Bytes, string NumeroReserva)> GetBudgetPdfAsync(string reservaPublicIdOrLegacyId, bool porPersona, CancellationToken ct = default)
+    {
+        if (_quotePdfService is null)
+        {
+            // Solo puede pasar si alguien instancia ReservaService a mano sin pasar el service (tests
+            // viejos): en runtime DI siempre lo inyecta. Mensaje tecnico a proposito (nunca deberia
+            // llegar a un usuario real, es un error de wiring, no de negocio).
+            throw new InvalidOperationException("El generador de PDF de presupuesto no está disponible.");
+        }
+
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas
+            .Include(r => r.FlightSegments)
+            .Include(r => r.HotelBookings)
+            .Include(r => r.TransferBookings)
+            .Include(r => r.PackageBookings)
+            .Include(r => r.AssistanceBookings)
+            .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        if (!EstadoReserva.IsPresupuestoStage(reserva.Status))
+        {
+            throw new InvalidOperationException(
+                "El PDF de presupuesto solo se emite mientras el documento es un presupuesto.");
+        }
+
+        var agencySettings = await _context.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(ct) ?? new AgencySettings();
+
+        // Solo los bloques CON texto cargado: el filtro fino (que categorias corresponden a esta
+        // reserva puntual) lo hace el renderer (QuotePdfService.SelectRelevantConditions).
+        var conditions = await _context.Set<BudgetConditionBlock>()
+            .AsNoTracking()
+            .Where(b => b.Text != null && b.Text != "")
+            .ToListAsync(ct);
+
+        byte[]? logoBytes = null;
+        if (agencySettings.HasLogo && _reportService is not null)
+        {
+            try
+            {
+                var (bytes, _, _) = await _reportService.GetAgencyLogoAsync(ct);
+                logoBytes = bytes;
+            }
+            catch (KeyNotFoundException)
+            {
+                // Carrera rara (el logo se borro entre leer AgencySettings y pedirlo): el PDF sale sin
+                // logo, no rompe la generacion completa por un archivo que ya no esta.
+            }
+        }
+
+        // Cantidad de pasajeros CARGADOS: en Presupuesto todavia no hay pasajeros nominales (esos se
+        // cargan recien en "En gestion"), asi que la cantidad es la declarada por categoria.
+        var cantidadPasajerosCargados = reserva.AdultCount + reserva.ChildCount + reserva.InfantCount;
+
+        var pdfBytes = _quotePdfService.GenerateQuotePdf(reserva, agencySettings, conditions, logoBytes, porPersona, cantidadPasajerosCargados);
+        return (pdfBytes, reserva.NumeroReserva);
     }
 
     /// <summary>

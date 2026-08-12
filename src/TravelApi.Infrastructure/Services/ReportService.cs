@@ -1686,6 +1686,17 @@ public class ReportService : IReportService
             throw new ValidationException($"El legajo no puede superar los {maxAgencyLicenseNumberLength} caracteres.");
         }
 
+        // Fix post-review (2026-08-12): la plantilla de "Formas de pago" tenia la MISMA columna
+        // varchar(4000) que BudgetConditionBlock.Text (mismo limite del textarea de Configuracion), pero
+        // esta pantalla no la estaba guardando -> quedaba inerte (el PDF la leia, nadie podia escribirla).
+        // Mismo criterio "SIEMPRE, no solo si cambia" que el legajo de arriba: columna nueva, sin datos
+        // legacy que puedan estar mal.
+        const int maxBudgetPaymentTermsTemplateLength = 4000;
+        if (updated.BudgetPaymentTermsTemplate?.Trim().Length > maxBudgetPaymentTermsTemplateLength)
+        {
+            throw new ValidationException($"El texto de formas de pago no puede superar los {maxBudgetPaymentTermsTemplateLength} caracteres.");
+        }
+
         if (settings == null)
         {
             _dbContext.AgencySettings.Add(updated);
@@ -1713,6 +1724,12 @@ public class ReportService : IReportService
             settings.PdfBandColorHex = string.IsNullOrWhiteSpace(updated.PdfBandColorHex)
                 ? null
                 : updated.PdfBandColorHex.Trim();
+            // Fix post-review (2026-08-12): faltaba esta linea — la columna existia y el PDF la leia, pero
+            // el PUT nunca la copiaba al objeto trackeado, asi que quedaba siempre en null sin importar lo
+            // que mandara el front.
+            settings.BudgetPaymentTermsTemplate = string.IsNullOrWhiteSpace(updated.BudgetPaymentTermsTemplate)
+                ? null
+                : updated.BudgetPaymentTermsTemplate.Trim();
             settings.UpdatedAt = DateTime.UtcNow;
         }
 

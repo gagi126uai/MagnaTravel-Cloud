@@ -595,6 +595,9 @@ builder.Services.AddSingleton(new ServiceLineInterpretationOptions
 builder.Services.AddSingleton<ServiceLineInterpretationCache>();
 builder.Services.AddScoped<IServiceLineInterpreter, ServiceLineInterpreter>();
 builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
+// Obra "PDF de presupuesto" (2026-08-11/12), TANDA 3: renderer del PDF que ve el cliente. Espejo del
+// registro de IInvoicePdfService de arriba.
+builder.Services.AddScoped<IQuotePdfService, QuotePdfService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IApprovalRequestService, ApprovalRequestService>();
 

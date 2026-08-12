@@ -65,6 +65,17 @@ public record RescheduleReservaRequest(
     DateTime? NewStartDate = null);
 
 /// <summary>
+/// Obra "PDF de presupuesto" (decisión #2 firmada del dueño, 2026-08-11/12): texto de "Formas de pago"
+/// propio de UN presupuesto puntual (cuotas, señas, medios aceptados). <see cref="Text"/> null/vacío
+/// BORRA el texto propio (el PDF cae a la plantilla de Configuración de la agencia, o a nada si tampoco
+/// hay plantilla) — mismo criterio de reemplazo total que <c>UpdateBudgetConditionBlockRequest</c>
+/// (ReportsController), no el anti-clobber "null = no tocar" de campos dentro de un request con MUCHOS
+/// campos: acá el único propósito del endpoint es este texto, así que null es una instrucción explícita
+/// de "dejalo vacío", no "no tocar nada".
+/// </summary>
+public record UpdateBudgetPaymentTermsRequest(string? Text);
+
+/// <summary>
 /// Request para cambiar el Status de un servicio (Hotel/Transfer/Package/Flight/
 /// ServicioReserva) y opcionalmente el codigo de confirmacion del proveedor.
 /// Usado desde la cuenta corriente del proveedor para permitir al operador

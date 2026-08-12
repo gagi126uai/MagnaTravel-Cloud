@@ -101,5 +101,16 @@ public class AgencySettings
     [NotMapped]
     public bool HasLogo => !string.IsNullOrWhiteSpace(LogoStoredFileName);
 
+    /// <summary>
+    /// Obra "PDF de presupuesto" (decisión #2 firmada del dueño, 2026-08-11/12), TANDA 3: plantilla de
+    /// "Formas de pago" que la agencia carga UNA vez en Configuración (cuotas estándar, medios de pago
+    /// aceptados, etc.). El PDF de un presupuesto puntual usa PRIMERO el texto propio de esa reserva
+    /// (<see cref="Reserva.BudgetPaymentTermsText"/>); si esa reserva no tiene nada escrito, cae acá; si
+    /// tampoco hay plantilla, la sección "FORMAS DE PAGO" se omite entera del PDF (nunca se inventa un
+    /// texto — regla madre de la obra, decisión #8).
+    /// </summary>
+    [MaxLength(4000)]
+    public string? BudgetPaymentTermsTemplate { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

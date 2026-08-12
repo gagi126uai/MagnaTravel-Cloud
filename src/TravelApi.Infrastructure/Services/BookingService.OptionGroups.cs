@@ -307,11 +307,9 @@ public partial class BookingService
         var normalized = OptionGroupRules.Normalize(requestedOptionGroup);
         if (normalized is null) return; // no esta seteando ningun grupo: nada que validar.
 
-        bool isPresupuestoStage =
-            string.Equals(reservaStatus, EstadoReserva.Quotation, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(reservaStatus, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase);
-
-        if (!isPresupuestoStage)
+        // Obra "PDF de presupuesto" (2026-08-11/12): el predicado "es etapa Presupuesto" se subio a
+        // EstadoReserva.IsPresupuestoStage para que el PDF lo reuse — ver el XML-doc completo alla.
+        if (!EstadoReserva.IsPresupuestoStage(reservaStatus))
         {
             throw new ArgumentException(OptionGroupOnlyDuringPresupuestoMessage);
         }

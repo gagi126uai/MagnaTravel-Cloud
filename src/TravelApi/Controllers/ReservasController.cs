@@ -868,6 +868,66 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // ============================================================================================
+    // Obra "PDF de presupuesto" (decisión firmada del dueño, 2026-08-11/12), TANDA 3: texto de "Formas
+    // de pago" propio de la reserva + el PDF que se le manda al cliente. Mismo permiso/ownership que
+    // "dates" arriba (edición de cabecera de la reserva) y que el voucher (lectura de reserva) más abajo.
+    // ============================================================================================
+
+    [HttpPatch("{publicIdOrLegacyId}/budget-payment-terms")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult> UpdateBudgetPaymentTerms(
+        string publicIdOrLegacyId, UpdateBudgetPaymentTermsRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.UpdateBudgetPaymentTermsAsync(publicIdOrLegacyId, request, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// PDF de presupuesto que se le manda al cliente (maqueta v2 firmada, 2026-08-11/12). Solo funciona
+    /// mientras la reserva es Presupuesto (Cotización/Presupuesto) — <see cref="IReservaService.GetBudgetPdfAsync"/>
+    /// tira <see cref="InvalidOperationException"/> (mapeada a 409) fuera de esa etapa.
+    /// <paramref name="pricing"/>: "porPersona" (default) o "total" — cualquier otro valor cae a "porPersona".
+    /// </summary>
+    [HttpGet("{publicIdOrLegacyId}/budget-pdf")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> GetBudgetPdf(
+        string publicIdOrLegacyId, [FromQuery] string? pricing, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var porPersona = !string.Equals(pricing, "total", StringComparison.OrdinalIgnoreCase);
+            var (pdfBytes, numeroReserva) = await _reservaService.GetBudgetPdfAsync(publicIdOrLegacyId, porPersona, cancellationToken);
+            return File(pdfBytes, "application/pdf", $"Presupuesto {numeroReserva}.pdf");
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error generating budget PDF for reserva {ReservaId}", publicIdOrLegacyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo generar el PDF del presupuesto.");
+        }
+    }
+
     // REPROGRAMAR VIAJE (2026-06-23): mueve JUNTAS las fechas de todos los servicios de la reserva por un
     // desplazamiento de N dias (o derivando el shift de una nueva fecha de salida). Misma autorizacion que
     // editar un servicio: ReservasEdit + ownership de la reserva. Los guards de negocio (estado terminal,
