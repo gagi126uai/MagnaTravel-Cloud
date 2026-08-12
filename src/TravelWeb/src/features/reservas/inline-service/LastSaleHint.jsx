@@ -10,7 +10,7 @@
 export function LastSaleHint({ text }) {
     if (!text) return null;
     return (
-        <p className="mt-1 text-xs text-slate-400" data-testid="last-sale-hint">
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500" data-testid="last-sale-hint">
             Último precio: {text}
         </p>
     );

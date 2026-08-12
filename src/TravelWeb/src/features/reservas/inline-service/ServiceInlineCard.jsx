@@ -33,6 +33,7 @@ import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle } from "lucide-rea
 import { hasPermission } from "../../../auth";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { Button } from "../../../components/ui/button";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { esRechazoCostoMenorAPagado, agregarConfirmacionCostoMenorAPagado } from "../lib/costConfirmationGuard";
@@ -1106,12 +1107,19 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // â”€â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     return (
-        // Borde azul = zona activa (mockup estilo .inlinecard)
+        // Marco calmo (estándar visual firmado 2026-08-11, maqueta pantalla 3, clase
+        // `.carga`): antes era un borde AZUL de 2px que gritaba más que los datos de
+        // adentro — ahora es un borde gris parejo, igual que cualquier otra tarjeta de
+        // la app. `dark:` recién se agrega en esta tanda: la carpeta inline-service/
+        // no tenía NINGUNA regla de modo oscuro (hallazgo B de la auditoría).
         <div
-            className="border-2 border-blue-500 rounded-xl bg-white p-5 mt-4 shadow-sm"
+            className="rounded-[10px] border border-slate-300 bg-white p-4 mt-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
             data-testid="service-inline-card"
         >
-            {/* PESTAÑAS */}
+            {/* PESTAÑAS: pastillas .ctab de la maqueta — la activa se pinta con el ÚNICO
+                azul de acción del sistema (token `primary`, el mismo de "Guardar
+                servicio" más abajo), 32px de alto. Antes eran círculos más grandes en
+                azul suelto (`bg-blue-600`, sin relación con el resto de los botones). */}
             <div className="flex gap-2 mb-5 flex-wrap" role="tablist" aria-label="Tipo de servicio">
                 {TABS.map(({ id, label, icon: Icon }) => {
                     const estaActiva = tabActiva === id;
@@ -1124,12 +1132,12 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                             // Al editar no se puede cambiar de tipo (la ficha es para ese servicio)
                             disabled={esEdicion && !estaActiva}
                             onClick={() => { if (!esEdicion) setTabActiva(id); }}
-                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${
+                            className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold transition-colors ${
                                 estaActiva
-                                    ? "bg-blue-600 text-white"
+                                    ? "border-primary bg-primary text-primary-foreground dark:border-primary dark:bg-primary dark:text-primary-foreground"
                                     : esEdicion
-                                    ? "bg-slate-50 text-slate-300 cursor-not-allowed"
-                                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                    ? "border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed dark:border-slate-800 dark:bg-slate-900 dark:text-slate-700"
+                                    : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                             }`}
                             data-testid={`tab-${id.toLowerCase()}`}
                         >
@@ -1246,10 +1254,19 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 )}
             </div>
 
+            {/* Leyenda del sugerido (maqueta firmada 2026-08-11, clase `.leyenda-sug`):
+                excepción explícita a P-15 ("sin cartelitos aclarativos") — el dueño la dejó
+                en la maqueta a propósito, así que ACÁ sí va. Explica de una vez lo que
+                significa el amarillo de TODOS los campos sugeridos de arriba (P-21: el
+                sistema sugiere, nunca decide — el vendedor lo puede pisar y no vuelve solo). */}
+            <p className="mt-2 text-[11.5px] text-amber-700 dark:text-amber-400">
+                Lo pintado de amarillo es sugerido — lo podés pisar y no vuelve solo.
+            </p>
+
             {/* FOOTER FIJO: totales + botones */}
-            <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 {/* Izquierda: totales */}
-                <div className="text-sm text-slate-700 flex flex-wrap items-center gap-3">
+                <div className="text-sm text-slate-700 dark:text-slate-300 flex flex-wrap items-center gap-3">
                     {totalesFooter.mostrar && (
                         <>
                             {/* Bug #26 (Tanda 4, 2026-07-24): antes formatearPrecio() no recibía la
@@ -1262,7 +1279,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                             </span>
                             {/* Ganancia: solo para quien tiene permiso de ver costos */}
                             {canSeeCost && totalesFooter.ganancia !== null && (
-                                <span className={totalesFooter.ganancia >= 0 ? "font-semibold text-emerald-600" : "font-semibold text-red-600"}>
+                                <span className={totalesFooter.ganancia >= 0 ? "font-semibold text-emerald-600 dark:text-emerald-400" : "font-semibold text-red-600 dark:text-red-400"}>
                                     Ganás {formatearPrecio(totalesFooter.ganancia, formActivo?.currency || "ARS")}
                                 </span>
                             )}
@@ -1294,7 +1311,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         botones — nunca pasó por el motor, así que no es un rechazo "real". */}
                     {errorValidacion && (
                         <div
-                            className="flex flex-col gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm"
+                            className="flex flex-col gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm dark:text-red-300 dark:bg-red-950/30 dark:border-red-900"
                             role="alert"
                             data-testid="inline-card-error"
                         >
@@ -1317,24 +1334,32 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         dataTestId="inline-card-rechazo-motor"
                     />
                     <div className="flex gap-2">
-                        <button
+                        {/* Decisión firmada del dueño (11/08/2026, estándar visual): "Cancelar"
+                            pasaba a confundirse con el término del negocio ("cancelar" = abonar
+                            el total de la reserva) — este botón solo CIERRA la ficha sin
+                            guardar, así que ahora dice "Descartar". El data-testid NO cambia:
+                            lo usa el robot de QA para cerrar la ficha (T-6). */}
+                        <Button
                             type="button"
+                            variant="ghost"
                             onClick={onCancelar}
                             disabled={guardando}
-                            className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors"
                             data-testid="inline-card-cancelar"
                         >
-                            Cancelar
-                        </button>
-                        <button
+                            Descartar
+                        </Button>
+                        {/* Botón primary del sistema (molde único, ver components/ui/button.jsx):
+                            antes era un azul suelto (`bg-blue-600`) distinto del resto de la
+                            app — ahora es el mismo "azul boleto" que usan todos los botones
+                            principales, con altura 40px estándar. */}
+                        <Button
                             type="button"
                             onClick={handleGuardar}
                             disabled={guardando}
-                            className="px-5 py-2 text-sm font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
                             data-testid="inline-card-guardar"
                         >
                             {guardando ? "Guardando…" : labelBotonGuardar}
-                        </button>
+                        </Button>
                     </div>
                 </div>
             </div>

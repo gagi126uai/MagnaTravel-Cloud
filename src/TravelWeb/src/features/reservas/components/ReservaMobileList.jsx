@@ -2,11 +2,13 @@ import React from "react";
 import { User, Calendar, AlertCircle, CheckCircle2, FolderOpen, Archive } from "lucide-react";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
-import { ReservaStatusBadge } from "./ReservaStatusBadge";
+import { ReservaStatusBadge, ReservaEstadoSello } from "./ReservaStatusBadge";
+import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSES } from "../lib/reservaMoneyDisplay";
+import { debeMostrarComoSello } from "../lib/reservaEstadoSelloLogic";
 
 /** Ícono/color del círculo de la izquierda, según el chip principal de Finanzas. */
 const ACENTO_POR_TONO = {
@@ -61,7 +63,14 @@ export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState 
                 <AcentoIcon className="h-5 w-5" />
               </div>
             }
-            statusSlot={<ReservaStatusBadge status={reserva.status} mostrarCandado />}
+            /* Paridad con la tabla de escritorio (ReservaTable.jsx): el sello reemplaza
+               al chip de color SOLO en Anulada/Perdida/Finalizada — mismo criterio
+               (`debeMostrarComoSello`), nunca duplicado a mano acá. */
+            statusSlot={
+              debeMostrarComoSello(reserva)
+                ? <ReservaEstadoSello reserva={reserva} />
+                : <ReservaStatusBadge status={reserva.status} mostrarCandado />
+            }
             title={`#${reserva.numeroReserva}`}
             subtitle={reserva.destino || null}
             meta={
@@ -83,15 +92,22 @@ export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState 
               </>
             }
             footer={
-              <div className="flex flex-col items-start gap-0.5">
+              /* Paridad con la tabla de escritorio (ReservaTable.jsx, lavado de cara
+                 2026-08-11): el símbolo de moneda pasa del texto pegado al número a un
+                 cartelito aparte (CurrencyBadge) — antes esta tarjeta mobile mostraba
+                 "US$800,00" como texto plano, distinto de cómo se ve en desktop. */
+              <div className="flex flex-col items-start gap-1">
                 {ventaLineas.map((linea, index) => (
                   <span
                     key={linea.currency}
-                    className={index === 0 ? "text-xs text-slate-500" : "text-[11px] text-slate-400"}
+                    className={index === 0
+                      ? "flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400"
+                      : "flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500"}
                   >
                     {index === 0 ? "Vendido: " : ""}
+                    <CurrencyBadge currency={linea.currency} />
                     <span className="font-medium text-slate-900 dark:text-slate-200">
-                      {formatCurrency(linea.amount, linea.currency)}
+                      {formatCurrency(linea.amount, linea.currency, { withSymbol: false })}
                     </span>
                   </span>
                 ))}

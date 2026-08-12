@@ -566,7 +566,11 @@ export function ReservaHeader({
                                 onClick={onReschedule}
                                 type="button"
                                 data-testid="reserva-action-reschedule"
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50"
+                                // Residuo de coherencia (lavado de cara, 2026-08-11): antes era índigo
+                                // suelto — el mismo molde secundario que "Editar fechas" (su vecino en
+                                // esta misma fila), único color de acción del sistema reservado al
+                                // botón principal.
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                                 title="Mueve todas las fechas de los servicios"
                             >
                                 <FastForward className="w-3.5 h-3.5" />

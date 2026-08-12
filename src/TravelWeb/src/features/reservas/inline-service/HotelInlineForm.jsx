@@ -14,7 +14,7 @@
  *
  * Total = noches × habitaciones × precio por noche (decisión Gastón 2026-06-06).
  *
- * Footer: "Venta $X · Ganás $Y  + Más detalles" | "Cancelar" + "Guardar"
+ * Footer: "Venta $X · Ganás $Y  + Más detalles" | "Descartar" + "Guardar servicio"
  *
  * Detrás de "+ Más detalles" (plegado por defecto):
  *   Confirmación del operador · Dirección
@@ -92,13 +92,23 @@ function redondearDinero(valor) {
 
 // ─── Clases CSS reutilizables ─────────────────────────────────────────────────
 
-const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
-const INPUT_NORMAL = `${INPUT_BASE} border-slate-200`;
-// Amarillo: campo precargado como sugerencia (editable) — mockup estilo .sugerido
-const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50`;
+// Molde ".campo" de la maqueta firmada 2026-08-11 (docs/ux/2026-08-11-maqueta-reservas-
+// firmada.html): inputs ~36px de alto, borde gris parejo, foco en el ÚNICO azul de acción
+// del sistema (token `primary`, ya no un `blue-500` suelto). Estas 4 constantes se repiten
+// IDÉNTICAS en los 5 formularios de la ficha de carga (Hotel/Aéreo/Traslado/Paquete/
+// Asistencia) — cada uno las define localmente porque cada archivo se usa solo (no hay
+// import cruzado entre ellos), pero conviene tocarlas TODAS igual si cambia el molde.
+const INPUT_BASE = "w-full py-2 px-2.5 text-[13px] border rounded-[7px] bg-white text-slate-800 focus:outline-none focus:ring-1 focus:border-primary focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-800/60 dark:disabled:text-slate-500";
+const INPUT_NORMAL = `${INPUT_BASE} border-slate-300 dark:border-slate-600`;
+// Amarillo: campo precargado como sugerencia (editable) — mockup estilo .sugerido. El color
+// en modo claro NO se toca (decisión 2026-08-11, ítem 6: "sugerido amarillo... como ya
+// está") — sólo se agrega la versión oscura, que antes no existía (hallazgo B, "cero reglas
+// dark" en toda la carpeta inline-service/).
+const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50 dark:border-amber-600/70 dark:bg-amber-900/25 dark:text-amber-100`;
 // Calculado: solo lectura con estilo gris punteado — mockup estilo .calc
-const INPUT_CALCULADO = `${INPUT_BASE} border-slate-200 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default`;
-const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
+const INPUT_CALCULADO = `${INPUT_BASE} border-slate-300 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-300`;
+// Label 11px (molde .campo de la maqueta): antes 12px (text-xs).
+const LABEL_BASE = "block text-[11px] font-semibold tracking-wide text-slate-500 mb-1 dark:text-slate-400";
 
 // ─── Componente NewHotelBox ───────────────────────────────────────────────────
 
@@ -114,13 +124,13 @@ const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
  */
 function NewHotelBox({ newProduct, onChange, suppliers, supplierSugerido, onSupplierTouched }) {
     return (
-        <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4">
+        <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4 dark:border-violet-700 dark:bg-violet-950/20">
             <div className="flex items-center gap-2 mb-3">
-                <Hotel className="w-4 h-4 text-violet-600" />
-                <span className="text-sm font-semibold text-violet-700">
+                <Hotel className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                <span className="text-sm font-semibold text-violet-700 dark:text-violet-300">
                     Hotel nuevo — se guarda en tu tarifario al confirmar
                 </span>
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-700">
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
                     Creado en venta
                 </span>
             </div>
@@ -817,7 +827,7 @@ export function HotelInlineForm({
                 <button
                     type="button"
                     onClick={() => setMostrarDetalles((prev) => !prev)}
-                    className="flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors"
+                    className="flex items-center gap-1 text-sm font-semibold text-primary hover:opacity-80 transition-colors dark:text-primary"
                     data-testid="hotel-mas-detalles-toggle"
                     aria-expanded={mostrarDetalles}
                 >

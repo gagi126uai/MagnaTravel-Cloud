@@ -39,12 +39,14 @@ import { useSeleccionPendienteDelTipo } from "./useSeleccionPendienteDelTipo";
 // D13 (spec 2026-08-10): campos de fecha de ESTE form, [desde, hasta] — Aéreo tiene ida/vuelta.
 const CAMPOS_FECHA_VUELO = ["departureDate", "returnDate"];
 
-// ─── Clases CSS (mismas que HotelInlineForm para coherencia visual) ──────────
-const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
-const INPUT_NORMAL = `${INPUT_BASE} border-slate-200`;
-const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50`;
-const INPUT_CALCULADO = `${INPUT_BASE} border-slate-200 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default`;
-const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
+// ─── Clases CSS (mismas que HotelInlineForm para coherencia visual — molde ".campo"
+// de la maqueta firmada 2026-08-11, con su versión oscura: ver el comentario largo
+// en HotelInlineForm.jsx, donde vive el original) ─────────────────────────────
+const INPUT_BASE = "w-full py-2 px-2.5 text-[13px] border rounded-[7px] bg-white text-slate-800 focus:outline-none focus:ring-1 focus:border-primary focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-800/60 dark:disabled:text-slate-500";
+const INPUT_NORMAL = `${INPUT_BASE} border-slate-300 dark:border-slate-600`;
+const INPUT_SUGERIDO = `${INPUT_BASE} border-yellow-400 bg-yellow-50 dark:border-amber-600/70 dark:bg-amber-900/25 dark:text-amber-100`;
+const INPUT_CALCULADO = `${INPUT_BASE} border-slate-300 border-dashed bg-slate-50 text-slate-600 font-semibold cursor-default dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-300`;
+const LABEL_BASE = "block text-[11px] font-semibold tracking-wide text-slate-500 mb-1 dark:text-slate-400";
 
 // ─── Recuadro violeta para vuelo nuevo ───────────────────────────────────────
 
@@ -56,13 +58,13 @@ const LABEL_BASE = "block text-xs font-semibold text-slate-600 mb-1";
  */
 function NewFlightBox({ newProduct, onChange, suppliers, supplierSugerido, onSupplierTouched }) {
     return (
-        <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4">
+        <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4 dark:border-violet-700 dark:bg-violet-950/20">
             <div className="flex items-center gap-2 mb-3">
-                <Plane className="w-4 h-4 text-violet-600" />
-                <span className="text-sm font-semibold text-violet-700">
+                <Plane className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                <span className="text-sm font-semibold text-violet-700 dark:text-violet-300">
                     Ruta nueva — se guarda en tu tarifario al confirmar
                 </span>
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-700">
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
                     Creado en venta
                 </span>
             </div>
@@ -555,7 +557,7 @@ export function FlightInlineForm({
                 <button
                     type="button"
                     onClick={() => setMostrarDetalles((prev) => !prev)}
-                    className="flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors"
+                    className="flex items-center gap-1 text-sm font-semibold text-primary hover:opacity-80 transition-colors dark:text-primary"
                     data-testid="flight-mas-detalles-toggle"
                     aria-expanded={mostrarDetalles}
                 >

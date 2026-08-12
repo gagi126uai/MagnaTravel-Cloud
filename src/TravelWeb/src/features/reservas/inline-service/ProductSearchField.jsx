@@ -123,11 +123,11 @@ function SearchResultItem({ result, onSelect, isStrongMatch, canSeeCost, isKeybo
     let bgClass;
     if (isKeyboardFocused) {
         // Foco de teclado: resaltado más marcado que el hover normal
-        bgClass = "bg-blue-100";
+        bgClass = "bg-blue-100 dark:bg-blue-900/40";
     } else if (isStrongMatch) {
-        bgClass = "bg-blue-50 hover:bg-blue-100";
+        bgClass = "bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/30 dark:hover:bg-blue-900/40";
     } else {
-        bgClass = "bg-white hover:bg-slate-50";
+        bgClass = "bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800";
     }
 
     return (
@@ -138,28 +138,28 @@ function SearchResultItem({ result, onSelect, isStrongMatch, canSeeCost, isKeybo
             aria-selected={isKeyboardFocused}
             onMouseDown={(event) => event.preventDefault()} // evita blur del input al clickear
             onClick={() => onSelect(result)}
-            className={`w-full px-4 py-3 text-left border-b border-slate-100 last:border-b-0 flex justify-between items-start gap-3 transition-colors ${bgClass}`}
+            className={`w-full px-4 py-3 text-left border-b border-slate-100 last:border-b-0 flex justify-between items-start gap-3 transition-colors dark:border-slate-800 ${bgClass}`}
             data-testid="catalog-search-result"
         >
             <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-slate-900 truncate">{result.name}</div>
+                <div className="text-sm font-semibold text-slate-900 truncate dark:text-white">{result.name}</div>
                 {result.subtitle && (
-                    <div className="text-xs text-slate-500 mt-0.5">{result.subtitle}</div>
+                    <div className="text-xs text-slate-500 mt-0.5 dark:text-slate-400">{result.subtitle}</div>
                 )}
                 {lastSaleInfo && (
-                    <div className="text-xs text-slate-400 mt-0.5">{lastSaleInfo}</div>
+                    <div className="text-xs text-slate-400 mt-0.5 dark:text-slate-500">{lastSaleInfo}</div>
                 )}
             </div>
             <div className="shrink-0 flex items-center gap-1.5">
                 {otherTypeLabel && (
                     <span
-                        className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600"
+                        className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
                         data-testid="catalog-search-result-type-badge"
                     >
                         {otherTypeLabel}
                     </span>
                 )}
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
                     En tu tarifario
                 </span>
             </div>
@@ -220,14 +220,14 @@ function CreateNewOption({ searchText, serviceType, onCreateNew, isKeyboardFocus
             aria-selected={isKeyboardFocused}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => onCreateNew(searchText)}
-            className={`w-full px-4 py-3 text-left transition-colors ${isKeyboardFocused ? "bg-blue-100" : "bg-slate-50 hover:bg-slate-100"}`}
+            className={`w-full px-4 py-3 text-left transition-colors ${isKeyboardFocused ? "bg-blue-100 dark:bg-blue-900/40" : "bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800"}`}
             data-testid="catalog-create-new"
         >
-            <div className="flex items-center gap-2 text-sm font-semibold text-blue-600">
+            <div className="flex items-center gap-2 text-sm font-semibold text-primary dark:text-primary">
                 <Plus className="w-4 h-4 shrink-0" />
                 <span>No es ninguno: crear "{searchText}" como {nombreTipo} nuevo</span>
             </div>
-            <div className="text-xs text-slate-400 mt-0.5 ml-6">
+            <div className="text-xs text-slate-400 mt-0.5 ml-6 dark:text-slate-500">
                 Revisá los de arriba antes — si ya existe, elegirlo evita duplicados.
             </div>
         </button>
@@ -554,15 +554,15 @@ export function ProductSearchField({
 
     return (
         <div className="relative">
-            <label className="block text-xs font-semibold text-slate-600 mb-1" htmlFor={`${listboxId.current}-input`}>
+            <label className="block text-[11px] font-semibold tracking-wide text-slate-500 mb-1 dark:text-slate-400" htmlFor={`${listboxId.current}-input`}>
                 {label || "Producto"}
             </label>
             <div className="relative">
-                <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none dark:text-slate-500" />
                 <input
                     id={`${listboxId.current}-input`}
                     type="text"
-                    className="w-full pl-10 pr-10 py-2.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+                    className="w-full pl-10 pr-10 py-2 text-[13px] border border-slate-300 rounded-[7px] bg-white text-slate-800 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-600 dark:disabled:bg-slate-800/60 dark:disabled:text-slate-500"
                     placeholder={placeholder || "Buscá en tu catálogo..."}
                     value={value || ""}
                     onChange={(event) => {
@@ -590,7 +590,7 @@ export function ProductSearchField({
                     role="combobox"
                 />
                 {isSearching && (
-                    <RefreshCw className="absolute right-3 top-2.5 w-4 h-4 text-blue-500 animate-spin" />
+                    <RefreshCw className="absolute right-3 top-2.5 w-4 h-4 text-primary dark:text-primary animate-spin" />
                 )}
             </div>
 
@@ -598,13 +598,13 @@ export function ProductSearchField({
             {showDropdown && (
                 <div
                     id={listboxId.current}
-                    className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden"
+                    className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden dark:border-slate-700 dark:bg-slate-900"
                     role="listbox"
                     aria-label={`Resultados de búsqueda de ${label || "productos"}`}
                 >
                     {isSearching && (
                         // Estado "buscando": texto sutil, no bloqueante
-                        <div className="px-4 py-3 text-xs text-slate-400 italic" role="status">
+                        <div className="px-4 py-3 text-xs text-slate-400 italic dark:text-slate-500" role="status">
                             Buscando…
                         </div>
                     )}
@@ -626,7 +626,7 @@ export function ProductSearchField({
                         o cierra el desplegable. */}
                     {debeMostrarDuda({ duda: dudaVigente, isSearching, dudaDescartada: dudaDescartadaRef.current, hayProductoVinculado: Boolean(rateId) }) && (
                         <div
-                            className="px-4 py-2 text-xs text-slate-500 bg-slate-50 border-b border-slate-100"
+                            className="px-4 py-2 text-xs text-slate-500 bg-slate-50 border-b border-slate-100 dark:text-slate-400 dark:bg-slate-800/60 dark:border-slate-700"
                             role="status"
                             data-testid="catalog-search-duda"
                         >
@@ -657,7 +657,7 @@ export function ProductSearchField({
 
                     {/* Sin resultados: directo a crear (guía UX ronda 2) */}
                     {hasNoResults && !isSearching && (
-                        <div className="px-4 py-3 text-xs text-slate-500" role="status">
+                        <div className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400" role="status">
                             No encontramos "{value}" en tu tarifario
                         </div>
                     )}
