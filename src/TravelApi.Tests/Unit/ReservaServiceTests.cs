@@ -10,6 +10,7 @@ using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
@@ -79,7 +80,8 @@ public class ReservaServiceTests
         Assert.NotNull(result);
         Assert.Equal("Test Trip", result.Name);
         Assert.Equal(EstadoReserva.Budget, result.Status);
-        Assert.StartsWith($"F-{DateTime.Now.Year}-", result.NumeroReserva);
+        // Formato nuevo sin prefijo "F-" (decision del dueño 2026-08-11): "{año}-{correlativo}".
+        Assert.StartsWith($"{ArgentinaTime.GetArgentinaNow().Year}-", result.NumeroReserva);
         Assert.Equal(1, await context.Reservas.CountAsync());
     }
 

@@ -622,3 +622,18 @@ confundas y creas que facturaste de verdad), pero está gritando más que tu tra
 | Cartelito de dólares del mismo color que las acciones | `components/ui/CurrencyBadge.jsx:27` (`bg-indigo-700`) |
 | Globitos que repiten el texto visible | `ReservaHeader.jsx:517, 548, 589` |
 | Textos pendientes de la maqueta firmada 2026-08-03 | `ReservasPage.jsx:284` dice "Nuevo Presupuesto" (firmado: "+ Nueva reserva"); solapa "Presupuestos" (firmado: "Borradores") |
+
+---
+
+## ENMIENDA 2026-08-11 (decisión de identidad del documento, firmada por el dueño)
+
+Posterior a la firma de la maqueta, el dueño firmó la decisión de identidad
+(multiple choice + desempate del mismo día, registrada en la memoria del
+proyecto): **el título de la ficha es DINÁMICO por etapa y sin "#" ni "F"**:
+"Cotización {numero}" / "Presupuesto {numero}" / "Reserva {numero}" — la
+palabra la pone la etapa, el número (formato "2026-1067") nunca cambia.
+La chapita de estado se omite SOLO cuando repite exactamente la palabra del
+título (Cotización/Presupuesto); en el resto de las etapas sigue visible.
+Esto SUPERSEDE el ejemplo "Reserva #F-2026-1067" de la maqueta y de la
+sección de tipografía de este documento. El "#" puede persistir como prefijo
+visual en las tablas del listado.

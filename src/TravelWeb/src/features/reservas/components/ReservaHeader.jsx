@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, AlertTriangle, Undo2, Pencil, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Undo2, Pencil, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal, Ban } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo, ReservaStatusBadge } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
@@ -7,6 +8,7 @@ import { isAdmin } from "../../../auth";
 import { faltaTitularConNombre } from "../lib/pasajeroHint";
 import { isReservaAnulada } from "../moneyStatus";
 import { armarLineaDestinoYPasajeros } from "../lib/reservaDestinoFicha";
+import { palabraTituloReserva, debeOcultarChapitaEstado } from "../lib/reservaHeaderTituloLogic";
 
 // Bug "fechas corridas un día" (2026-07-16): startDate/endDate de la reserva son
 // fechas-solo-día (el usuario elige un día calendario, no una hora). El backend las
@@ -69,18 +71,23 @@ function MenuAccionesExcepcion({ items }) {
 
     return (
         <div className="relative" ref={contenedorRef}>
-            <button
+            {/* Lavado de cara (2026-08-11, F-16 "la excepción es discreta, nunca un botón
+                normal"): el "⋯" pasa de caja con borde a variant="ghost" — mismo molde
+                terciario que "Perdida", sin fondo ni borde propio, 40px de alto igual
+                que el resto de la fila (antes tenía su propia altura/relleno a mano). */}
+            <Button
                 type="button"
                 ref={triggerRef}
+                variant="ghost"
+                size="icon"
                 onClick={() => setAbierto((previo) => !previo)}
                 aria-haspopup="menu"
                 aria-expanded={abierto}
                 aria-label="Más acciones"
                 data-testid="reserva-menu-excepciones-trigger"
-                className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-slate-500 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
             >
                 <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-            </button>
+            </Button>
             {abierto && (
                 <div
                     role="menu"
@@ -388,11 +395,25 @@ export function ReservaHeader({
         ? reserva.porMoneda.every((linea) => (linea.balance ?? 0) <= 0)
         : (reserva.balance ?? 0) <= 0;
     const canClose = endHasPast && todasLasMonedasSaldadas;
-    const closeTooltip = !endHasPast
-        ? "El viaje todavía no terminó"
-        : !todasLasMonedasSaldadas
-            ? "No se puede cerrar con saldo pendiente"
-            : "Cerrar reserva";
+    // Fix bloqueante de review (2026-08-11, B2): el botón "Cerrar reserva" SOLO se
+    // renderiza más abajo cuando `endHasPast` ya es true (`reserva.status === 'Traveling'
+    // && endHasPast`) — la rama "El viaje todavía no terminó" nunca podía dispararse
+    // adentro de ese botón, era código muerto. El único motivo real de bloqueo posible
+    // acá es el saldo pendiente.
+    const motivoCierreBloqueado = !todasLasMonedasSaldadas
+        ? "No se puede cerrar con saldo pendiente"
+        : null;
+
+    // ─── Título dinámico de la cabecera (Lavado de cara, Tanda 2, 2026-08-11 —
+    // ENMIENDA del dueño tras el review B1) ───────────────────────────────────
+    // Cotización y Presupuesto son etapas DISTINTAS del ciclo (ADR-020): cada una
+    // tiene su propia palabra en el título ("Cotización 2026-1067" / "Presupuesto
+    // 2026-1067"), no se colapsan en una sola. La lógica vive en un helper puro
+    // testeado aparte (reservaHeaderTituloLogic.js) para no repetir el mapeo acá
+    // adentro del JSX. La chapita de estado se OMITE solo cuando repetiría la
+    // palabra que el título ya dice (P-16) — eso pasa en Quotation y Budget.
+    const palabraTitulo = palabraTituloReserva(reserva.status);
+    const ocultarChapitaDeEstado = debeOcultarChapitaEstado(reserva.status);
 
     return (
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -410,9 +431,11 @@ export function ReservaHeader({
                     (hay una edición sin revisar), no es un dato de plata ni de destino. */}
                 <div className="flex items-center gap-2 flex-wrap">
                     <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                        Reserva <span className="text-indigo-600 dark:text-indigo-400">#{reserva.numeroReserva}</span>
+                        {palabraTitulo} <span className="text-primary">{reserva.numeroReserva}</span>
                     </h1>
-                    <ReservaStatusBadge status={reserva.status} mostrarCandado size="lg" />
+                    {!ocultarChapitaDeEstado && (
+                        <ReservaStatusBadge status={reserva.status} mostrarCandado size="lg" />
+                    )}
                     {/* ADR-027: etiqueta "Con cambios" al lado del estado.
                         Aparece cuando el vendedor editó precio/costo de un servicio
                         en una reserva viva y el dueño todavía no acusó el cambio.
@@ -514,7 +537,6 @@ export function ReservaHeader({
                                 type="button"
                                 data-testid="reserva-action-edit-dates"
                                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                                title="Editar fechas del viaje"
                             >
                                 <Pencil className="w-3.5 h-3.5" />
                                 Editar fechas
@@ -545,7 +567,7 @@ export function ReservaHeader({
                                 type="button"
                                 data-testid="reserva-action-reschedule"
                                 className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50"
-                                title="Reprogramar viaje — mueve todas las fechas de los servicios"
+                                title="Mueve todas las fechas de los servicios"
                             >
                                 <FastForward className="w-3.5 h-3.5" />
                                 Reprogramar viaje
@@ -582,14 +604,15 @@ export function ReservaHeader({
                     ===================================================== */}
 
                     {reserva.status === 'Quotation' && (
-                        <button
+                        <Button
+                            type="button"
+                            variant="default"
                             onClick={() => onStatusChange('Budget')}
                             data-testid="reserva-action-to-budget"
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95"
-                            title="Pasar a Presupuesto — el borrador pasa a documento formal para el cliente"
+                            title="El borrador pasa a documento formal para el cliente"
                         >
                             Pasar a presupuesto
-                        </button>
+                        </Button>
                     )}
 
                     {reserva.status === 'Budget' && (() => {
@@ -607,24 +630,21 @@ export function ReservaHeader({
                         const faltaTitular = faltaTitularConNombre(reserva.passengers);
                         return (
                             <>
-                                <button
+                                {/* Lavado de cara (2026-08-11): el `title` con el motivo del apagado se
+                                    saca de acá — ya está ESCRITO abajo, en el cartelito ámbar "Falta
+                                    cargar el titular" (P-9: el motivo va a la vista, no en un tooltip).
+                                    Sin motivo, el título repetía el mismo texto que dice el botón (P-16). */}
+                                <Button
+                                    type="button"
+                                    variant="default"
                                     onClick={() => onStatusChange('InManagement')}
                                     disabled={faltaTitular}
                                     data-testid="reserva-action-client-accepted"
                                     data-disabled-reason={faltaTitular ? "sin-titular-con-nombre" : undefined}
-                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${
-                                        faltaTitular
-                                            ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed shadow-none'
-                                            : 'bg-cyan-600 hover:bg-cyan-700 text-white'
-                                    }`}
-                                    title={
-                                        faltaTitular
-                                            ? "Tiene que haber un pasajero titular con el nombre cargado"
-                                            : "El cliente aceptó el presupuesto — arranca la gestión con los operadores"
-                                    }
+                                    title={faltaTitular ? undefined : "Arranca la gestión con los operadores"}
                                 >
                                     El cliente aceptó
-                                </button>
+                                </Button>
                                 {/* P8 (Tanda 3 del rediseño, 2026-08-03, maqueta sección 6 — "el callejón sin
                                     salida, resuelto"): antes este texto explicaba el motivo pero no llevaba a
                                     ningún lado — la solapa Pasajeros todavía no existía en Presupuesto, así
@@ -656,59 +676,88 @@ export function ReservaHeader({
                         "Apartar para liquidar" y "Finalizar / Marcar liquidada" fueron eliminados
                         porque "A liquidar" ya no existe como estado. */}
                     {reserva.status === 'Traveling' && endHasPast && (
-                        <button
-                            onClick={() => onStatusChange('Closed')}
-                            disabled={!canClose}
-                            data-testid="reserva-action-finalize-direct"
-                            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
-                            title={closeTooltip}
-                        >
-                            Cerrar reserva
-                        </button>
+                        <>
+                            {/* Fix bloqueante de review (2026-08-11, B2): un `title` sobre un botón
+                                `disabled` NUNCA se ve — la clase base de Button trae
+                                `disabled:pointer-events-none`, así que el navegador no puede
+                                disparar el hover que muestra el tooltip nativo. Mismo patrón que
+                                "El cliente aceptó" (más arriba): el motivo va ESCRITO al lado,
+                                no en un tooltip fantasma. La enmienda de P-9 que permite tooltip
+                                SOLO vale para los listados (Archivar en ReservaTable/
+                                ReservaMobileList) — acá, en la cabecera de la ficha, sigue el
+                                criterio original de P-9: el motivo a la vista. */}
+                            <Button
+                                type="button"
+                                variant="default"
+                                onClick={() => onStatusChange('Closed')}
+                                disabled={!canClose}
+                                data-testid="reserva-action-finalize-direct"
+                            >
+                                Cerrar reserva
+                            </Button>
+                            {motivoCierreBloqueado && (
+                                <p
+                                    className="text-xs text-amber-600 dark:text-amber-400 font-medium"
+                                    data-testid="reserva-action-finalize-direct-motivo"
+                                >
+                                    {motivoCierreBloqueado}
+                                </p>
+                            )}
+                        </>
                     )}
 
                     {/* ACCIONES SECUNDARIAS — Separador visual en sm: hacia arriba.
                         Feedback 2026-06-19: botones deshabilitados = solo gris, sin texto debajo.
                         Todos los botones tienen la misma altura/padding que las acciones primarias. */}
-                    <div className="flex flex-wrap gap-2 sm:border-l sm:border-slate-200 sm:dark:border-slate-800 sm:pl-4">
+                    {/* Fix causa raíz del bug "Perdida más grande que El cliente aceptó" (Lavado
+                        de cara 2026-08-11, ver auditoría A.0 del estándar visual): a este
+                        contenedor le faltaba `items-center` — sin esa instrucción, los hijos se
+                        ESTIRABAN al alto del más alto del grupo (el motivo de Archivar en 2
+                        renglones). Con items-center todos los botones de la fila arrancan en la
+                        misma línea y miden lo mismo, sin importar cuánto texto cuelgue debajo de
+                        alguno. */}
+                    <div className="flex flex-wrap items-center gap-2 sm:border-l sm:border-slate-200 sm:dark:border-slate-800 sm:pl-4">
 
-                        {/* Boton "Perdida": discreto, solo desde Cotizacion/Presupuesto */}
+                        {/* Boton "Perdida": discreto (nivel 3, fantasma), solo desde Cotizacion/Presupuesto.
+                            Lavado de cara: pasa de caja gris rellena a variant="ghost" — texto
+                            gris sin fondo propio, mismo molde que el resto de las terciarias. */}
                         {showMarkLostButton && (
-                            <button
+                            <Button
+                                type="button"
+                                variant="ghost"
                                 onClick={onMarkLost}
                                 data-testid="reserva-action-mark-lost"
                                 aria-label="Perdida"
-                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors text-sm font-semibold"
                             >
                                 <XCircle className="w-4 h-4" />
                                 Perdida
-                            </button>
+                            </Button>
                         )}
 
-                        {/* ── Boton "Anular reserva" (P9: estilo "peligro suave", con emoji
-                            🚫 igual que la maqueta firmada) ──────────────────────────────
+                        {/* ── Boton "Anular reserva" (nivel 4, destructiva discreta) ──────────
                             F4-2 (2026-06-26): habilitado cuando canAnnul.allowed OR canCancel.allowed.
                             En gris (disabled) solo cuando NINGUNA de las dos lo permite.
                             ADR-035: SIEMPRE VISIBLE si el usuario tiene permiso (reservas.cancel).
                             Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
                             El cartel único en ReservaDetailPage explica el estado global.
                             P9 (2026-08-03): oculto en Anulada/Perdida (ver esAnuladaOPerdida
-                            más arriba) — ahí no tiene sentido ofrecer anular de nuevo. */}
+                            más arriba) — ahí no tiene sentido ofrecer anular de nuevo.
+                            Lavado de cara (2026-08-11): variant="destructive" del sistema — letra
+                            roja + contorno rosado, NUNCA relleno rojo (P-14 sigue confirmando en
+                            el flujo que abre onCancelReserva). El emoji 🚫 se reemplaza por el
+                            ícono Ban de lucide — B.3 regla 4, "se van todos los emojis". */}
                         {showCancelButton && (
-                            <button
+                            <Button
+                                type="button"
+                                variant="destructive"
                                 onClick={puedeAnular ? onCancelReserva : undefined}
                                 disabled={!puedeAnular}
                                 data-testid="btn-anular-reserva"
                                 aria-label="Anular reserva"
-                                className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${
-                                    puedeAnular
-                                        ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300'
-                                        : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
-                                }`}
                             >
-                                <span aria-hidden="true">🚫</span>
+                                <Ban className="w-4 h-4" aria-hidden="true" />
                                 Anular reserva
-                            </button>
+                            </Button>
                         )}
 
                         {/* ADR-037: el botón "Reabrir para facturar" fue ELIMINADO.

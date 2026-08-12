@@ -242,7 +242,10 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                         }}
                         onKeyDown={handleKeyDown}
                         data-testid="nueva-reserva-cliente-input"
-                        className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        // Lavado de cara (2026-08-11, D residuos de la review T1): el aro de foco
+                        // pasa de índigo suelto a los tokens del sistema (--primary/--ring, azul
+                        // boleto) — mismo azul que ya usan los botones y el resto de la app.
+                        className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-primary focus:ring-1 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                 </div>
 
@@ -268,8 +271,10 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => handleSeleccionarCliente(cliente)}
                                 data-testid="nueva-reserva-cliente-resultado"
+                                // Resaltado del resultado seleccionado con teclado: tinte del azul
+                                // boleto del sistema (bg-primary/…) en vez de índigo suelto.
                                 className={`block w-full border-b border-slate-100 px-3 py-2 text-left text-sm dark:border-slate-800 ${
-                                    keyboardIndex === index ? "bg-indigo-50 dark:bg-indigo-900/30" : "hover:bg-slate-50 dark:hover:bg-slate-800"
+                                    keyboardIndex === index ? "bg-primary/10 dark:bg-primary/20" : "hover:bg-slate-50 dark:hover:bg-slate-800"
                                 }`}
                             >
                                 <span className="font-semibold text-slate-800 dark:text-slate-100">{cliente.fullName}</span>
@@ -307,8 +312,14 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={abrirAltaClienteNuevo}
                                 data-testid="nueva-reserva-cliente-nuevo"
-                                className={`block w-full px-3 py-2 text-left text-sm font-semibold text-indigo-600 dark:text-indigo-400 ${
-                                    keyboardIndex === resultados.length ? "bg-indigo-50 dark:bg-indigo-900/30" : "hover:bg-indigo-50 dark:hover:bg-indigo-950/30"
+                                // Fix bloqueante de review (2026-08-11, B3): faltaba el dark: explícito
+                                // — sobre el fondo casi negro del dropdown en oscuro, un 10%/5% de tinte
+                                // azul se notaba muy poco. Mismo par de valores (20%/10%) que ya usa el
+                                // resaltado por teclado de los resultados, unas líneas más arriba.
+                                className={`block w-full px-3 py-2 text-left text-sm font-semibold text-primary ${
+                                    keyboardIndex === resultados.length
+                                        ? "bg-primary/10 dark:bg-primary/20"
+                                        : "hover:bg-primary/5 dark:hover:bg-primary/10"
                                 }`}
                             >
                                 + Es un cliente nuevo: crearlo acá
@@ -328,7 +339,7 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                         type="date"
                         value={startDate}
                         onChange={(event) => setStartDate(event.target.value)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary focus:ring-1 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                 </div>
                 <div className="flex-1" />

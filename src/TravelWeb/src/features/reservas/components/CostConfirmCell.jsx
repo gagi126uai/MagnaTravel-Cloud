@@ -392,8 +392,10 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
 
     return (
         <>
-            {/* Monto del costo */}
-            <div className="text-xs text-slate-500 font-mono">
+            {/* Monto del costo. Lavado de cara (2026-08-11, B.2): "tabular-nums" en vez de
+                "font-mono" — mismo criterio que la columna Costo de ServiceList.jsx, una
+                sola familia tipográfica (Inter) en toda la app. */}
+            <div className="text-xs text-slate-500 tabular-nums">
                 {formatCurrency(service.netCost, moneda, { withSymbol: mostrarSimbolo })}
             </div>
 

@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using TravelApi.Tests.Fixtures;
@@ -148,7 +149,8 @@ public class HostStartupSmokeTests : IClassFixture<CustomWebApplicationFactory>
             Assert.NotNull(reserva);
             // Las altas nuevas nacen en Presupuesto; CreateReservaAsync ignora cualquier Status del request.
             Assert.Equal(EstadoReserva.Budget, reserva!.Status);
-            Assert.StartsWith($"F-{DateTime.Now.Year}-", reserva.NumeroReserva);
+            // Formato nuevo sin prefijo "F-" (decision del dueño 2026-08-11): "{año}-{correlativo}".
+            Assert.StartsWith($"{ArgentinaTime.GetArgentinaNow().Year}-", reserva.NumeroReserva);
         }
     }
 }

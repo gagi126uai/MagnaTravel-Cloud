@@ -43,6 +43,14 @@ import { getMoneyStatus } from "../moneyStatus";
  * Feedback 2026-06-19 (cambio 6): chips más chicos para no competir con el badge de estado.
  */
 
+// Molde único de chip (Lavado de cara, 2026-08-11, estándar visual B.5: "24 px de alto,
+// redondo completo, 11 px mayúsculas, borde 1 px del mismo tono"). Los 4 chips de esta
+// cabecera (Pago, Viaje, Factura, En corrección) comparten esta forma — solo cambia el
+// color (className de cada estado, que SIGUE informando algo: verde=plata entró,
+// rojo=freno, ámbar=pide algo — P-20, "un color, un significado". Este lavado de cara
+// es de PIEL, no de semántica: no se tocan los colores por estado, solo la forma).
+const CLASE_CHIP_ESTANDAR = "inline-flex h-6 items-center rounded-full border px-2.5 text-[11px] font-bold uppercase tracking-wider";
+
 const INVOICING_CHIP = {
     NotInvoiced: {
         label: 'Sin facturar',
@@ -201,7 +209,7 @@ export function ReservaStatusChips({ reserva }) {
                     </span>
                     <span
                         data-testid={`chip-pago-${chipPago.key}`}
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipPago.className}`}
+                        className={`${CLASE_CHIP_ESTANDAR} ${chipPago.className}`}
                         title={chipPago.title}
                     >
                         {chipPago.label}
@@ -217,7 +225,7 @@ export function ReservaStatusChips({ reserva }) {
                     </span>
                     <span
                         data-testid={`chip-viaje-${chipViaje.key}`}
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipViaje.className}`}
+                        className={`${CLASE_CHIP_ESTANDAR} ${chipViaje.className}`}
                         title={chipViaje.title}
                     >
                         {chipViaje.label}
@@ -232,7 +240,7 @@ export function ReservaStatusChips({ reserva }) {
                 </span>
                 <span
                     data-testid={`chip-factura-${reserva.invoicingStatus || 'NotInvoiced'}`}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${invoicing.className}`}
+                    className={`${CLASE_CHIP_ESTANDAR} ${invoicing.className}`}
                     title={invoicing.title}
                 >
                     {invoicing.label}
@@ -246,7 +254,7 @@ export function ReservaStatusChips({ reserva }) {
             {reserva.isUnderCorrection && (
                 <span
                     data-testid="chip-en-correccion"
-                    className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800"
+                    className={`${CLASE_CHIP_ESTANDAR} bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800`}
                     title="Pendiente revisar fechas — congelada para el pase automático a viaje"
                 >
                     En corrección

@@ -296,23 +296,28 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
  *     implicar plata en juego (multa o nota de crédito) que vale la pena remarcar.
  * "Finalizado" (2026-06-24): verde/slate — viaje exitoso, no es cancelación.
  *   Verde claro en vez del verde intenso de "Confirmado" para distinguirlos.
+ *
+ * Lavado de cara (2026-08-11, B.5 "Chip (un solo molde)"): cada combinación ahora
+ * incluye también el color del BORDE (antes solo bg+text) — el chip estándar lleva
+ * "borde 1 px del mismo tono, fondo pálido", no solo un fondo de color suelto.
  */
 function claseColorEstadoServicio(workflowStatus, reservaStatus) {
     // Reserva entera deshecha: gris sobrio, sin importar el workflowStatus de este
     // servicio en particular (etiquetaEstadoServicio también le da prioridad a esto).
     if (reservaStatus === 'Lost' || reservaStatus === 'Cancelled') {
-        return 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500';
+        return 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-500 dark:border-slate-700';
     }
 
     const etiqueta = etiquetaEstadoServicio(workflowStatus, reservaStatus);
-    if (etiqueta === 'Confirmado') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+    if (etiqueta === 'Confirmado') return 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800';
     // Servicio anulado individualmente (antes decía "Cancelado" acá): mismo rosa/alerta
     // de siempre, solo cambió el texto que se muestra.
-    if (etiqueta === 'Anulado') return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400';
+    if (etiqueta === 'Anulado') return 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800';
     // "Finalizado": verde pálido / slate — el servicio se cumplió, el viaje terminó bien.
     // Se diferencia de "Confirmado" (verde intenso) para no confundir "en camino" con "cerrado".
-    if (etiqueta === 'Finalizado') return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400';
-    return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
+    if (etiqueta === 'Finalizado') return 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800';
+    // Default = "Solicitado": ámbar del molde estándar (maqueta firmada, chip .c-solicitado).
+    return 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800';
 }
 
 /**
@@ -1385,9 +1390,9 @@ export function ServiceList({
                                             <td className="py-3 px-2.5 align-middle whitespace-nowrap">
                                                 {/* items-start: el badge hugea su texto y no se estira al ancho de la celda */}
                                                 <div className="flex flex-col items-start gap-1.5">
-                                                    {/* px-1.5 (en vez de px-2) para que el área de color no se extienda
-                                                        de más en textos cortos como "Solicitado" o "Emitido". */}
-                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${claseColorEstadoServicio(svc.workflowStatus, reservaStatus)}`}>
+                                                    {/* Molde de chip estándar (Lavado de cara 2026-08-11, B.5): redondo
+                                                        completo + borde del mismo tono, no un simple rectángulo de color. */}
+                                                    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider ${claseColorEstadoServicio(svc.workflowStatus, reservaStatus)}`}>
                                                         {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                                     </span>
                                                     {/* Pelotita ADR-020 (decision 4): solo en estado InManagement.
@@ -1474,7 +1479,12 @@ export function ServiceList({
                                                 // Regla 6 del modelo de estados (2026-07-17): el costo de un servicio
                                                 // anulado se tacha igual que su nombre (mismo patrón visual aprobado,
                                                 // ServiceList.jsx:1261) — es historia de la reserva, no un dato vivo.
-                                                <td className={`py-3 px-2.5 align-middle text-right text-xs font-mono ${
+                                                // Lavado de cara (2026-08-11, B.2): "tabular-nums" en vez de
+                                                // "font-mono" — las cifras quedan alineadas en columna (todos los
+                                                // dígitos del mismo ancho) SIN meter una segunda familia
+                                                // tipográfica; el estándar pide una sola familia (Inter) en toda
+                                                // la app, solo cambia peso/tamaño.
+                                                <td className={`py-3 px-2.5 align-middle text-right text-xs tabular-nums ${
                                                     esServicioAnulado(svc)
                                                         ? 'line-through text-slate-400 dark:text-slate-500'
                                                         : 'text-slate-500'
@@ -1495,8 +1505,9 @@ export function ServiceList({
                                             {/* Precio venta: mismo tachado que el costo cuando el servicio está
                                                 anulado. En vivo mantiene el énfasis fuerte (font-bold + texto oscuro)
                                                 que ya tenía; el tachado lo pierde a propósito (deja de ser el
-                                                importe "actual" de la reserva). */}
-                                            <td className={`py-3 px-2.5 align-middle text-right text-xs font-mono ${
+                                                importe "actual" de la reserva). Mismo cambio font-mono→tabular-nums
+                                                que la celda de Costo (B.2, una sola familia tipográfica). */}
+                                            <td className={`py-3 px-2.5 align-middle text-right text-xs tabular-nums ${
                                                 esServicioAnulado(svc)
                                                     ? 'line-through text-slate-400 dark:text-slate-500'
                                                     : 'font-bold text-slate-900 dark:text-white'
@@ -1715,11 +1726,15 @@ export function ServiceList({
                                                                     Editar
                                                                 </button>
                                                             ) : (
+                                                                // Lavado de cara (2026-08-11): "Editar" pasa de azul a
+                                                                // gris — el azul boleto queda RESERVADO para la acción
+                                                                // principal de la pantalla; una acción de fila no compite
+                                                                // con eso (maqueta firmada, .b-texto).
                                                                 <button
                                                                     onClick={() => onEditService(svc)}
                                                                     data-testid={`btn-edit-service-${getReservationServicePublicId(svc)}`}
                                                                     aria-label="Editar servicio"
-                                                                    className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-xs font-semibold"
+                                                                    className="inline-flex items-center gap-1 p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 rounded text-xs font-semibold"
                                                                 >
                                                                     <Edit2 className="w-4 h-4" />
                                                                     Editar
@@ -1785,12 +1800,15 @@ export function ServiceList({
                                                             // agregar "servicio"); "Borrar" sigue sumándosela en el
                                                             // aria-label para que el lector de pantalla diga a qué aplica
                                                             // (igual que siempre — el texto visible de "Borrar" no cambia).
+                                                            // Lavado de cara (2026-08-11): rojo exacto del estándar
+                                                            // (#B91C1C = Tailwind red-700, la maqueta lo llama
+                                                            // "rojo/freno", B.1) — antes era red-600, un tono más claro.
                                                             return (
                                                                 <button
                                                                     onClick={() => handleTrashClick(svc)}
                                                                     data-testid={`btn-delete-service-${getReservationServicePublicId(svc)}`}
                                                                     aria-label={esConfirmado ? textoTacho : `${textoTacho} servicio`}
-                                                                    className="inline-flex items-center gap-1 p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded text-xs font-semibold"
+                                                                    className="inline-flex items-center gap-1 p-1.5 text-red-700 hover:bg-red-50 hover:text-red-800 dark:text-red-400 dark:hover:bg-red-900/20 rounded text-xs font-semibold"
                                                                 >
                                                                     <Trash2 className="w-4 h-4" />
                                                                     {textoTacho}
@@ -1880,7 +1898,7 @@ export function ServiceList({
                                                 {/* Totales por moneda separados por · */}
                                                 <span className="flex flex-col items-end gap-0.5">
                                                     {monedas.map((moneda, idx) => (
-                                                        <span key={moneda} className="inline-flex items-center gap-1.5 text-xs font-black text-slate-900 dark:text-white font-mono">
+                                                        <span key={moneda} className="inline-flex items-center gap-1.5 text-xs font-black text-slate-900 dark:text-white tabular-nums">
                                                             <CurrencyBadge currency={moneda} />
                                                             {formatCurrency(totalesPorMoneda[moneda], moneda, { withSymbol: false })}
                                                             {idx < monedas.length - 1 && (
@@ -1941,9 +1959,8 @@ export function ServiceList({
                                                 </span>
                                             )}
                                         </div>
-                                        {/* px-1.5 en vez de px-2: mismo ajuste que desktop para que el área
-                                            de color no se extienda de más en textos cortos. */}
-                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${claseColorEstadoServicio(svc.workflowStatus, reservaStatus)}`}>
+                                        {/* Mismo molde de chip estándar que desktop (B.5). */}
+                                        <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider ${claseColorEstadoServicio(svc.workflowStatus, reservaStatus)}`}>
                                             {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                         </span>
                                     </div>

@@ -7590,38 +7590,113 @@ public class ReservaService : IReservaService
         }
     }
 
-    private async Task<string> GenerateNumeroReservaAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Genera el numero correlativo de la reserva/presupuesto: <c>"{año}-{correlativo}"</c> (ej.
+    /// <c>"2026-1068"</c>). El correlativo arranca en 1000 y reinicia cada año calendario. Decision del
+    /// dueño (2026-08-11): se saca el prefijo "F-" — ya no representaba nada para el usuario.
+    ///
+    /// <para><b>Bug de huso horario corregido (regla T-14)</b>: el año salia de <c>DateTime.UtcNow</c>, pero
+    /// el contenedor de produccion corre en UTC. Una reserva creada a las 22hs de Argentina del 31/12 ya es
+    /// "01/01 del año siguiente" en UTC, asi que el correlativo reiniciaba a 1000 casi 3 horas antes de que
+    /// terminara el año para el usuario. <see cref="ArgentinaTime"/> (helper unico del repo, regla T-4) da
+    /// el año segun la hora de pared de Argentina, sin importar el huso del servidor.</para>
+    ///
+    /// <para><b>Bug de atomicidad corregido</b>: la version vieja hacia <c>SELECT</c> → sumar en memoria →
+    /// <c>SaveChanges</c>, sin ningun candado. Si dos altas de reserva entraban casi al mismo tiempo, las
+    /// dos podian leer el mismo <c>LastValue</c>, sumar +1 en memoria cada una, y terminar generando el
+    /// MISMO numero — una de las dos altas se caia contra el indice unico de <c>FileNumber</c> con un error
+    /// crudo de base de datos. En Postgres <see cref="GenerateNumeroReservaAtomicAsync"/> resuelve esto con
+    /// un UNICO enunciado SQL (<c>INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING</c>): Postgres toma el
+    /// bloqueo de fila necesario en el mismo instante que hace el UPDATE, asi que dos altas concurrentes
+    /// SIEMPRE terminan con numeros distintos, sin reintentos ni candados en memoria.</para>
+    ///
+    /// <para><b>Por que el provider InMemory (tests unitarios) sigue con el camino viejo</b>: el provider
+    /// InMemory de EF Core no soporta SQL crudo (no hay Postgres detras). Los tests unitarios no corren
+    /// simultaneos contra la MISMA base InMemory, asi que alcanza con el candado en memoria (mismo patron
+    /// que <c>AuthService.NonRelationalRegistrationLock</c>) para mantener el comportamiento correcto.</para>
+    ///
+    /// <c>internal</c> (no <c>private</c>): <c>InternalsVisibleTo("TravelApi.Tests")</c> ya esta configurado
+    /// en el csproj, asi que el test de concurrencia contra Postgres real puede llamar este metodo directo.
+    /// </summary>
+    internal async Task<string> GenerateNumeroReservaAsync(CancellationToken cancellationToken)
     {
-        var year = DateTime.UtcNow.Year;
-        var sequence = await _context.BusinessSequences
-            .FirstOrDefaultAsync(item => item.DocumentType == "Reserva" && item.Year == year, cancellationToken);
+        var year = ArgentinaTime.GetArgentinaNow().Year;
 
-        if (sequence is null)
-        {
-            sequence = new BusinessSequence
-            {
-                DocumentType = "Reserva",
-                Year = year,
-                LastValue = 1000,
-                UpdatedAt = DateTime.UtcNow
-            };
+        var lastValue = _context.Database.IsRelational()
+            ? await GenerateNumeroReservaAtomicAsync(year, cancellationToken)
+            : await GenerateNumeroReservaInMemoryAsync(year, cancellationToken);
 
-            _context.BusinessSequences.Add(sequence);
-        }
-        else
+        return $"{year}-{lastValue}";
+    }
+
+    /// <summary>
+    /// Camino atomico para Postgres: un solo <c>INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING</c>.
+    /// El <c>GREATEST(..., 1000)</c> preserva el piso historico del correlativo (defensivo, por si alguna
+    /// vez la fila queda con un valor corrupto por debajo de 1000).
+    /// </summary>
+    private async Task<long> GenerateNumeroReservaAtomicAsync(int year, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+
+        var results = await _context.Database.SqlQueryRaw<long>(
+            """
+            INSERT INTO "BusinessSequences" ("DocumentType", "Year", "LastValue", "UpdatedAt")
+            VALUES ('Reserva', {0}, 1000, {1})
+            ON CONFLICT ("DocumentType", "Year")
+            DO UPDATE SET
+                "LastValue" = GREATEST("BusinessSequences"."LastValue" + 1, 1000),
+                "UpdatedAt" = {1}
+            RETURNING "LastValue" AS "Value"
+            """,
+            year, now).ToListAsync(cancellationToken);
+
+        return results[0];
+    }
+
+    /// <summary>
+    /// Camino para el provider InMemory (unit tests): mismo calculo que el atomico de Postgres pero sin SQL
+    /// crudo, protegido por un candado exclusivo por proceso (no hay verdadera concurrencia entre tests que
+    /// comparten una base InMemory, asi que alcanza).
+    /// </summary>
+    private async Task<long> GenerateNumeroReservaInMemoryAsync(int year, CancellationToken cancellationToken)
+    {
+        await NumeroReservaInMemoryLock.WaitAsync(cancellationToken);
+        try
         {
-            sequence.LastValue += 1;
-            if (sequence.LastValue < 1000)
+            var sequence = await _context.BusinessSequences
+                .FirstOrDefaultAsync(item => item.DocumentType == "Reserva" && item.Year == year, cancellationToken);
+
+            if (sequence is null)
             {
-                sequence.LastValue = 1000;
+                sequence = new BusinessSequence
+                {
+                    DocumentType = "Reserva",
+                    Year = year,
+                    LastValue = 1000,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                _context.BusinessSequences.Add(sequence);
+            }
+            else
+            {
+                sequence.LastValue = Math.Max(sequence.LastValue + 1, 1000);
+                sequence.UpdatedAt = DateTime.UtcNow;
             }
 
-            sequence.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+            return sequence.LastValue;
         }
-
-        await _context.SaveChangesAsync(cancellationToken);
-        return $"F-{year}-{sequence.LastValue}";
+        finally
+        {
+            NumeroReservaInMemoryLock.Release();
+        }
     }
+
+    // Candado estatico (un solo semaforo para toda la app, mismo patron que
+    // AuthService.NonRelationalRegistrationLock): solo se usa en el camino InMemory de
+    // GenerateNumeroReservaAsync, nunca contra Postgres real.
+    private static readonly SemaphoreSlim NumeroReservaInMemoryLock = new(1, 1);
 }
 
 
