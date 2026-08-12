@@ -1,3 +1,4 @@
+using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Application.Interfaces;
@@ -21,7 +22,31 @@ public interface IReportService
     Task<byte[]> ExportUsdInvoicesReportAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);
     Task<AgencySettings?> GetAgencySettingsAsync(CancellationToken cancellationToken);
     Task<AgencySettings> UpdateAgencySettingsAsync(AgencySettings updated, CancellationToken cancellationToken);
-    
+
+    // ============================================================================================
+    // Obra "PDF de presupuesto" (decisión firmada del dueño, 2026-08-11/12), TANDA 1: logo de la
+    // agencia (para el encabezado del PDF) y los 6 bloques de condiciones (letra chica del PDF).
+    // Mismo controller/autorización que el resto de Configuración de la agencia (Admin only).
+    // ============================================================================================
+
+    /// <summary>Sube/reemplaza el logo de la agencia. Si ya había uno cargado, lo borra del almacenamiento.</summary>
+    Task<AgencySettings> UpdateAgencyLogoAsync(Stream fileStream, string fileName, string contentType, CancellationToken cancellationToken);
+
+    /// <summary>Borra el logo cargado (si hay). No falla si no hay logo (idempotente).</summary>
+    Task RemoveAgencyLogoAsync(CancellationToken cancellationToken);
+
+    /// <summary>Descarga los bytes del logo cargado. Lanza <see cref="KeyNotFoundException"/> si no hay ninguno.</summary>
+    Task<(byte[] Bytes, string ContentType, string FileName)> GetAgencyLogoAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Las 6 categorías SIEMPRE, en orden fijo (ver <see cref="BudgetConditionBlockKindText.All"/>), con
+    /// texto vacío para las que la agencia todavía no cargó — el front nunca ve "falta la categoría X".
+    /// </summary>
+    Task<IReadOnlyList<BudgetConditionBlockDto>> GetBudgetConditionBlocksAsync(CancellationToken cancellationToken);
+
+    /// <summary>Upsert del texto de UNA categoría. <paramref name="kindText"/> es uno de <see cref="BudgetConditionBlockKindText.All"/>.</summary>
+    Task<BudgetConditionBlockDto> UpdateBudgetConditionBlockAsync(string kindText, string? text, CancellationToken cancellationToken);
+
     // BI Analytics
     Task<List<SellerRankingDto>> GetSellerRankingAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);
     Task<List<DestinationAnalyticsDto>> GetDestinationAnalyticsAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);

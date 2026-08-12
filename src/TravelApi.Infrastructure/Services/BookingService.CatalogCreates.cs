@@ -90,6 +90,7 @@ public partial class BookingService
     private async Task<HotelBookingDto> CreateHotelWithCatalogAsync(int reservaId, CreateHotelRequest req, CancellationToken ct)
     {
         ValidateHotelStay(req.CheckIn, req.CheckOut);
+        EnsureStarRatingInRange(req.StarRating);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         // QA con navegador en PROD (2026-08-11): se guardo un hotel con Habitaciones = -1. Las
         // cantidades multiplican la plata (ver CatalogUnitization), asi que el minimo se exige aca,
@@ -116,10 +117,17 @@ public partial class BookingService
                 ? null
                 : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Hotel, ct);
 
+            // Fix B1(a) (review de seguridad, 2026-08-12): opciones A/B/C solo se cargan en Presupuesto.
+            EnsureOptionGroupOnlySetDuringPresupuesto(file.Status, req.OptionGroup);
+            EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+
             var hotel = _mapper.Map<HotelBooking>(req);
             hotel.ReservaId = reservaId;
             hotel.SupplierId = supplierId;
             hotel.Currency = currency;
+            // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): normaliza espacios/vacio -> null.
+            hotel.OptionGroup = OptionGroupRules.Normalize(hotel.OptionGroup);
+            hotel.OptionLabel = string.IsNullOrWhiteSpace(hotel.OptionLabel) ? null : hotel.OptionLabel.Trim();
             // Bug 2026-06-06 (reportado por el dueño con flag ON): la ficha inline manda CheckIn/CheckOut
             // como fecha pelada ("2026-08-12") -> Kind=Unspecified -> Npgsql tira DbUpdateException en el
             // INSERT a timestamptz. Normalizamos a fecha de pared (medianoche Kind=Utc). Ver NormalizeCalendarDate.
@@ -237,10 +245,17 @@ public partial class BookingService
                 ? null
                 : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Aereo, ct);
 
+            // Fix B1(a) (review de seguridad, 2026-08-12): opciones A/B/C solo se cargan en Presupuesto.
+            EnsureOptionGroupOnlySetDuringPresupuesto(file.Status, req.OptionGroup);
+            EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+
             var flight = _mapper.Map<FlightSegment>(req);
             flight.ReservaId = reservaId;
             flight.SupplierId = supplierId;
             flight.Currency = currency;
+            // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): normaliza espacios/vacio -> null.
+            flight.OptionGroup = OptionGroupRules.Normalize(flight.OptionGroup);
+            flight.OptionLabel = string.IsNullOrWhiteSpace(flight.OptionLabel) ? null : flight.OptionLabel.Trim();
             flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
             flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
             // Auditoria ERP item 5: deadlines mapeados por convencion desde el request; normalizados a pared.
@@ -330,10 +345,17 @@ public partial class BookingService
                 ? null
                 : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Traslado, ct);
 
+            // Fix B1(a) (review de seguridad, 2026-08-12): opciones A/B/C solo se cargan en Presupuesto.
+            EnsureOptionGroupOnlySetDuringPresupuesto(file.Status, req.OptionGroup);
+            EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+
             var transfer = _mapper.Map<TransferBooking>(req);
             transfer.ReservaId = reservaId;
             transfer.SupplierId = supplierId;
             transfer.Currency = currency;
+            // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): normaliza espacios/vacio -> null.
+            transfer.OptionGroup = OptionGroupRules.Normalize(transfer.OptionGroup);
+            transfer.OptionLabel = string.IsNullOrWhiteSpace(transfer.OptionLabel) ? null : transfer.OptionLabel.Trim();
             transfer.PickupDateTime = NormalizeAirportWallClock(transfer.PickupDateTime);
             if (transfer.ReturnDateTime.HasValue)
                 transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
@@ -423,10 +445,17 @@ public partial class BookingService
                 ? null
                 : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Paquete, ct);
 
+            // Fix B1(a) (review de seguridad, 2026-08-12): opciones A/B/C solo se cargan en Presupuesto.
+            EnsureOptionGroupOnlySetDuringPresupuesto(file.Status, req.OptionGroup);
+            EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+
             var package = _mapper.Map<PackageBooking>(req);
             package.ReservaId = reservaId;
             package.SupplierId = supplierId;
             package.Currency = currency;
+            // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): normaliza espacios/vacio -> null.
+            package.OptionGroup = OptionGroupRules.Normalize(package.OptionGroup);
+            package.OptionLabel = string.IsNullOrWhiteSpace(package.OptionLabel) ? null : package.OptionLabel.Trim();
             // Bug 2026-06-06: la ficha inline manda StartDate/EndDate como fecha pelada (Kind=Unspecified)
             // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
             package.StartDate = NormalizeCalendarDate(package.StartDate);
@@ -509,10 +538,17 @@ public partial class BookingService
                 ? null
                 : await GetRateForServiceTypeAsync(req.RateId, CatalogServiceTypes.Asistencia, ct);
 
+            // Fix B1(a) (review de seguridad, 2026-08-12): opciones A/B/C solo se cargan en Presupuesto.
+            EnsureOptionGroupOnlySetDuringPresupuesto(file.Status, req.OptionGroup);
+            EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+
             var assistance = _mapper.Map<AssistanceBooking>(req);
             assistance.ReservaId = reservaId;
             assistance.SupplierId = supplierId;
             assistance.Currency = currency;
+            // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): normaliza espacios/vacio -> null.
+            assistance.OptionGroup = OptionGroupRules.Normalize(assistance.OptionGroup);
+            assistance.OptionLabel = string.IsNullOrWhiteSpace(assistance.OptionLabel) ? null : assistance.OptionLabel.Trim();
             // Bug 2026-06-06: la ficha inline manda ValidFrom/ValidTo como fecha pelada (Kind=Unspecified)
             // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared ANTES de calcular los dias
             // de vigencia. Ver NormalizeCalendarDate.

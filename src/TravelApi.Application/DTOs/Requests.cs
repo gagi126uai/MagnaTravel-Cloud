@@ -76,7 +76,20 @@ public record CreateFlightRequest(
     // "Sin definir" (validacion SUAVE, ver ServiceGeographicScopeText.ParseOrNull). Antes de este fix
     // este campo NO existia en el request del vuelo: la ficha lo mandaba y el backend lo ignoraba en
     // silencio (el semaforo de DNI nunca se prendia por un vuelo real).
-    string? GeographicScope = null
+    string? GeographicScope = null,
+    // Obra "PDF de presupuesto" (2026-08-11/12, TANDA 1): datos opcionales para que el presupuesto sea
+    // espejo de lo cargado. Ver FlightSegment.OutboundDepartureTime/ReturnDepartureTime/IsDirect/
+    // Includes*. Ninguno es obligatorio (decision #8 del dueño).
+    TimeOnly? OutboundDepartureTime = null,
+    TimeOnly? ReturnDepartureTime = null,
+    bool? IsDirect = null,
+    bool? IncludesBackpack = null,
+    bool? IncludesCarryOn = null,
+    bool? IncludesCheckedBag = null,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver FlightSegment.OptionGroup/OptionLabel.
+    // Null = este vuelo NO es una alternativa de nada (caso normal).
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record UpdateFlightRequest(
@@ -125,7 +138,20 @@ public record UpdateFlightRequest(
     // deadlines. La ficha SIEMPRE reenvia el ambito en la edicion (round-trip), pero un caller viejo
     // que no lo conoce llega en null: el map lo IGNORA (ver MappingProfile) y el service lo asigna a
     // mano SOLO cuando el texto se reconoce, para no borrar un ambito ya cargado (ver UpdateFlightAsync).
-    string? GeographicScope = null
+    string? GeographicScope = null,
+    // Obra "PDF de presupuesto" (2026-08-11/12, TANDA 1): ver CreateFlightRequest. Anti-clobber en el
+    // UPDATE (el map IGNORA estos campos, ver MappingProfile): un caller que todavia no los conoce
+    // manda null y NO borra lo ya cargado (ver UpdateFlightAsync).
+    TimeOnly? OutboundDepartureTime = null,
+    TimeOnly? ReturnDepartureTime = null,
+    bool? IsDirect = null,
+    bool? IncludesBackpack = null,
+    bool? IncludesCarryOn = null,
+    bool? IncludesCheckedBag = null,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber igual que los campos de arriba
+    // (null = no tocar). Ver FlightSegment.OptionGroup/OptionLabel.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record CreateHotelRequest(
@@ -155,7 +181,11 @@ public record CreateHotelRequest(
     DateTime? OperatorPaymentDeadline = null,
     // Tarifario inteligente (2026-08-07, §5.2): nombre FINO de la habitacion ("Superior", "Vista al
     // mar"). Opcional al final. Junto con RoomType y MealPlan arma la variante que recuerda el precio.
-    string? RoomCategory = null
+    string? RoomCategory = null,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver HotelBooking.OptionGroup/OptionLabel.
+    // Null = este hotel NO es una alternativa de nada (caso normal).
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record UpdateHotelRequest(
@@ -186,7 +216,11 @@ public record UpdateHotelRequest(
     // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
     bool ConfirmCostBelowPaid = false,
     // Tarifario inteligente (2026-08-07, §5.2): nombre FINO de la habitacion. Ver CreateHotelRequest.
-    string? RoomCategory = null
+    string? RoomCategory = null,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
+    // estos campos, ver MappingProfile). Null = no tocar lo ya cargado. Ver HotelBooking.OptionGroup/OptionLabel.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record CreateTransferRequest(
@@ -219,7 +253,10 @@ public record CreateTransferRequest(
     string? ProductName = null,
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, mapeada
     // por convencion en el ALTA. Ver TransferBooking.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver TransferBooking.OptionGroup/OptionLabel.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record UpdateTransferRequest(
@@ -251,7 +288,11 @@ public record UpdateTransferRequest(
     // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver TransferBooking.OperatorPaymentDeadline.
     DateTime? OperatorPaymentDeadline = null,
     // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
-    bool ConfirmCostBelowPaid = false
+    bool ConfirmCostBelowPaid = false,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
+    // estos campos, ver MappingProfile). Null = no tocar lo ya cargado.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 // Bloque 3: Asistencia al viajero (seguro). Espeja a CreateHotelRequest/UpdateHotelRequest:
@@ -276,7 +317,10 @@ public record CreateAssistanceRequest(
     NewCatalogProductRequest? NewCatalogProduct = null,
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, mapeada
     // por convencion en el ALTA. Ver AssistanceBooking.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver AssistanceBooking.OptionGroup/OptionLabel.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record UpdateAssistanceRequest(
@@ -299,7 +343,11 @@ public record UpdateAssistanceRequest(
     // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver AssistanceBooking.OperatorPaymentDeadline.
     DateTime? OperatorPaymentDeadline = null,
     // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
-    bool ConfirmCostBelowPaid = false
+    bool ConfirmCostBelowPaid = false,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
+    // estos campos, ver MappingProfile). Null = no tocar lo ya cargado.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record CreatePackageRequest(
@@ -326,7 +374,10 @@ public record CreatePackageRequest(
     string? OccupancyBase = null,
     // Auditoria ERP 2026-06-12 (item 5): VUELVE la fecha limite de pago al operador. Opcional al final,
     // mapeada por convencion en el ALTA. Ver PackageBooking.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver PackageBooking.OptionGroup/OptionLabel.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );
 
 public record UpdatePackageRequest(
@@ -352,5 +403,9 @@ public record UpdatePackageRequest(
     // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver PackageBooking.OperatorPaymentDeadline.
     DateTime? OperatorPaymentDeadline = null,
     // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
-    bool ConfirmCostBelowPaid = false
+    bool ConfirmCostBelowPaid = false,
+    // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
+    // estos campos, ver MappingProfile). Null = no tocar lo ya cargado.
+    string? OptionGroup = null,
+    string? OptionLabel = null
 );

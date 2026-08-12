@@ -72,4 +72,14 @@ public interface IBookingService
     // Ambas recalculan el saldo (ConfirmedSale) y disparan el motor de estados (pueden confirmar el file).
     Task<FlightSegmentDto> MarkFlightTicketIssuedAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, string? ticketNumber, CancellationToken ct);
     Task<TransferBookingDto> MarkTransferNoConfirmationRequiredAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct);
+
+    /// <summary>
+    /// Opciones A/B/C (decisión #1 firmada del dueño, 2026-08-11/12): resuelve un grupo de opciones —
+    /// se queda con el servicio ganador y BORRA (con rastro, PR-12) los demás servicios vivos del mismo
+    /// grupo, en una sola transacción. Mismos guards que borrar un servicio suelto (candado por estado
+    /// de la reserva + candado de reserva confirmada sin autorización viva). Idempotente: si el grupo
+    /// ya tiene una sola alternativa viva, no borra nada.
+    /// </summary>
+    Task<ResolveOptionGroupResultDto> ResolveOptionGroupAsync(
+        string reservaPublicIdOrLegacyId, ResolveOptionGroupRequest req, CancellationToken ct);
 }

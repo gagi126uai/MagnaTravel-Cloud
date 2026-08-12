@@ -24,6 +24,12 @@ public class HotelBookingDto
     public string? RoomCategory { get; set; }
     public string Status { get; set; } = "Pendiente";
     public string? ConfirmationNumber { get; set; }
+    /// <summary>
+    /// Cantidad de estrellas del hotel (1 a 5). Existía en la entidad desde antes pero no se exponía en
+    /// este DTO — obra "PDF de presupuesto" (2026-08-11/12) lo agrega para que el presupuesto lo muestre.
+    /// Null = no informado. Guard 1..5 al guardar: ver BookingService (mensaje "Las estrellas van de 1 a 5.").
+    /// </summary>
+    public int? StarRating { get; set; }
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Se expone para que la ficha
     // la muestre/edite (round-trip) y para la alarma de pago. Aditivo, null = no informada. NO es dato
     // de costo (es solo una fecha): no se enmascara. Ver HotelBooking.OperatorPaymentDeadline.
@@ -112,5 +118,15 @@ public class HotelBookingDto
     /// avisa) cuando no se calculó — mismo criterio "sin dato = sin aviso" que evita falsos positivos.</para>
     /// </summary>
     public bool SupplierTaxConditionUnknown { get; set; }
+
+    /// <summary>
+    /// Opciones A/B/C (decisión #1 firmada, 2026-08-11/12): grupo de alternativas al que pertenece este
+    /// hotel. Null = no es una alternativa de nada (caso normal). Ver
+    /// TravelApi.Domain.Reservations.OptionGroupRules.
+    /// </summary>
+    public string? OptionGroup { get; set; }
+
+    /// <summary>Etiqueta visible dentro del grupo ("A"/"B"/"C").</summary>
+    public string? OptionLabel { get; set; }
 }
 

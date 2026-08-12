@@ -108,11 +108,16 @@ public static class WipeGroups
     /// <para><b>AiSettings entró acá el 2026-08-09</b> (review de seguridad de la obra M-28): si "borrar la
     /// configuración" dejaba viva la clave de la inteligencia artificial, una instalación que se entrega o se
     /// limpia se quedaba con la credencial del dueño anterior adentro. Va con el resto de la configuración.</para>
+    ///
+    /// <para><b>BudgetConditionBlocks entró acá el 2026-08-12</b> (obra "PDF de presupuesto"): son las
+    /// condiciones de la agencia (letra chica del PDF), standalone, sin FK a ninguna reserva — mismo
+    /// criterio que AgencySettings. Sin este alta, "borrar la configuración" dejaba viva la letra chica
+    /// de una agencia anterior en una instalación que se entrega o se limpia.</para>
     /// </summary>
     public static readonly string[] ConfiguracionTables =
     {
         "AgencySettings", "AfipSettings", "OperationalFinanceSettings", "ApprovalPolicies", "WhatsAppBotConfigs",
-        "AiSettings",
+        "AiSettings", "BudgetConditionBlocks",
     };
 
     /// <summary>
@@ -129,5 +134,6 @@ public static class WipeGroups
         ["ApprovalPolicies"] = "las reglas de aprobación",
         ["WhatsAppBotConfigs"] = "la configuración del bot de WhatsApp",
         ["AiSettings"] = "la configuración de inteligencia artificial",
+        ["BudgetConditionBlocks"] = "las condiciones del presupuesto",
     };
 }

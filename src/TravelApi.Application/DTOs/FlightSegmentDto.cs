@@ -100,4 +100,20 @@ public class FlightSegmentDto
     /// Null = sin definir (el vendedor no lo cargo).
     /// </summary>
     public string? GeographicScope { get; set; }
+
+    // Obra "PDF de presupuesto" (2026-08-11/12): campos opcionales espejo de lo cargado en la ficha.
+    // Ver el XML-doc completo en FlightSegment.OutboundDepartureTime y hermanos.
+    public TimeOnly? OutboundDepartureTime { get; set; }
+    public TimeOnly? ReturnDepartureTime { get; set; }
+    public bool? IsDirect { get; set; }
+    public bool? IncludesBackpack { get; set; }
+    public bool? IncludesCarryOn { get; set; }
+    public bool? IncludesCheckedBag { get; set; }
+
+    /// <summary>
+    /// Opciones A/B/C (decision #1 firmada, 2026-08-11/12): grupo de alternativas al que pertenece este
+    /// vuelo. Null = no es una alternativa de nada. Ver TravelApi.Domain.Reservations.OptionGroupRules.
+    /// </summary>
+    public string? OptionGroup { get; set; }
+    public string? OptionLabel { get; set; }
 }

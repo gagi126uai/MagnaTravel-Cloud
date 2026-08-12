@@ -77,4 +77,11 @@ public class TransferBookingDto
     /// XML-doc completo en <see cref="HotelBookingDto.SupplierTaxConditionUnknown"/>.
     /// </summary>
     public bool SupplierTaxConditionUnknown { get; set; }
+
+    /// <summary>
+    /// Opciones A/B/C (decisión #1 firmada, 2026-08-11/12): grupo de alternativas al que pertenece este
+    /// traslado. Null = no es una alternativa de nada. Ver TravelApi.Domain.Reservations.OptionGroupRules.
+    /// </summary>
+    public string? OptionGroup { get; set; }
+    public string? OptionLabel { get; set; }
 }

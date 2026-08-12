@@ -753,4 +753,13 @@ public static class AuditActions
 
     /// <summary>Tarifario: entityName de los eventos sobre un producto (una fila de Rates).</summary>
     public const string RateEntityName = "Rate";
+
+    /// <summary>
+    /// Opciones A/B/C (decision #1 firmada, 2026-08-11/12): alguien resolvio un grupo de opciones — eligio
+    /// cual servicio quedo y se borraron sus alternativas (PR-12: nada se borra sin rastro, ver
+    /// docs/estandares/2026-07-22-constitucion-producto-v1.md). EntityName=<see cref="ReservaEntityName"/>,
+    /// EntityId = Reserva.PublicId. El detail lleva el nombre del grupo, el servicio ganador y la lista de
+    /// servicios borrados (etiquetas legibles, sin datos de costo ni de pasajeros).
+    /// </summary>
+    public const string OptionGroupResolved = "OptionGroupResolved";
 }

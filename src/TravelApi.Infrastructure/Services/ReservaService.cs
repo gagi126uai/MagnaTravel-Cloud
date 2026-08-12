@@ -5651,6 +5651,12 @@ public class ReservaService : IReservaService
             // puede aceptarse.
             throw new InvalidOperationException("Agregá al menos un servicio antes de marcar que el cliente aceptó.");
 
+        // Opciones A/B/C (decisión #1 firmada del dueño, 2026-08-11/12): si queda algún grupo de
+        // opciones con más de una alternativa viva, no sabemos todavía qué eligió el cliente — se
+        // rechaza el avance hasta que alguien resuelva el grupo (elegir una opción y borrar las otras,
+        // ver BookingService.ResolveOptionGroupAsync).
+        await EnsureNoAmbiguousOptionGroupsAsync(id);
+
         // Normalizacion defensiva: en Presupuesto cualquier servicio debe estar en
         // "Solicitado". Si por algun bypass (API directa, data preexistente) hay
         // alguno con otro status, lo forzamos al pasar al siguiente estado. El agente despues
@@ -5702,6 +5708,67 @@ public class ReservaService : IReservaService
         {
             throw new InvalidOperationException(
                 "Cargá al menos el nombre del titular antes de avanzar.");
+        }
+    }
+
+    /// <summary>
+    /// Opciones A/B/C (decisión #1 firmada del dueño, 2026-08-11/12): rechaza "el cliente aceptó" si
+    /// queda algún grupo de opciones con 2+ alternativas VIVAS sin resolver. Consulta SOLO los
+    /// servicios que tienen <c>OptionGroup</c> cargado (5 queries chicas, una por tabla tipada; la
+    /// inmensa mayoría de las reservas no usa esta función y no paga costo de más). "Vivo" se decide con
+    /// el MISMO criterio que <see cref="TravelApi.Domain.Reservations.ReservaMoneyCalculator"/> usa para
+    /// sumar a los totales (<see cref="WorkflowStatusHelper.CountsForQuotedTotal"/>): un servicio
+    /// cancelado deja de competir por su grupo. La fuente única de "ambiguo" es
+    /// <see cref="OptionGroupRules"/> — la MISMA regla que usa el
+    /// calculador de plata, para que el gate y los totales nunca se contradigan.
+    /// </summary>
+    private async Task EnsureNoAmbiguousOptionGroupsAsync(int id)
+    {
+        var infos = new List<OptionGroupRules.OptionGroupServiceInfo>();
+
+        var flights = await _context.FlightSegments.AsNoTracking()
+            .Where(f => f.ReservaId == id && f.OptionGroup != null)
+            .Select(f => new { f.OptionGroup, f.Status })
+            .ToListAsync();
+        infos.AddRange(flights.Select(f => new OptionGroupRules.OptionGroupServiceInfo(
+            f.OptionGroup, WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapFlightStatus(f.Status)))));
+
+        var hotels = await _context.HotelBookings.AsNoTracking()
+            .Where(h => h.ReservaId == id && h.OptionGroup != null)
+            .Select(h => new { h.OptionGroup, h.Status })
+            .ToListAsync();
+        infos.AddRange(hotels.Select(h => new OptionGroupRules.OptionGroupServiceInfo(
+            h.OptionGroup, WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(h.Status)))));
+
+        var transfers = await _context.TransferBookings.AsNoTracking()
+            .Where(t => t.ReservaId == id && t.OptionGroup != null)
+            .Select(t => new { t.OptionGroup, t.Status })
+            .ToListAsync();
+        infos.AddRange(transfers.Select(t => new OptionGroupRules.OptionGroupServiceInfo(
+            t.OptionGroup, WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(t.Status)))));
+
+        var packages = await _context.PackageBookings.AsNoTracking()
+            .Where(p => p.ReservaId == id && p.OptionGroup != null)
+            .Select(p => new { p.OptionGroup, p.Status })
+            .ToListAsync();
+        infos.AddRange(packages.Select(p => new OptionGroupRules.OptionGroupServiceInfo(
+            p.OptionGroup, WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(p.Status)))));
+
+        var assistances = await _context.AssistanceBookings.AsNoTracking()
+            .Where(a => a.ReservaId == id && a.OptionGroup != null)
+            .Select(a => new { a.OptionGroup, a.Status })
+            .ToListAsync();
+        infos.AddRange(assistances.Select(a => new OptionGroupRules.OptionGroupServiceInfo(
+            a.OptionGroup, WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(a.Status)))));
+
+        var ambiguousGroups = OptionGroupRules.FindAmbiguousGroups(infos);
+        if (ambiguousGroups.Count > 0)
+        {
+            // Orden alfabetico: si hay varios grupos ambiguos a la vez, el mensaje siempre nombra el
+            // MISMO primero (determinista), en vez de depender del orden azaroso en que llegaron las
+            // filas de 5 queries distintas.
+            var firstAmbiguousGroup = ambiguousGroups.OrderBy(group => group, StringComparer.OrdinalIgnoreCase).First();
+            throw new InvalidOperationException($"Elegí qué opción quedó de {firstAmbiguousGroup} antes de confirmar.");
         }
     }
 

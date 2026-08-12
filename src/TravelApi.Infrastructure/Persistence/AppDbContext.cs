@@ -290,6 +290,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<SupplierInvoicePaymentApplication> SupplierInvoicePaymentApplications => Set<SupplierInvoicePaymentApplication>();
     public DbSet<SupplierInvoicePaymentApplicationReversal> SupplierInvoicePaymentApplicationReversals => Set<SupplierInvoicePaymentApplicationReversal>();
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
+    // Obra "PDF de presupuesto" (2026-08-11/12), TANDA 1: bloques de condiciones del presupuesto
+    // ("letra chica" del PDF), uno por categoria de servicio. Ver BudgetConditionBlock.
+    public DbSet<BudgetConditionBlock> BudgetConditionBlocks => Set<BudgetConditionBlock>();
     public DbSet<OperationalFinanceSettings> OperationalFinanceSettings => Set<OperationalFinanceSettings>();
     // Configuracion de la inteligencia artificial de esta instalacion (spec firmada 2026-08-07 §15,
     // M-28). Fila unica, con la clave del proveedor CIFRADA (ver AiSettings).
@@ -1457,6 +1460,25 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // ADR-044 T3b Decision 3 (2026-07-10): default de agencia de "quién asume la diferencia de cambio".
             // Enum como int, default Client lo pone la migracion a nivel BD (fila existente = comportamiento de hoy).
             entity.Property(s => s.TreasuryFxAssumedByDefault).HasConversion<int>();
+        });
+
+        // Obra "PDF de presupuesto" (2026-08-11/12), TANDA 1: bloques de condiciones del presupuesto,
+        // una fila por categoria de servicio (Aereos/Hoteles/Traslados/Paquetes/Asistencias/Generales).
+        modelBuilder.Entity<BudgetConditionBlock>(entity =>
+        {
+            entity.ToTable("BudgetConditionBlocks");
+
+            // Kind como STRING (no int) para que la columna se entienda leyendo la BD directo, mismo
+            // criterio que PartialCreditNoteReconciliation.Status mas abajo. EF traduce enum <-> string.
+            entity.Property(b => b.Kind)
+                  .HasConversion<string>()
+                  .HasMaxLength(20)
+                  .IsRequired();
+
+            entity.Property(b => b.Text).HasMaxLength(4000);
+
+            // A lo sumo UNA fila por categoria (el service hace upsert, nunca inserta un duplicado).
+            entity.HasIndex(b => b.Kind).IsUnique();
         });
 
         // ADR-040 (cuenta corriente del cliente, 2026-06-26): limite de credito del cliente por moneda. Espejo

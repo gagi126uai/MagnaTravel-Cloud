@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
@@ -167,6 +168,70 @@ public class ReportsController : ControllerBase
         return Ok(result);
     }
 
+    // ============================================================================================
+    // Obra "PDF de presupuesto" (decisión firmada del dueño, 2026-08-11/12), TANDA 1: logo de la
+    // agencia + los 6 bloques de condiciones. Mismo controller/autorización (Admin) que el resto de
+    // Configuración de la agencia.
+    // ============================================================================================
+
+    /// <summary>Sube o reemplaza el logo de la agencia (PNG/JPG, máximo 2 MB). Usa el mismo almacenamiento que los adjuntos/vouchers (MinIO).</summary>
+    [HttpPost("settings/logo")]
+    [Authorize(Roles = "Admin")]
+    [RequestSizeLimit(2 * 1024 * 1024)]
+    public async Task<ActionResult> UploadAgencyLogo(IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file is null || file.Length == 0)
+        {
+            return BadRequest(new { message = "Elegí un archivo de imagen." });
+        }
+
+        await using var stream = file.OpenReadStream();
+        var settings = await _reportService.UpdateAgencyLogoAsync(stream, file.FileName, file.ContentType, cancellationToken);
+        return Ok(settings);
+    }
+
+    /// <summary>Descarga el logo cargado (para que el front lo muestre en la vista previa de Configuración).</summary>
+    [HttpGet("settings/logo")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetAgencyLogo(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var (bytes, contentType, fileName) = await _reportService.GetAgencyLogoAsync(cancellationToken);
+            return File(bytes, contentType, fileName);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [HttpDelete("settings/logo")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> DeleteAgencyLogo(CancellationToken cancellationToken)
+    {
+        await _reportService.RemoveAgencyLogoAsync(cancellationToken);
+        return Ok();
+    }
+
+    /// <summary>Los 6 bloques de condiciones del presupuesto ("letra chica" del PDF), uno por categoría.</summary>
+    [HttpGet("budget-conditions")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> GetBudgetConditions(CancellationToken cancellationToken)
+    {
+        var blocks = await _reportService.GetBudgetConditionBlocksAsync(cancellationToken);
+        return Ok(blocks);
+    }
+
+    /// <summary>Edita el texto de UNA categoría (ej. "Hoteles"). <paramref name="kind"/> es el texto de la categoría, no un número.</summary>
+    [HttpPut("budget-conditions/{kind}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> UpdateBudgetCondition(string kind, [FromBody] UpdateBudgetConditionBlockRequest request, CancellationToken cancellationToken)
+    {
+        var updated = await _reportService.UpdateBudgetConditionBlockAsync(kind, request.Text, cancellationToken);
+        return Ok(updated);
+    }
+
     private static AgencySettings MapAgencySettings(AgencySettingsUpsertRequest request)
     {
         return new AgencySettings
@@ -180,7 +245,9 @@ public class ReportsController : ControllerBase
             Phone = request.Phone,
             Email = request.Email,
             DefaultCommissionPercent = request.DefaultCommissionPercent,
-            Currency = request.Currency
+            Currency = request.Currency,
+            AgencyLicenseNumber = request.AgencyLicenseNumber,
+            PdfBandColorHex = request.PdfBandColorHex
         };
     }
 }
@@ -195,4 +262,10 @@ public record AgencySettingsUpsertRequest(
     string? Phone,
     string? Email,
     decimal DefaultCommissionPercent,
-    string Currency);
+    string Currency,
+    // Obra "PDF de presupuesto" (2026-08-11/12): legajo EVT y color de la banda del PDF. Opcionales al
+    // final para no romper callers posicionales existentes (mismo patrón del resto del proyecto).
+    string? AgencyLicenseNumber = null,
+    string? PdfBandColorHex = null);
+
+public record UpdateBudgetConditionBlockRequest(string? Text);

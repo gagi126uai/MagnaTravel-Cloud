@@ -34,6 +34,11 @@ public class ReportService : IReportService
     // servicio con el ctor corto). Se usa para dejar rastro de datos que el reporte decide IGNORAR
     // — sin log, un cobro descartado seria invisible para quien tenga que explicar un total.
     private readonly ILogger<ReportService>? _logger;
+    // Obra "PDF de presupuesto" (2026-08-11/12): almacenamiento del logo de la agencia (MinIO). Opcional,
+    // mismo criterio que los demas de arriba (no romper los unit tests que arman este servicio con el
+    // ctor corto) — sin este servicio inyectado, UpdateAgencyLogoAsync rechaza con un mensaje claro en
+    // vez de explotar con NullReferenceException.
+    private readonly IFileStoragePort? _fileStoragePort;
 
     public ReportService(
         AppDbContext dbContext,
@@ -42,7 +47,8 @@ public class ReportService : IReportService
         IHttpContextAccessor? httpContextAccessor = null,
         IFinancePositionService? financePositionService = null,
         IExchangeRateResolver? exchangeRateResolver = null,
-        ILogger<ReportService>? logger = null)
+        ILogger<ReportService>? logger = null,
+        IFileStoragePort? fileStoragePort = null)
     {
         _dbContext = dbContext;
         _bnaExchangeRateService = bnaExchangeRateService;
@@ -51,6 +57,7 @@ public class ReportService : IReportService
         _financePositionService = financePositionService;
         _exchangeRateResolver = exchangeRateResolver;
         _logger = logger;
+        _fileStoragePort = fileStoragePort;
     }
 
     public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
@@ -1649,6 +1656,25 @@ public class ReportService : IReportService
             throw new ValidationException(CommissionPercentValidator.InvalidPercentMessage);
         }
 
+        // Obra "PDF de presupuesto" (2026-08-11/12): el color de la banda del PDF, mismo criterio
+        // "solo si cambia" que el resto de esta pantalla.
+        bool pdfBandColorChanged = !string.Equals(settings?.PdfBandColorHex, updated.PdfBandColorHex, StringComparison.Ordinal);
+        if (pdfBandColorChanged && !HexColorValidator.IsValidOrEmpty(updated.PdfBandColorHex))
+        {
+            throw new ValidationException(HexColorValidator.InvalidHexColorMessage);
+        }
+
+        // Mejora #3 (review de seguridad, 2026-08-12): la columna es varchar(50) — sin este chequeo, un
+        // legajo EVT largo revienta con un error crudo de Npgsql ("value too long for type character
+        // varying(50)") en vez de un mensaje criollo. Se valida SIEMPRE (no "solo si cambia"): es una
+        // columna nueva, no existe el caso "dato legacy que ya estaba mal" (mismo criterio que
+        // CommissionPercentValidator, arriba).
+        const int maxAgencyLicenseNumberLength = 50;
+        if (updated.AgencyLicenseNumber?.Trim().Length > maxAgencyLicenseNumberLength)
+        {
+            throw new ValidationException($"El legajo no puede superar los {maxAgencyLicenseNumberLength} caracteres.");
+        }
+
         if (settings == null)
         {
             _dbContext.AgencySettings.Add(updated);
@@ -1659,8 +1685,8 @@ public class ReportService : IReportService
             settings.AgencyName = updated.AgencyName;
             settings.LegalName = updated.LegalName;
             settings.TaxCondition = updated.TaxCondition;
-            settings.ActivityStartDate = updated.ActivityStartDate.HasValue 
-                ? DateTime.SpecifyKind(updated.ActivityStartDate.Value, DateTimeKind.Utc) 
+            settings.ActivityStartDate = updated.ActivityStartDate.HasValue
+                ? DateTime.SpecifyKind(updated.ActivityStartDate.Value, DateTimeKind.Utc)
                 : null;
             settings.TaxId = updated.TaxId;
             settings.Address = updated.Address;
@@ -1668,11 +1694,196 @@ public class ReportService : IReportService
             settings.Email = updated.Email;
             settings.DefaultCommissionPercent = updated.DefaultCommissionPercent;
             settings.Currency = updated.Currency;
+            // Obra "PDF de presupuesto" (2026-08-11/12): legajo EVT y color de banda del PDF. El logo
+            // NO se toca acá — tiene su propio endpoint (UpdateAgencyLogoAsync) porque es un archivo.
+            settings.AgencyLicenseNumber = string.IsNullOrWhiteSpace(updated.AgencyLicenseNumber)
+                ? null
+                : updated.AgencyLicenseNumber.Trim();
+            settings.PdfBandColorHex = string.IsNullOrWhiteSpace(updated.PdfBandColorHex)
+                ? null
+                : updated.PdfBandColorHex.Trim();
             settings.UpdatedAt = DateTime.UtcNow;
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return settings;
+    }
+
+    // ============================================================================================
+    // Obra "PDF de presupuesto" (2026-08-11/12), TANDA 1: logo de la agencia + bloques de condiciones.
+    // ============================================================================================
+
+    /// <summary>Extensiones y Content-Type aceptados para el logo (solo el PRIMER filtro, por nombre de archivo declarado).</summary>
+    private static readonly Dictionary<string, string[]> AllowedLogoContentTypesByExtension = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".png"] = new[] { "image/png" },
+        [".jpg"] = new[] { "image/jpeg" },
+        [".jpeg"] = new[] { "image/jpeg" },
+    };
+
+    private const long MaxLogoSizeBytes = 2 * 1024 * 1024; // 2 MB: es un logo, no una foto de alta resolucion.
+
+    /// <summary>
+    /// Sube o reemplaza el logo de la agencia. Tres candados independientes, en orden: (1) extensión del
+    /// nombre de archivo + Content-Type declarado (<see cref="AllowedLogoContentTypesByExtension"/>) — un
+    /// filtro barato pero que el cliente puede mentir; (2) tamaño máximo (<see cref="MaxLogoSizeBytes"/>);
+    /// (3) firma REAL del archivo (magic bytes) vía <see cref="ImageFileSignatureValidator.IsPngOrJpg"/> —
+    /// mismo criterio de seguridad que <c>AttachmentService.MatchesFileSignature</c> (no comparten código,
+    /// AttachmentService cubre más formatos), agregado en la review de seguridad del 2026-08-12 porque el
+    /// Content-Type del punto (1) por sí solo NO alcanza (el navegador lo manda, y el cliente puede
+    /// mentirlo). Si ya había un logo cargado, el archivo viejo se borra del almacenamiento DESPUÉS de
+    /// confirmar que el nuevo se guardó bien (no se pierde el logo anterior si algo falla a mitad de camino).
+    /// </summary>
+    public async Task<AgencySettings> UpdateAgencyLogoAsync(Stream fileStream, string fileName, string contentType, CancellationToken cancellationToken)
+    {
+        if (_fileStoragePort is null)
+        {
+            // No debería pasar en producción (Program.cs siempre registra MinioFileStoragePort); es una
+            // guarda defensiva para no explotar con NullReferenceException si algún día cambia el wiring.
+            throw new InvalidOperationException("El almacenamiento de archivos no está disponible en este momento.");
+        }
+
+        var safeFileName = Path.GetFileName(fileName ?? string.Empty).Trim();
+        var extension = Path.GetExtension(safeFileName);
+        if (!AllowedLogoContentTypesByExtension.TryGetValue(extension, out var allowedContentTypes))
+        {
+            throw new ValidationException("El logo tiene que ser una imagen PNG o JPG.");
+        }
+
+        await using var buffer = new MemoryStream();
+        await fileStream.CopyToAsync(buffer, cancellationToken);
+        if (buffer.Length == 0)
+        {
+            throw new ValidationException("El archivo está vacío.");
+        }
+        if (buffer.Length > MaxLogoSizeBytes)
+        {
+            throw new ValidationException("El logo supera el tamaño máximo permitido de 2 MB.");
+        }
+
+        var normalizedContentType = (contentType ?? string.Empty).Trim();
+        if (!allowedContentTypes.Contains(normalizedContentType, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ValidationException("El contenido del archivo no coincide con el tipo declarado.");
+        }
+
+        // Mejora #1 (review de seguridad, 2026-08-12): el Content-Type que manda el navegador es un dato
+        // que el cliente puede mentir (ej. subir un .exe renombrado a "logo.png" con Content-Type
+        // forzado a "image/png"). Miramos los primeros bytes REALES del archivo — mismo criterio que
+        // AttachmentService.MatchesFileSignature, acotado a los 2 formatos que acepta el logo.
+        if (!ImageFileSignatureValidator.IsPngOrJpg(buffer.ToArray()))
+        {
+            throw new ValidationException("La firma del archivo no coincide con el tipo permitido.");
+        }
+
+        var settings = await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken)
+            ?? new AgencySettings();
+        var previousStoredFileName = settings.LogoStoredFileName;
+
+        buffer.Position = 0;
+        var objectName = $"agency/logo/{Guid.NewGuid():N}{extension}";
+        var stored = await _fileStoragePort.SaveAsync(buffer, objectName, safeFileName, normalizedContentType, cancellationToken);
+
+        settings.LogoStoredFileName = stored.StoredFileName;
+        settings.LogoFileName = stored.FileName;
+        settings.LogoContentType = stored.ContentType;
+        settings.LogoFileSize = stored.FileSize;
+        settings.UpdatedAt = DateTime.UtcNow;
+
+        if (settings.Id == 0)
+        {
+            _dbContext.AgencySettings.Add(settings);
+        }
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Borra el archivo VIEJO recien despues de confirmar el nuevo (si algo fallo arriba, el logo
+        // anterior sigue intacto en MinIO en vez de perderse a mitad de camino).
+        if (!string.IsNullOrWhiteSpace(previousStoredFileName) && previousStoredFileName != settings.LogoStoredFileName)
+        {
+            await _fileStoragePort.DeleteAsync(previousStoredFileName, cancellationToken);
+        }
+
+        return settings;
+    }
+
+    public async Task RemoveAgencyLogoAsync(CancellationToken cancellationToken)
+    {
+        var settings = await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken);
+        if (settings is null || string.IsNullOrWhiteSpace(settings.LogoStoredFileName))
+        {
+            return; // Idempotente: borrar "nada" no es un error.
+        }
+
+        var storedFileName = settings.LogoStoredFileName;
+        settings.LogoStoredFileName = null;
+        settings.LogoFileName = null;
+        settings.LogoContentType = null;
+        settings.LogoFileSize = null;
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (_fileStoragePort is not null)
+        {
+            await _fileStoragePort.DeleteAsync(storedFileName, cancellationToken);
+        }
+    }
+
+    public async Task<(byte[] Bytes, string ContentType, string FileName)> GetAgencyLogoAsync(CancellationToken cancellationToken)
+    {
+        var settings = await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken);
+        if (settings is null || string.IsNullOrWhiteSpace(settings.LogoStoredFileName) || _fileStoragePort is null)
+        {
+            throw new KeyNotFoundException("La agencia todavía no tiene un logo cargado.");
+        }
+
+        return await _fileStoragePort.GetAsync(
+            settings.LogoStoredFileName, settings.LogoFileName ?? "logo", settings.LogoContentType ?? "application/octet-stream", cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<BudgetConditionBlockDto>> GetBudgetConditionBlocksAsync(CancellationToken cancellationToken)
+    {
+        var storedBlocks = await _dbContext.Set<BudgetConditionBlock>()
+            .AsNoTracking()
+            .ToDictionaryAsync(b => b.Kind, cancellationToken);
+
+        // Las 6 categorías SIEMPRE, en el orden fijo de las pestañas — con texto vacío para las que
+        // todavía no tienen fila (no se pre-siembran en la migración, ver BudgetConditionBlock).
+        return BudgetConditionBlockKindText.All
+            .Select(kindText =>
+            {
+                var kind = BudgetConditionBlockKindText.ParseOrNull(kindText)!.Value;
+                storedBlocks.TryGetValue(kind, out var stored);
+                return new BudgetConditionBlockDto(kindText, stored?.Text);
+            })
+            .ToList();
+    }
+
+    public async Task<BudgetConditionBlockDto> UpdateBudgetConditionBlockAsync(string kindText, string? text, CancellationToken cancellationToken)
+    {
+        var kind = BudgetConditionBlockKindText.ParseOrNull(kindText)
+            ?? throw new ValidationException("Esa categoría de condiciones no existe.");
+
+        if (text != null && text.Length > 4000)
+        {
+            throw new ValidationException("El texto de las condiciones es demasiado largo (máximo 4000 caracteres).");
+        }
+
+        var block = await _dbContext.Set<BudgetConditionBlock>().FirstOrDefaultAsync(b => b.Kind == kind, cancellationToken);
+        var normalizedText = string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+        if (block is null)
+        {
+            block = new BudgetConditionBlock { Kind = kind, Text = normalizedText, UpdatedAt = DateTime.UtcNow };
+            _dbContext.Set<BudgetConditionBlock>().Add(block);
+        }
+        else
+        {
+            block.Text = normalizedText;
+            block.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return new BudgetConditionBlockDto(kindText, block.Text);
     }
 
     // ===== BI ANALYTICS =====

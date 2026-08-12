@@ -638,6 +638,20 @@ public partial class BookingService : IBookingService
         }
     }
 
+    /// <summary>
+    /// Obra "PDF de presupuesto" (2026-08-11/12): la cantidad de estrellas del hotel es un dato real
+    /// del mundo (1 a 5), no un número libre. Null = no informado, sigue siendo válido (el campo es
+    /// opcional). Guard en el MOTOR (T-3), no solo en la ficha: aunque el front limite el desplegable a
+    /// 1..5, un request directo con 0 o 47 no debe poder guardarse.
+    /// </summary>
+    private static void EnsureStarRatingInRange(int? starRating)
+    {
+        if (starRating.HasValue && (starRating.Value < 1 || starRating.Value > 5))
+        {
+            throw new ArgumentException("Las estrellas van de 1 a 5.");
+        }
+    }
+
     private static void ValidateAssistanceValidity(DateTime validFrom, DateTime validTo)
     {
         // La vigencia "hasta" no puede ser anterior a la vigencia "desde". Permitimos que sean
@@ -1019,6 +1033,33 @@ public partial class BookingService : IBookingService
         if (parsedGeographicScope.HasValue)
             flight.GeographicScope = parsedGeographicScope.Value;
 
+        // Obra "PDF de presupuesto" (2026-08-11/12, anti-clobber): el map IGNORA estos 6 campos. Un
+        // front que todavia no los conoce (tanda de UI pendiente) manda null y PRESERVAMOS lo ya
+        // cargado; un valor explicito se aplica. Mismo criterio que ProductName/los deadlines de arriba.
+        if (req.OutboundDepartureTime.HasValue)
+            flight.OutboundDepartureTime = req.OutboundDepartureTime.Value;
+        if (req.ReturnDepartureTime.HasValue)
+            flight.ReturnDepartureTime = req.ReturnDepartureTime.Value;
+        if (req.IsDirect.HasValue)
+            flight.IsDirect = req.IsDirect.Value;
+        if (req.IncludesBackpack.HasValue)
+            flight.IncludesBackpack = req.IncludesBackpack.Value;
+        if (req.IncludesCarryOn.HasValue)
+            flight.IncludesCarryOn = req.IncludesCarryOn.Value;
+        if (req.IncludesCheckedBag.HasValue)
+            flight.IncludesCheckedBag = req.IncludesCheckedBag.Value;
+
+        // Opciones A/B/C (decision #1 firmada, 2026-08-11/12, anti-clobber): mismo criterio. La
+        // resolucion del grupo (elegir una opcion y borrar las otras) va por
+        // BookingService.ResolveOptionGroupAsync, NO por este update.
+        // Fix B1(a) (review de seguridad, 2026-08-12): rechaza si la reserva ya paso Presupuesto.
+        await EnsureOptionGroupOnlySetDuringPresupuestoAsync(reservaId, req.OptionGroup, ct);
+        EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+        if (req.OptionGroup != null)
+            flight.OptionGroup = OptionGroupRules.Normalize(req.OptionGroup);
+        if (req.OptionLabel != null)
+            flight.OptionLabel = string.IsNullOrWhiteSpace(req.OptionLabel) ? null : req.OptionLabel.Trim();
+
         // ADR-018 Ronda 7: cabina opcional. OJO, aca NO hay anti-clobber a proposito: la ficha reenvia
         // la cabina en cada edicion (round-trip), asi que null/vacio significa "el vendedor la dejo en
         // Sin especificar" y debe persistirse null (es un borrado legitimo, no un campo no enviado).
@@ -1245,6 +1286,7 @@ public partial class BookingService : IBookingService
     public async Task<HotelBookingDto> UpdateHotelAsync(int reservaId, int id, UpdateHotelRequest req, CancellationToken ct)
     {
         ValidateHotelStay(req.CheckIn, req.CheckOut);
+        EnsureStarRatingInRange(req.StarRating);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         // QA con navegador en PROD (2026-08-11): asi entro el hotel con Habitaciones = -1. Mismo
         // minimo que en el alta — editar no puede ser la puerta de atras.
@@ -1312,6 +1354,16 @@ public partial class BookingService : IBookingService
         // valor, asi un caller que no lo manda (null) no borra la fecha cargada. Ver NormalizeCalendarDate.
         if (req.OperatorPaymentDeadline.HasValue)
             hotel.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
+
+        // Opciones A/B/C (decision #1 firmada, 2026-08-11/12, anti-clobber): mismo criterio que arriba.
+        // La resolucion del grupo va por BookingService.ResolveOptionGroupAsync, no por este update.
+        // Fix B1(a) (review de seguridad, 2026-08-12): rechaza si la reserva ya paso Presupuesto.
+        await EnsureOptionGroupOnlySetDuringPresupuestoAsync(reservaId, req.OptionGroup, ct);
+        EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+        if (req.OptionGroup != null)
+            hotel.OptionGroup = OptionGroupRules.Normalize(req.OptionGroup);
+        if (req.OptionLabel != null)
+            hotel.OptionLabel = string.IsNullOrWhiteSpace(req.OptionLabel) ? null : req.OptionLabel.Trim();
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         // (ApplyHotelRateSnapshot, mas abajo, no toca precios en Hotel: solo atributos.)
@@ -1568,6 +1620,16 @@ public partial class BookingService : IBookingService
         if (req.OperatorPaymentDeadline.HasValue)
             package.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
+        // Opciones A/B/C (decision #1 firmada, 2026-08-11/12, anti-clobber): mismo criterio de arriba.
+        // La resolucion del grupo va por BookingService.ResolveOptionGroupAsync.
+        // Fix B1(a) (review de seguridad, 2026-08-12): rechaza si la reserva ya paso Presupuesto.
+        await EnsureOptionGroupOnlySetDuringPresupuestoAsync(reservaId, req.OptionGroup, ct);
+        EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+        if (req.OptionGroup != null)
+            package.OptionGroup = OptionGroupRules.Normalize(req.OptionGroup);
+        if (req.OptionLabel != null)
+            package.OptionLabel = string.IsNullOrWhiteSpace(req.OptionLabel) ? null : req.OptionLabel.Trim();
+
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (package.NetCost, package.Tax, package.Commission) = await ResolveUpdateCostFieldsAsync(
             serviceType: "Package", serviceId: id,
@@ -1794,6 +1856,16 @@ public partial class BookingService : IBookingService
         // para que la identidad del traslado no revierta a "Transfer "/ruta.
         if (!string.IsNullOrWhiteSpace(req.ProductName))
             transfer.ProductName = req.ProductName.Trim();
+
+        // Opciones A/B/C (decision #1 firmada, 2026-08-11/12, anti-clobber): mismo criterio que
+        // ProductName. La resolucion del grupo va por BookingService.ResolveOptionGroupAsync.
+        // Fix B1(a) (review de seguridad, 2026-08-12): rechaza si la reserva ya paso Presupuesto.
+        await EnsureOptionGroupOnlySetDuringPresupuestoAsync(reservaId, req.OptionGroup, ct);
+        EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+        if (req.OptionGroup != null)
+            transfer.OptionGroup = OptionGroupRules.Normalize(req.OptionGroup);
+        if (req.OptionLabel != null)
+            transfer.OptionLabel = string.IsNullOrWhiteSpace(req.OptionLabel) ? null : req.OptionLabel.Trim();
 
         // ADR-018 Ronda 7: tipo de vehiculo opcional. Sin anti-clobber a proposito: la ficha lo reenvia
         // en cada edicion (round-trip), asi que null/vacio es un borrado legitimo y se persiste null.
@@ -2074,6 +2146,16 @@ public partial class BookingService : IBookingService
         // Auditoria ERP item 5 (anti-clobber): el map IGNORA el deadline; asignamos solo si viene con valor.
         if (req.OperatorPaymentDeadline.HasValue)
             assistance.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
+
+        // Opciones A/B/C (decision #1 firmada, 2026-08-11/12, anti-clobber): mismo criterio de arriba.
+        // La resolucion del grupo va por BookingService.ResolveOptionGroupAsync.
+        // Fix B1(a) (review de seguridad, 2026-08-12): rechaza si la reserva ya paso Presupuesto.
+        await EnsureOptionGroupOnlySetDuringPresupuestoAsync(reservaId, req.OptionGroup, ct);
+        EnsureOptionGroupFieldLengths(req.OptionGroup, req.OptionLabel);
+        if (req.OptionGroup != null)
+            assistance.OptionGroup = OptionGroupRules.Normalize(req.OptionGroup);
+        if (req.OptionLabel != null)
+            assistance.OptionLabel = string.IsNullOrWhiteSpace(req.OptionLabel) ? null : req.OptionLabel.Trim();
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (assistance.NetCost, assistance.Tax, assistance.Commission) = await ResolveUpdateCostFieldsAsync(

@@ -62,6 +62,20 @@ public static class ReservaMoneyCalculator
         return new ReservaMoneySummary(lines);
     }
 
+    /// <summary>
+    /// Opciones A/B/C (decisión #1, 2026-08-11/12): devuelve los nombres de grupo (normalizados) que
+    /// hoy tienen MÁS DE UNA alternativa VIVA en <paramref name="reserva"/>. Función pura, misma fuente
+    /// que usa <see cref="Calculate"/> para no duplicar los totales — la reutiliza también
+    /// <c>ReservaAutoStateService</c> (fix B1 "cinturón", review de seguridad 2026-08-12): el motor
+    /// automático NO confirma una reserva con un grupo todavía ambiguo, aunque el candado de escritura
+    /// (<c>BookingService.EnsureOptionGroupOnlySetDuringPresupuesto</c>) sea la defensa PRINCIPAL.
+    /// </summary>
+    public static HashSet<string> FindAmbiguousOptionGroups(Reserva reserva)
+    {
+        ArgumentNullException.ThrowIfNull(reserva);
+        return OptionGroupRules.FindAmbiguousGroups(BuildOptionGroupServiceInfos(reserva));
+    }
+
     // ============================================================================================
     // Servicios: cada servicio aporta su SalePrice/NetCost a la moneda que el servicio declara.
     // El filtro de "cuenta o no" (cotizado / resuelto) es EXACTAMENTE el mismo de antes; lo unico
@@ -70,47 +84,103 @@ public static class ReservaMoneyCalculator
 
     private static void AccumulateServices(Reserva reserva, Dictionary<string, CurrencyAccumulator> porMoneda)
     {
+        // Opciones A/B/C (decisión #1 firmada, 2026-08-11/12): si dos o más servicios de la reserva
+        // compiten por el mismo OptionGroup (ej. "Hotel A" vs "Hotel B") y todavía no se resolvió cuál
+        // quedó, NINGUNO de los dos suma a los totales — sumar ambos duplicaría la venta/el costo de un
+        // servicio que en los hechos es UNO SOLO (el cliente todavía no eligió). Apenas queda una sola
+        // alternativa viva en el grupo (las demás se cancelaron o se borraron al resolver, ver
+        // BookingService.ResolveOptionGroupAsync), el grupo deja de ser ambiguo y esa única opción
+        // vuelve a contar normal. Ver TravelApi.Domain.Reservations.OptionGroupRules.
+        var ambiguousGroups = FindAmbiguousOptionGroups(reserva);
+
         if (reserva.FlightSegments != null)
             foreach (var flight in reserva.FlightSegments)
+            {
+                if (OptionGroupRules.BelongsToAmbiguousGroup(flight.OptionGroup, ambiguousGroups)) continue;
                 AddService(porMoneda, flight.Currency,
                     quoted: IsQuotedFlight(flight),
                     resolved: ServiceResolutionRules.IsResolved(flight),
                     salePrice: flight.SalePrice, netCost: flight.NetCost);
+            }
 
         if (reserva.HotelBookings != null)
             foreach (var hotel in reserva.HotelBookings)
+            {
+                if (OptionGroupRules.BelongsToAmbiguousGroup(hotel.OptionGroup, ambiguousGroups)) continue;
                 AddService(porMoneda, hotel.Currency,
                     quoted: IsQuotedHotel(hotel),
                     resolved: ServiceResolutionRules.IsResolved(hotel),
                     salePrice: hotel.SalePrice, netCost: hotel.NetCost);
+            }
 
         if (reserva.TransferBookings != null)
             foreach (var transfer in reserva.TransferBookings)
+            {
+                if (OptionGroupRules.BelongsToAmbiguousGroup(transfer.OptionGroup, ambiguousGroups)) continue;
                 AddService(porMoneda, transfer.Currency,
                     quoted: IsQuotedTransfer(transfer),
                     resolved: ServiceResolutionRules.IsResolved(transfer),
                     salePrice: transfer.SalePrice, netCost: transfer.NetCost);
+            }
 
         if (reserva.PackageBookings != null)
             foreach (var package in reserva.PackageBookings)
+            {
+                if (OptionGroupRules.BelongsToAmbiguousGroup(package.OptionGroup, ambiguousGroups)) continue;
                 AddService(porMoneda, package.Currency,
                     quoted: IsQuotedPackage(package),
                     resolved: ServiceResolutionRules.IsResolved(package),
                     salePrice: package.SalePrice, netCost: package.NetCost);
+            }
 
         if (reserva.AssistanceBookings != null)
             foreach (var assistance in reserva.AssistanceBookings)
+            {
+                if (OptionGroupRules.BelongsToAmbiguousGroup(assistance.OptionGroup, ambiguousGroups)) continue;
                 AddService(porMoneda, assistance.Currency,
                     quoted: IsQuotedAssistance(assistance),
                     resolved: ServiceResolutionRules.IsResolved(assistance),
                     salePrice: assistance.SalePrice, netCost: assistance.NetCost);
+            }
 
+        // ServicioReserva (generico/legacy) NO participa de las opciones A/B/C: no tiene alta desde la
+        // ficha moderna (ver ServiciosReservaController, el POST directo esta deprecado con 410 Gone),
+        // asi que nunca puede llegar con OptionGroup cargado. Se mantiene fuera de este mecanismo a
+        // proposito (menos superficie, ver reporte de la obra "PDF de presupuesto").
         if (reserva.Servicios != null)
             foreach (var service in reserva.Servicios)
                 AddService(porMoneda, service.Currency,
                     quoted: IsQuotedGeneric(service),
                     resolved: ServiceResolutionRules.IsResolved(service),
                     salePrice: service.SalePrice, netCost: service.NetCost);
+    }
+
+    /// <summary>
+    /// Junta, de los 5 servicios tipados, (OptionGroup, IsLive) para que <see cref="OptionGroupRules"/>
+    /// calcule qué grupos siguen ambiguos. "Vivo" = cotizado (mismo predicado <c>IsQuotedXxx</c> que ya
+    /// decide si el servicio suma a TotalSale): un servicio cancelado deja de competir por su grupo.
+    /// </summary>
+    private static IEnumerable<OptionGroupRules.OptionGroupServiceInfo> BuildOptionGroupServiceInfos(Reserva reserva)
+    {
+        if (reserva.FlightSegments != null)
+            foreach (var flight in reserva.FlightSegments)
+                yield return new OptionGroupRules.OptionGroupServiceInfo(flight.OptionGroup, IsQuotedFlight(flight));
+
+        if (reserva.HotelBookings != null)
+            foreach (var hotel in reserva.HotelBookings)
+                yield return new OptionGroupRules.OptionGroupServiceInfo(hotel.OptionGroup, IsQuotedHotel(hotel));
+
+        if (reserva.TransferBookings != null)
+            foreach (var transfer in reserva.TransferBookings)
+                yield return new OptionGroupRules.OptionGroupServiceInfo(transfer.OptionGroup, IsQuotedTransfer(transfer));
+
+        if (reserva.PackageBookings != null)
+            foreach (var package in reserva.PackageBookings)
+                yield return new OptionGroupRules.OptionGroupServiceInfo(package.OptionGroup, IsQuotedPackage(package));
+
+        if (reserva.AssistanceBookings != null)
+            foreach (var assistance in reserva.AssistanceBookings)
+                yield return new OptionGroupRules.OptionGroupServiceInfo(assistance.OptionGroup, IsQuotedAssistance(assistance));
     }
 
     /// <summary>

@@ -143,5 +143,15 @@ public class PackageBooking : IHasPublicId
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    // Opciones A/B/C (decisión #1 firmada del dueño, 2026-08-11/12): ver el XML-doc completo en
+    // TravelApi.Domain.Reservations.OptionGroupRules. Replicado igual en los 5 servicios tipados.
+    /// <summary>Nombre corto del grupo de opciones. Null = no es una alternativa de nada.</summary>
+    [MaxLength(60)]
+    public string? OptionGroup { get; set; }
+
+    /// <summary>Etiqueta visible dentro del grupo ("A"/"B"/"C").</summary>
+    [MaxLength(5)]
+    public string? OptionLabel { get; set; }
+
     public int GetExpectedPaxCount() => Adults + Children;
 }

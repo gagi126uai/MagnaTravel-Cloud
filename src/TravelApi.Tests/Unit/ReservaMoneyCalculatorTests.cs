@@ -119,6 +119,97 @@ public class ReservaMoneyCalculatorTests
         Assert.Equal(0m, money.TotalCost);
     }
 
+    // --- Opciones A/B/C (decision #1 firmada, 2026-08-11/12): grupo ambiguo NO suma a los totales ---
+
+    [Fact]
+    public void Calculate_TwoLiveOptionsInSameGroup_NeitherCounts()
+    {
+        var reserva = new Reserva();
+        reserva.HotelBookings.Add(new HotelBooking
+        {
+            Status = "Solicitado", SalePrice = 1000m, NetCost = 700m,
+            OptionGroup = "hoteles", OptionLabel = "A"
+        });
+        reserva.HotelBookings.Add(new HotelBooking
+        {
+            Status = "Solicitado", SalePrice = 1500m, NetCost = 1000m,
+            OptionGroup = "Hoteles", OptionLabel = "B" // mismo grupo, distinta mayuscula a proposito
+        });
+
+        var money = ReservaMoneyCalculator.Calculate(reserva);
+
+        // Ninguna de las dos opciones suma: el cliente todavia no eligio, sumar ambas duplicaria la venta.
+        Assert.Equal(0m, money.TotalSale);
+        Assert.Equal(0m, money.TotalCost);
+    }
+
+    [Fact]
+    public void Calculate_ResolvedGroup_SoleSurvivorCountsNormally()
+    {
+        // Simula el estado DESPUES de resolver el grupo (BookingService.ResolveOptionGroupAsync borro
+        // al perdedor): solo queda una fila con OptionGroup cargado -> ya no es ambiguo, cuenta normal.
+        var reserva = new Reserva();
+        reserva.HotelBookings.Add(new HotelBooking
+        {
+            Status = "Solicitado", SalePrice = 1000m, NetCost = 700m,
+            OptionGroup = "hoteles", OptionLabel = "A"
+        });
+
+        var money = ReservaMoneyCalculator.Calculate(reserva);
+
+        Assert.Equal(1000m, money.TotalSale);
+        Assert.Equal(700m, money.TotalCost);
+    }
+
+    [Fact]
+    public void Calculate_AmbiguousGroup_OtherServicesUnaffected()
+    {
+        // Un grupo ambiguo no debe "contagiar" a servicios de otros grupos ni a servicios sin grupo.
+        var reserva = new Reserva();
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Solicitado", SalePrice = 100m, NetCost = 70m, OptionGroup = "hoteles" });
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Solicitado", SalePrice = 200m, NetCost = 150m, OptionGroup = "hoteles" });
+        reserva.FlightSegments.Add(new FlightSegment { Status = "HK", SalePrice = 500m, NetCost = 300m }); // sin grupo
+
+        var money = ReservaMoneyCalculator.Calculate(reserva);
+
+        Assert.Equal(500m, money.TotalSale); // solo el vuelo (sin grupo) cuenta
+        Assert.Equal(300m, money.TotalCost);
+    }
+
+    [Fact]
+    public void Calculate_ThreeOptionsOneCancelled_RemainingTwoStillAmbiguous()
+    {
+        // A/B/C: si se cancela UNA de las tres pero quedan DOS vivas, el grupo sigue ambiguo.
+        var reserva = new Reserva();
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Solicitado", SalePrice = 100m, NetCost = 70m, OptionGroup = "hoteles", OptionLabel = "A" });
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Solicitado", SalePrice = 200m, NetCost = 150m, OptionGroup = "hoteles", OptionLabel = "B" });
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Cancelado", SalePrice = 300m, NetCost = 250m, OptionGroup = "hoteles", OptionLabel = "C" });
+
+        var money = ReservaMoneyCalculator.Calculate(reserva);
+
+        Assert.Equal(0m, money.TotalSale); // A y B siguen ambiguas; C esta cancelada (no cuenta igual)
+    }
+
+    // Micro-ronda review (2026-08-12): assert DEDICADO de ConfirmedSale. Los tests de arriba ya prueban
+    // TotalSale/TotalCost en 0, pero ConfirmedSale (la deuda EXIGIBLE del cliente, la que gobierna el
+    // saldo/Balance) es "correcto por construccion" — nunca tuvo un assert propio. Si alguien rompe el
+    // filtro de grupo ambiguo justo en la rama de ConfirmedSale (y no en TotalSale), este test lo agarra.
+    [Fact]
+    public void Calculate_AmbiguousGroup_BothResolved_ConfirmedSaleIsZero()
+    {
+        var reserva = new Reserva();
+        // Las DOS opciones estan RESUELTAS (Status = Confirmado -> ServiceResolutionRules.IsResolved =
+        // true para Hotel), asi que si el filtro de grupo ambiguo no alcanzara a ConfirmedSale, esta
+        // plata "se colaria" como deuda exigible del cliente aunque el cliente todavia no eligio.
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", SalePrice = 1000m, NetCost = 700m, OptionGroup = "hoteles", OptionLabel = "A" });
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", SalePrice = 1500m, NetCost = 1000m, OptionGroup = "hoteles", OptionLabel = "B" });
+
+        var money = ReservaMoneyCalculator.Calculate(reserva);
+
+        Assert.Equal(0m, money.ConfirmedSale);
+        Assert.Equal(0m, money.Balance); // ConfirmedSale - TotalPaid = 0 - 0
+    }
+
     // --- BLOQUEANTE 1: vuelo emitido y luego cancelado NO suma a ConfirmedSale ---
 
     [Theory]

@@ -214,4 +214,52 @@ public class FlightSegment : IHasPublicId
     /// nunca se prendia por un vuelo real, solo por el servicio generico viejo).
     /// </summary>
     public ServiceGeographicScope GeographicScope { get; set; } = ServiceGeographicScope.Undefined;
+
+    // ============================================================================================
+    // Obra "PDF de presupuesto" (decisión firmada del dueño, 2026-08-11/12), TANDA 1: campos que solo
+    // existen para que el presupuesto en PDF sea un espejo fiel de lo que el vendedor cargó. Todos
+    // OPCIONALES a propósito (decisión #8): el PDF no obliga a cargar nada que hoy no se carga.
+    // ============================================================================================
+
+    /// <summary>
+    /// Horario de SALIDA de la ida, como hora del día (sin fecha) para que el PDF lo muestre corto
+    /// ("Sale 08:30hs"). Es DISTINTO de <see cref="DepartureTime"/> (que ya tiene fecha+hora completas
+    /// del vuelo real): este campo es solo para vuelos "ida y vuelta" cargados como UNA sola línea de
+    /// producto (ProductName libre, sin tramos estructurados) donde el vendedor igual quiere anotar los
+    /// dos horarios para el presupuesto. Null = no informado.
+    /// </summary>
+    public TimeOnly? OutboundDepartureTime { get; set; }
+
+    /// <summary>Horario de salida de la VUELTA, mismo criterio que <see cref="OutboundDepartureTime"/>.</summary>
+    public TimeOnly? ReturnDepartureTime { get; set; }
+
+    /// <summary>Si el vuelo es directo (sin escalas). Null = no informado (no significa "con escalas").</summary>
+    public bool? IsDirect { get; set; }
+
+    /// <summary>Si la tarifa incluye mochila/bolso bajo el asiento. Null = no informado.</summary>
+    public bool? IncludesBackpack { get; set; }
+
+    /// <summary>Si la tarifa incluye equipaje de mano (carry-on). Null = no informado.</summary>
+    public bool? IncludesCarryOn { get; set; }
+
+    /// <summary>Si la tarifa incluye valija despachada en bodega. Null = no informado.</summary>
+    public bool? IncludesCheckedBag { get; set; }
+
+    // ============================================================================================
+    // Opciones A/B/C (decisión #1 firmada, 2026-08-11/12): ver el XML-doc completo en
+    // TravelApi.Domain.Reservations.OptionGroupRules. Replicado igual en los 5 servicios tipados.
+    // ============================================================================================
+
+    /// <summary>
+    /// Nombre corto del grupo de opciones al que pertenece este vuelo (ej. "aereo-tramo1"). Null = este
+    /// vuelo NO es una alternativa de nada, es el único candidato (caso normal, 100% de las reservas
+    /// hoy). Dos o más servicios con el MISMO OptionGroup (case-insensitive) compiten entre sí: solo
+    /// UNO puede sobrevivir antes de que la reserva pase a "el cliente aceptó".
+    /// </summary>
+    [MaxLength(60)]
+    public string? OptionGroup { get; set; }
+
+    /// <summary>Etiqueta visible de la opción dentro del grupo ("A"/"B"/"C"). Solo tiene sentido si <see cref="OptionGroup"/> está cargado.</summary>
+    [MaxLength(5)]
+    public string? OptionLabel { get; set; }
 }

@@ -117,11 +117,29 @@ public class ReservaAutoStateService
 
             bool allResolved = AllLiveServicesResolved(reserva);
 
+            // Fix B1 "cinturón" (review de seguridad, 2026-08-12): la defensa PRINCIPAL contra grupos de
+            // opciones A/B/C ambiguos es el candado de escritura (BookingService rechaza setear/cambiar
+            // OptionGroup fuera de Presupuesto). Este chequeo es la red de seguridad: aunque ese candado
+            // tuviera un agujero, el motor automático NUNCA confirma una reserva con un grupo todavía
+            // ambiguo (2+ alternativas vivas) — confirmar así dejaría una venta escondida (ninguna de las
+            // opciones del grupo suma a TotalSale, ver ReservaMoneyCalculator). Misma fuente única que el
+            // calculador de plata y el guard "el cliente aceptó" (OptionGroupRules).
+            var ambiguousOptionGroups = ReservaMoneyCalculator.FindAmbiguousOptionGroups(reserva);
+            if (allResolved && ambiguousOptionGroups.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Auto-state: Reserva {ReservaId} tiene todos los servicios resueltos pero quedan grupos de " +
+                    "opciones sin resolver ({Groups}) — NO se confirma automáticamente. Esto no debería pasar " +
+                    "(el candado de escritura debería haberlo evitado); revisar cómo entró.",
+                    reserva.Id, string.Join(", ", ambiguousOptionGroups));
+            }
+
             if (terminalTransitioned)
             {
                 anyChange = true;
             }
-            else if (string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase) && allResolved)
+            else if (string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase)
+                     && allResolved && ambiguousOptionGroups.Count == 0)
             {
                 await ApplyTransitionAsync(reserva, EstadoReserva.Confirmed, "Forward", now,
                     "Todos los servicios resueltos: confirmacion automatica", ct);

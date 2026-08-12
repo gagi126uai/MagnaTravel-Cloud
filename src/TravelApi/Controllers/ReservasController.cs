@@ -564,6 +564,36 @@ public class ReservasController : ControllerBase
 
     // ============= /Phase 2.1 =============
 
+    /// <summary>
+    /// Opciones A/B/C (decisión #1 firmada del dueño, 2026-08-11/12): "resolver grupo de opciones" —
+    /// elige cuál de las alternativas quedó y BORRA (con rastro) las demás, en una sola operación.
+    /// Mismo permiso/ownership que borrar un servicio suelto (reservas.edit).
+    /// </summary>
+    [HttpPost("{publicIdOrLegacyId}/option-groups/resolve")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> ResolveOptionGroup(
+        string publicIdOrLegacyId, [FromBody] ResolveOptionGroupRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _bookingService.ResolveOptionGroupAsync(publicIdOrLegacyId, request, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     // ============= Phase 2.4 — Revert status con autorizacion =============
 
     [HttpGet("{publicIdOrLegacyId}/revert-options")]

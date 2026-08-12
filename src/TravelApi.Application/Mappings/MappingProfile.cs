@@ -132,7 +132,20 @@ public class MappingProfile : Profile
             // en el UPDATE, mismo motivo que ProductName/los deadlines de arriba. Un caller viejo que no
             // conoce este campo manda null y el map lo borraria; el service (UpdateFlightAsync) lo asigna a
             // mano SOLO cuando el texto se reconoce, preservando el ambito ya cargado en cualquier otro caso.
-            .ForMember(dest => dest.GeographicScope, opt => opt.Ignore());
+            .ForMember(dest => dest.GeographicScope, opt => opt.Ignore())
+            // Obra "PDF de presupuesto" (2026-08-11/12, anti-clobber): mismo motivo que arriba. Un front
+            // que todavia no conoce estos campos manda null y el map los borraria; el service (UpdateFlightAsync)
+            // los asigna a mano solo cuando vienen con valor.
+            .ForMember(dest => dest.OutboundDepartureTime, opt => opt.Ignore())
+            .ForMember(dest => dest.ReturnDepartureTime, opt => opt.Ignore())
+            .ForMember(dest => dest.IsDirect, opt => opt.Ignore())
+            .ForMember(dest => dest.IncludesBackpack, opt => opt.Ignore())
+            .ForMember(dest => dest.IncludesCarryOn, opt => opt.Ignore())
+            .ForMember(dest => dest.IncludesCheckedBag, opt => opt.Ignore())
+            // Opciones A/B/C (2026-08-11/12, anti-clobber): idem — el service (UpdateFlightAsync) los
+            // asigna a mano solo cuando vienen con valor.
+            .ForMember(dest => dest.OptionGroup, opt => opt.Ignore())
+            .ForMember(dest => dest.OptionLabel, opt => opt.Ignore());
 
         CreateMap<HotelBooking, HotelBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -173,7 +186,11 @@ public class MappingProfile : Profile
                 opt.MapFrom(src => src.WorkflowStatus);
             })
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
-            .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
+            .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments))
+            // Opciones A/B/C (2026-08-11/12, anti-clobber): el service (UpdateHotelAsync) los asigna a
+            // mano solo cuando vienen con valor. Ver nota gemela en UpdateFlightRequest.
+            .ForMember(dest => dest.OptionGroup, opt => opt.Ignore())
+            .ForMember(dest => dest.OptionLabel, opt => opt.Ignore());
 
         CreateMap<TransferBooking, TransferBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -211,7 +228,11 @@ public class MappingProfile : Profile
             // El service lo asigna a mano solo cuando viene con valor (ver UpdateTransferAsync).
             .ForMember(dest => dest.ProductName, opt => opt.Ignore())
             // Auditoria ERP item 5 (anti-clobber): deadline asignado a mano solo si viene con valor.
-            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore());
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
+            // Opciones A/B/C (2026-08-11/12, anti-clobber): el service (UpdateTransferAsync) los asigna
+            // a mano solo cuando vienen con valor. Ver nota gemela en UpdateFlightRequest.
+            .ForMember(dest => dest.OptionGroup, opt => opt.Ignore())
+            .ForMember(dest => dest.OptionLabel, opt => opt.Ignore());
 
         CreateMap<PackageBooking, PackageBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -251,7 +272,11 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             // ADR-018: EndDate puede venir null (ficha "producto-primero"). Se coalesce a StartDate
             // para que Nights quede en 0 sin inventar fecha (NO se persiste una fecha de fin falsa).
-            .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => ((src.EndDate ?? src.StartDate) - src.StartDate).Days));
+            .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => ((src.EndDate ?? src.StartDate) - src.StartDate).Days))
+            // Opciones A/B/C (2026-08-11/12, anti-clobber): el service (UpdatePackageAsync) los asigna
+            // a mano solo cuando vienen con valor. Ver nota gemela en UpdateFlightRequest.
+            .ForMember(dest => dest.OptionGroup, opt => opt.Ignore())
+            .ForMember(dest => dest.OptionLabel, opt => opt.Ignore());
 
         // AssistanceBooking (Bloque 3). Espejo de HotelBooking: el DTO NO expone Commission
         // (queda solo en la entidad). WorkflowStatus se deriva del Status crudo igual que Hotel.
@@ -287,7 +312,11 @@ public class MappingProfile : Profile
             {
                 opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.WorkflowStatus));
                 opt.MapFrom(src => src.WorkflowStatus);
-            });
+            })
+            // Opciones A/B/C (2026-08-11/12, anti-clobber): el service (UpdateAssistanceAsync) los
+            // asigna a mano solo cuando vienen con valor. Ver nota gemela en UpdateFlightRequest.
+            .ForMember(dest => dest.OptionGroup, opt => opt.Ignore())
+            .ForMember(dest => dest.OptionLabel, opt => opt.Ignore());
 
         // Customers
         CreateMap<Customer, CustomerDto>();

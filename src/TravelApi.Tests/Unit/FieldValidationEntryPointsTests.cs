@@ -478,6 +478,39 @@ public class FieldValidationEntryPointsTests
         Assert.Equal("Av. Colon 123", result.Address);
     }
 
+    // Mejora #3 (review de seguridad "PDF de presupuesto", 2026-08-12): sin este chequeo, un legajo EVT
+    // largo revienta con un error crudo de Npgsql ("value too long for type character varying(50)") en
+    // vez de un mensaje criollo. La columna es varchar(50).
+    [Fact]
+    public async Task UpdateAgencySettingsAsync_LegajoDemasiadoLargo_Bloquea()
+    {
+        await using var context = CreateContext();
+        var service = CreateReportService(context);
+        var legajoDemasiadoLargo = new string('9', 51);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(
+            () => service.UpdateAgencySettingsAsync(
+                new AgencySettings { AgencyName = "Magna Travel", AgencyLicenseNumber = legajoDemasiadoLargo },
+                CancellationToken.None));
+
+        Assert.Equal("El legajo no puede superar los 50 caracteres.", ex.Message);
+        Assert.Equal(0, await context.AgencySettings.CountAsync());
+    }
+
+    [Fact]
+    public async Task UpdateAgencySettingsAsync_LegajoDeLongitudValida_Permite()
+    {
+        await using var context = CreateContext();
+        var service = CreateReportService(context);
+        var legajoValido = new string('9', 50);
+
+        var result = await service.UpdateAgencySettingsAsync(
+            new AgencySettings { AgencyName = "Magna Travel", AgencyLicenseNumber = legajoValido },
+            CancellationToken.None);
+
+        Assert.Equal(legajoValido, result.AgencyLicenseNumber);
+    }
+
     // ===================================================================================================
     // 5) Configuracion de ARCA (AfipService) — punto de venta y condicion fiscal
     // ===================================================================================================
