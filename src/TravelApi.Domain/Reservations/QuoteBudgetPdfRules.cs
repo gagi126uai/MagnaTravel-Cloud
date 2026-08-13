@@ -65,16 +65,39 @@ public static class QuoteBudgetPdfRules
     }
 
     /// <summary>
-    /// Fix post-review (2026-08-12): el monto de una tarifa, CON o SIN etiqueta de moneda. Antes el
-    /// renderer caía a "ARS" cuando el servicio no tenía moneda cargada — eso INVENTA un dato (viola la
-    /// regla espejo, decisión #8: nunca afirmar una moneda que nadie cargó). Con <paramref name="currency"/>
-    /// null/vacío se imprime el número solo, sin código de moneda al lado.
+    /// Fix post-review (2026-08-12) + REHACER maqueta v2 (2026-08-13, ronda "recalcar la maqueta"): el
+    /// monto de una tarifa, CON o SIN etiqueta de moneda. La maqueta firmada pide el MONTO primero y la
+    /// moneda DESPUÉS ("1.450 USD" — antes salía "USD 1.450,00", al revés). Con
+    /// <paramref name="currency"/> null/vacío se imprime el número solo, sin código de moneda al lado
+    /// (regla espejo, decisión #8: nunca afirmar una moneda que nadie cargó).
     /// </summary>
     public static string BuildAmountLabel(decimal amount, string? currency)
     {
-        var formattedAmount = CurrencyDisplayFormat.Amount(amount);
-        return string.IsNullOrWhiteSpace(currency) ? formattedAmount : $"{currency} {formattedAmount}";
+        var formattedAmount = FormatAmountForBudgetPdf(amount);
+        return string.IsNullOrWhiteSpace(currency) ? formattedAmount : $"{formattedAmount} {currency}";
     }
+
+    /// <summary>
+    /// "1.450" (miles con punto, SIN decimales) para un monto redondo; "1.450,50" (coma decimal,
+    /// estilo es-AR) cuando el monto tiene centavos de verdad. La maqueta pide ocultar el ",00" —
+    /// nadie escribe un presupuesto a mano con "1.450,00", se ve mas prolijo "1.450" — pero un centavo
+    /// real (ej. una conversión de moneda que dio 1.450,37) NUNCA se trunca ni se redondea para
+    /// esconderlo. Se redondea a 2 decimales AwayFromZero primero (mismo criterio comercial que
+    /// <see cref="ResolveDisplayPrice"/>) solo para decidir SI hay centavos que mostrar.
+    /// </summary>
+    private static string FormatAmountForBudgetPdf(decimal amount)
+    {
+        var roundedAmount = Math.Round(amount, 2, MidpointRounding.AwayFromZero);
+        var hasRealCents = roundedAmount != Math.Truncate(roundedAmount);
+
+        return hasRealCents
+            ? roundedAmount.ToString("N2", EsArCulture)
+            : roundedAmount.ToString("N0", EsArCulture);
+    }
+
+    // CultureInfo.GetCultureInfo (a diferencia de "new CultureInfo") devuelve una instancia cacheada de
+    // solo lectura — mismo criterio que TravelApi.Domain.Helpers.CurrencyDisplayFormat.
+    private static readonly System.Globalization.CultureInfo EsArCulture = System.Globalization.CultureInfo.GetCultureInfo("es-AR");
 
     /// <summary>
     /// Línea "SALIDA:" ("10/02/2027 al 15/02/2027 – 5 noches."). Usa las fechas YA calculadas de la
@@ -170,31 +193,69 @@ public static class QuoteBudgetPdfRules
         return null;
     }
 
-    /// <summary>
-    /// True si ESTE vuelo tiene el horario estructurado que pide la maqueta "completa" (bloque con
-    /// hora grande + chip "Directo"). Hoy el front no carga <c>OutboundDepartureTime</c>/
-    /// <c>ReturnDepartureTime</c> (campos nuevos de esta obra, aún sin pantalla de carga), así que lo
-    /// normal es que esto dé false y el PDF caiga a la versión simple de una línea.
-    /// </summary>
-    public static bool HasStructuredSchedule(FlightSegment flight)
-        => flight.OutboundDepartureTime.HasValue || flight.ReturnDepartureTime.HasValue;
+    // ============================================================================================
+    // Bloque de vuelos REHECHO a la maqueta v2 (2026-08-13, ronda "recalcar la maqueta"): una fila por
+    // TRAMO (no por "ida y vuelta en una sola línea"). <see cref="FlightSegment.DepartureTime"/> es
+    // OBLIGATORIO desde que existe el segmento (ver CreateFlightRequest) — todo tramo vivo tiene una
+    // hora de salida real, nunca inventada. El resto (llegada, aeropuertos, duración) es opcional y se
+    // omite elemento por elemento cuando el vendedor no lo cargó (regla espejo, decisión #8).
+    //
+    // NOTA para quien retome esta obra: <see cref="FlightSegment.OutboundDepartureTime"/>/
+    // <c>ReturnDepartureTime</c> (agregados en la TANDA 1 de esta misma obra) quedan SIN USAR acá — se
+    // diseñaron para un vuelo "ida y vuelta como una sola línea de producto", pero la maqueta v2 firmada
+    // pide una fila POR TRAMO con hora de llegada y aeropuertos, que esos dos campos no modelan (no
+    // tienen fecha ni llegada). Se resuelve con los campos ORIGINALES del segmento (Origin/Destination/
+    // DepartureTime/ArrivalTime/IsDirect), que sí encajan con "un tramo, una fila". No se borran los
+    // campos de TANDA 1 (fuera del alcance permitido de esta ronda), pero quedan candidatos a revisar
+    // con el arquitecto si de verdad hacen falta.
+    // ============================================================================================
 
     /// <summary>
-    /// Línea simple de un vuelo cuando NO hay horario estructurado cargado (el caso normal hoy):
-    /// nombre del producto o aerolínea+número, más las notas libres del segmento si las hay (el campo
-    /// más cercano a un "horarios y escalas" en texto libre que existe hoy en <see cref="FlightSegment"/>).
+    /// Etiqueta de aeropuerto para UNA punta del tramo ("EZE · BUENOS AIRES"): código IATA + ciudad, en
+    /// mayúsculas (así la pide la maqueta, chica y gris debajo de la hora). Cada dato es independiente:
+    /// si el vendedor cargó uno solo de los dos, se muestra ese solo; sin ninguno de los dos → null (sin
+    /// línea, nunca se inventa un aeropuerto).
     /// </summary>
-    public static string BuildFlightSummaryLine(FlightSegment flight)
+    public static string? BuildFlightAirportLabel(string? code, string? city)
     {
-        var parts = new List<string> { BuildFlightDisplayName(flight) };
+        var trimmedCode = string.IsNullOrWhiteSpace(code) ? null : code.Trim();
+        var trimmedCity = string.IsNullOrWhiteSpace(city) ? null : city.Trim();
 
-        if (!string.IsNullOrWhiteSpace(flight.Notes))
-        {
-            parts.Add(flight.Notes.Trim());
-        }
+        if (trimmedCode is null && trimmedCity is null) return null;
+        if (trimmedCode is null) return trimmedCity!.ToUpperInvariant();
+        if (trimmedCity is null) return trimmedCode.ToUpperInvariant();
 
-        return string.Join(" — ", parts);
+        return $"{trimmedCode} · {trimmedCity}".ToUpperInvariant();
     }
+
+    /// <summary>
+    /// Duración del tramo ("3h 45m") a partir de la salida y la llegada. Null cuando no hay hora de
+    /// llegada cargada (BUG 2, 2026-06-08: existen tramos solo de ida, ver <see cref="FlightSegment.ArrivalTime"/>)
+    /// o cuando el dato cargado es incoherente (llegada antes que salida) — la maqueta omite el número
+    /// entero en vez de mostrar algo inventado o negativo.
+    /// </summary>
+    public static string? BuildFlightDuration(DateTime departureTime, DateTime? arrivalTime)
+    {
+        if (!arrivalTime.HasValue) return null;
+
+        var duration = arrivalTime.Value - departureTime;
+        if (duration < TimeSpan.Zero) return null;
+
+        var hours = (int)duration.TotalHours;
+        var minutes = duration.Minutes;
+
+        return minutes == 0 ? $"{hours}h" : $"{hours}h {minutes}m";
+    }
+
+    /// <summary>
+    /// True si la llegada cae un día calendario DESPUÉS de la salida (el vuelo cruza medianoche) — la
+    /// maqueta lo marca con un "+1" chiquito en rojo al lado de la hora de llegada. A diferencia de
+    /// <see cref="FlightSegment.OutboundDepartureTime"/>/<c>ReturnDepartureTime</c> (solo HORA, sin
+    /// fecha), <see cref="FlightSegment.DepartureTime"/>/<c>ArrivalTime</c> sí tienen fecha real: el
+    /// cálculo es exacto, no una suposición.
+    /// </summary>
+    public static bool IsNextDayArrival(DateTime departureTime, DateTime? arrivalTime)
+        => arrivalTime.HasValue && arrivalTime.Value.Date > departureTime.Date;
 
     /// <summary>
     /// Destino que se imprime centrado bajo la banda del PDF. Sale del PRIMER hotel vivo (su ciudad) o,

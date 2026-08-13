@@ -48,7 +48,7 @@ export default function BudgetPdfSettingsTab() {
   // nuevos) — lo necesitamos para reenviarlo completo al PUT (ver el comentario de arriba).
   const [settingsCompletos, setSettingsCompletos] = useState(null);
   const [legajoEvt, setLegajoEvt] = useState("");
-  const [colorBanda, setColorBanda] = useState("#1d4ed8");
+  const [colorBanda, setColorBanda] = useState("#0e3a4f");
   const [guardandoIdentidad, setGuardandoIdentidad] = useState(false);
 
   // ─── Card 3: Formas de pago (la PLANTILLA de Configuración, no el texto de cada
@@ -65,7 +65,7 @@ export default function BudgetPdfSettingsTab() {
         if (cancelado) return;
         setSettingsCompletos(data);
         setLegajoEvt(data?.agencyLicenseNumber || "");
-        setColorBanda(data?.pdfBandColorHex || "#1d4ed8");
+        setColorBanda(data?.pdfBandColorHex || "#0e3a4f");
         setTextoFormasDePago(data?.budgetPaymentTermsTemplate || "");
       } catch {
         // Degradación elegante: si el GET falla, el formulario queda con los defaults —

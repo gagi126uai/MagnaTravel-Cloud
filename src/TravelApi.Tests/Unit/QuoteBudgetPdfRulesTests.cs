@@ -83,13 +83,15 @@ public class QuoteBudgetPdfRulesTests
 
     // ================================================================================
     // BuildAmountLabel: fix post-review (2026-08-12) — nunca inventar "ARS" cuando el servicio no
-    // tiene moneda cargada.
+    // tiene moneda cargada. REHECHO a la maqueta v2 (2026-08-13): el monto va PRIMERO y la moneda
+    // DESPUÉS ("1.450 USD", no "USD 1.450,00"), y los centavos ",00" se ocultan cuando el monto es
+    // redondo (un centavo REAL, en cambio, nunca se esconde).
     // ================================================================================
 
     [Fact]
-    public void BuildAmountLabel_WithCurrency_PrefixesIt()
+    public void BuildAmountLabel_WithCurrency_AmountFirstThenCurrency()
     {
-        Assert.Equal("USD 1.000,00", QuoteBudgetPdfRules.BuildAmountLabel(1000m, "USD"));
+        Assert.Equal("1.000 USD", QuoteBudgetPdfRules.BuildAmountLabel(1000m, "USD"));
     }
 
     [Fact]
@@ -97,8 +99,26 @@ public class QuoteBudgetPdfRulesTests
     {
         var label = QuoteBudgetPdfRules.BuildAmountLabel(1000m, null);
 
-        Assert.Equal("1.000,00", label);
+        Assert.Equal("1.000", label);
         Assert.DoesNotContain("ARS", label);
+    }
+
+    [Fact]
+    public void BuildAmountLabel_RoundAmount_OmitsZeroCents()
+    {
+        Assert.Equal("1.450 USD", QuoteBudgetPdfRules.BuildAmountLabel(1450.00m, "USD"));
+    }
+
+    [Fact]
+    public void BuildAmountLabel_WithRealCents_KeepsThem_NeverHidesRealMoney()
+    {
+        Assert.Equal("1.450,50 USD", QuoteBudgetPdfRules.BuildAmountLabel(1450.50m, "USD"));
+    }
+
+    [Fact]
+    public void BuildAmountLabel_ThousandsUseDotSeparator()
+    {
+        Assert.Equal("12.345 ARS", QuoteBudgetPdfRules.BuildAmountLabel(12345m, "ARS"));
     }
 
     // ================================================================================
@@ -320,5 +340,88 @@ public class QuoteBudgetPdfRulesTests
         Assert.Contains(result, c => c.Kind == BudgetConditionBlockKind.Hotels);
         Assert.Contains(result, c => c.Kind == BudgetConditionBlockKind.General);
         Assert.DoesNotContain(result, c => c.Kind == BudgetConditionBlockKind.Flights);
+    }
+
+    // ================================================================================
+    // Vuelos REHECHOS a la maqueta v2 (2026-08-13): fila por tramo con
+    // BuildFlightAirportLabel/BuildFlightDuration/IsNextDayArrival. Espejo: cada elemento se omite
+    // solo, nunca se inventa un aeropuerto/duración que no se cargó.
+    // ================================================================================
+
+    [Fact]
+    public void BuildFlightAirportLabel_BothLoaded_JoinsCodeAndCity_Uppercase()
+    {
+        Assert.Equal("EZE · BUENOS AIRES", QuoteBudgetPdfRules.BuildFlightAirportLabel("eze", "Buenos Aires"));
+    }
+
+    [Fact]
+    public void BuildFlightAirportLabel_OnlyOneLoaded_ShowsThatOne()
+    {
+        Assert.Equal("EZE", QuoteBudgetPdfRules.BuildFlightAirportLabel("eze", null));
+        Assert.Equal("BUENOS AIRES", QuoteBudgetPdfRules.BuildFlightAirportLabel(null, "Buenos Aires"));
+    }
+
+    [Fact]
+    public void BuildFlightAirportLabel_NeitherLoaded_ReturnsNull()
+    {
+        Assert.Null(QuoteBudgetPdfRules.BuildFlightAirportLabel(null, "   "));
+    }
+
+    [Fact]
+    public void BuildFlightDuration_NoArrivalLoaded_ReturnsNull_NeverInventsDuration()
+    {
+        // BUG 2 (2026-06-08): tramos solo de ida existen de verdad, no es un dato faltante por error.
+        Assert.Null(QuoteBudgetPdfRules.BuildFlightDuration(new DateTime(2027, 2, 10, 8, 30, 0), null));
+    }
+
+    [Fact]
+    public void BuildFlightDuration_SameDay_FormatsHoursAndMinutes()
+    {
+        var departure = new DateTime(2027, 2, 10, 8, 30, 0);
+        var arrival = new DateTime(2027, 2, 10, 12, 45, 0);
+
+        Assert.Equal("4h 15m", QuoteBudgetPdfRules.BuildFlightDuration(departure, arrival));
+    }
+
+    [Fact]
+    public void BuildFlightDuration_ExactHours_OmitsZeroMinutes()
+    {
+        var departure = new DateTime(2027, 2, 10, 8, 0, 0);
+        var arrival = new DateTime(2027, 2, 10, 11, 0, 0);
+
+        Assert.Equal("3h", QuoteBudgetPdfRules.BuildFlightDuration(departure, arrival));
+    }
+
+    [Fact]
+    public void BuildFlightDuration_ArrivalBeforeDeparture_ReturnsNull_NeverNegative()
+    {
+        var departure = new DateTime(2027, 2, 10, 22, 0, 0);
+        var arrival = new DateTime(2027, 2, 10, 8, 0, 0);
+
+        Assert.Null(QuoteBudgetPdfRules.BuildFlightDuration(departure, arrival));
+    }
+
+    [Fact]
+    public void IsNextDayArrival_ArrivalOnLaterCalendarDate_ReturnsTrue()
+    {
+        var departure = new DateTime(2027, 2, 10, 23, 30, 0);
+        var arrival = new DateTime(2027, 2, 11, 6, 15, 0);
+
+        Assert.True(QuoteBudgetPdfRules.IsNextDayArrival(departure, arrival));
+    }
+
+    [Fact]
+    public void IsNextDayArrival_SameCalendarDate_ReturnsFalse()
+    {
+        var departure = new DateTime(2027, 2, 10, 8, 30, 0);
+        var arrival = new DateTime(2027, 2, 10, 12, 45, 0);
+
+        Assert.False(QuoteBudgetPdfRules.IsNextDayArrival(departure, arrival));
+    }
+
+    [Fact]
+    public void IsNextDayArrival_NoArrivalLoaded_ReturnsFalse()
+    {
+        Assert.False(QuoteBudgetPdfRules.IsNextDayArrival(new DateTime(2027, 2, 10, 8, 30, 0), null));
     }
 }

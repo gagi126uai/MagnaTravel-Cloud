@@ -26,12 +26,45 @@ public class QuotePdfService : IQuotePdfService
     private static readonly Color DirectChipBorderColor = Color.FromHex("#9fd6c6");
     private static readonly Color DirectChipTextColor = Color.FromHex("#2c8a6e");
     private static readonly Color DirectChipBackgroundColor = Color.FromHex("#f4fbf8");
+    private static readonly Color FlightMutedTextColor = Color.FromHex("#8a9199");
+    private static readonly Color NextDayBadgeColor = Color.FromHex("#d65a5a");
+    private static readonly Color FooterGrayColor = Color.FromHex("#555555");
 
-    // NOTA (alcance de esta tanda): la maqueta pide un superíndice rojo "+1" cuando el vuelo llega al
-    // día siguiente. Hoy OutboundDepartureTime/ReturnDepartureTime son solo HORA (TimeOnly, sin fecha) —
-    // no hay forma de calcular "cruza medianoche" sin inventar una fecha. Se deja sin implementar a
-    // propósito (regla madre: nunca se inventa un dato) hasta que exista un campo de fecha real para
-    // ese cálculo.
+    // ============================================================================================
+    // Íconos de la maqueta v2 (2026-08-13, ronda "recalcar la maqueta"): dibujados como SVG inline, NO
+    // como texto con glifos ("★", "✈"). BUG CRÍTICO de la versión anterior: la fuente por defecto de
+    // QuestPDF (ver nota de DefaultTextStyle mas abajo, el contenedor de producción no instala fuentes
+    // de Microsoft) no trae esos glifos, y salían como cuadraditos rotos ("tofu"). Un SVG con un <path>
+    // explícito SIEMPRE dibuja la forma pedida, sin depender de qué fuente esté instalada.
+    // ============================================================================================
+
+    // Ícono compuesto (círculo gris + avioncito) de la fila de vuelos. QuestPDF no trae un "círculo"
+    // como forma primitiva lista para usar — es más simple y robusto resolver las DOS formas (círculo +
+    // avión) en UN solo SVG chico que dibujarlas con dos elementos QuestPDF distintos superpuestos.
+    private const string FlightIconSvg = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30">
+          <circle cx="15" cy="15" r="15" fill="#f1f3f5"/>
+          <g transform="translate(7,7) scale(0.6667)">
+            <path fill="#1c6b8a" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2.5 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+          </g>
+        </svg>
+        """;
+
+    // Estrella de 5 puntas rellena, color de marca. Una por punto en <c>ComposeStarRating</c>.
+    private const string StarSvg = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <path fill="#1c6b8a" d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+        </svg>
+        """;
+
+    // Ícono genérico de equipaje (una valija): esta tanda no distingue mochila/carry-on/valija con
+    // dibujos distintos, alcanza con marcar CUÁNTOS conceptos de equipaje incluye la tarifa (uno por
+    // flag en true). Ver ComposeFlightRow.
+    private const string LuggageSvg = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <path fill="#8a9199" d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM10 4h4v2h-4V4zm10 15H4V8h16v11z"/>
+        </svg>
+        """;
 
     public QuotePdfService()
     {
@@ -213,51 +246,88 @@ public class QuotePdfService : IQuotePdfService
         {
             foreach (var flight in flights)
             {
-                box.Item().PaddingBottom(4).Element(e => ComposeFlightRow(e, flight));
+                box.Item().PaddingBottom(8).Element(e => ComposeFlightRow(e, flight));
             }
         });
     }
 
+    /// <summary>
+    /// Una fila por TRAMO (maqueta v2, 2026-08-13): [ícono avión] [hora salida + aeropuerto] [chip
+    /// "Directo"] [hora llegada + aeropuerto, con "+1" si cruza medianoche] [duración] [íconos de
+    /// equipaje a la derecha]. <see cref="FlightSegment.DepartureTime"/> es el único dato garantizado
+    /// (obligatorio desde que el segmento existe); todo lo demás se omite en silencio si no está cargado
+    /// — nunca un placeholder inventado (regla espejo, decisión #8).
+    /// </summary>
     private void ComposeFlightRow(IContainer container, FlightSegment flight)
     {
-        // Hoy el front no carga los horarios estructurados (OutboundDepartureTime/ReturnDepartureTime):
-        // la version "completa" queda lista para cuando exista esa pantalla, pero el camino normal hoy
-        // es la version simple de una linea.
-        if (!QuoteBudgetPdfRules.HasStructuredSchedule(flight))
-        {
-            container.Text(QuoteBudgetPdfRules.BuildFlightSummaryLine(flight)).FontSize(13);
-            return;
-        }
+        var departureAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Origin, flight.OriginCity);
+        var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Destination, flight.DestinationCity);
+        var durationLabel = QuoteBudgetPdfRules.BuildFlightDuration(flight.DepartureTime, flight.ArrivalTime);
+        var showsArrivalBlock = flight.ArrivalTime.HasValue || arrivalAirportLabel is not null;
 
         container.Row(row =>
         {
-            row.RelativeItem().Column(times =>
-            {
-                if (flight.OutboundDepartureTime.HasValue)
-                    times.Item().Text($"Sale {flight.OutboundDepartureTime:HH:mm}hs").Bold().FontSize(16);
-                if (flight.ReturnDepartureTime.HasValue)
-                    times.Item().Text($"Vuelve {flight.ReturnDepartureTime:HH:mm}hs").Bold().FontSize(16);
+            row.ConstantItem(30).Height(30).Svg(FlightIconSvg);
 
-                var originDestino = BuildRouteLabel(flight);
-                if (!string.IsNullOrWhiteSpace(originDestino))
-                    times.Item().Text(originDestino).FontSize(10).FontColor(Colors.Grey.Darken1);
+            row.ConstantItem(10);
+
+            row.AutoItem().Column(departure =>
+            {
+                departure.Item().Text($"{flight.DepartureTime:HH:mm}").Bold().FontSize(15);
+                if (departureAirportLabel is not null)
+                    departure.Item().Text(departureAirportLabel).FontSize(10.5f).FontColor(FlightMutedTextColor);
             });
 
             if (flight.IsDirect == true)
             {
-                row.ConstantItem(70).AlignMiddle().AlignCenter()
+                row.ConstantItem(12);
+                row.AutoItem().AlignMiddle()
                     .Border(1).BorderColor(DirectChipBorderColor).Background(DirectChipBackgroundColor)
-                    .Padding(4).Text("Directo").FontSize(9).FontColor(DirectChipTextColor);
+                    .PaddingHorizontal(8).PaddingVertical(4).Text("Directo").FontSize(11).FontColor(DirectChipTextColor);
+            }
+
+            if (showsArrivalBlock)
+            {
+                row.ConstantItem(20);
+                row.AutoItem().Column(arrival =>
+                {
+                    if (flight.ArrivalTime.HasValue)
+                    {
+                        arrival.Item().Row(arrivalTimeRow =>
+                        {
+                            arrivalTimeRow.AutoItem().Text($"{flight.ArrivalTime:HH:mm}").Bold().FontSize(15);
+
+                            if (QuoteBudgetPdfRules.IsNextDayArrival(flight.DepartureTime, flight.ArrivalTime))
+                            {
+                                arrivalTimeRow.AutoItem().PaddingLeft(2).AlignTop()
+                                    .Text("+1").FontSize(8).FontColor(NextDayBadgeColor);
+                            }
+                        });
+                    }
+
+                    if (arrivalAirportLabel is not null)
+                        arrival.Item().Text(arrivalAirportLabel).FontSize(10.5f).FontColor(FlightMutedTextColor);
+                });
+            }
+
+            if (durationLabel is not null)
+            {
+                row.ConstantItem(14);
+                row.AutoItem().AlignMiddle().Text(durationLabel).FontSize(11.5f).FontColor(FlightMutedTextColor);
+            }
+
+            // Empuja los íconos de equipaje al borde derecho de la fila (item relativo vacío = separador
+            // elástico, patrón estándar de QuestPDF para "lo que sigue va pegado a la derecha").
+            row.RelativeItem();
+
+            var includedBaggageCount = new[] { flight.IncludesBackpack, flight.IncludesCarryOn, flight.IncludesCheckedBag }
+                .Count(includesFlag => includesFlag == true);
+
+            for (var i = 0; i < includedBaggageCount; i++)
+            {
+                row.ConstantItem(14).PaddingLeft(3).AlignMiddle().Svg(LuggageSvg);
             }
         });
-    }
-
-    private string? BuildRouteLabel(FlightSegment flight)
-    {
-        var origin = flight.OriginCity ?? flight.Origin;
-        var destination = flight.DestinationCity ?? flight.Destination;
-        if (string.IsNullOrWhiteSpace(origin) && string.IsNullOrWhiteSpace(destination)) return null;
-        return $"{origin} → {destination}";
     }
 
     // ============================================================================================
@@ -282,11 +352,18 @@ public class QuotePdfService : IQuotePdfService
     {
         container.Column(column =>
         {
-            var titleWithStars = hotel.StarRating is > 0
-                ? $"{hotel.HotelName}  {new string('★', Math.Min(hotel.StarRating.Value, 5))}"
-                : hotel.HotelName;
+            // Maqueta v2 (2026-08-13): peso NORMAL a propósito — la negrita gruesa del intento anterior
+            // fue el error que el dueño marcó ("nada que ver"); la maqueta es fina y elegante.
+            column.Item().Row(titleRow =>
+            {
+                titleRow.AutoItem().Text(hotel.HotelName).FontSize(17).FontColor(DestinationTitleColor);
 
-            column.Item().Text(titleWithStars).FontSize(17).FontColor(DestinationTitleColor).Bold();
+                if (hotel.StarRating is > 0)
+                {
+                    titleRow.ConstantItem(8);
+                    titleRow.AutoItem().AlignMiddle().Element(e => ComposeStarRating(e, Math.Min(hotel.StarRating.Value, 5)));
+                }
+            });
 
             var roomLine = BuildRoomLine(hotel);
             if (!string.IsNullOrWhiteSpace(roomLine))
@@ -308,6 +385,23 @@ public class QuotePdfService : IQuotePdfService
         if (!string.IsNullOrWhiteSpace(hotel.RoomType)) parts.Add(hotel.RoomType);
         if (!string.IsNullOrWhiteSpace(hotel.RoomCategory)) parts.Add(hotel.RoomCategory);
         return parts.Count == 0 ? null : string.Join(" – ", parts);
+    }
+
+    /// <summary>
+    /// BUG CRÍTICO de la versión anterior (2026-08-13): las estrellas salían como cuadraditos rotos
+    /// ("▯▯▯▯") porque la fuente por defecto de QuestPDF no tiene el glifo "★". Se dibujan como SVG (una
+    /// por punto) en vez de texto — un SVG con un &lt;path&gt; explícito siempre tiene la forma pedida,
+    /// sin depender de qué fuente esté instalada en el contenedor de producción.
+    /// </summary>
+    private void ComposeStarRating(IContainer container, int starCount)
+    {
+        container.Row(row =>
+        {
+            for (var i = 0; i < starCount; i++)
+            {
+                row.ConstantItem(13).PaddingRight(1).Svg(StarSvg);
+            }
+        });
     }
 
     /// <summary>"TARIFA POR PERSONA: **{monto} {moneda}**" o "TARIFA TOTAL:" según corresponda. El monto
@@ -430,8 +524,11 @@ public class QuotePdfService : IQuotePdfService
     }
 
     // ============================================================================================
-    // PIE: razón social (color de banda) + legajo + dirección/teléfono. Cada parte se omite si su
-    // dato de origen está vacío.
+    // PIE (REHECHO a la maqueta v2, 2026-08-13): 3 líneas, todas centradas.
+    //   1) nombre de la agencia en ITÁLICA, color de banda (antes salía en negrita sin itálica — muere).
+    //   2) "Legajo XXXX" si está cargado (antes NO se imprimía — muere).
+    //   3) "dirección · Tel teléfono" (antes usaba "|" como separador y sin la palabra "Tel").
+    // Cada línea se omite si su dato de origen está vacío — nunca un placeholder inventado.
     // ============================================================================================
 
     private void ComposeFooter(IContainer container, AgencySettings agencySettings)
@@ -445,20 +542,23 @@ public class QuotePdfService : IQuotePdfService
             var mainName = !string.IsNullOrWhiteSpace(agencySettings.AgencyName) ? agencySettings.AgencyName : agencySettings.LegalName;
             if (!string.IsNullOrWhiteSpace(mainName))
             {
-                column.Item().AlignCenter().Text(mainName).FontSize(11).Bold().FontColor(bandColor);
+                column.Item().AlignCenter().Text(mainName).FontSize(14).Italic().FontColor(bandColor);
             }
 
-            var footerLineParts = new List<string>();
             if (!string.IsNullOrWhiteSpace(agencySettings.AgencyLicenseNumber))
-                footerLineParts.Add($"Legajo {agencySettings.AgencyLicenseNumber}");
-            if (!string.IsNullOrWhiteSpace(agencySettings.Address))
-                footerLineParts.Add(agencySettings.Address);
-            if (!string.IsNullOrWhiteSpace(agencySettings.Phone))
-                footerLineParts.Add(agencySettings.Phone);
-
-            if (footerLineParts.Count > 0)
             {
-                column.Item().AlignCenter().Text(string.Join(" | ", footerLineParts)).FontSize(10.5f).FontColor(Colors.Grey.Darken1);
+                column.Item().AlignCenter().Text($"Legajo {agencySettings.AgencyLicenseNumber}").FontSize(10.5f).FontColor(FooterGrayColor);
+            }
+
+            var addressAndPhoneParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(agencySettings.Address))
+                addressAndPhoneParts.Add(agencySettings.Address!.Trim());
+            if (!string.IsNullOrWhiteSpace(agencySettings.Phone))
+                addressAndPhoneParts.Add($"Tel {agencySettings.Phone!.Trim()}");
+
+            if (addressAndPhoneParts.Count > 0)
+            {
+                column.Item().AlignCenter().Text(string.Join(" · ", addressAndPhoneParts)).FontSize(10.5f).FontColor(FooterGrayColor);
             }
         });
     }
@@ -484,8 +584,13 @@ public class QuotePdfService : IQuotePdfService
         page.Header().Column(headerColumn =>
         {
             headerColumn.Item().Element(e => ComposeBand(e, bandColor, logoBytes, heightPt: 54));
-            headerColumn.Item().PaddingTop(14).AlignCenter().Text("INFORMACIÓN IMPORTANTE")
-                .FontSize(20).Bold().FontColor(DestinationTitleColor);
+
+            // REHECHO a la maqueta v2 (2026-08-13): antes salía gigante (20), centrado y en negrita
+            // simple — el dueño lo marcó como "muere". El título de página 2 lleva el MISMO estilo de
+            // sección que "FORMAS DE PAGO." en la página 1 (negrita + subrayado + itálica, 13,
+            // alineado a la izquierda), con el mismo padding horizontal que el resto del contenido.
+            headerColumn.Item().PaddingTop(14).PaddingHorizontal(30)
+                .Text("INFORMACIÓN IMPORTANTE").Bold().Underline().Italic().FontSize(13);
         });
 
         page.Content().PaddingHorizontal(30).PaddingTop(14).Column(content =>
@@ -494,7 +599,14 @@ public class QuotePdfService : IQuotePdfService
             {
                 content.Item().PaddingBottom(10).Column(section =>
                 {
-                    section.Item().Text(BudgetConditionBlockKindText.ToDisplayText(block.Kind)).Bold().FontSize(13);
+                    // Títulos de bloque en ITÁLICA (no negrita): la maqueta reserva la negrita+subrayado
+                    // para el título de sección de arriba, los bloques van más discretos.
+                    // "Aereos" es la CLAVE de la API (sin tilde a propósito, no se puede cambiar);
+                    // al cliente se le muestra la palabra bien escrita.
+                    var tituloBloque = block.Kind == BudgetConditionBlockKind.Flights
+                        ? "Aéreos"
+                        : BudgetConditionBlockKindText.ToDisplayText(block.Kind);
+                    section.Item().Text(tituloBloque).Italic().FontSize(12.5f);
                     section.Item().PaddingTop(2).Text(block.Text).FontSize(12.5f);
                 });
             }
