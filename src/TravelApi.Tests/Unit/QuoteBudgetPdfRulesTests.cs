@@ -477,61 +477,88 @@ public class QuoteBudgetPdfRulesTests
         Assert.False(QuoteBudgetPdfRules.LooksLikeMissingSchedule(departure, arrival));
     }
 
-    [Fact]
-    public void ShouldShowDepartureTime_BothExactMidnight_ReturnsFalse()
-    {
-        var departure = new DateTime(2027, 3, 1, 0, 0, 0);
-        var arrival = new DateTime(2027, 3, 2, 0, 0, 0);
+    // ================================================================================
+    // Corrección ronda 3 (2026-08-13, pedido directo del dueño): un tramo CARGADO se dibuja SIEMPRE — la
+    // ronda anterior escondía el tramo entero cuando parecía "sin horario cargado" y el dueño lo
+    // rechazó. BuildFlightDepartureTimeText/BuildFlightArrivalTimeText reemplazan a los booleanos
+    // ShouldShowDepartureTime/ShouldShowArrivalTime: ahora en vez de "mostrar sí/no", deciden "mostrar la
+    // hora o la fecha corta" — el lado de salida ya NUNCA devuelve null.
+    // ================================================================================
 
-        Assert.False(QuoteBudgetPdfRules.ShouldShowDepartureTime(departure, arrival));
+    [Fact]
+    public void BuildFlightDepartureTimeText_RealSchedule_ReturnsHour()
+    {
+        var departure = new DateTime(2027, 3, 1, 8, 30, 0);
+        var arrival = new DateTime(2027, 3, 1, 12, 45, 0);
+
+        Assert.Equal("08:30", QuoteBudgetPdfRules.BuildFlightDepartureTimeText(departure, arrival));
     }
 
     [Fact]
-    public void ShouldShowDepartureTime_NoArrivalLoaded_ReturnsTrue_DepartureAloneIsAlwaysReal()
+    public void BuildFlightDepartureTimeText_NoArrivalLoaded_ReturnsHour_DepartureAloneIsAlwaysReal()
     {
         // Sin llegada cargada no hay forma de sospechar "sin horario" -- DepartureTime es obligatorio
-        // desde que el tramo existe, se respeta siempre que no haya otra hora con la que compararlo.
-        Assert.True(QuoteBudgetPdfRules.ShouldShowDepartureTime(new DateTime(2027, 3, 1, 0, 0, 0), null));
+        // desde que el tramo existe y se respeta como hora real siempre que no haya otro dato con el que
+        // compararlo.
+        var departure = new DateTime(2027, 3, 1, 0, 0, 0);
+
+        Assert.Equal("00:00", QuoteBudgetPdfRules.BuildFlightDepartureTimeText(departure, null));
     }
 
     [Fact]
-    public void ShouldShowDepartureTime_RealSchedule_ReturnsTrue()
+    public void BuildFlightDepartureTimeText_BothExactMidnight_ReturnsDate_NeverHidesTheSegment()
     {
-        var departure = new DateTime(2027, 3, 1, 8, 30, 0);
-        var arrival = new DateTime(2027, 3, 1, 12, 45, 0);
-
-        Assert.True(QuoteBudgetPdfRules.ShouldShowDepartureTime(departure, arrival));
-    }
-
-    [Fact]
-    public void ShouldShowArrivalTime_SameInstant_ReturnsFalse()
-    {
-        var moment = new DateTime(2027, 3, 1, 9, 0, 0);
-        Assert.False(QuoteBudgetPdfRules.ShouldShowArrivalTime(moment, moment));
-    }
-
-    [Fact]
-    public void ShouldShowArrivalTime_BothExactMidnight_ReturnsFalse()
-    {
+        // El caso real de negocio: el vendedor cargó la FECHA del vuelo sin la hora. Antes esto hacía
+        // desaparecer la fila entera (rechazado por el dueño) -- ahora se imprime la fecha en el lugar de
+        // la hora, el tramo sigue apareciendo siempre.
         var departure = new DateTime(2027, 3, 1, 0, 0, 0);
         var arrival = new DateTime(2027, 3, 2, 0, 0, 0);
 
-        Assert.False(QuoteBudgetPdfRules.ShouldShowArrivalTime(departure, arrival));
+        Assert.Equal("01/03/2027", QuoteBudgetPdfRules.BuildFlightDepartureTimeText(departure, arrival));
     }
 
     [Fact]
-    public void ShouldShowArrivalTime_NoArrivalLoaded_ReturnsFalse()
-    {
-        Assert.False(QuoteBudgetPdfRules.ShouldShowArrivalTime(new DateTime(2027, 3, 1, 8, 30, 0), null));
-    }
-
-    [Fact]
-    public void ShouldShowArrivalTime_RealSchedule_ReturnsTrue()
+    public void BuildFlightArrivalTimeText_RealSchedule_ReturnsHour()
     {
         var departure = new DateTime(2027, 3, 1, 8, 30, 0);
         var arrival = new DateTime(2027, 3, 1, 12, 45, 0);
 
-        Assert.True(QuoteBudgetPdfRules.ShouldShowArrivalTime(departure, arrival));
+        Assert.Equal("12:45", QuoteBudgetPdfRules.BuildFlightArrivalTimeText(departure, arrival));
+    }
+
+    [Fact]
+    public void BuildFlightArrivalTimeText_NoArrivalLoaded_ReturnsNull()
+    {
+        Assert.Null(QuoteBudgetPdfRules.BuildFlightArrivalTimeText(new DateTime(2027, 3, 1, 8, 30, 0), null));
+    }
+
+    [Fact]
+    public void BuildFlightArrivalTimeText_SameInstant_ReturnsNull()
+    {
+        var moment = new DateTime(2027, 3, 1, 9, 0, 0);
+        Assert.Null(QuoteBudgetPdfRules.BuildFlightArrivalTimeText(moment, moment));
+    }
+
+    [Fact]
+    public void BuildFlightArrivalTimeText_BothExactMidnight_DifferentDates_ReturnsArrivalDate()
+    {
+        // El vendedor cargó un RANGO de fechas sin hora (10/02 -> 11/02): el lado de la llegada muestra
+        // su propia fecha, distinta de la de salida.
+        var departure = new DateTime(2027, 2, 10, 0, 0, 0);
+        var arrival = new DateTime(2027, 2, 11, 0, 0, 0);
+
+        Assert.Equal("11/02/2027", QuoteBudgetPdfRules.BuildFlightArrivalTimeText(departure, arrival));
+    }
+
+    [Fact]
+    public void BuildFlightArrivalTimeText_BothExactMidnight_SameDate_ReturnsNull_DepartureSideAlreadyShowsIt()
+    {
+        // Mismo día en las dos puntas, ambas a medianoche exacta -- no tiene sentido repetir la misma
+        // fecha del lado de la llegada, ya alcanza con la del lado de salida.
+        var departure = new DateTime(2027, 3, 1, 0, 0, 0);
+        var arrival = new DateTime(2027, 3, 1, 0, 0, 0); // mismo dia Y mismo instante (tambien cubierto por IsSameInstantArrival).
+
+        Assert.Null(QuoteBudgetPdfRules.BuildFlightArrivalTimeText(departure, arrival));
     }
 
     [Fact]
@@ -570,32 +597,4 @@ public class QuoteBudgetPdfRulesTests
         Assert.False(QuoteBudgetPdfRules.IsNextDayArrival(moment, moment));
     }
 
-    [Fact]
-    public void HasAnyVisibleFlightRowData_NothingLoaded_ReturnsFalse_RowMustBeOmitted()
-    {
-        var hasVisibleData = QuoteBudgetPdfRules.HasAnyVisibleFlightRowData(
-            showDepartureTime: false, showArrivalTime: false, departureAirportLabel: null, arrivalAirportLabel: null, durationLabel: null);
-
-        Assert.False(hasVisibleData);
-    }
-
-    [Fact]
-    public void HasAnyVisibleFlightRowData_OnlyAirportsLoaded_ReturnsTrue_RowStillRenders()
-    {
-        // Caso "medianoche exacta las dos puntas, pero con aeropuertos cargados": la fila se dibuja SOLO
-        // con lo que existe (aeropuertos), sin horas.
-        var hasVisibleData = QuoteBudgetPdfRules.HasAnyVisibleFlightRowData(
-            showDepartureTime: false, showArrivalTime: false, departureAirportLabel: "EZE", arrivalAirportLabel: null, durationLabel: null);
-
-        Assert.True(hasVisibleData);
-    }
-
-    [Fact]
-    public void HasAnyVisibleFlightRowData_OnlyDepartureTimeLoaded_ReturnsTrue()
-    {
-        var hasVisibleData = QuoteBudgetPdfRules.HasAnyVisibleFlightRowData(
-            showDepartureTime: true, showArrivalTime: false, departureAirportLabel: null, arrivalAirportLabel: null, durationLabel: null);
-
-        Assert.True(hasVisibleData);
-    }
 }

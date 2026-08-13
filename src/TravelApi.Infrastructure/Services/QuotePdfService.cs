@@ -268,13 +268,13 @@ public class QuotePdfService : IQuotePdfService
 
     private void ComposeVuelos(ColumnDescriptor column, Reserva reserva, HashSet<string> ambiguousGroups)
     {
+        // Corrección ronda 3 (2026-08-13, pedido directo del dueño): un tramo CARGADO se dibuja SIEMPRE.
+        // La ronda anterior filtraba tramos "sin dato real" y los hacía desaparecer de la caja entera —
+        // el dueño lo rechazó: cargó un vuelo (con su fecha) y el PDF se lo comió. La caja existe si hay
+        // AL MENOS UN tramo vivo, sin filtrar por "cuánto contenido visible tiene la fila" — ver
+        // ComposeFlightRow, que ahora siempre imprime algo del lado de salida (hora real o fecha).
         var flights = (reserva.FlightSegments ?? new List<FlightSegment>())
             .Where(f => IsLive(f.Status, isFlight: true) && !OptionGroupRules.BelongsToAmbiguousGroup(f.OptionGroup, ambiguousGroups))
-            // Fix ronda 2 (2026-08-13): un tramo cargado sin ningún dato real (sin hora, sin aeropuertos,
-            // sin duración) no entra a la caja — regla espejo, nunca se dibuja una fila "00:00 ... +1 · 24h"
-            // inventada por el formulario. Si NINGÚN tramo pasa este filtro, la caja entera queda vacía y
-            // el chequeo de abajo (flights.Count == 0) hace que no se dibuje nada.
-            .Where(HasAnyVisibleFlightData)
             .ToList();
 
         if (flights.Count == 0) return;
@@ -288,28 +288,19 @@ public class QuotePdfService : IQuotePdfService
         });
     }
 
-    /// <summary>Ver <see cref="QuoteBudgetPdfRules.HasAnyVisibleFlightRowData"/> — mismo cálculo que usa <see cref="ComposeFlightRow"/> para decidir qué dibuja, reusado acá para decidir si el tramo entra a la lista.</summary>
-    private static bool HasAnyVisibleFlightData(FlightSegment flight)
-    {
-        var departureAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Origin, flight.OriginCity);
-        var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Destination, flight.DestinationCity);
-        var showDepartureTime = QuoteBudgetPdfRules.ShouldShowDepartureTime(flight.DepartureTime, flight.ArrivalTime);
-        var showArrivalTime = QuoteBudgetPdfRules.ShouldShowArrivalTime(flight.DepartureTime, flight.ArrivalTime);
-        var durationLabel = QuoteBudgetPdfRules.BuildFlightDuration(flight.DepartureTime, flight.ArrivalTime);
-
-        return QuoteBudgetPdfRules.HasAnyVisibleFlightRowData(
-            showDepartureTime, showArrivalTime, departureAirportLabel, arrivalAirportLabel, durationLabel);
-    }
-
     /// <summary>
-    /// Una fila por TRAMO (maqueta v2, 2026-08-13): [ícono avión] [hora salida + aeropuerto] [chip
-    /// "Directo"] [hora llegada + aeropuerto, con "+1" si cruza medianoche] [duración] [íconos de
-    /// equipaje a la derecha]. Cada elemento se omite en silencio si no está cargado — nunca un
-    /// placeholder inventado (regla espejo, decisión #8). <see cref="FlightSegment.DepartureTime"/> es
-    /// obligatorio desde que el segmento existe, PERO fix ronda 2 (2026-08-13): si el tramo entero parece
-    /// cargado "sin horario real" (las dos puntas justo a medianoche, ver
-    /// <see cref="QuoteBudgetPdfRules.LooksLikeMissingSchedule"/>), tampoco se imprime la hora de salida —
-    /// mostrar "00:00" cuando nadie cargó un horario real es inventar un dato, igual que con la llegada.
+    /// Una fila por TRAMO (maqueta v2, 2026-08-13): [ícono avión] [hora u fecha de salida + aeropuerto]
+    /// [chip "Directo"] [hora/fecha de llegada + aeropuerto, con "+1" si cruza medianoche DE VERDAD]
+    /// [duración] [íconos de equipaje a la derecha]. El lado de SALIDA se dibuja SIEMPRE (nunca
+    /// desaparece la fila): <see cref="FlightSegment.DepartureTime"/> es obligatorio desde que el
+    /// segmento existe.
+    ///
+    /// <para><b>Corrección ronda 3 (2026-08-13, pedido directo del dueño)</b>: cuando el vendedor cargó
+    /// la FECHA del vuelo pero no la hora (las dos puntas quedan exactas a medianoche, ver
+    /// <see cref="QuoteBudgetPdfRules.LooksLikeMissingSchedule"/>), en el lugar de la hora se imprime la
+    /// fecha corta ("10/02/2027") — "un servicio cargado siempre aparece" le gana a "sin dato no se
+    /// muestra". El resto de los elementos (aeropuertos, chip, valijas) sigue igual: se omiten en
+    /// silencio si no están cargados, nunca un placeholder inventado (regla espejo, decisión #8).</para>
     /// </summary>
     private void ComposeFlightRow(IContainer container, FlightSegment flight)
     {
@@ -317,15 +308,12 @@ public class QuotePdfService : IQuotePdfService
         var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Destination, flight.DestinationCity);
         var durationLabel = QuoteBudgetPdfRules.BuildFlightDuration(flight.DepartureTime, flight.ArrivalTime);
 
-        // Fix ronda 2 (2026-08-13): antes la hora de salida se imprimía SIEMPRE (se asumía que
-        // DepartureTime, al ser obligatorio en el segmento, era siempre un dato real) y la de llegada se
-        // imprimía con solo chequear ArrivalTime.HasValue. Eso rendía basura ("00:00 ... 00:00 +1 · 24h")
-        // cuando el tramo se cargó sin horarios de verdad. Ahora las dos horas pasan por la regla espejo
-        // de QuoteBudgetPdfRules antes de dibujarse.
-        var showDepartureTime = QuoteBudgetPdfRules.ShouldShowDepartureTime(flight.DepartureTime, flight.ArrivalTime);
-        var showArrivalTime = QuoteBudgetPdfRules.ShouldShowArrivalTime(flight.DepartureTime, flight.ArrivalTime);
-        var showsDepartureBlock = showDepartureTime || departureAirportLabel is not null;
-        var showsArrivalBlock = showArrivalTime || arrivalAirportLabel is not null;
+        // BuildFlightDepartureTimeText NUNCA devuelve null (hora real o fecha de fallback) — el lado de
+        // salida ya no tiene un "if" de visibilidad, se dibuja siempre. El de llegada sí puede ser null
+        // (tramo solo de ida, llegada-relleno, o "mismo día" en el caso de fecha-sin-hora).
+        var departureTimeText = QuoteBudgetPdfRules.BuildFlightDepartureTimeText(flight.DepartureTime, flight.ArrivalTime);
+        var arrivalTimeText = QuoteBudgetPdfRules.BuildFlightArrivalTimeText(flight.DepartureTime, flight.ArrivalTime);
+        var showsArrivalBlock = arrivalTimeText is not null || arrivalAirportLabel is not null;
 
         container.Row(row =>
         {
@@ -333,16 +321,12 @@ public class QuotePdfService : IQuotePdfService
 
             row.ConstantItem(10);
 
-            if (showsDepartureBlock)
+            row.AutoItem().Column(departure =>
             {
-                row.AutoItem().Column(departure =>
-                {
-                    if (showDepartureTime)
-                        departure.Item().Text($"{flight.DepartureTime:HH:mm}").Bold().FontSize(15);
-                    if (departureAirportLabel is not null)
-                        departure.Item().Text(departureAirportLabel).FontSize(10.5f).FontColor(FlightMutedTextColor);
-                });
-            }
+                departure.Item().Text(departureTimeText).Bold().FontSize(15);
+                if (departureAirportLabel is not null)
+                    departure.Item().Text(departureAirportLabel).FontSize(10.5f).FontColor(FlightMutedTextColor);
+            });
 
             if (flight.IsDirect == true)
             {
@@ -357,11 +341,11 @@ public class QuotePdfService : IQuotePdfService
                 row.ConstantItem(20);
                 row.AutoItem().Column(arrival =>
                 {
-                    if (showArrivalTime)
+                    if (arrivalTimeText is not null)
                     {
                         arrival.Item().Row(arrivalTimeRow =>
                         {
-                            arrivalTimeRow.AutoItem().Text($"{flight.ArrivalTime:HH:mm}").Bold().FontSize(15);
+                            arrivalTimeRow.AutoItem().Text(arrivalTimeText).Bold().FontSize(15);
 
                             if (QuoteBudgetPdfRules.IsNextDayArrival(flight.DepartureTime, flight.ArrivalTime))
                             {

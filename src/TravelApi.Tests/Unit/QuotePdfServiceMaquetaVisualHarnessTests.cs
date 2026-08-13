@@ -177,6 +177,9 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
     [Fact]
     public void GenerateQuotePdf_EmptyDataScenario_NoInventedGarbage_SavedForVisualInspection()
     {
+        // Corrección ronda 3 (2026-08-13): el vuelo de este escenario (fecha cargada, hora NO cargada)
+        // ahora DEBE aparecer en el PDF con la fecha en el lugar de la hora -- ya no desaparece la fila
+        // entera (eso fue lo que el dueño rechazó de la ronda anterior).
         var reserva = BuildEmptyDataScenarioReserva();
 
         var pdfBytes = new QuotePdfService().GenerateQuotePdf(
@@ -338,10 +341,15 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
     }
 
     /// <summary>
-    /// Escenario (b) del barrido: vuelo sin horarios reales (reproduce el bug EXACTO de PROD: las dos
-    /// puntas a medianoche en punto) + hotel sin estrellas ni detalle de habitación + servicio sin moneda
-    /// cargada. Nada de esto debe imprimir basura ("00:00", "+1" inventado, "ARS" inventada, "Habitación:
-    /// Doble" cuando nadie cargó el detalle).
+    /// Escenario (b) del barrido: vuelo con FECHA cargada pero SIN hora (reproduce el caso real de PROD:
+    /// las dos puntas a medianoche en punto — el vendedor cargó la fecha del tramo, no la hora) + hotel
+    /// sin estrellas ni detalle de habitación + servicio sin moneda cargada.
+    ///
+    /// <para>Corrección ronda 3 (2026-08-13): el vuelo YA NO debe desaparecer (eso rompía "un servicio
+    /// cargado siempre aparece") — debe imprimirse con la FECHA en el lugar de la hora ("01/05/2027" del
+    /// lado de salida, "02/05/2027" del lado de llegada, sin "+1" ni duración inventados). El resto del
+    /// escenario sigue igual: nada de "ARS" inventada, nada de "Habitación: Doble" cuando nadie cargó el
+    /// detalle.</para>
     /// </summary>
     private static Reserva BuildEmptyDataScenarioReserva()
     {
@@ -354,7 +362,7 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                 {
                     Status = "NN",
                     DepartureTime = new DateTime(2027, 5, 1, 0, 0, 0),
-                    ArrivalTime = new DateTime(2027, 5, 2, 0, 0, 0), // "medianoche de relleno" -- antes rendia "00:00 00:00 +1 · 24h".
+                    ArrivalTime = new DateTime(2027, 5, 2, 0, 0, 0), // fecha sin hora -- debe imprimirse como "01/05/2027 ... 02/05/2027", sin "+1" ni duracion.
                 },
             },
             HotelBookings = new List<HotelBooking>
