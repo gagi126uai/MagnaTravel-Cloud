@@ -20,8 +20,10 @@ namespace TravelApi.Tests.Unit;
 /// </summary>
 public class QuotePdfServiceMaquetaVisualHarnessTests
 {
-    private const string OutputPath =
-        @"C:\Users\THERMA~1\AppData\Local\Temp\claude\D--Documentos-MagnaTravel-MagnaTravel-Cloud\8494bd8f-6783-4f09-8165-6960cc23b5b6\scratchpad\pdf-maqueta-check.pdf";
+    // Carpeta temporal DEL SISTEMA (no una ruta fija de una máquina puntual): el mismo test corre
+    // en Windows local y en el runner Linux del CI sin rutas que no existan.
+    private static readonly string OutputPath =
+        Path.Combine(Path.GetTempPath(), "pdf-maqueta-check.pdf");
 
     [Fact]
     public void GenerateQuotePdf_MaquetaSampleData_ProducesTwoPagePdf_SavedForVisualInspection()
