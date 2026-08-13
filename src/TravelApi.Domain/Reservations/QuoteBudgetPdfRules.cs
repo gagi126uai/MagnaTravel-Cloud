@@ -230,13 +230,16 @@ public static class QuoteBudgetPdfRules
 
     /// <summary>
     /// Duración del tramo ("3h 45m") a partir de la salida y la llegada. Null cuando no hay hora de
-    /// llegada cargada (BUG 2, 2026-06-08: existen tramos solo de ida, ver <see cref="FlightSegment.ArrivalTime"/>)
-    /// o cuando el dato cargado es incoherente (llegada antes que salida) — la maqueta omite el número
-    /// entero en vez de mostrar algo inventado o negativo.
+    /// llegada cargada (BUG 2, 2026-06-08: existen tramos solo de ida, ver <see cref="FlightSegment.ArrivalTime"/>),
+    /// cuando el dato cargado es incoherente (llegada antes que salida), o cuando la llegada NO es un dato
+    /// real (<see cref="IsSameInstantArrival"/>/<see cref="LooksLikeMissingSchedule"/>) — la maqueta omite
+    /// el número entero en vez de mostrar algo inventado, negativo o absurdo ("24h" de un tramo sin cargar).
     /// </summary>
     public static string? BuildFlightDuration(DateTime departureTime, DateTime? arrivalTime)
     {
         if (!arrivalTime.HasValue) return null;
+        if (IsSameInstantArrival(departureTime, arrivalTime.Value)) return null;
+        if (LooksLikeMissingSchedule(departureTime, arrivalTime.Value)) return null;
 
         var duration = arrivalTime.Value - departureTime;
         if (duration < TimeSpan.Zero) return null;
@@ -253,9 +256,78 @@ public static class QuoteBudgetPdfRules
     /// <see cref="FlightSegment.OutboundDepartureTime"/>/<c>ReturnDepartureTime</c> (solo HORA, sin
     /// fecha), <see cref="FlightSegment.DepartureTime"/>/<c>ArrivalTime</c> sí tienen fecha real: el
     /// cálculo es exacto, no una suposición.
+    ///
+    /// <para>Fix ronda 2 (2026-08-13): se agrega el guard de <see cref="LooksLikeMissingSchedule"/> — sin
+    /// él, un tramo sin horarios cargados (salida 00:00 día 1, "llegada" 00:00 día 2 puesta por el
+    /// formulario) mostraba un "+1" inventado, porque la fecha SÍ es "el día siguiente" aunque ninguna de
+    /// las dos horas sea real.</para>
     /// </summary>
     public static bool IsNextDayArrival(DateTime departureTime, DateTime? arrivalTime)
-        => arrivalTime.HasValue && arrivalTime.Value.Date > departureTime.Date;
+    {
+        if (!arrivalTime.HasValue) return false;
+        if (IsSameInstantArrival(departureTime, arrivalTime.Value)) return false;
+        if (LooksLikeMissingSchedule(departureTime, arrivalTime.Value)) return false;
+
+        return arrivalTime.Value.Date > departureTime.Date;
+    }
+
+    /// <summary>
+    /// True cuando la llegada es EXACTAMENTE el mismo instante que la salida (misma fecha y hora, al
+    /// segundo). Pasa cuando el formulario copia la salida como valor de arranque de la llegada y el
+    /// vendedor nunca lo completó de verdad — ningún vuelo real llega en el mismo segundo en que sale.
+    /// En ese caso NO hay llegada real: se omite la hora de llegada, el "+1" y la duración (mostrarlos
+    /// sería inventar un dato que nadie cargó, regla espejo decisión #8).
+    /// </summary>
+    public static bool IsSameInstantArrival(DateTime departureTime, DateTime arrivalTime)
+        => arrivalTime == departureTime;
+
+    /// <summary>
+    /// True cuando NI la salida NI la llegada tienen una hora real cargada: las dos caen justo a las
+    /// 00:00:00 en punto. Bug reportado por el dueño (12/08): un tramo cargado sin horarios rendía
+    /// "00:00 [Directo] 00:00 +1 · 24h" — el formulario completa 00:00 por default cuando el vendedor no
+    /// carga nada, y esas dos medianoches "de relleno" (aunque tengan fechas de calendario distintas)
+    /// generaban un "+1" y una duración de 24h inventados.
+    ///
+    /// <para>Una medianoche real SOLA (una única punta, la otra con hora distinta de 00:00) sigue siendo
+    /// un dato válido y se respeta — por eso se exige que las DOS estén en punto para sospechar "tramo sin
+    /// cargar", nunca alcanza con una sola.</para>
+    /// </summary>
+    public static bool LooksLikeMissingSchedule(DateTime departureTime, DateTime arrivalTime)
+        => departureTime.TimeOfDay == TimeSpan.Zero && arrivalTime.TimeOfDay == TimeSpan.Zero;
+
+    /// <summary>
+    /// True si corresponde imprimir la hora de SALIDA del tramo. Se omite únicamente en el caso
+    /// "medianoche exacta en las dos puntas" (<see cref="LooksLikeMissingSchedule"/>) — el resto de las
+    /// veces <see cref="FlightSegment.DepartureTime"/> es un dato real garantizado desde que el segmento
+    /// existe (ver <c>CreateFlightRequest</c>), nunca se omite por las dudas.
+    /// </summary>
+    public static bool ShouldShowDepartureTime(DateTime departureTime, DateTime? arrivalTime)
+        => !(arrivalTime.HasValue && LooksLikeMissingSchedule(departureTime, arrivalTime.Value));
+
+    /// <summary>
+    /// True si corresponde imprimir la hora de LLEGADA del tramo: hace falta que haya una llegada
+    /// cargada, que no sea el mismo instante que la salida (<see cref="IsSameInstantArrival"/>) y que las
+    /// dos puntas no parezcan "sin horario cargado" (<see cref="LooksLikeMissingSchedule"/>).
+    /// </summary>
+    public static bool ShouldShowArrivalTime(DateTime departureTime, DateTime? arrivalTime)
+    {
+        if (!arrivalTime.HasValue) return false;
+        if (IsSameInstantArrival(departureTime, arrivalTime.Value)) return false;
+        if (LooksLikeMissingSchedule(departureTime, arrivalTime.Value)) return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// True si el tramo tiene ALGÚN dato real para dibujar (hora de salida, hora de llegada, algún
+    /// aeropuerto, o una duración calculable). Fix ronda 2 (2026-08-13, decisión firmada): un tramo
+    /// cargado sin ningún dato real no debe imprimir una fila vacía o con basura — si esto da false, el
+    /// renderer omite la fila entera (y si NINGÚN tramo tiene datos, la caja de vuelos completa no
+    /// aparece).
+    /// </summary>
+    public static bool HasAnyVisibleFlightRowData(
+        bool showDepartureTime, bool showArrivalTime, string? departureAirportLabel, string? arrivalAirportLabel, string? durationLabel)
+        => showDepartureTime || showArrivalTime || departureAirportLabel is not null || arrivalAirportLabel is not null || durationLabel is not null;
 
     /// <summary>
     /// Destino que se imprime centrado bajo la banda del PDF. Sale del PRIMER hotel vivo (su ciudad) o,

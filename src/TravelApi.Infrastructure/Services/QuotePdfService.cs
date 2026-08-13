@@ -30,6 +30,16 @@ public class QuotePdfService : IQuotePdfService
     private static readonly Color NextDayBadgeColor = Color.FromHex("#d65a5a");
     private static readonly Color FooterGrayColor = Color.FromHex("#555555");
 
+    // Fix ronda 2 (2026-08-13): margen izquierdo inconsistente reportado por el dueño en PROD — las
+    // líneas SALIDA/EQUIPAJE/TRASLADO/HOTELES arrancaban pegadas al borde de la hoja porque vivían en
+    // page.Header() (sin padding propio) mientras el resto del cuerpo (caja de vuelos, hoteles, formas de
+    // pago) vivía en page.Content() con 30pt de margen. La maqueta firmada usa el MISMO padding en TODO
+    // el cuerpo, equivalente a 56px de HTML (56px * 72pt/96px = 42pt, conversión estándar CSS→PDF). Se
+    // deja como constante única para que ningún bloque nuevo pueda volver a quedar desalineado por usar
+    // un número "a mano" distinto. NO se aplica a la banda de color (ComposeBand): esa es decorativa y
+    // va de borde a borde a propósito, igual que en la maqueta.
+    private const float ContentHorizontalPadding = 42f;
+
     // ============================================================================================
     // Íconos de la maqueta v2 (2026-08-13, ronda "recalcar la maqueta"): dibujados como SVG inline, NO
     // como texto con glifos ("★", "✈"). BUG CRÍTICO de la versión anterior: la fuente por defecto de
@@ -57,14 +67,36 @@ public class QuotePdfService : IQuotePdfService
         </svg>
         """;
 
-    // Ícono genérico de equipaje (una valija): esta tanda no distingue mochila/carry-on/valija con
-    // dibujos distintos, alcanza con marcar CUÁNTOS conceptos de equipaje incluye la tarifa (uno por
-    // flag en true). Ver ComposeFlightRow.
-    private const string LuggageSvg = """
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-          <path fill="#8a9199" d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM10 4h4v2h-4V4zm10 15H4V8h16v11z"/>
-        </svg>
-        """;
+    // ============================================================================================
+    // Íconos de equipaje (fix ronda 2.1, 2026-08-13): el dueño rechazó la valija única repetida ("esa
+    // valija de mierda... yo te mostré algo y vos mostrás otra cosa") — la maqueta pide TRES conceptos
+    // DISTINTOS y bien dibujados, SIEMPRE los tres presentes en la fila del vuelo, en este orden: mochila
+    // (equipaje personal), equipaje de mano (carry-on, dibujado MÁS CHICO), valija despachada (mismo
+    // dibujo que el carry-on, a tamaño completo — se distinguen por tamaño, como 🧳 chico vs grande).
+    // El que SÍ está incluido en la tarifa va gris pleno; el que NO, va "fantasma" (mismo path, bien
+    // tenue) — así el cliente ve de un vistazo qué entra y qué no, en vez de mostrar solo los que aplican.
+    // ============================================================================================
+
+    private const string BackpackPathData =
+        "M20 8v12c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V8c0-1.86 1.28-3.41 3-3.86V2h3v2h4V2h3v2.14c1.72.45 3 2 3 3.86zM6 12v2h10v2h2v-4H6z";
+
+    private const string LuggagePathData =
+        "M17 6h-2V3c0-.55-.45-1-1-1h-4c-.55 0-1 .45-1 1v3H7c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2 0 .55.45 1 1 1s1-.45 1-1h6c0 .55.45 1 1 1s1-.45 1-1c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM9.5 18H8V9h1.5v9zm3.25 0h-1.5V9h1.5v9zm.75-12h-3V3.5h3V6zm3 12H15V9h1.5v9z";
+
+    /// <summary>
+    /// Arma el SVG de un ícono de equipaje con el estado incluido/no-incluido. Se genera el string acá
+    /// (en vez de tener 2 constantes fijas por ícono) porque QuestPDF no permite "teñir" un SVG ya armado
+    /// — hay que mandarle el color/opacidad correctos DESDE el path original en cada llamada.
+    /// </summary>
+    private static string BuildLuggageIconSvg(string pathData, bool included)
+    {
+        var fillOpacity = included ? "1" : "0.22"; // "fantasma": mismo dibujo, bien tenue -- nunca se oculta el ícono entero.
+        return $"""
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+              <path fill="#5b6067" fill-opacity="{fillOpacity}" d="{pathData}"/>
+            </svg>
+            """;
+    }
 
     public QuotePdfService()
     {
@@ -139,10 +171,10 @@ public class QuotePdfService : IQuotePdfService
         page.Header().Column(headerColumn =>
         {
             headerColumn.Item().Element(e => ComposeBand(e, bandColor, logoBytes, heightPt: 74));
-            headerColumn.Item().PaddingTop(14).Element(e => ComposeDestinoYDatos(e, reserva));
+            headerColumn.Item().PaddingTop(14).PaddingHorizontal(ContentHorizontalPadding).Element(e => ComposeDestinoYDatos(e, reserva));
         });
 
-        page.Content().PaddingHorizontal(30).PaddingTop(10).Column(content =>
+        page.Content().PaddingHorizontal(ContentHorizontalPadding).PaddingTop(10).Column(content =>
         {
             ComposeVuelos(content, reserva, ambiguousGroups);
             ComposeHoteles(content, reserva, ambiguousGroups, porPersona, cantidadPasajerosCargados);
@@ -238,6 +270,11 @@ public class QuotePdfService : IQuotePdfService
     {
         var flights = (reserva.FlightSegments ?? new List<FlightSegment>())
             .Where(f => IsLive(f.Status, isFlight: true) && !OptionGroupRules.BelongsToAmbiguousGroup(f.OptionGroup, ambiguousGroups))
+            // Fix ronda 2 (2026-08-13): un tramo cargado sin ningún dato real (sin hora, sin aeropuertos,
+            // sin duración) no entra a la caja — regla espejo, nunca se dibuja una fila "00:00 ... +1 · 24h"
+            // inventada por el formulario. Si NINGÚN tramo pasa este filtro, la caja entera queda vacía y
+            // el chequeo de abajo (flights.Count == 0) hace que no se dibuje nada.
+            .Where(HasAnyVisibleFlightData)
             .ToList();
 
         if (flights.Count == 0) return;
@@ -251,19 +288,44 @@ public class QuotePdfService : IQuotePdfService
         });
     }
 
+    /// <summary>Ver <see cref="QuoteBudgetPdfRules.HasAnyVisibleFlightRowData"/> — mismo cálculo que usa <see cref="ComposeFlightRow"/> para decidir qué dibuja, reusado acá para decidir si el tramo entra a la lista.</summary>
+    private static bool HasAnyVisibleFlightData(FlightSegment flight)
+    {
+        var departureAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Origin, flight.OriginCity);
+        var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Destination, flight.DestinationCity);
+        var showDepartureTime = QuoteBudgetPdfRules.ShouldShowDepartureTime(flight.DepartureTime, flight.ArrivalTime);
+        var showArrivalTime = QuoteBudgetPdfRules.ShouldShowArrivalTime(flight.DepartureTime, flight.ArrivalTime);
+        var durationLabel = QuoteBudgetPdfRules.BuildFlightDuration(flight.DepartureTime, flight.ArrivalTime);
+
+        return QuoteBudgetPdfRules.HasAnyVisibleFlightRowData(
+            showDepartureTime, showArrivalTime, departureAirportLabel, arrivalAirportLabel, durationLabel);
+    }
+
     /// <summary>
     /// Una fila por TRAMO (maqueta v2, 2026-08-13): [ícono avión] [hora salida + aeropuerto] [chip
     /// "Directo"] [hora llegada + aeropuerto, con "+1" si cruza medianoche] [duración] [íconos de
-    /// equipaje a la derecha]. <see cref="FlightSegment.DepartureTime"/> es el único dato garantizado
-    /// (obligatorio desde que el segmento existe); todo lo demás se omite en silencio si no está cargado
-    /// — nunca un placeholder inventado (regla espejo, decisión #8).
+    /// equipaje a la derecha]. Cada elemento se omite en silencio si no está cargado — nunca un
+    /// placeholder inventado (regla espejo, decisión #8). <see cref="FlightSegment.DepartureTime"/> es
+    /// obligatorio desde que el segmento existe, PERO fix ronda 2 (2026-08-13): si el tramo entero parece
+    /// cargado "sin horario real" (las dos puntas justo a medianoche, ver
+    /// <see cref="QuoteBudgetPdfRules.LooksLikeMissingSchedule"/>), tampoco se imprime la hora de salida —
+    /// mostrar "00:00" cuando nadie cargó un horario real es inventar un dato, igual que con la llegada.
     /// </summary>
     private void ComposeFlightRow(IContainer container, FlightSegment flight)
     {
         var departureAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Origin, flight.OriginCity);
         var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Destination, flight.DestinationCity);
         var durationLabel = QuoteBudgetPdfRules.BuildFlightDuration(flight.DepartureTime, flight.ArrivalTime);
-        var showsArrivalBlock = flight.ArrivalTime.HasValue || arrivalAirportLabel is not null;
+
+        // Fix ronda 2 (2026-08-13): antes la hora de salida se imprimía SIEMPRE (se asumía que
+        // DepartureTime, al ser obligatorio en el segmento, era siempre un dato real) y la de llegada se
+        // imprimía con solo chequear ArrivalTime.HasValue. Eso rendía basura ("00:00 ... 00:00 +1 · 24h")
+        // cuando el tramo se cargó sin horarios de verdad. Ahora las dos horas pasan por la regla espejo
+        // de QuoteBudgetPdfRules antes de dibujarse.
+        var showDepartureTime = QuoteBudgetPdfRules.ShouldShowDepartureTime(flight.DepartureTime, flight.ArrivalTime);
+        var showArrivalTime = QuoteBudgetPdfRules.ShouldShowArrivalTime(flight.DepartureTime, flight.ArrivalTime);
+        var showsDepartureBlock = showDepartureTime || departureAirportLabel is not null;
+        var showsArrivalBlock = showArrivalTime || arrivalAirportLabel is not null;
 
         container.Row(row =>
         {
@@ -271,12 +333,16 @@ public class QuotePdfService : IQuotePdfService
 
             row.ConstantItem(10);
 
-            row.AutoItem().Column(departure =>
+            if (showsDepartureBlock)
             {
-                departure.Item().Text($"{flight.DepartureTime:HH:mm}").Bold().FontSize(15);
-                if (departureAirportLabel is not null)
-                    departure.Item().Text(departureAirportLabel).FontSize(10.5f).FontColor(FlightMutedTextColor);
-            });
+                row.AutoItem().Column(departure =>
+                {
+                    if (showDepartureTime)
+                        departure.Item().Text($"{flight.DepartureTime:HH:mm}").Bold().FontSize(15);
+                    if (departureAirportLabel is not null)
+                        departure.Item().Text(departureAirportLabel).FontSize(10.5f).FontColor(FlightMutedTextColor);
+                });
+            }
 
             if (flight.IsDirect == true)
             {
@@ -291,7 +357,7 @@ public class QuotePdfService : IQuotePdfService
                 row.ConstantItem(20);
                 row.AutoItem().Column(arrival =>
                 {
-                    if (flight.ArrivalTime.HasValue)
+                    if (showArrivalTime)
                     {
                         arrival.Item().Row(arrivalTimeRow =>
                         {
@@ -320,13 +386,16 @@ public class QuotePdfService : IQuotePdfService
             // elástico, patrón estándar de QuestPDF para "lo que sigue va pegado a la derecha").
             row.RelativeItem();
 
-            var includedBaggageCount = new[] { flight.IncludesBackpack, flight.IncludesCarryOn, flight.IncludesCheckedBag }
-                .Count(includesFlag => includesFlag == true);
-
-            for (var i = 0; i < includedBaggageCount; i++)
-            {
-                row.ConstantItem(14).PaddingLeft(3).AlignMiddle().Svg(LuggageSvg);
-            }
+            // Fix ronda 2.1 (2026-08-13, rechazo del dueño): los TRES íconos van SIEMPRE, en este orden
+            // (mochila, equipaje de mano, valija despachada) — el que no está incluido en la tarifa se ve
+            // "fantasma" (tenue) en vez de desaparecer, para que el cliente vea de un vistazo qué entra y
+            // qué no. Antes se dibujaba la MISMA valija genérica una vez por cada flag en true.
+            row.ConstantItem(15).PaddingLeft(4).AlignMiddle()
+                .Svg(BuildLuggageIconSvg(BackpackPathData, included: flight.IncludesBackpack == true));
+            row.ConstantItem(13).PaddingLeft(3).AlignMiddle() // equipaje de mano: ~85% del tamaño de la valija despachada.
+                .Svg(BuildLuggageIconSvg(LuggagePathData, included: flight.IncludesCarryOn == true));
+            row.ConstantItem(15).PaddingLeft(3).AlignMiddle() // valija despachada: mismo dibujo que el de mano, tamaño completo.
+                .Svg(BuildLuggageIconSvg(LuggagePathData, included: flight.IncludesCheckedBag == true));
         });
     }
 
@@ -499,7 +568,9 @@ public class QuotePdfService : IQuotePdfService
                             : $"Opción {candidate.OptionLabel} — {candidate.DisplayName}";
 
                         row.RelativeItem().Text(label).FontSize(13);
-                        row.ConstantItem(140).AlignRight().Element(e =>
+                        // 200pt y no menos: "TARIFA POR PERSONA: 1.450 USD" entra entera. Con 140 la
+                        // moneda se caía sola a la línea de abajo (defecto visto en el barrido 13/08).
+                        row.ConstantItem(200).AlignRight().Element(e =>
                             ComposeTarifaLine(e, candidate.SalePrice, candidate.Currency, porPersona, cantidadPasajerosCargados));
                     });
                 }
@@ -589,11 +660,11 @@ public class QuotePdfService : IQuotePdfService
             // simple — el dueño lo marcó como "muere". El título de página 2 lleva el MISMO estilo de
             // sección que "FORMAS DE PAGO." en la página 1 (negrita + subrayado + itálica, 13,
             // alineado a la izquierda), con el mismo padding horizontal que el resto del contenido.
-            headerColumn.Item().PaddingTop(14).PaddingHorizontal(30)
+            headerColumn.Item().PaddingTop(14).PaddingHorizontal(ContentHorizontalPadding)
                 .Text("INFORMACIÓN IMPORTANTE").Bold().Underline().Italic().FontSize(13);
         });
 
-        page.Content().PaddingHorizontal(30).PaddingTop(14).Column(content =>
+        page.Content().PaddingHorizontal(ContentHorizontalPadding).PaddingTop(14).Column(content =>
         {
             foreach (var block in conditions)
             {

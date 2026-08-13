@@ -140,6 +140,271 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
         Assert.NotEmpty(pdfBytes);
     }
 
+    // ================================================================================
+    // Barrido ronda 2 (2026-08-13): 4 escenarios que cubren TODOS los tipos de servicio + los 2 bugs
+    // reportados por el dueño en PROD (margen inconsistente en la página 1/2, vuelo sin horarios
+    // mostrando basura). Cada PDF se guarda en Path.GetTempPath() con nombre "pdf-check-<escenario>.pdf"
+    // para inspección visual manual (Read tool sobre el PDF) — complementan, no reemplazan, los asserts
+    // automáticos de arriba (que solo verifican "es un PDF válido", no pueden leer píxeles).
+    // ================================================================================
+
+    [Fact]
+    public void GenerateQuotePdf_CompleteScenario_AllSixServiceTypes_SavedForVisualInspection()
+    {
+        var reserva = BuildCompleteScenarioReserva();
+
+        var pdfBytes = new QuotePdfService().GenerateQuotePdf(
+            reserva, BuildSampleAgencySettings(), BuildSampleConditions(), logoBytes: null,
+            porPersona: true, // "TARIFA POR PERSONA:" -- contrastar con GenerateQuotePdf_TotalPricingScenario (mismos datos, TARIFA TOTAL).
+            cantidadPasajerosCargados: reserva.AdultCount + reserva.ChildCount + reserva.InfantCount);
+
+        AssertValidPdfAndSave(pdfBytes, "completo");
+    }
+
+    [Fact]
+    public void GenerateQuotePdf_TotalPricingScenario_SameDataAsCompleto_ShowsTarifaTotal_SavedForVisualInspection()
+    {
+        var reserva = BuildCompleteScenarioReserva();
+
+        var pdfBytes = new QuotePdfService().GenerateQuotePdf(
+            reserva, BuildSampleAgencySettings(), BuildSampleConditions(), logoBytes: null,
+            porPersona: false, // fuerza "TARIFA TOTAL:" en vez de "TARIFA POR PERSONA:", mismos datos que "completo".
+            cantidadPasajerosCargados: reserva.AdultCount + reserva.ChildCount + reserva.InfantCount);
+
+        AssertValidPdfAndSave(pdfBytes, "total");
+    }
+
+    [Fact]
+    public void GenerateQuotePdf_EmptyDataScenario_NoInventedGarbage_SavedForVisualInspection()
+    {
+        var reserva = BuildEmptyDataScenarioReserva();
+
+        var pdfBytes = new QuotePdfService().GenerateQuotePdf(
+            reserva, BuildSampleAgencySettings(), Array.Empty<BudgetConditionBlock>(), logoBytes: null,
+            porPersona: false, cantidadPasajerosCargados: 0);
+
+        AssertValidPdfAndSave(pdfBytes, "vacios");
+    }
+
+    [Fact]
+    public void GenerateQuotePdf_SingleServiceScenario_NoInventedGarbage_SavedForVisualInspection()
+    {
+        // Complementa el caso anterior con el otro extremo: UN solo servicio cargado en toda la reserva
+        // (nada de vuelos, traslados ni opciones) -- ninguna sección vacía debe dejar un espacio raro ni
+        // una etiqueta colgada sin su valor.
+        var reserva = new Reserva
+        {
+            Id = 8,
+            HotelBookings = new List<HotelBooking>
+            {
+                new()
+                {
+                    Status = "Solicitado",
+                    HotelName = "Hotel Único",
+                    City = "Mendoza",
+                    SalePrice = 900m,
+                    Currency = "USD",
+                },
+            },
+        };
+
+        var pdfBytes = new QuotePdfService().GenerateQuotePdf(
+            reserva, BuildSampleAgencySettings(), Array.Empty<BudgetConditionBlock>(), logoBytes: null,
+            porPersona: false, cantidadPasajerosCargados: 0);
+
+        AssertValidPdfAndSave(pdfBytes, "vacios-un-servicio");
+    }
+
+    [Fact]
+    public void GenerateQuotePdf_OptionsScenario_HotelsGroupedAsABC_SavedForVisualInspection()
+    {
+        var reserva = BuildOptionsScenarioReserva();
+
+        var pdfBytes = new QuotePdfService().GenerateQuotePdf(
+            reserva, BuildSampleAgencySettings(), Array.Empty<BudgetConditionBlock>(), logoBytes: null,
+            porPersona: false, cantidadPasajerosCargados: 0);
+
+        AssertValidPdfAndSave(pdfBytes, "opciones");
+    }
+
+    /// <summary>Assert común de "es un PDF válido" (firma "%PDF-") + lo graba en disco para inspección visual (Read tool).</summary>
+    private static void AssertValidPdfAndSave(byte[] pdfBytes, string scenarioName)
+    {
+        Assert.NotEmpty(pdfBytes);
+        Assert.Equal("%PDF-", System.Text.Encoding.ASCII.GetString(pdfBytes, 0, 5));
+
+        var path = Path.Combine(Path.GetTempPath(), $"pdf-check-{scenarioName}.pdf");
+        File.WriteAllBytes(path, pdfBytes);
+    }
+
+    /// <summary>
+    /// Escenario (a) del barrido: los 6 tipos de servicio a la vez (vuelo, hotel, traslado, paquete,
+    /// asistencia, genérico) + formas de pago + condiciones de página 2. El vuelo cruza medianoche de
+    /// verdad (23:15 -&gt; 13:40 del día siguiente) para verificar que el "+1" REAL sigue funcionando
+    /// después del fix de "medianoche de relleno" (no se rompió el caso positivo al arreglar el negativo).
+    /// </summary>
+    private static Reserva BuildCompleteScenarioReserva()
+    {
+        return new Reserva
+        {
+            Id = 6,
+            StartDate = new DateTime(2027, 4, 10),
+            EndDate = new DateTime(2027, 4, 17),
+            AdultCount = 2,
+            ChildCount = 1,
+            InfantCount = 0,
+            BudgetPaymentTermsText = "Seña del 30% al confirmar. Saldo 70% hasta 30 días antes de la salida.",
+            FlightSegments = new List<FlightSegment>
+            {
+                new()
+                {
+                    Status = "NN",
+                    Origin = "EZE",
+                    OriginCity = "Buenos Aires",
+                    Destination = "MAD",
+                    DestinationCity = "Madrid",
+                    DepartureTime = new DateTime(2027, 4, 10, 23, 15, 0),
+                    ArrivalTime = new DateTime(2027, 4, 11, 13, 40, 0), // cruza medianoche DE VERDAD -> "+1" real, debe seguir apareciendo.
+                    IsDirect = true,
+                    IncludesBackpack = true,
+                    IncludesCarryOn = true,
+                    IncludesCheckedBag = true,
+                },
+            },
+            HotelBookings = new List<HotelBooking>
+            {
+                new()
+                {
+                    Status = "Solicitado",
+                    HotelName = "Hotel Palace Madrid",
+                    City = "Madrid",
+                    StarRating = 5,
+                    RoomType = "Doble",
+                    RoomCategory = "Superior",
+                    MealPlan = "Desayuno",
+                    Nights = 7,
+                    SalePrice = 2100m,
+                    Currency = "USD",
+                },
+            },
+            TransferBookings = new List<TransferBooking>
+            {
+                new()
+                {
+                    Status = "Solicitado",
+                    ProductName = "Traslado privado aeropuerto - hotel",
+                    SalePrice = 60m,
+                    Currency = "USD",
+                },
+            },
+            PackageBookings = new List<PackageBooking>
+            {
+                new()
+                {
+                    Status = "Solicitado",
+                    PackageName = "City tour Madrid + Toledo",
+                    Destination = "Madrid",
+                    SalePrice = 180m,
+                    Currency = "USD",
+                },
+            },
+            AssistanceBookings = new List<AssistanceBooking>
+            {
+                new()
+                {
+                    Status = "Solicitado",
+                    PlanType = "Asistencia al viajero Full",
+                    SalePrice = 90m,
+                    Currency = "USD",
+                },
+            },
+            // Servicio "genérico" (ServicioReserva, ServiceType=Otro): HOY NO tiene bloque propio en
+            // QuotePdfService (gap real, reportado aparte -- ver el inventario del reporte de esta ronda,
+            // fuera del alcance de los 3 fixes autorizados). Se carga ACÁ A PROPÓSITO para verificar que
+            // una reserva completa con este tipo presente sigue generando un PDF válido (no explota),
+            // aunque el papel no lo dibuje todavía.
+            Servicios = new List<ServicioReserva>
+            {
+                new()
+                {
+                    Status = "Solicitado",
+                    ServiceType = ServiceTypes.Other,
+                    Description = "Alquiler de auto 7 días",
+                    SalePrice = 350m,
+                    Currency = "USD",
+                },
+            },
+        };
+    }
+
+    /// <summary>
+    /// Escenario (b) del barrido: vuelo sin horarios reales (reproduce el bug EXACTO de PROD: las dos
+    /// puntas a medianoche en punto) + hotel sin estrellas ni detalle de habitación + servicio sin moneda
+    /// cargada. Nada de esto debe imprimir basura ("00:00", "+1" inventado, "ARS" inventada, "Habitación:
+    /// Doble" cuando nadie cargó el detalle).
+    /// </summary>
+    private static Reserva BuildEmptyDataScenarioReserva()
+    {
+        return new Reserva
+        {
+            Id = 7,
+            FlightSegments = new List<FlightSegment>
+            {
+                new()
+                {
+                    Status = "NN",
+                    DepartureTime = new DateTime(2027, 5, 1, 0, 0, 0),
+                    ArrivalTime = new DateTime(2027, 5, 2, 0, 0, 0), // "medianoche de relleno" -- antes rendia "00:00 00:00 +1 · 24h".
+                },
+            },
+            HotelBookings = new List<HotelBooking>
+            {
+                new()
+                {
+                    Status = "Solicitado",
+                    HotelName = "Hostal sin categoría ni moneda",
+                    City = "Córdoba",
+                    StarRating = null,
+                    RoomType = string.Empty, // sin detalle de habitación cargado -- el default de la entidad es "Doble".
+                    RoomCategory = null,
+                    SalePrice = 300m,
+                    Currency = null, // servicio sin moneda cargada -- nunca debe inventar "ARS".
+                },
+            },
+        };
+    }
+
+    /// <summary>
+    /// Escenario (c) del barrido: 3 hoteles compitiendo por el mismo <c>OptionGroup</c> ("hoteles"),
+    /// etiquetados A/B/C -- deben listarse bajo "OPCIONES – hoteles" con su tarifa cada uno, NO como
+    /// bloques de hotel sueltos (esos ya se filtran del bloque Hoteles normal, ver ComposeHoteles).
+    /// </summary>
+    private static Reserva BuildOptionsScenarioReserva()
+    {
+        return new Reserva
+        {
+            Id = 9,
+            HotelBookings = new List<HotelBooking>
+            {
+                new()
+                {
+                    Status = "Solicitado", HotelName = "Hotel Económico", City = "Bariloche", StarRating = 3,
+                    OptionGroup = "hoteles", OptionLabel = "A", SalePrice = 800m, Currency = "USD",
+                },
+                new()
+                {
+                    Status = "Solicitado", HotelName = "Hotel Confort", City = "Bariloche", StarRating = 4,
+                    OptionGroup = "hoteles", OptionLabel = "B", SalePrice = 1100m, Currency = "USD",
+                },
+                new()
+                {
+                    Status = "Solicitado", HotelName = "Hotel Premium", City = "Bariloche", StarRating = 5,
+                    OptionGroup = "hoteles", OptionLabel = "C", SalePrice = 1600m, Currency = "USD",
+                },
+            },
+        };
+    }
+
     private static Reserva BuildSampleReserva()
     {
         return new Reserva
