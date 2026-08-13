@@ -1,19 +1,26 @@
 /**
  * Solapa de Configuración "Presupuestos y PDF" (spec docs/ux/2026-08-12-spec-pdf-presupuesto-ui.md,
- * §4). Dos cards independientes:
+ * §4, + Card 3 agregada por docs/ux/2026-08-12-spec-pdf-emision-y-formas-de-pago.md, §2). Tres
+ * cards independientes:
  *   - "Identidad del PDF": logo, color de la banda y legajo EVT — datos que van en la cabecera
  *     del PDF de presupuesto (obra "PDF de presupuesto", QuestPDF llega en una tanda siguiente).
  *   - "Condiciones que van en el PDF": la "letra chica" por tipo de servicio (6 bloques de texto
  *     libre), con un borrador opcional armado por IA que el dueño siempre revisa antes de guardar.
+ *   - "Formas de pago" (Card 3, ancho completo): la PLANTILLA general que se precarga en cada
+ *     presupuesto nuevo — distinta del texto propio de cada reserva (ese vive en la ficha,
+ *     PaymentTermsCard.jsx, con autoguardado). Acá, como en Card 1/2, el guardado es explícito
+ *     ("Guardar cambios"): dos pantallas, dos patrones ya establecidos, no se unifican (§2.2).
  *
- * `agencyLicenseNumber`/`pdfBandColorHex` viajan en el MISMO endpoint que ya usa la solapa
- * "Agencia" (`GET`/`PUT /reports/settings`) — por eso esta card reenvía TODOS los campos que trae
- * el GET al guardar (`AgencySettingsUpsertRequest` no es anti-clobber: si mandáramos solo legajo/
- * color, el backend pisaría agencyName/taxId/etc con los defaults del request).
+ * `agencyLicenseNumber`/`pdfBandColorHex`/`budgetPaymentTermsTemplate` viajan en el MISMO endpoint
+ * que ya usa la solapa "Agencia" (`GET`/`PUT /reports/settings`) — por eso el guardado de
+ * cualquiera de las tres cards reenvía TODOS los campos que trae el GET (`AgencySettingsUpsertRequest`
+ * no es anti-clobber: si mandáramos solo el campo que cambió, el backend pisaría agencyName/taxId/
+ * etc con los defaults del request). Ver `armarPayloadSettings` más abajo — un solo lugar arma ese
+ * payload completo para que Card 1 y Card 3 no repitan la lista de 12 campos cada una.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, FileText, ChevronDown, Sparkles } from "lucide-react";
+import { Image as ImageIcon, FileText, ChevronDown, Sparkles, CreditCard } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
@@ -44,6 +51,12 @@ export default function BudgetPdfSettingsTab() {
   const [colorBanda, setColorBanda] = useState("#1d4ed8");
   const [guardandoIdentidad, setGuardandoIdentidad] = useState(false);
 
+  // ─── Card 3: Formas de pago (la PLANTILLA de Configuración, no el texto de cada
+  // reserva — ese vive en PaymentTermsCard.jsx dentro de la ficha) ──────────────────
+  const [textoFormasDePago, setTextoFormasDePago] = useState("");
+  const [guardandoFormasDePago, setGuardandoFormasDePago] = useState(false);
+  const [redactandoFormasDePago, setRedactandoFormasDePago] = useState(false);
+
   useEffect(() => {
     let cancelado = false;
     (async () => {
@@ -53,6 +66,7 @@ export default function BudgetPdfSettingsTab() {
         setSettingsCompletos(data);
         setLegajoEvt(data?.agencyLicenseNumber || "");
         setColorBanda(data?.pdfBandColorHex || "#1d4ed8");
+        setTextoFormasDePago(data?.budgetPaymentTermsTemplate || "");
       } catch {
         // Degradación elegante: si el GET falla, el formulario queda con los defaults —
         // el dueño puede escribir de cero; el guardado reintenta el PUT igual.
@@ -63,28 +77,65 @@ export default function BudgetPdfSettingsTab() {
     };
   }, []);
 
+  // Arma el payload COMPLETO que espera PUT /reports/settings (no es anti-clobber: hay que
+  // mandar los 12 campos siempre, aunque el usuario haya tocado uno solo). Lee siempre los
+  // 3 estados ACTUALES (legajoEvt/colorBanda/textoFormasDePago) — así Card 1 y Card 3
+  // comparten un solo lugar con la lista completa, en vez de repetirla cada una: cuando se
+  // guarda desde Card 1, el texto de Card 3 viaja intacto (y viceversa), porque ambos leen
+  // el mismo estado en memoria, no un snapshot viejo del último GET.
+  const armarPayloadSettings = () => ({
+    agencyName: settingsCompletos?.agencyName || "",
+    legalName: settingsCompletos?.legalName || null,
+    taxCondition: settingsCompletos?.taxCondition || null,
+    activityStartDate: settingsCompletos?.activityStartDate || null,
+    taxId: settingsCompletos?.taxId || null,
+    address: settingsCompletos?.address || null,
+    phone: settingsCompletos?.phone || null,
+    email: settingsCompletos?.email || null,
+    defaultCommissionPercent: settingsCompletos?.defaultCommissionPercent ?? 10,
+    currency: settingsCompletos?.currency || "ARS",
+    agencyLicenseNumber: legajoEvt.trim() || null,
+    pdfBandColorHex: colorBanda || null,
+    budgetPaymentTermsTemplate: textoFormasDePago.trim() || null,
+  });
+
   const handleGuardarIdentidad = async () => {
     setGuardandoIdentidad(true);
     try {
-      await api.put("/reports/settings", {
-        agencyName: settingsCompletos?.agencyName || "",
-        legalName: settingsCompletos?.legalName || null,
-        taxCondition: settingsCompletos?.taxCondition || null,
-        activityStartDate: settingsCompletos?.activityStartDate || null,
-        taxId: settingsCompletos?.taxId || null,
-        address: settingsCompletos?.address || null,
-        phone: settingsCompletos?.phone || null,
-        email: settingsCompletos?.email || null,
-        defaultCommissionPercent: settingsCompletos?.defaultCommissionPercent ?? 10,
-        currency: settingsCompletos?.currency || "ARS",
-        agencyLicenseNumber: legajoEvt.trim() || null,
-        pdfBandColorHex: colorBanda || null,
-      });
+      await api.put("/reports/settings", armarPayloadSettings());
       showSuccess("Identidad del PDF actualizada.");
     } catch (error) {
       showError(getApiErrorMessage(error, "No se pudo guardar la identidad del PDF."));
     } finally {
       setGuardandoIdentidad(false);
+    }
+  };
+
+  const handleGuardarFormasDePago = async () => {
+    setGuardandoFormasDePago(true);
+    try {
+      await api.put("/reports/settings", armarPayloadSettings());
+      showSuccess("Plantilla de formas de pago actualizada.");
+    } catch (error) {
+      showError(getApiErrorMessage(error, "No se pudo guardar la plantilla de formas de pago."));
+    } finally {
+      setGuardandoFormasDePago(false);
+    }
+  };
+
+  // "✨ Ayudame a redactarlo" de Card 3 — gemelo EXACTO del de Card 2 (handleAyudaIa), pero
+  // sin categoría: acá hay una sola plantilla, no una por rubro. Nunca guarda nada solo (P-21).
+  const handleAyudaIaFormasDePago = async () => {
+    setRedactandoFormasDePago(true);
+    try {
+      const draft = await api.post("/reports/budget-payment-terms-template/draft", {
+        currentText: textoFormasDePago || null,
+      });
+      setTextoFormasDePago(draft?.text || "");
+    } catch (error) {
+      showError(getApiErrorMessage(error, "No se pudo redactar el borrador."));
+    } finally {
+      setRedactandoFormasDePago(false);
     }
   };
 
@@ -390,6 +441,61 @@ export default function BudgetPdfSettingsTab() {
             data-testid="btn-guardar-condiciones"
           >
             {guardandoBloques ? "Guardando..." : "Guardar cambios"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Card 3 — Formas de pago (spec docs/ux/2026-08-12-spec-pdf-emision-y-formas-de-pago.md,
+          §2): ancho completo, DEBAJO de las otras dos — es una sola card, no tiene sentido
+          angostarla a la mitad y dejar un hueco vacío al lado (§2.2). Un solo textarea (no
+          acordeón: acá hay UN dato, no seis por rubro como en Card 2). */}
+      <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden h-fit">
+        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
+          <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+            <CreditCard className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-900 dark:text-white">Formas de pago</h3>
+            <p className="text-xs text-slate-500">
+              Plantilla que se precarga en cada presupuesto nuevo — cada vendedor la puede editar para SU reserva sin tocar esto de acá
+            </p>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-2">
+          <label htmlFor="formas-de-pago-plantilla" className="sr-only">
+            Plantilla de formas de pago
+          </label>
+          <textarea
+            id="formas-de-pago-plantilla"
+            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 dark:bg-slate-950 text-sm p-3 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            value={textoFormasDePago}
+            onChange={(event) => setTextoFormasDePago(event.target.value)}
+            placeholder="Ej: Seña del 30% al reservar. Saldo 21 días antes de la salida. Transferencia bancaria o efectivo en la agencia."
+            data-testid="textarea-formas-de-pago-plantilla"
+          />
+          {/* Link terciario, idéntico al de Card 2 (mismo criterio: IA invisible, sin caja
+              nueva, sin color fuerte) — el borrador cae en el textarea, nunca se guarda solo. */}
+          <button
+            type="button"
+            onClick={handleAyudaIaFormasDePago}
+            disabled={redactandoFormasDePago}
+            className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-60 disabled:cursor-not-allowed"
+            data-testid="btn-ayuda-ia-formas-de-pago"
+          >
+            <Sparkles className="h-3 w-3" aria-hidden="true" />
+            {redactandoFormasDePago ? "Redactando…" : "Ayudame a redactarlo"}
+          </button>
+        </div>
+
+        <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+          <Button
+            type="button"
+            onClick={handleGuardarFormasDePago}
+            disabled={guardandoFormasDePago || !settingsCompletos}
+            data-testid="btn-guardar-formas-de-pago"
+          >
+            {guardandoFormasDePago ? "Guardando..." : "Guardar cambios"}
           </Button>
         </div>
       </div>

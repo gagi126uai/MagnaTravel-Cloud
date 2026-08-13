@@ -10,6 +10,10 @@ public static class MessageDeliveryKinds
     // voucher; se distingue por Kind para que la bandeja de entregas muestre "Factura" y no "Voucher".
     public const string Invoice = "Invoice";
     public const string CreditNote = "CreditNote";
+    // TANDA 4 (2026-08-13): envio del PDF de PRESUPUESTO al cliente por WhatsApp. Mismo canal/infra que
+    // el resto de los documentos; se distingue por Kind para que la bandeja de entregas muestre
+    // "Presupuesto" y no "Voucher"/"Factura".
+    public const string Budget = "Budget";
     public const string IncomingMessage = "IncomingMessage";
     public const string OperationalAck = "OperationalAck";
 }

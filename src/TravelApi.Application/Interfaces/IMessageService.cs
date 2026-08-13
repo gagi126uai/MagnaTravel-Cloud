@@ -19,4 +19,12 @@ public interface IMessageService
     /// factura, reserva y destinatario se derivan server-side para impedir cruces de documentos.
     /// </summary>
     Task<MessageDeliveryDto> SendPartialCreditNoteMessageAsync(Guid bookingCancellationPublicId, OperationActor actor, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// TANDA 4 (2026-08-13): envía el PDF de PRESUPUESTO al cliente de la reserva por WhatsApp. Reusa el
+    /// mismo generador que "Descargar PDF" / GET budget-pdf (<see cref="IReservaService.GetBudgetPdfAsync"/>),
+    /// que ya valida que la reserva siga en etapa Presupuesto. El destinatario siempre es el
+    /// cliente/pagador de la reserva — no hay selector de persona.
+    /// </summary>
+    Task<MessageDeliveryDto> SendBudgetMessageAsync(SendBudgetMessageRequest request, OperationActor actor, CancellationToken cancellationToken);
 }

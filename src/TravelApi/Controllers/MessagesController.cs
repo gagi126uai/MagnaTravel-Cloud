@@ -123,6 +123,45 @@ public class MessagesController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// TANDA 4 (2026-08-13): envía el PDF de PRESUPUESTO al cliente de la reserva por WhatsApp. Gemelo
+    /// de <see cref="SendVoucherMessage"/>/<see cref="SendInvoiceMessage"/> pero sin selector de
+    /// destinatario: en etapa Presupuesto todavía no hay "a quién más" mandarle el documento, siempre es
+    /// el cliente/pagador de la reserva. Doble permiso (AND, no OR como el voucher): hace falta poder
+    /// enviar mensajes Y poder ver la reserva — <see cref="IMessageService.SendBudgetMessageAsync"/>
+    /// además valida ownership puntual de ESA reserva (dueño o reservas.view_all).
+    /// </summary>
+    [HttpPost("budget")]
+    [RequirePermission(Permissions.MessagesSend)]
+    [RequirePermission(Permissions.ReservasView)]
+    public async Task<ActionResult<MessageDeliveryDto>> SendBudgetMessage(
+        [FromBody] SendBudgetMessageRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var delivery = await _messageService.SendBudgetMessageAsync(request, BuildActor(), cancellationToken);
+            return Ok(delivery);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error sending budget message");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo enviar el presupuesto.");
+        }
+    }
+
     private OperationActor BuildActor()
     {
         var roles = User.FindAll(ClaimTypes.Role).Select(role => role.Value).Where(role => !string.IsNullOrWhiteSpace(role)).ToArray();

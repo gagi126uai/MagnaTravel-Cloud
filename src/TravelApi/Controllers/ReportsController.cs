@@ -257,6 +257,45 @@ public class ReportsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Fix bloqueante (2026-08-13, hallazgo de frontend-reviewer): la ficha de reserva precarga acá la
+    /// plantilla de "Formas de pago" para la card de la solapa "Presupuestos y PDF". A diferencia de
+    /// <see cref="GetAgencySettings"/> (Admin-only, entidad completa), este endpoint es de LECTURA MÍNIMA:
+    /// solo el texto de la plantilla, con el permiso base de reservas — cualquiera parado en una ficha de
+    /// reserva (vendedor, colaborador) lo puede pedir, sin necesitar ver el resto de Configuración.
+    /// </summary>
+    [HttpGet("budget-payment-terms-template")]
+    [RequirePermission(Permissions.ReservasView)]
+    public async Task<ActionResult<BudgetPaymentTermsTemplateDto>> GetBudgetPaymentTermsTemplate(CancellationToken cancellationToken)
+    {
+        var template = await _reportService.GetBudgetPaymentTermsTemplateAsync(cancellationToken);
+        return Ok(template);
+    }
+
+    /// <summary>
+    /// TANDA 4 (2026-08-13): "✨ Ayudame a redactarlo" para la plantilla de "Formas de pago" de
+    /// Configuración (Card 3, solapa "Presupuestos y PDF"). Gemelo EXACTO del borrador de condiciones de
+    /// arriba, pero sin categoría (acá hay una sola plantilla, no una por rubro). Nunca guarda nada — el
+    /// dueño confirma con el PUT de <see cref="UpdateAgencySettings"/> de siempre (regla P-21).
+    /// </summary>
+    [HttpPost("budget-payment-terms-template/draft")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<BudgetConditionDraftDto>> GenerateBudgetPaymentTermsTemplateDraft(
+        [FromBody] GenerateBudgetConditionDraftRequest? request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var draft = await _reportService.GenerateBudgetPaymentTermsTemplateDraftAsync(request?.CurrentText, cancellationToken);
+            return Ok(draft);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // La IA no está configurada o no pudo redactar: 409 con un mensaje YA en criollo, apto para
+            // mostrar tal cual (el service nunca deja pasar detalle técnico en este mensaje).
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     private static AgencySettings MapAgencySettings(AgencySettingsUpsertRequest request)
     {
         return new AgencySettings

@@ -1615,6 +1615,23 @@ public class ReportService : IReportService
         return await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Fix bloqueante (2026-08-13): trae SOLO el texto de la plantilla, con una proyección
+    /// (<c>Select</c> antes del <c>FirstOrDefaultAsync</c>) para no traer del todo la fila de
+    /// <see cref="AgencySettings"/> — ni por error se filtra un campo interno que no corresponde acá.
+    /// Si la agencia todavía no configuró nada (o no existe fila de settings), devuelve texto null: la
+    /// ficha de reserva ya sabe mostrar el textarea vacío en ese caso, no es un error.
+    /// </summary>
+    public async Task<BudgetPaymentTermsTemplateDto> GetBudgetPaymentTermsTemplateAsync(CancellationToken cancellationToken)
+    {
+        var text = await _dbContext.AgencySettings
+            .OrderBy(s => s.Id)
+            .Select(s => s.BudgetPaymentTermsTemplate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return new BudgetPaymentTermsTemplateDto(text);
+    }
+
     public async Task<AgencySettings> UpdateAgencySettingsAsync(AgencySettings updated, CancellationToken cancellationToken)
     {
         var settings = await _dbContext.AgencySettings.OrderBy(s => s.Id).FirstOrDefaultAsync(cancellationToken);
@@ -1996,6 +2013,68 @@ public class ReportService : IReportService
         BudgetConditionBlockKind.General => "condiciones generales del presupuesto",
         _ => "condiciones generales del presupuesto",
     };
+
+    /// <summary>
+    /// TANDA 4 (2026-08-13): genera el BORRADOR de la plantilla de "Formas de pago" con IA para el link
+    /// "✨ Ayudame a redactarlo" de Configuración (Card 3). Mismo mecanismo que
+    /// <see cref="GenerateBudgetConditionDraftAsync"/> — nunca persiste nada, el dueño confirma con el
+    /// PUT de <see cref="UpdateAgencySettingsAsync"/> de siempre (regla P-21).
+    /// </summary>
+    public async Task<BudgetConditionDraftDto> GenerateBudgetPaymentTermsTemplateDraftAsync(
+        string? currentText, CancellationToken cancellationToken)
+    {
+        if (_aiAssistantService is null || _aiConnectionResolver is null
+            || !await _aiConnectionResolver.IsUsableAsync(cancellationToken))
+        {
+            throw new InvalidOperationException(AiDraftUnavailableMessage);
+        }
+
+        var request = BuildBudgetPaymentTermsTemplateDraftRequest(currentText);
+        var result = await _aiAssistantService.CompleteAsync(request, cancellationToken);
+
+        if (!result.Succeeded || string.IsNullOrWhiteSpace(result.Text))
+        {
+            // El motivo técnico (timeout, config inválida, etc) queda SOLO en el log del servidor — a la
+            // pantalla le llega el mismo mensaje en criollo de siempre (P-17 / data-exposure).
+            _logger?.LogWarning(
+                "Borrador IA de formas de pago del presupuesto: no se pudo redactar. Motivo interno: {Reason}",
+                result.DegradationReason ?? "sin detalle");
+            throw new InvalidOperationException(AiDraftUnavailableMessage);
+        }
+
+        return new BudgetConditionDraftDto(result.Text.Trim());
+    }
+
+    /// <summary>
+    /// Arma el pedido al modelo: redactar (o mejorar) el texto de "Formas de pago" de una agencia de
+    /// viajes minorista (seña, saldo, cuotas, medios de pago aceptados), en español rioplatense, texto
+    /// plano y acotado — listo para pegar tal cual en Configuración.
+    /// </summary>
+    private static AiChatRequest BuildBudgetPaymentTermsTemplateDraftRequest(string? currentText)
+    {
+        var systemMessage = AiChatMessage.System(
+            "Sos un asistente que redacta, en español rioplatense y en tono profesional simple, el texto " +
+            "de \"Formas de pago\" que una agencia de viajes minorista argentina carga en su configuración " +
+            "y que después se imprime en cada presupuesto en PDF (seña, saldo, cuotas, medios de pago " +
+            "aceptados). Escribís SOLO texto plano: sin títulos, sin markdown, sin asteriscos ni " +
+            "numeración con símbolos. El texto tiene que quedar listo para pegar tal cual en el PDF, con " +
+            "un largo máximo de 120 palabras.");
+
+        var trimmedCurrentText = string.IsNullOrWhiteSpace(currentText) ? null : currentText.Trim();
+        var userMessage = AiChatMessage.User(
+            trimmedCurrentText is null
+                ? "Redactá desde cero un texto estándar de formas de pago para los presupuestos de una " +
+                  "agencia de viajes: seña, saldo y medios de pago aceptados."
+                : "Mejorá y completá este borrador de formas de pago para los presupuestos de una agencia " +
+                  "de viajes, conservando lo que la agencia ya decidió (no lo contradigas):\n\n" +
+                  trimmedCurrentText);
+
+        // Tope de tokens acorde a 120 palabras en español; temperatura baja porque esto es redaccion de
+        // un texto comercial repetible, no contenido creativo (mismo criterio que el de condiciones).
+        var options = new AiProviderOptions { MaxTokens = 300, Temperature = 0.4 };
+
+        return new AiChatRequest(new[] { systemMessage, userMessage }, options);
+    }
 
     // ===== BI ANALYTICS =====
 

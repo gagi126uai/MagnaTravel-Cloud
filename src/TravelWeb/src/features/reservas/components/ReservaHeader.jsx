@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, AlertTriangle, Undo2, Pencil, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal, Ban } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Undo2, Pencil, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal, Ban, FileText, Send, Loader2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
+import { api } from "../../../api";
+import { showError, showSuccess } from "../../../alerts";
+import { getApiErrorMessage } from "../../../lib/errors";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo, ReservaStatusBadge } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
@@ -9,6 +12,29 @@ import { faltaTitularConNombre } from "../lib/pasajeroHint";
 import { isReservaAnulada } from "../moneyStatus";
 import { armarLineaDestinoYPasajeros } from "../lib/reservaDestinoFicha";
 import { palabraTituloReserva, debeOcultarChapitaEstado } from "../lib/reservaHeaderTituloLogic";
+import {
+    MODO_PRECIO_PRESUPUESTO,
+    etiquetaChipPrecioPresupuesto,
+    alternarModoPrecioPresupuesto,
+    queryParamPricingParaModo,
+    porPersonaBooleanParaModo,
+} from "../lib/budgetPdfLogic";
+
+/**
+ * Dispara la descarga de un blob ya recibido (mismo patrón que ReservaVoucherTab.jsx y
+ * ReservaDocumentsTab.jsx — no hay un helper compartido todavía, se copia el mismo bloque
+ * chico que ya usan esos dos componentes).
+ */
+function downloadBlob(blob, fileName) {
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+}
 
 // Bug "fechas corridas un día" (2026-07-16): startDate/endDate de la reserva son
 // fechas-solo-día (el usuario elige un día calendario, no una hora). El backend las
@@ -415,6 +441,57 @@ export function ReservaHeader({
     const palabraTitulo = palabraTituloReserva(reserva.status);
     const ocultarChapitaDeEstado = debeOcultarChapitaEstado(reserva.status);
 
+    // ─── "Emitir PDF" / "Enviar por WhatsApp" (spec 2026-08-12, botones firmados en
+    // §5 de la spec de presupuesto + interruptor "por persona/total" en §3 de la spec de
+    // formas de pago, OPCIÓN A elegida por Gastón) ────────────────────────────────────
+    // El interruptor NO persiste entre visitas a propósito (useState local, nunca se
+    // guarda en ningún lado): cada vez que se abre la ficha vuelve a "Por persona", el
+    // default firmado — así nunca sorprende con un formato viejo elegido semanas atrás.
+    const [modoPrecioPresupuesto, setModoPrecioPresupuesto] = useState(MODO_PRECIO_PRESUPUESTO.PorPersona);
+    // Candados anti doble click (mismo criterio que issuingId/sendingVoucherId en
+    // ReservaVoucherTab.jsx): mientras uno de los dos está en curso, ese botón se apaga y
+    // muestra spinner — un segundo click no dispara una segunda descarga/un segundo envío.
+    const [generandoPdfPresupuesto, setGenerandoPdfPresupuesto] = useState(false);
+    const [enviandoPresupuestoWhatsApp, setEnviandoPresupuestoWhatsApp] = useState(false);
+
+    const handleEmitirPdfPresupuesto = async () => {
+        if (generandoPdfPresupuesto) return;
+        setGenerandoPdfPresupuesto(true);
+        try {
+            const pricing = queryParamPricingParaModo(modoPrecioPresupuesto);
+            const blob = await api.get(`/reservas/${reserva.publicId}/budget-pdf?pricing=${pricing}`, {
+                responseType: "blob",
+            });
+            downloadBlob(blob, `Presupuesto ${reserva.numeroReserva}.pdf`);
+        } catch (error) {
+            showError(getApiErrorMessage(error, "No se pudo generar el PDF del presupuesto."));
+        } finally {
+            setGenerandoPdfPresupuesto(false);
+        }
+    };
+
+    // Mismo mecanismo YA construido para vouchers (ReservaVoucherTab.jsx → POST
+    // /messages/…): acá el destinatario no es ambiguo (siempre el cliente/pagador de la
+    // reserva, no hay selector de pasajero como en el voucher), así que el back lo
+    // resuelve solo — un único click, sin ventana intermedia.
+    const handleEnviarPresupuestoWhatsApp = async () => {
+        if (enviandoPresupuestoWhatsApp) return;
+        setEnviandoPresupuestoWhatsApp(true);
+        try {
+            await api.post("/messages/budget", {
+                reservaId: reserva.publicId,
+                porPersona: porPersonaBooleanParaModo(modoPrecioPresupuesto),
+            });
+            showSuccess(`Presupuesto enviado por WhatsApp a ${reserva.customerName}.`);
+        } catch (error) {
+            // El backend ya arma el mensaje en criollo, listo para mostrar tal cual (ej.
+            // "«Juan Pérez» no tiene teléfono cargado. Agregá uno y reintentá.").
+            showError(getApiErrorMessage(error, "No se pudo enviar el presupuesto. Probá de nuevo."));
+        } finally {
+            setEnviandoPresupuestoWhatsApp(false);
+        }
+    };
+
     return (
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -672,6 +749,60 @@ export function ReservaHeader({
                             </>
                         );
                     })()}
+
+                    {/* "Emitir PDF" / "Enviar por WhatsApp" (spec 2026-08-12, §5 de la spec de
+                        presupuesto): SOLO en etapa Presupuesto, inmediatamente después del botón
+                        principal "El cliente aceptó" y ANTES del separador de acciones
+                        secundarias (Perdida/Archivar/⋯). Ninguno de los dos es relleno — la
+                        principal sigue siendo la única con ese peso visual (B.3 regla de oro). */}
+                    {reserva.status === 'Budget' && (
+                        <>
+                            {/* Interruptor "Por persona / Total del viaje" (§3 de la spec de
+                                formas de pago, OPCIÓN A elegida por Gastón): molde de chip B.5
+                                (24px, redondo, borde fino) reutilizado como control interactivo
+                                — el vendedor ve QUÉ formato va a emitir antes de tocar el botón. */}
+                            <button
+                                type="button"
+                                onClick={() => setModoPrecioPresupuesto(alternarModoPrecioPresupuesto)}
+                                data-testid="reserva-chip-modo-precio-presupuesto"
+                                aria-pressed={modoPrecioPresupuesto === MODO_PRECIO_PRESUPUESTO.Total}
+                                title="Cambia si el PDF muestra el precio por persona o el total del viaje"
+                                className="inline-flex h-6 items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                            >
+                                {etiquetaChipPrecioPresupuesto(modoPrecioPresupuesto)}
+                            </button>
+
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleEmitirPdfPresupuesto}
+                                disabled={generandoPdfPresupuesto}
+                                data-testid="reserva-action-emitir-pdf-presupuesto"
+                            >
+                                {generandoPdfPresupuesto ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                                ) : (
+                                    <FileText className="w-4 h-4" aria-hidden="true" />
+                                )}
+                                {generandoPdfPresupuesto ? "Generando…" : "Emitir PDF"}
+                            </Button>
+
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleEnviarPresupuestoWhatsApp}
+                                disabled={enviandoPresupuestoWhatsApp}
+                                data-testid="reserva-action-enviar-presupuesto-whatsapp"
+                            >
+                                {enviandoPresupuestoWhatsApp ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                                ) : (
+                                    <Send className="w-4 h-4" aria-hidden="true" />
+                                )}
+                                {enviandoPresupuestoWhatsApp ? "Enviando…" : "Enviar por WhatsApp"}
+                            </Button>
+                        </>
+                    )}
 
                     {/* En gestion: Confirmada es automatica al resolverse todos los servicios. */}
                     {/* Confirmada: En viaje tambien es automatica (job diario por fecha de salida). */}

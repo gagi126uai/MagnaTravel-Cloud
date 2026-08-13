@@ -13,17 +13,23 @@ public class MessageService : IMessageService
     private readonly IWhatsAppGateway _whatsAppGateway;
     private readonly IVoucherService _voucherService;
     private readonly IInvoiceService _invoiceService;
+    // TANDA 4 (2026-08-13): parametro OPCIONAL a proposito, mismo criterio que _aiAssistantService en
+    // ReportService — si algun test viejo instancia MessageService con el ctor sin este parametro,
+    // SendBudgetMessageAsync simplemente no esta disponible en vez de romper la compilacion de esos tests.
+    private readonly IReservaService? _reservaService;
 
     public MessageService(
         AppDbContext db,
         IWhatsAppGateway whatsAppGateway,
         IVoucherService voucherService,
-        IInvoiceService invoiceService)
+        IInvoiceService invoiceService,
+        IReservaService? reservaService = null)
     {
         _db = db;
         _whatsAppGateway = whatsAppGateway;
         _voucherService = voucherService;
         _invoiceService = invoiceService;
+        _reservaService = reservaService;
     }
 
     public async Task<IReadOnlyList<MessageRecipientDto>> GetRecipientsAsync(
@@ -320,6 +326,91 @@ public class MessageService : IMessageService
             Kind = MessageDeliveryKinds.Invoice,
             Status = MessageDeliveryStatuses.Sent,
             Phone = recipient.Phone,
+            MessageText = caption,
+            AttachmentName = fileName,
+            BotMessageId = result.MessageId,
+            SentByUserId = actor.UserId,
+            SentByUserName = actor.UserName,
+            CreatedAt = DateTime.UtcNow,
+            SentAt = DateTime.UtcNow
+        };
+
+        _db.MessageDeliveries.Add(delivery);
+        await _db.SaveChangesAsync(cancellationToken);
+        return MapDelivery(delivery);
+    }
+
+    /// <summary>
+    /// TANDA 4 (2026-08-13): envía el PDF de PRESUPUESTO al cliente de la reserva por WhatsApp.
+    ///
+    /// <para>Reglas (en este orden):
+    /// <list type="number">
+    ///   <item>El actor debe tener permiso de envío de mensajes (mismo gate que voucher/factura).</item>
+    ///   <item>El actor debe poder acceder a la reserva: dueño (ResponsibleUserId) o permiso view_all
+    ///         de reservas (mismo criterio que el GET /budget-pdf).</item>
+    ///   <item>La reserva debe tener un cliente/pagador cargado, y ese cliente debe tener teléfono.
+    ///         A diferencia del voucher, acá NO hay selector de destinatario: el presupuesto siempre
+    ///         va al cliente de la reserva.</item>
+    ///   <item>El PDF se genera con <see cref="IReservaService.GetBudgetPdfAsync"/> — el MISMO
+    ///         generador que "Descargar PDF" — que además valida sola que la reserva siga en etapa
+    ///         Presupuesto (tira <see cref="InvalidOperationException"/> fuera de esa etapa).</item>
+    /// </list></para>
+    /// </summary>
+    public async Task<MessageDeliveryDto> SendBudgetMessageAsync(
+        SendBudgetMessageRequest request,
+        OperationActor actor,
+        CancellationToken cancellationToken)
+    {
+        await EnsureActorCanAsync(actor, Permissions.MessagesSend, cancellationToken);
+
+        if (_reservaService is null)
+        {
+            // Solo puede pasar si alguien instancia MessageService a mano sin pasar el service (tests
+            // viejos): en runtime DI siempre lo inyecta. Mensaje técnico a propósito (nunca debería
+            // llegar a un usuario real, es un error de wiring, no de negocio).
+            throw new InvalidOperationException("El generador de PDF de presupuesto no está disponible.");
+        }
+
+        var reservaId = await ResolveReservaIdAsync(request.ReservaId, cancellationToken);
+        var reserva = await _db.Reservas
+            .Include(r => r.Payer)
+            .FirstOrDefaultAsync(r => r.Id == reservaId, cancellationToken)
+            ?? throw new KeyNotFoundException("Reserva no encontrada.");
+
+        await EnsureActorCanAccessReservaAsync(actor, reserva, Permissions.ReservasViewAll, cancellationToken);
+
+        var customer = reserva.Payer
+            ?? throw new InvalidOperationException("La reserva no tiene un cliente cargado.");
+
+        var phone = WhatsAppPhoneHelper.Canonicalize(customer.Phone) ?? WhatsAppPhoneHelper.Canonicalize(reserva.WhatsAppPhoneOverride);
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            throw new InvalidOperationException($"«{customer.FullName}» no tiene teléfono cargado. Agregá uno y reintentá.");
+        }
+
+        // Mismo generador que "Descargar PDF" (GET /budget-pdf): no duplicamos la composición del PDF.
+        // Tira InvalidOperationException si la reserva ya salió de la etapa Presupuesto.
+        var (pdfBytes, numeroReserva) = await _reservaService.GetBudgetPdfAsync(request.ReservaId, request.PorPersona, cancellationToken);
+
+        var fileName = $"Presupuesto {numeroReserva}.pdf";
+        var caption = $"Te compartimos el presupuesto {numeroReserva}. Cualquier consulta, escribinos por acá.";
+
+        var result = await _whatsAppGateway.SendDocumentAsync(
+            phone,
+            caption,
+            fileName,
+            "application/pdf",
+            pdfBytes,
+            cancellationToken);
+
+        var delivery = new MessageDelivery
+        {
+            ReservaId = reserva.Id,
+            CustomerId = customer.Id,
+            Channel = MessageDeliveryChannels.WhatsApp,
+            Kind = MessageDeliveryKinds.Budget,
+            Status = MessageDeliveryStatuses.Sent,
+            Phone = phone,
             MessageText = caption,
             AttachmentName = fileName,
             BotMessageId = result.MessageId,

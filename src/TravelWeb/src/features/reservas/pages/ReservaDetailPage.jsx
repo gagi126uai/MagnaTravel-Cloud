@@ -25,6 +25,7 @@ import { getServiciosSinConfirmar, construirAvisosInformativos } from "../avisos
 import { EditReservaDatesModal } from "../components/EditReservaDatesModal";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
+import { PaymentTermsCard } from "../components/PaymentTermsCard";
 import { ReservaLockBanner } from "../components/ReservaLockBanner";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RegistrarCobroInline } from "../components/RegistrarCobroInline";
@@ -2483,6 +2484,21 @@ export default function ReservaDetailPage() {
               {/* ADR-031 (2026-06-15): PassengerAssignmentsPanel eliminado.
                   La asignación es AUTOMÁTICA — todos los pasajeros van a todos los servicios.
                   No hay paso manual de "elegir a mano quién va en cada servicio" (P7). */}
+
+              {/* "Formas de pago" (spec 2026-08-12 emisión y formas de pago, §1): el texto que
+                  el PDF de presupuesto muestra bajo "Formas de pago". Solo en etapa Presupuesto
+                  — misma condición que usan los botones "Emitir PDF"/"Enviar por WhatsApp" de
+                  la cabecera (ReservaHeader). Fuera de Presupuesto la card directamente
+                  desaparece (ni de solo lectura): si no se puede volver a emitir el PDF ahí,
+                  no tiene sentido mostrar el campo que lo alimenta. */}
+              {reserva.status === "Budget" && (
+                <PaymentTermsCard
+                  key={`payment-terms-${reserva?.publicId}`}
+                  reservaPublicId={publicId}
+                  initialText={reserva?.budgetPaymentTermsText}
+                  onSaved={() => fetchReserva({ showLoading: false, preserveOnError: true })}
+                />
+              )}
             </div>
           ) : null}
 

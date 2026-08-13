@@ -23,6 +23,14 @@ public interface IReportService
     Task<AgencySettings?> GetAgencySettingsAsync(CancellationToken cancellationToken);
     Task<AgencySettings> UpdateAgencySettingsAsync(AgencySettings updated, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Fix bloqueante (2026-08-13): SOLO el texto de la plantilla de "Formas de pago" — no la entidad
+    /// <see cref="AgencySettings"/> completa (esa vive detrás de <see cref="GetAgencySettingsAsync"/>,
+    /// Admin-only). Lo usa la ficha de reserva para precargar el textarea de "Formas de pago" propias de
+    /// esa reserva sin exigirle Admin a un vendedor/colaborador que solo necesita ver la reserva.
+    /// </summary>
+    Task<BudgetPaymentTermsTemplateDto> GetBudgetPaymentTermsTemplateAsync(CancellationToken cancellationToken);
+
     // ============================================================================================
     // Obra "PDF de presupuesto" (decisión firmada del dueño, 2026-08-11/12), TANDA 1: logo de la
     // agencia (para el encabezado del PDF) y los 6 bloques de condiciones (letra chica del PDF).
@@ -60,6 +68,15 @@ public interface IReportService
     /// usuario, si la inteligencia artificial no está configurada o no pudo redactar el borrador.</para>
     /// </summary>
     Task<BudgetConditionDraftDto> GenerateBudgetConditionDraftAsync(string kindText, string? currentText, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// TANDA 4 (2026-08-13): genera con IA un BORRADOR del texto de "Formas de pago" que la agencia
+    /// carga UNA vez en Configuración (<see cref="TravelApi.Domain.Entities.AgencySettings.BudgetPaymentTermsTemplate"/>).
+    /// Gemelo EXACTO de <see cref="GenerateBudgetConditionDraftAsync"/> pero sin categoría — el borrador
+    /// NUNCA se guarda solo (regla P-21) y, si la IA no está disponible, tira
+    /// <see cref="InvalidOperationException"/> con un mensaje en criollo apto para mostrar tal cual.
+    /// </summary>
+    Task<BudgetConditionDraftDto> GenerateBudgetPaymentTermsTemplateDraftAsync(string? currentText, CancellationToken cancellationToken);
 
     // BI Analytics
     Task<List<SellerRankingDto>> GetSellerRankingAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken);

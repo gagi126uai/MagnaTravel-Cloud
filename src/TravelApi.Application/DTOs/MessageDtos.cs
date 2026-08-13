@@ -46,6 +46,20 @@ public class SendInvoiceMessageRequest
     public string? Caption { get; set; }
 }
 
+/// <summary>
+/// TANDA 4 (2026-08-13): pedido para enviar el PDF de PRESUPUESTO al cliente de la reserva por
+/// WhatsApp. A diferencia del voucher/factura, acá NO hay selector de destinatario: mientras la
+/// reserva está en etapa Presupuesto todavía no hay pasajeros "confirmados" a quien mandarle nada — el
+/// presupuesto SIEMPRE va al cliente/pagador de la reserva.
+/// </summary>
+public class SendBudgetMessageRequest
+{
+    public string ReservaId { get; set; } = string.Empty;
+
+    /// <summary>true (default) = tarifa dividida por pasajero cargado; false = tarifa total. Mismo criterio que el GET budget-pdf.</summary>
+    public bool PorPersona { get; set; } = true;
+}
+
 public class MessageDeliveryDto
 {
     public Guid PublicId { get; set; }
