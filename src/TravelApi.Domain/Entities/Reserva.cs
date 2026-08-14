@@ -314,18 +314,6 @@ public class Reserva : IHasPublicId
     public DateTime? ClosedAt { get; set; }
 
     /// <summary>
-    /// COLUMNA MUERTA desde ADR-053 (2026-08-13, "fechas del viaje calculadas y de solo lectura"). Ya
-    /// NADIE la lee ni la escribe: el candado invisible que representaba se reemplazó por el estado
-    /// VISIBLE <see cref="NeedsDateRecalculation"/> + el botón "volver a calcular" (decisión del dueño
-    /// 2026-08-11). La columna se DROPEA en la migración <c>Adr053_M2_DropDatesManuallySet</c>, que se
-    /// deploya en un release APARTE (ver D6.2 del ADR: el <c>DROP COLUMN</c> tiene una ventana real de
-    /// rotura durante el deploy si va junto con las columnas nuevas — separarlo la elimina). Se deja la
-    /// propiedad viva en esta tanda (F1) solo para que el scaffold de <c>Adr053_M1</c> no intente
-    /// dropearla por su cuenta.
-    /// </summary>
-    public bool DatesManuallySet { get; set; } = false;
-
-    /// <summary>
     /// ADR-053 (2026-08-13): "fecha prometida" de salida — patrón Odoo calculada+prometida. Campo NUEVO,
     /// separado, 100% MANUAL: el escritor único de <see cref="StartDate"/>/<see cref="EndDate"/>
     /// (<c>ReservaScheduleCalculator.RecalculateAndPersistAsync</c>) NUNCA la toca. Se ofrece el PAR
@@ -338,8 +326,8 @@ public class Reserva : IHasPublicId
     public DateTime? PromisedEndDate { get; set; }
 
     /// <summary>
-    /// ADR-053 (2026-08-13): estado VISIBLE que reemplaza al candado invisible <see cref="DatesManuallySet"/>
-    /// (ya muerto). Se prende en dos casos: (1) "Sacar de viaje" (<c>CorrectTravelingEntryAsync</c>) — antes
+    /// ADR-053 (2026-08-13): estado VISIBLE que reemplaza al viejo candado invisible <c>DatesManuallySet</c>,
+    /// ya eliminado (la columna se dropeó en <c>Adr053_M2_DropDatesManuallySet</c>). Se prende en dos casos: (1) "Sacar de viaje" (<c>CorrectTravelingEntryAsync</c>) — antes
     /// borraba <c>StartDate</c> a mano como señal de "revisar la fecha del servicio"; ahora que
     /// <c>StartDate</c> es de solo lectura, esta bandera cumple ese rol sin inventar un valor de fecha falso.
     /// (2) Cualquier caso futuro no previsto donde alguien necesite marcar "esta ventana no es confiable,
