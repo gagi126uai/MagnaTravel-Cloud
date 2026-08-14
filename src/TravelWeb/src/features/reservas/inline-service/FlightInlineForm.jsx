@@ -6,7 +6,14 @@
  *   Costo · Venta · Moneda
  *
  * Más detalles (plegado):
- *   PNR · Números de ticket · Horarios y escalas · Equipaje
+ *   Aeropuerto/ciudad de salida y llegada · Horarios del vuelo (Sale/Llega ida y vuelta) ·
+ *   PNR · Números de ticket · Escalas · Equipaje
+ *
+ * Obra "PDF completo" (2026-08-13, corrección Round 3 14/08 — el dueño eligió que los
+ * horarios vivan DENTRO de "Más detalles", no en la zona principal): los 4 horarios viajan
+ * por OutboundDepartureTime/OutboundArrivalTime/ReturnDepartureTime/ReturnArrivalTime,
+ * NUNCA por departureTime/arrivalTime — ver la nota "SEMÁNTICA INTOCABLE" en
+ * buildFlightPayload (ServiceInlineCard.jsx) para el porqué.
  *
  * Permiso `cobranzas.see_cost`:
  *   - Con permiso: ve el campo Costo + ganancia en el footer.
@@ -148,9 +155,16 @@ export function FlightInlineForm({
     // isDirect/includes* (spec 2026-08-12, §1): datos del PDF de presupuesto — también cuentan
     // para abrir la sección sola. isDirect vive como string ("" / "true" / "false") en el form
     // porque es el value de un <select>; los 3 casilleros son boolean.
+    // Obra "PDF completo" (2026-08-13, spec §4 + corrección Round 3 14/08): origen/destino
+    // Y los 4 horarios (Sale/Llega ida y vuelta) también abren "Más detalles" solos si ya
+    // tienen valor — los horarios viven DENTRO del acordeón (bloque "Horarios del vuelo",
+    // pegado al de aeropuertos), no en la zona principal.
     const tieneDetallesExistentes = Boolean(
         form.pnr || form.ticketNumber || form.baggage || form.scheduleNotes || form.cabinClass ||
-        form.isDirect || form.includesBackpack || form.includesCarryOn || form.includesCheckedBag
+        form.isDirect || form.includesBackpack || form.includesCarryOn || form.includesCheckedBag ||
+        form.origin || form.originCity || form.destination || form.destinationCity ||
+        form.outboundDepartureTime || form.outboundArrivalTime ||
+        form.returnDepartureTime || form.returnArrivalTime
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -439,7 +453,16 @@ export function FlightInlineForm({
                         value={form.returnDate || ""}
                         min={form.departureDate || undefined}
                         onChange={(event) => {
-                            setForm((prev) => ({ ...prev, returnDate: event.target.value }));
+                            const nuevaFechaVuelta = event.target.value;
+                            setForm((prev) => ({
+                                ...prev,
+                                returnDate: nuevaFechaVuelta,
+                                // Fix reviewer (14/08): si el vendedor BORRA la fecha de vuelta, los
+                                // casilleros "Sale vuelta"/"Llega vuelta" quedan apagados en pantalla
+                                // pero sin esto seguían viajando en el payload — un horario de vuelta
+                                // sin vuelta. Los limpiamos junto con la fecha, no solo los deshabilitamos.
+                                ...(nuevaFechaVuelta ? {} : { returnDepartureTime: "", returnArrivalTime: "" }),
+                            }));
                             setCamposSugeridos((prev) => ({ ...prev, returnDate: false }));
                             setCamposTocadosAMano((prev) => ({ ...prev, returnDate: true }));
                         }}
@@ -571,6 +594,123 @@ export function FlightInlineForm({
 
                 {mostrarDetalles && (
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Aeropuertos (spec 2026-08-13, §2): PRIMER bloque, arriba del PNR — describe
+                            el vuelo, como Cabina, no es un dato de gestión. Nunca la palabra "IATA" en
+                            pantalla (jerga prohibida): el label en criollo + el placeholder alcanzan.
+                            Ninguno obligatorio — el PDF arma "EZE · BUENOS AIRES" con lo que haya. */}
+                        <div className="sm:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div>
+                                <label className={LABEL_BASE} htmlFor="flight-origen">Aeropuerto de salida</label>
+                                <input
+                                    id="flight-origen"
+                                    type="text"
+                                    maxLength={3}
+                                    className={INPUT_NORMAL}
+                                    value={form.origin || ""}
+                                    onChange={(event) => setForm((prev) => ({ ...prev, origin: event.target.value.toUpperCase() }))}
+                                    placeholder="EZE"
+                                    data-testid="flight-origen"
+                                />
+                            </div>
+                            <div>
+                                <label className={LABEL_BASE} htmlFor="flight-origen-ciudad">Ciudad de salida</label>
+                                <input
+                                    id="flight-origen-ciudad"
+                                    type="text"
+                                    className={INPUT_NORMAL}
+                                    value={form.originCity || ""}
+                                    onChange={(event) => setForm((prev) => ({ ...prev, originCity: event.target.value }))}
+                                    placeholder="Buenos Aires"
+                                    data-testid="flight-origen-ciudad"
+                                />
+                            </div>
+                            <div>
+                                <label className={LABEL_BASE} htmlFor="flight-destino">Aeropuerto de llegada</label>
+                                <input
+                                    id="flight-destino"
+                                    type="text"
+                                    maxLength={3}
+                                    className={INPUT_NORMAL}
+                                    value={form.destination || ""}
+                                    onChange={(event) => setForm((prev) => ({ ...prev, destination: event.target.value.toUpperCase() }))}
+                                    placeholder="MIA"
+                                    data-testid="flight-destino"
+                                />
+                            </div>
+                            <div>
+                                <label className={LABEL_BASE} htmlFor="flight-destino-ciudad">Ciudad de llegada</label>
+                                <input
+                                    id="flight-destino-ciudad"
+                                    type="text"
+                                    className={INPUT_NORMAL}
+                                    value={form.destinationCity || ""}
+                                    onChange={(event) => setForm((prev) => ({ ...prev, destinationCity: event.target.value }))}
+                                    placeholder="Miami"
+                                    data-testid="flight-destino-ciudad"
+                                />
+                            </div>
+                        </div>
+                        {/* Horarios del vuelo (spec 2026-08-13 §1, corrección Round 3 14/08): el
+                            dueño eligió la opción B — los 4 horarios van ADENTRO de "+ Más detalles",
+                            pegados al bloque de aeropuertos (juntos arman el tramo), NO en la zona
+                            principal. Van por OutboundDepartureTime/OutboundArrivalTime/
+                            ReturnDepartureTime/ReturnArrivalTime — NUNCA por departureTime/arrivalTime
+                            (ver la nota "SEMÁNTICA INTOCABLE" en buildFlightPayload, ServiceInlineCard.jsx).
+                            Ninguno es obligatorio: vacío = no informado, el PDF simplemente no imprime
+                            esa línea. Los de "vuelta" quedan apagados sin fecha de vuelta cargada — sin
+                            fecha no hay tramo que horariar (mismo criterio que ya usan los demás
+                            casilleros dependientes de otro campo, sin cartelito por P-15). */}
+                        <div className="sm:col-span-2">
+                            <p className={LABEL_BASE}>Horarios del vuelo</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-ida-sale">Sale ida</label>
+                                    <input
+                                        id="flight-ida-sale"
+                                        type="time"
+                                        className={INPUT_NORMAL}
+                                        value={form.outboundDepartureTime || ""}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, outboundDepartureTime: event.target.value }))}
+                                        data-testid="flight-ida-sale"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-ida-llega">Llega ida</label>
+                                    <input
+                                        id="flight-ida-llega"
+                                        type="time"
+                                        className={INPUT_NORMAL}
+                                        value={form.outboundArrivalTime || ""}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, outboundArrivalTime: event.target.value }))}
+                                        data-testid="flight-ida-llega"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-vuelta-sale">Sale vuelta</label>
+                                    <input
+                                        id="flight-vuelta-sale"
+                                        type="time"
+                                        className={INPUT_NORMAL}
+                                        value={form.returnDepartureTime || ""}
+                                        disabled={!form.returnDate}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, returnDepartureTime: event.target.value }))}
+                                        data-testid="flight-vuelta-sale"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-vuelta-llega">Llega vuelta</label>
+                                    <input
+                                        id="flight-vuelta-llega"
+                                        type="time"
+                                        className={INPUT_NORMAL}
+                                        value={form.returnArrivalTime || ""}
+                                        disabled={!form.returnDate}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, returnArrivalTime: event.target.value }))}
+                                        data-testid="flight-vuelta-llega"
+                                    />
+                                </div>
+                            </div>
+                        </div>
                         <div>
                             <label className={LABEL_BASE} htmlFor="flight-pnr">Código de reserva (PNR)</label>
                             <input
@@ -598,16 +738,20 @@ export function FlightInlineForm({
                             />
                         </div>
                         <div className="sm:col-span-2">
-                            <label className={LABEL_BASE} htmlFor="flight-horarios">Horarios y escalas</label>
+                            {/* Ex "Horarios y escalas" (spec 2026-08-13, §3): mismo campo de texto
+                                libre, mismo dato guardado (scheduleNotes) — solo cambia el nombre para
+                                no competir con los casilleros de hora nuevos (P-16: un dato no se dice
+                                dos veces). Lo ya cargado en este campo no se toca ni se migra. */}
+                            <label className={LABEL_BASE} htmlFor="flight-horarios">Escalas</label>
                             <input
                                 id="flight-horarios"
                                 type="text"
                                 className={INPUT_NORMAL}
                                 value={form.scheduleNotes || ""}
                                 onChange={(event) => setForm((prev) => ({ ...prev, scheduleNotes: event.target.value }))}
-                                placeholder="Ej: Sale 10:30 AEP · Escala 1h MDZ · Llega 15:20 IGR"
+                                placeholder="Ej: Escala de 1h en Panamá · Cambia de avión"
                                 data-testid="flight-horarios"
-                                aria-label="Horarios y escalas"
+                                aria-label="Escalas"
                             />
                         </div>
                         <div className="sm:col-span-2">

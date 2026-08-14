@@ -1027,13 +1027,12 @@ public partial class BookingService : IBookingService
         if (parsedGeographicScope.HasValue)
             flight.GeographicScope = parsedGeographicScope.Value;
 
-        // Obra "PDF de presupuesto" (2026-08-11/12, anti-clobber): el map IGNORA estos 6 campos. Un
-        // front que todavia no los conoce (tanda de UI pendiente) manda null y PRESERVAMOS lo ya
-        // cargado; un valor explicito se aplica. Mismo criterio que ProductName/los deadlines de arriba.
-        if (req.OutboundDepartureTime.HasValue)
-            flight.OutboundDepartureTime = req.OutboundDepartureTime.Value;
-        if (req.ReturnDepartureTime.HasValue)
-            flight.ReturnDepartureTime = req.ReturnDepartureTime.Value;
+        // Fix 2026-08-14 (bloqueante de review): los 4 horarios de vuelo (OutboundDepartureTime/
+        // OutboundArrivalTime/ReturnDepartureTime/ReturnArrivalTime) YA NO se asignan a mano aca. El map
+        // (_mapper.Map de arriba) los aplica por convencion, igual que Origin/Destino. La ficha inline es
+        // el UNICO emisor de este UPDATE y siempre manda los 4 casilleros ("" -> null), asi que null
+        // borra el horario a proposito — antes quedaban pegados para siempre porque este bloque los
+        // preservaba con .HasValue. Ver FlightSegment y MappingProfile.
         if (req.IsDirect.HasValue)
             flight.IsDirect = req.IsDirect.Value;
         if (req.IncludesBackpack.HasValue)
@@ -1349,6 +1348,12 @@ public partial class BookingService : IBookingService
         // valor, asi un caller que no lo manda (null) no borra la fecha cargada. Ver NormalizeCalendarDate.
         if (req.OperatorPaymentDeadline.HasValue)
             hotel.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
+
+        // Fix 2026-08-14 (bloqueante de review): el plan de cuotas (InstallmentsCount/InstallmentAmount)
+        // YA NO se asigna a mano aca. El map (_mapper.Map de arriba) lo aplica por convencion, igual que
+        // Origin/Destino. La ficha inline es el UNICO emisor de este UPDATE y siempre manda los 2
+        // casilleros ("" -> null), asi que null borra el plan a proposito — antes quedaba pegado para
+        // siempre porque este bloque lo preservaba con .HasValue. Ver HotelBooking y MappingProfile.
 
         // Opciones A/B/C (decision #1 firmada, 2026-08-11/12, anti-clobber): mismo criterio que arriba.
         // La resolucion del grupo va por BookingService.ResolveOptionGroupAsync, no por este update.

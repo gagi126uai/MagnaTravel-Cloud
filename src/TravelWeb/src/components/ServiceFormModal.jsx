@@ -1755,7 +1755,15 @@ function GenericServiceForm({ form, setForm, suppliers, onRateSelect, disabled, 
 
             <div>
                 <label className={labelClass}>Descripción *</label>
-                <input className={inputClass} value={form.description || ""} onChange={(event) => setForm({ ...form, description: event.target.value })} required disabled={disabled} />
+                {/* Fix data-exposure (obra "PDF completo", 2026-08-14): el servicio "Otro" es el
+                    único de los 6 tipos que NO separa nombre-visible-al-cliente de notas internas
+                    (los otros 5 tienen ADR-018: productName vs notes). Este texto se imprime TAL
+                    CUAL en el presupuesto que ve el cliente — el aviso evita que el vendedor anote
+                    algo interno acá pensando que es una nota privada. Separar en dos campos queda
+                    como obra futura; esto es el freno mínimo mientras tanto. maxLength=200: el PDF
+                    no pagina textos infinitos, y 200 sobra para un nombre de servicio. */}
+                <input className={inputClass} value={form.description || ""} onChange={(event) => setForm({ ...form, description: event.target.value })} maxLength={200} required disabled={disabled} />
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">El cliente lo ve así en el presupuesto.</p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

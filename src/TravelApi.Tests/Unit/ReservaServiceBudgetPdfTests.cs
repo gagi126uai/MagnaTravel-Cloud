@@ -124,6 +124,46 @@ public class ReservaServiceBudgetPdfTests
         Assert.Equal("%PDF-", System.Text.Encoding.ASCII.GetString(bytes, 0, 5));
     }
 
+    // ================================================================================
+    // Fix de review (2026-08-14): GetBudgetPdfAsync cargaba la reserva SIN Include(r => r.Servicios) --
+    // el bloque "Otro" (ServicioReserva) del renderer nunca se dibujaba en producción porque la colección
+    // llegaba siempre vacía (sin lazy loading configurado). El harness de QuotePdfService no lo detectaba
+    // porque arma la Reserva a mano en memoria, sin pasar por esta query real. Este test usa el camino de
+    // PRODUCCIÓN (GetBudgetPdfAsync, con el servicio sembrado de verdad en el DbContext) para que un
+    // Include que se vuelva a caer en el futuro rompa acá, no en el navegador de Gastón.
+    // ================================================================================
+
+    [Fact]
+    public async Task GetBudgetPdfAsync_WithGenericServicioReserva_LoadsItFromDb_AndDrawsIt()
+    {
+        await using var ctx = NewContext();
+        ctx.Reservas.Add(Reserva(1, EstadoReserva.Budget, numero: "2026-1"));
+        ctx.Reservas.Add(Reserva(2, EstadoReserva.Budget, numero: "2026-2"));
+        // Servicio "Otro" sembrado como fila REAL de base (no un objeto en memoria armado por el test) --
+        // asi el Include nuevo es el UNICO camino por el que puede llegar al renderer.
+        ctx.Servicios.Add(new ServicioReserva
+        {
+            Id = 20, ReservaId = 1, Status = "Solicitado",
+            ServiceType = ServiceTypes.Other, Description = "Alquiler de auto 7 días",
+            SalePrice = 350m, Currency = "USD",
+        });
+        await ctx.SaveChangesAsync();
+
+        var service = NewReservaService(ctx);
+
+        var (bytesConServicio, _) = await service.GetBudgetPdfAsync("1", porPersona: false);
+        var (bytesSinServicio, _) = await service.GetBudgetPdfAsync("2", porPersona: false);
+
+        Assert.NotEmpty(bytesConServicio);
+        Assert.Equal("%PDF-", System.Text.Encoding.ASCII.GetString(bytesConServicio, 0, 5));
+        // Criterio observable (mismo que usa QuotePdfServiceMaquetaVisualHarnessTests para "algo se
+        // dibujó"): sin poder leer píxeles desde un test, un bloque nuevo con texto real ("Alquiler de
+        // auto 7 días" + su tarifa) tiene que agregar bytes al PDF -- si el Include se rompe de nuevo y
+        // la colección vuelve a llegar vacía, este assert lo detecta.
+        Assert.True(bytesConServicio.Length > bytesSinServicio.Length,
+            "El PDF con el servicio 'Otro' cargado en la base debería pesar más que el mismo presupuesto sin ningún servicio.");
+    }
+
     [Fact]
     public async Task GetBudgetPdfAsync_ReservaNotFound_ThrowsKeyNotFound()
     {

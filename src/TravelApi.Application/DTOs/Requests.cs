@@ -89,7 +89,12 @@ public record CreateFlightRequest(
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver FlightSegment.OptionGroup/OptionLabel.
     // Null = este vuelo NO es una alternativa de nada (caso normal).
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF completo" (2026-08-13, decision firmada del dueño): horarios de LLEGADA por tramo, para
+    // que el PDF dibuje la fila completa "Sale ... / Llega ...". Ver FlightSegment.OutboundArrivalTime/
+    // ReturnArrivalTime — mismo criterio que los de salida (opcionales, sin default de negocio).
+    TimeOnly? OutboundArrivalTime = null,
+    TimeOnly? ReturnArrivalTime = null
 );
 
 public record UpdateFlightRequest(
@@ -139,9 +144,12 @@ public record UpdateFlightRequest(
     // que no lo conoce llega en null: el map lo IGNORA (ver MappingProfile) y el service lo asigna a
     // mano SOLO cuando el texto se reconoce, para no borrar un ambito ya cargado (ver UpdateFlightAsync).
     string? GeographicScope = null,
-    // Obra "PDF de presupuesto" (2026-08-11/12, TANDA 1): ver CreateFlightRequest. Anti-clobber en el
-    // UPDATE (el map IGNORA estos campos, ver MappingProfile): un caller que todavia no los conoce
-    // manda null y NO borra lo ya cargado (ver UpdateFlightAsync).
+    // Obra "PDF de presupuesto" (2026-08-11/12, TANDA 1) + fix 2026-08-14: los 4 horarios de vuelo
+    // (Outbound/Return x Departure/Arrival) se mapean por CONVENCION, NO son anti-clobber. La ficha
+    // inline (ServiceInlineCard.jsx) es el UNICO emisor de este UPDATE y SIEMPRE manda los 4 casilleros
+    // ("" -> null), asi que null significa "el vendedor vacio el casillero" y debe BORRAR el horario
+    // guardado. Antes el map los ignoraba y el service los preservaba con .HasValue: eso hacia que un
+    // horario cargado quedara pegado para siempre, sin forma de borrarlo. Ver FlightSegment.
     TimeOnly? OutboundDepartureTime = null,
     TimeOnly? ReturnDepartureTime = null,
     bool? IsDirect = null,
@@ -151,7 +159,12 @@ public record UpdateFlightRequest(
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber igual que los campos de arriba
     // (null = no tocar). Ver FlightSegment.OptionGroup/OptionLabel.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF completo" (2026-08-13): horarios de llegada por tramo. Mismo mapeo por convencion que
+    // OutboundDepartureTime/ReturnDepartureTime de arriba (fix 2026-08-14): null = casillero vaciado a
+    // proposito, se borra. Ver FlightSegment.OutboundArrivalTime/ReturnArrivalTime.
+    TimeOnly? OutboundArrivalTime = null,
+    TimeOnly? ReturnArrivalTime = null
 );
 
 public record CreateHotelRequest(
@@ -185,7 +198,11 @@ public record CreateHotelRequest(
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver HotelBooking.OptionGroup/OptionLabel.
     // Null = este hotel NO es una alternativa de nada (caso normal).
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF completo" (2026-08-13, decision firmada del dueño): plan de cuotas informativo para el
+    // presupuesto ("6 CUOTAS 280 USD"). Opcionales al final. Ver HotelBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record UpdateHotelRequest(
@@ -220,7 +237,14 @@ public record UpdateHotelRequest(
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
     // estos campos, ver MappingProfile). Null = no tocar lo ya cargado. Ver HotelBooking.OptionGroup/OptionLabel.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF completo" (2026-08-13) + fix 2026-08-14: plan de cuotas informativo. Se mapea por
+    // CONVENCION, NO es anti-clobber. La ficha inline es el UNICO emisor de este UPDATE y siempre
+    // manda los 2 casilleros ("" -> null), asi que null = "el vendedor vacio el casillero" y debe
+    // BORRAR el plan guardado (antes el service lo preservaba con .HasValue y quedaba pegado para
+    // siempre). Ver HotelBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record CreateTransferRequest(

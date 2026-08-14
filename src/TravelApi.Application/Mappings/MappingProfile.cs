@@ -133,11 +133,6 @@ public class MappingProfile : Profile
             // conoce este campo manda null y el map lo borraria; el service (UpdateFlightAsync) lo asigna a
             // mano SOLO cuando el texto se reconoce, preservando el ambito ya cargado en cualquier otro caso.
             .ForMember(dest => dest.GeographicScope, opt => opt.Ignore())
-            // Obra "PDF de presupuesto" (2026-08-11/12, anti-clobber): mismo motivo que arriba. Un front
-            // que todavia no conoce estos campos manda null y el map los borraria; el service (UpdateFlightAsync)
-            // los asigna a mano solo cuando vienen con valor.
-            .ForMember(dest => dest.OutboundDepartureTime, opt => opt.Ignore())
-            .ForMember(dest => dest.ReturnDepartureTime, opt => opt.Ignore())
             .ForMember(dest => dest.IsDirect, opt => opt.Ignore())
             .ForMember(dest => dest.IncludesBackpack, opt => opt.Ignore())
             .ForMember(dest => dest.IncludesCarryOn, opt => opt.Ignore())
@@ -146,6 +141,12 @@ public class MappingProfile : Profile
             // asigna a mano solo cuando vienen con valor.
             .ForMember(dest => dest.OptionGroup, opt => opt.Ignore())
             .ForMember(dest => dest.OptionLabel, opt => opt.Ignore());
+            // NOTA: los 4 horarios (OutboundDepartureTime/OutboundArrivalTime/ReturnDepartureTime/
+            // ReturnArrivalTime) NO estan en la lista de arriba: se mapean por CONVENCION (igual que
+            // Origin/Destino/StarRating), no anti-clobber. La ficha inline (ServiceInlineCard.jsx) es
+            // el UNICO emisor de este UPDATE y siempre manda los 4 casilleros ("" -> null), asi que
+            // null significa "el vendedor vacio el casillero a proposito" y debe borrar el valor
+            // guardado, no conservarlo (fix 2026-08-14, bloqueante de review).
 
         CreateMap<HotelBooking, HotelBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -191,6 +192,11 @@ public class MappingProfile : Profile
             // mano solo cuando vienen con valor. Ver nota gemela en UpdateFlightRequest.
             .ForMember(dest => dest.OptionGroup, opt => opt.Ignore())
             .ForMember(dest => dest.OptionLabel, opt => opt.Ignore());
+            // NOTA: InstallmentsCount/InstallmentAmount (plan de cuotas informativo del hotel) NO estan
+            // en la lista de arriba: se mapean por CONVENCION, no anti-clobber. La ficha inline es el
+            // UNICO emisor de este UPDATE y siempre manda los 2 casilleros ("" -> null), asi que null
+            // significa "el vendedor vacio el casillero a proposito" y debe borrar el valor guardado
+            // (fix 2026-08-14, bloqueante de review — mismo criterio que los horarios de vuelo arriba).
 
         CreateMap<TransferBooking, TransferBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))

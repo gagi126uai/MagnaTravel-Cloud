@@ -128,5 +128,12 @@ public class HotelBookingDto
 
     /// <summary>Etiqueta visible dentro del grupo ("A"/"B"/"C").</summary>
     public string? OptionLabel { get; set; }
+
+    /// <summary>
+    /// Obra "PDF completo" (2026-08-13): plan de cuotas informativo del presupuesto ("6 CUOTAS 280
+    /// USD"). Ver HotelBooking.InstallmentsCount/InstallmentAmount. Null = no informado.
+    /// </summary>
+    public int? InstallmentsCount { get; set; }
+    public decimal? InstallmentAmount { get; set; }
 }
 

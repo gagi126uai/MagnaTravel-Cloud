@@ -144,6 +144,12 @@ function buildHotelFormInitial(serviceToEdit) {
             address: "",
             // starRating (spec 2026-08-12, §2): dato del PDF de presupuesto. "" = Sin especificar.
             starRating: "",
+            // Plan de cuotas (spec 2026-08-13, §8.3): dato informativo para el PDF, NO participa
+            // del cálculo de Venta total. installmentsCount es texto con sanitizarCantidadPositiva
+            // (mismo molde que "Habitaciones"); installmentAmount usa MoneyInput sin moneda propia
+            // (P-16: usa la moneda que ya eligió el servicio, `form.currency`).
+            installmentsCount: "",
+            installmentAmount: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -174,6 +180,10 @@ function buildHotelFormInitial(serviceToEdit) {
         // Round-trip: el backend devuelve starRating (int|null) en HotelBookingDto. String vacío
         // cuando no está cargado — el <select> necesita strings, no null/undefined.
         starRating: serviceToEdit.starRating != null ? String(serviceToEdit.starRating) : "",
+        // Round-trip: el backend devuelve installmentsCount (int|null) / installmentAmount
+        // (decimal|null) en HotelBookingDto. Fallback "" cuando no hay plan de cuotas cargado.
+        installmentsCount: serviceToEdit.installmentsCount != null ? String(serviceToEdit.installmentsCount) : "",
+        installmentAmount: serviceToEdit.installmentAmount != null ? String(serviceToEdit.installmentAmount) : "",
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -204,6 +214,20 @@ function buildFlightFormInitial(serviceToEdit) {
             includesBackpack: false,
             includesCarryOn: false,
             includesCheckedBag: false,
+            // Obra "PDF completo" (2026-08-13, spec §2): aeropuerto/ciudad, texto libre. El
+            // backend YA aceptaba estos 4 campos desde ADR-018 (Origin/Destination opcionales);
+            // esta ficha nunca les había dado casillero en pantalla.
+            origin: "",
+            originCity: "",
+            destination: "",
+            destinationCity: "",
+            // Obra "PDF completo" (2026-08-13, spec §1/§8.2): horarios de ida/vuelta, string
+            // "HH:mm" (el mismo formato que devuelve un <input type="time">). Vacío = no
+            // informado — nunca se manda dentro de departureTime/arrivalTime (ver buildFlightPayload).
+            outboundDepartureTime: "",
+            outboundArrivalTime: "",
+            returnDepartureTime: "",
+            returnArrivalTime: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -237,6 +261,19 @@ function buildFlightFormInitial(serviceToEdit) {
         includesBackpack: Boolean(serviceToEdit.includesBackpack),
         includesCarryOn: Boolean(serviceToEdit.includesCarryOn),
         includesCheckedBag: Boolean(serviceToEdit.includesCheckedBag),
+        // Round-trip: FlightSegmentDto expone origin/originCity/destination/destinationCity
+        // desde siempre (ADR-018); fallback "" cuando nunca se cargaron.
+        origin: serviceToEdit.origin || "",
+        originCity: serviceToEdit.originCity || "",
+        destination: serviceToEdit.destination || "",
+        destinationCity: serviceToEdit.destinationCity || "",
+        // Round-trip: el backend devuelve TimeOnly como "HH:mm:ss" (ej. "08:30:00"). El
+        // casillero <input type="time"> necesita "HH:mm" — cortamos a los primeros 5
+        // caracteres, mismo gesto que .split("T")[0] usa para las fechas de arriba.
+        outboundDepartureTime: (serviceToEdit.outboundDepartureTime || "").slice(0, 5),
+        outboundArrivalTime: (serviceToEdit.outboundArrivalTime || "").slice(0, 5),
+        returnDepartureTime: (serviceToEdit.returnDepartureTime || "").slice(0, 5),
+        returnArrivalTime: (serviceToEdit.returnArrivalTime || "").slice(0, 5),
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -437,6 +474,18 @@ function buildHotelPayload(formHotel, canSeeCost) {
         // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
         // starRating (spec 2026-08-12, §2): "" -> null (Sin especificar), string numérico -> Number.
         starRating: formHotel.starRating ? Number(formHotel.starRating) : null,
+        // Plan de cuotas (spec 2026-08-13, §8.3): dato informativo del PDF, no participa del
+        // cálculo de Venta total (que sigue siendo noches × habitaciones × precio, arriba). "" o
+        // "0" -> null: el PDF simplemente no imprime la línea si no hay plan cargado.
+        installmentsCount: formHotel.installmentsCount && Number(formHotel.installmentsCount) > 0
+            ? Number(formHotel.installmentsCount)
+            : null,
+        // Fix reviewer (14/08): mismo criterio que installmentsCount de arriba — "0" es un string
+        // truthy en JS (`"0" ? ... : ...` entra por la rama del "sí"), así que sin el > 0 explícito
+        // un valor "0" tipeado a mano viajaba como 0 en vez de null.
+        installmentAmount: formHotel.installmentAmount && Number(formHotel.installmentAmount) > 0
+            ? Number(formHotel.installmentAmount)
+            : null,
     };
     if (formHotel.rateId) {
         payload.rateId = formHotel.rateId;
@@ -452,9 +501,31 @@ function buildFlightPayload(formVuelo, canSeeCost) {
         // ADR-018: la identidad del vuelo va en productName, no en description.
         // El backend (FlightSegment) tiene columna ProductName (varchar200, nullable).
         productName: formVuelo.routeName?.trim() || "",
+        // ══════════════════════════════════════════════════════════════════════════
+        // SEMÁNTICA INTOCABLE (obra "PDF completo", 2026-08-13, decisión firmada del
+        // dueño) — ver el comentario largo en FlightSegment.cs (backend), citado acá:
+        //   departureTime/arrivalTime → VENTANA del viaje (fecha de ida/vuelta a
+        //   medianoche, alimenta ReservaScheduleCalculator/ADR-053). NO es un horario.
+        //   outboundDepartureTime/outboundArrivalTime/returnDepartureTime/
+        //   returnArrivalTime → HORARIOS del papel (PDF de presupuesto), viajan
+        //   SIEMPRE por sus 4 campos propios, jamás pisando departureTime/arrivalTime.
         // Hora de pared sin conversión UTC (véase ServiceFormModal línea ~2286)
         departureTime: formVuelo.departureDate ? `${formVuelo.departureDate}T00:00:00` : null,
         arrivalTime: formVuelo.returnDate ? `${formVuelo.returnDate}T00:00:00` : null,
+        // Aeropuertos (spec 2026-08-13, §2): texto libre, nunca la palabra "IATA" en pantalla.
+        // Estos 4 campos SÍ se mapean por convención en el UPDATE del backend (no son
+        // anti-clobber como los 4 de abajo) — round-trip normal, mandamos lo que hay en el form.
+        origin: formVuelo.origin?.trim() || null,
+        originCity: formVuelo.originCity?.trim() || null,
+        destination: formVuelo.destination?.trim() || null,
+        destinationCity: formVuelo.destinationCity?.trim() || null,
+        // Horarios del papel (spec 2026-08-13, §1/§8.2): "" -> null (no informado). El
+        // backend acepta directamente el string "HH:mm" que entrega un <input type="time">
+        // (verificado por test permanente: FlightRequestJsonBindingTests, backend).
+        outboundDepartureTime: formVuelo.outboundDepartureTime || null,
+        outboundArrivalTime: formVuelo.outboundArrivalTime || null,
+        returnDepartureTime: formVuelo.returnDepartureTime || null,
+        returnArrivalTime: formVuelo.returnArrivalTime || null,
         // Bug 2 (QA 11/08/2026): Math.max(...,1) — sin esto, un "-1" tipeado a mano
         // (o pegado con el mouse) viajaba tal cual al backend. validarForm() ya lo
         // frena en pantalla; esto es la red final, antes de armar el payload.

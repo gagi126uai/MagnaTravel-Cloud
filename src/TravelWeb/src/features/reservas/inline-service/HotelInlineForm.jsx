@@ -17,7 +17,9 @@
  * Footer: "Venta $X · Ganás $Y  + Más detalles" | "Descartar" + "Guardar servicio"
  *
  * Detrás de "+ Más detalles" (plegado por defecto):
- *   Confirmación del operador · Dirección
+ *   Estrellas del hotel · Confirmación del operador · Cuotas / Valor por cuota · Dirección
+ *   (Cuotas y Valor por cuota, obra "PDF completo" 2026-08-13 §8.3: plan de cuotas
+ *   informativo para el PDF, no participa del cálculo de Venta total)
  *
  * Por qué Régimen y Habitación están a la vista y son obligatorios:
  *   CreateHotelRequest / UpdateHotelRequest exigen string RoomType y string MealPlan
@@ -239,8 +241,10 @@ export function HotelInlineForm({
     // operatorPaymentDeadline NO se chequea: el campo fue eliminado en F2 y siempre es undefined.
     // starRating (spec 2026-08-12, §2): dato del PDF de presupuesto, opcional — también cuenta
     // para abrir la sección sola al editar un hotel que ya lo tiene cargado.
+    // installmentsCount/installmentAmount (spec 2026-08-13, §8.3): plan de cuotas, mismo criterio.
     const tieneDetallesExistentes = Boolean(
-        form.confirmationNumber || form.address || form.starRating
+        form.confirmationNumber || form.address || form.starRating ||
+        form.installmentsCount || form.installmentAmount
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -880,6 +884,40 @@ export function HotelInlineForm({
                         {/* Campo "Fecha límite de seña/pago" eliminado en F2 (Próximos Inicios).
                             El aviso de la campanita se calcula desde firstStartDate (backend),
                             no desde un campo manual. Sin campo = sin dato viejo que desincronizar. */}
+                        {/* Plan de cuotas (spec 2026-08-13, §8.3): dato informativo para el PDF de
+                            presupuesto ("6 CUOTAS 280 USD") — NO participa del cálculo de Venta
+                            total (esa cuenta sigue siendo noches × habitaciones × precio, arriba).
+                            Va DESPUÉS de Estrellas/Confirmación (mismo criterio: descriptivo antes
+                            que operativo) y ANTES de Dirección. Sin validación cruzada contra el
+                            total: el dueño puede anotar un plan con recargo que suma distinto al
+                            contado, y el sistema no lo corrige ni lo avisa. */}
+                        <div>
+                            <label className={LABEL_BASE} htmlFor="hotel-cuotas">Cuotas</label>
+                            <input
+                                id="hotel-cuotas"
+                                type="text"
+                                inputMode="numeric"
+                                className={INPUT_NORMAL}
+                                value={form.installmentsCount || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, installmentsCount: sanitizarCantidadPositiva(event.target.value) }))}
+                                placeholder="Ej: 6"
+                                data-testid="hotel-cuotas"
+                                aria-label="Cantidad de cuotas"
+                            />
+                        </div>
+                        <div>
+                            {/* Sin selector de moneda propio (P-16): se entiende en la moneda que
+                                ya eligió el servicio en el selector "Moneda" de la fila de Precios. */}
+                            <label className={LABEL_BASE} htmlFor="hotel-valor-cuota">Valor por cuota</label>
+                            <MoneyInput
+                                id="hotel-valor-cuota"
+                                className={INPUT_NORMAL}
+                                value={form.installmentAmount || ""}
+                                onChange={(nuevoValor) => setForm((prev) => ({ ...prev, installmentAmount: nuevoValor }))}
+                                data-testid="hotel-valor-cuota"
+                                aria-label="Valor de cada cuota"
+                            />
+                        </div>
                         <div className="sm:col-span-2">
                             <label className={LABEL_BASE} htmlFor="hotel-direccion">Dirección</label>
                             <input

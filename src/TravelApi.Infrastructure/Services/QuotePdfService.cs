@@ -262,17 +262,18 @@ public class QuotePdfService : IQuotePdfService
     }
 
     // ============================================================================================
-    // VUELOS: recuadro con una fila por tramo vivo (no cancelado, no perteneciente a un grupo ambiguo —
-    // esos se listan en OPCIONES). Version "completa" (horario estructurado) o "simple" (una línea).
+    // VUELOS (obra "PDF completo", decisión firmada del dueño, 2026-08-13): recuadro con DOS FILAS
+    // COMPLETAS por vuelo vivo — IDA y VUELTA — calcando el ejemplo BAYAHIBE. Cada vuelo cargado imprime
+    // SIEMPRE su fila de ida; la fila de vuelta solo aparece si el vendedor cargó una fecha de vuelta
+    // (ver QuoteBudgetPdfRules.HasReturnLeg). Los vuelos que pertenecen a un grupo ambiguo (2+
+    // alternativas sin resolver) se listan en OPCIONES, no acá.
     // ============================================================================================
 
     private void ComposeVuelos(ColumnDescriptor column, Reserva reserva, HashSet<string> ambiguousGroups)
     {
-        // Corrección ronda 3 (2026-08-13, pedido directo del dueño): un tramo CARGADO se dibuja SIEMPRE.
-        // La ronda anterior filtraba tramos "sin dato real" y los hacía desaparecer de la caja entera —
-        // el dueño lo rechazó: cargó un vuelo (con su fecha) y el PDF se lo comió. La caja existe si hay
-        // AL MENOS UN tramo vivo, sin filtrar por "cuánto contenido visible tiene la fila" — ver
-        // ComposeFlightRow, que ahora siempre imprime algo del lado de salida (hora real o fecha).
+        // "Un servicio cargado SIEMPRE aparece" (pedido directo del dueño, ronda 3 del 2026-08-13): la
+        // caja existe si hay AL MENOS UN vuelo vivo, sin filtrar por "cuánto contenido visible tiene la
+        // fila" — ver ComposeFlightLegRow, que siempre imprime algo del lado de salida (hora real o fecha).
         var flights = (reserva.FlightSegments ?? new List<FlightSegment>())
             .Where(f => IsLive(f.Status, isFlight: true) && !OptionGroupRules.BelongsToAmbiguousGroup(f.OptionGroup, ambiguousGroups))
             .ToList();
@@ -283,36 +284,59 @@ public class QuotePdfService : IQuotePdfService
         {
             foreach (var flight in flights)
             {
-                box.Item().PaddingBottom(8).Element(e => ComposeFlightRow(e, flight));
+                // Fila IDA: Origin -> Destination, horarios Outbound*. SIEMPRE se dibuja (todo vuelo
+                // cargado tiene, como mínimo, una fecha de ida — DepartureTime es obligatorio).
+                box.Item().PaddingBottom(8).Element(e => ComposeFlightLegRow(
+                    e, flight,
+                    departureTime: flight.OutboundDepartureTime,
+                    arrivalTime: flight.OutboundArrivalTime,
+                    fallbackLegDate: flight.DepartureTime,
+                    originCode: flight.Origin, originCity: flight.OriginCity,
+                    destinationCode: flight.Destination, destinationCity: flight.DestinationCity));
+
+                // Fila VUELTA: aeropuertos INVERTIDOS (Destination -> Origin), horarios Return*. Solo si
+                // el vendedor cargó una fecha de vuelta (FlightSegment.ArrivalTime, ver el reparto firmado
+                // en la entidad) — un vuelo de ida sola NUNCA imprime esta fila.
+                if (QuoteBudgetPdfRules.HasReturnLeg(flight))
+                {
+                    box.Item().PaddingBottom(8).Element(e => ComposeFlightLegRow(
+                        e, flight,
+                        departureTime: flight.ReturnDepartureTime,
+                        arrivalTime: flight.ReturnArrivalTime,
+                        fallbackLegDate: flight.ArrivalTime!.Value,
+                        originCode: flight.Destination, originCity: flight.DestinationCity,
+                        destinationCode: flight.Origin, destinationCity: flight.OriginCity));
+                }
             }
         });
     }
 
     /// <summary>
-    /// Una fila por TRAMO (maqueta v2, 2026-08-13): [ícono avión] [hora u fecha de salida + aeropuerto]
-    /// [chip "Directo"] [hora/fecha de llegada + aeropuerto, con "+1" si cruza medianoche DE VERDAD]
-    /// [duración] [íconos de equipaje a la derecha]. El lado de SALIDA se dibuja SIEMPRE (nunca
-    /// desaparece la fila): <see cref="FlightSegment.DepartureTime"/> es obligatorio desde que el
-    /// segmento existe.
-    ///
-    /// <para><b>Corrección ronda 3 (2026-08-13, pedido directo del dueño)</b>: cuando el vendedor cargó
-    /// la FECHA del vuelo pero no la hora (las dos puntas quedan exactas a medianoche, ver
-    /// <see cref="QuoteBudgetPdfRules.LooksLikeMissingSchedule"/>), en el lugar de la hora se imprime la
-    /// fecha corta ("10/02/2027") — "un servicio cargado siempre aparece" le gana a "sin dato no se
-    /// muestra". El resto de los elementos (aeropuertos, chip, valijas) sigue igual: se omiten en
-    /// silencio si no están cargados, nunca un placeholder inventado (regla espejo, decisión #8).</para>
+    /// Una fila de IDA o de VUELTA (maqueta BAYAHIBE, 2026-08-13): [ícono avión] [hora u fecha de salida
+    /// + aeropuerto de origen] [chip "Directo"] [hora de llegada + aeropuerto de destino, con "+1" si
+    /// cruza medianoche] [duración] [íconos de equipaje a la derecha]. El chip "Directo" y los íconos de
+    /// equipaje son atributos DEL VUELO completo (no cambian entre ida y vuelta): salen de
+    /// <c>flight.IsDirect</c>/<c>Includes*</c> sin importar qué horarios se le pasen a esta fila.
     /// </summary>
-    private void ComposeFlightRow(IContainer container, FlightSegment flight)
+    private void ComposeFlightLegRow(
+        IContainer container,
+        FlightSegment flight,
+        TimeOnly? departureTime,
+        TimeOnly? arrivalTime,
+        DateTime fallbackLegDate,
+        string? originCode,
+        string? originCity,
+        string? destinationCode,
+        string? destinationCity)
     {
-        var departureAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Origin, flight.OriginCity);
-        var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(flight.Destination, flight.DestinationCity);
-        var durationLabel = QuoteBudgetPdfRules.BuildFlightDuration(flight.DepartureTime, flight.ArrivalTime);
+        var departureAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(originCode, originCity);
+        var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(destinationCode, destinationCity);
+        var durationLabel = QuoteBudgetPdfRules.BuildFlightLegDuration(departureTime, arrivalTime);
 
-        // BuildFlightDepartureTimeText NUNCA devuelve null (hora real o fecha de fallback) — el lado de
-        // salida ya no tiene un "if" de visibilidad, se dibuja siempre. El de llegada sí puede ser null
-        // (tramo solo de ida, llegada-relleno, o "mismo día" en el caso de fecha-sin-hora).
-        var departureTimeText = QuoteBudgetPdfRules.BuildFlightDepartureTimeText(flight.DepartureTime, flight.ArrivalTime);
-        var arrivalTimeText = QuoteBudgetPdfRules.BuildFlightArrivalTimeText(flight.DepartureTime, flight.ArrivalTime);
+        // BuildFlightLegDepartureText NUNCA devuelve null (hora real o fecha de fallback) — el lado de
+        // salida se dibuja siempre. El de llegada sí puede ser null (hora de llegada no cargada todavía).
+        var departureTimeText = QuoteBudgetPdfRules.BuildFlightLegDepartureText(departureTime, fallbackLegDate);
+        var arrivalTimeText = QuoteBudgetPdfRules.BuildFlightLegArrivalText(arrivalTime);
         var showsArrivalBlock = arrivalTimeText is not null || arrivalAirportLabel is not null;
 
         container.Row(row =>
@@ -347,7 +371,7 @@ public class QuotePdfService : IQuotePdfService
                         {
                             arrivalTimeRow.AutoItem().Text(arrivalTimeText).Bold().FontSize(15);
 
-                            if (QuoteBudgetPdfRules.IsNextDayArrival(flight.DepartureTime, flight.ArrivalTime))
+                            if (QuoteBudgetPdfRules.IsFlightLegNextDay(departureTime, arrivalTime))
                             {
                                 arrivalTimeRow.AutoItem().PaddingLeft(2).AlignTop()
                                     .Text("+1").FontSize(8).FontColor(NextDayBadgeColor);
@@ -429,6 +453,15 @@ public class QuotePdfService : IQuotePdfService
             }
 
             column.Item().PaddingTop(4).Element(e => ComposeTarifaLine(e, hotel.SalePrice, hotel.Currency, porPersona, cantidadPasajerosCargados));
+
+            // Obra "PDF completo" (2026-08-13): línea de cuotas debajo de la tarifa ("6 CUOTAS 280
+            // USD"), en negrita 13 como pide la maqueta. Ausente si el vendedor no cargó los dos datos
+            // (ver QuoteBudgetPdfRules.BuildInstallmentsLine — regla espejo, decisión #8).
+            var installmentsLine = QuoteBudgetPdfRules.BuildInstallmentsLine(hotel.InstallmentsCount, hotel.InstallmentAmount, hotel.Currency);
+            if (installmentsLine is not null)
+            {
+                column.Item().PaddingTop(2).Text(installmentsLine).Bold().FontSize(13);
+            }
         });
     }
 
@@ -477,10 +510,15 @@ public class QuotePdfService : IQuotePdfService
     }
 
     // ============================================================================================
-    // OTROS SERVICIOS (traslados/paquetes/asistencias): la maqueta firmada no detalla un bloque propio
-    // para estos tres tipos (solo la línea resumen "TRASLADO:" de los datos generales), pero omitir su
-    // tarifa del PDF escondería plata que el cliente debe pagar. Se imprimen con el mismo criterio de
-    // tarifa que Hoteles, en una lista compacta — alcance a revisar con UX en la tanda de frontend.
+    // OTROS SERVICIOS (traslados/paquetes/asistencias/genérico "Otro"): la maqueta firmada no detalla un
+    // bloque propio para estos tipos (solo la línea resumen "TRASLADO:" de los datos generales), pero
+    // omitir su tarifa del PDF escondería plata que el cliente debe pagar. Se imprimen con el mismo
+    // criterio de tarifa que Hoteles, en una lista compacta — alcance a revisar con UX en la tanda de
+    // frontend.
+    //
+    // "Otro" (ServicioReserva, obra "PDF completo", 2026-08-13) NO tiene OptionGroup/OptionLabel (es el
+    // servicio genérico legacy, no uno de los 5 tipados con opciones A/B/C) — por eso no pasa por el
+    // filtro OptionGroupRules.BelongsToAmbiguousGroup como los otros tres.
     // ============================================================================================
 
     private void ComposeOtrosServicios(
@@ -506,6 +544,12 @@ public class QuotePdfService : IQuotePdfService
         {
             var name = string.IsNullOrWhiteSpace(assistance.PlanType) ? "Asistencia" : assistance.PlanType!;
             rows.Add((name, assistance.SalePrice, assistance.Currency));
+        }
+
+        foreach (var otro in (reserva.Servicios ?? new List<ServicioReserva>())
+            .Where(s => IsLive(s.Status, isFlight: false)))
+        {
+            rows.Add((QuoteBudgetPdfRules.BuildOtroServiceDisplayName(otro), otro.SalePrice, otro.Currency));
         }
 
         if (rows.Count == 0) return;

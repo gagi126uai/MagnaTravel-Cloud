@@ -95,6 +95,16 @@ function buildHotelPayload(form, canSeeCost) {
         // Siempre con valor: el backend rechaza null/vacío con 400 (non-nullable)
         mealPlan: form.mealPlan || "Desayuno",
         roomType: form.roomType || "Doble",
+        // Plan de cuotas (spec 2026-08-13, §8.3): informativo para el PDF, no participa del
+        // cálculo de Venta total (arriba). "" o "0" -> null (el PDF omite la línea).
+        installmentsCount: form.installmentsCount && Number(form.installmentsCount) > 0
+            ? Number(form.installmentsCount)
+            : null,
+        // Fix reviewer (14/08): mismo criterio que installmentsCount — "0" es truthy como string,
+        // así que sin el > 0 explícito un valor "0" viajaba como 0 en vez de null.
+        installmentAmount: form.installmentAmount && Number(form.installmentAmount) > 0
+            ? Number(form.installmentAmount)
+            : null,
     };
 
     // Mutuamente excluyentes: rateId O newCatalogProduct
@@ -177,6 +187,10 @@ function buildHotelFormInitial(serviceToEdit) {
         confirmationNumber: serviceToEdit.confirmationNumber || "",
         // operatorPaymentDeadline eliminado en F2 (Próximos Inicios)
         address: serviceToEdit.address || "",
+        // Round-trip: el backend devuelve installmentsCount (int|null) / installmentAmount
+        // (decimal|null). Fallback "" cuando no hay plan de cuotas cargado.
+        installmentsCount: serviceToEdit.installmentsCount != null ? String(serviceToEdit.installmentsCount) : "",
+        installmentAmount: serviceToEdit.installmentAmount != null ? String(serviceToEdit.installmentAmount) : "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
     };
@@ -681,4 +695,105 @@ test("validarFormHotel: form completo con mealPlan y roomType → válido", () =
         newCatalogProduct: null,
     };
     assert.equal(validarFormHotel(form), null);
+});
+
+// ─── Tests: obra "PDF completo" (2026-08-13, §8.3) — plan de cuotas ───────────
+
+test("buildHotelPayload: cuotas y valor por cuota cargados → van tal cual en el payload", () => {
+    const form = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        unitSalePrice: 5000, supplierId: "supplier-1",
+        mealPlan: "Desayuno", roomType: "Doble",
+        installmentsCount: "6",
+        installmentAmount: "280",
+        newCatalogProduct: null,
+    };
+    const payload = buildHotelPayload(form, true);
+    assert.equal(payload.installmentsCount, 6);
+    assert.equal(payload.installmentAmount, 280);
+});
+
+test("buildHotelPayload: sin plan de cuotas → null en el payload (el PDF omite la línea)", () => {
+    const form = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        unitSalePrice: 5000, supplierId: "supplier-1",
+        mealPlan: "Desayuno", roomType: "Doble",
+        newCatalogProduct: null,
+    };
+    const payload = buildHotelPayload(form, true);
+    assert.equal(payload.installmentsCount, null);
+    assert.equal(payload.installmentAmount, null);
+});
+
+test("buildHotelPayload: cuotas en '0' → null (mismo criterio que 'sin plan cargado')", () => {
+    const form = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        unitSalePrice: 5000, supplierId: "supplier-1",
+        mealPlan: "Desayuno", roomType: "Doble",
+        installmentsCount: "0",
+        newCatalogProduct: null,
+    };
+    const payload = buildHotelPayload(form, true);
+    assert.equal(payload.installmentsCount, null);
+});
+
+test("buildHotelPayload: valor por cuota en '0' → null (mismo criterio que 'sin plan cargado')", () => {
+    // Fix reviewer (14/08): "0" es un string truthy en JS — sin el > 0 explícito, este caso
+    // mandaba 0 al backend en vez de null.
+    const form = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        unitSalePrice: 5000, supplierId: "supplier-1",
+        mealPlan: "Desayuno", roomType: "Doble",
+        installmentAmount: "0",
+        newCatalogProduct: null,
+    };
+    const payload = buildHotelPayload(form, true);
+    assert.equal(payload.installmentAmount, null);
+});
+
+test("buildHotelPayload: el plan de cuotas NO participa del cálculo de Venta total", () => {
+    // Regla dura de la spec (§8.3): la cuenta real sigue siendo noches × habitaciones × precio.
+    // Un plan de cuotas "raro" (que sume distinto al contado) no se corrige ni se avisa.
+    const form = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12", // 2 noches
+        rooms: 1,
+        unitSalePrice: 5000, supplierId: "supplier-1",
+        mealPlan: "Desayuno", roomType: "Doble",
+        installmentsCount: "6",
+        installmentAmount: "999999", // recargo grande, no coincide con el contado
+        newCatalogProduct: null,
+    };
+    const payload = buildHotelPayload(form, true);
+    assert.equal(payload.salePrice, 10000, "10000 = 2 noches × 1 habitación × 5000, sin tocar por las cuotas");
+});
+
+test("buildHotelFormInitial: round-trip — cuotas persistidas se precargan en el form como texto", () => {
+    const serviceDesdeBackend = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        rooms: 1, netCost: 0, salePrice: 10000,
+        installmentsCount: 6,
+        installmentAmount: 280,
+        rateId: "rate-1",
+    };
+    const form = buildHotelFormInitial(serviceDesdeBackend);
+    assert.equal(form.installmentsCount, "6");
+    assert.equal(form.installmentAmount, "280");
+});
+
+test("buildHotelFormInitial: sin cuotas del backend → '' en el form (nunca undefined)", () => {
+    const serviceDesdeBackend = {
+        hotelName: "Hotel Central",
+        checkIn: "2026-07-10", checkOut: "2026-07-12",
+        rooms: 1, netCost: 0, salePrice: 10000,
+        rateId: "rate-1",
+    };
+    const form = buildHotelFormInitial(serviceDesdeBackend);
+    assert.equal(form.installmentsCount, "");
+    assert.equal(form.installmentAmount, "");
 });

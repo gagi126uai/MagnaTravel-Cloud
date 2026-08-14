@@ -199,5 +199,24 @@ public class HotelBooking : IHasPublicId
     [MaxLength(5)]
     public string? OptionLabel { get; set; }
 
+    /// <summary>
+    /// Obra "PDF completo" (decisión firmada del dueño, 2026-08-13): cantidad de cuotas del plan de pago
+    /// que el vendedor anota para este hotel (ej. "6 CUOTAS DE 280 USD" en el presupuesto). Es un dato
+    /// PURAMENTE INFORMATIVO para el papel — no genera pagos ni imputaciones reales, no toca el saldo del
+    /// cliente ni el circuito de cobranzas. Opcional: null = no informado, el PDF omite la línea entera
+    /// (regla espejo, decisión #8). Va siempre junto con <see cref="InstallmentAmount"/>: el PDF solo
+    /// imprime la línea si AMBOS campos están cargados (una cantidad de cuotas sin monto, o un monto sin
+    /// cantidad, no dice nada útil).
+    /// </summary>
+    public int? InstallmentsCount { get; set; }
+
+    /// <summary>
+    /// Monto de CADA cuota del plan (ver <see cref="InstallmentsCount"/>). Mismo criterio informativo: no
+    /// es un componente de <see cref="SalePrice"/> ni se valida contra el total (el vendedor puede anotar
+    /// cualquier combinación, es texto de presupuesto, no un plan de cobranza real todavía).
+    /// </summary>
+    [Column(TypeName = "decimal(12,2)")]
+    public decimal? InstallmentAmount { get; set; }
+
     public int GetExpectedPaxCount() => Adults + Children;
 }

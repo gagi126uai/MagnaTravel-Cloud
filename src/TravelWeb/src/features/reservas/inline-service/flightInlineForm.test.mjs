@@ -52,6 +52,8 @@ function buildFlightPayload(form, canSeeCost) {
     const payload = {
         // ADR-018: identidad en productName, no en description
         productName: form.routeName?.trim() || "",
+        // SEMÁNTICA INTOCABLE (obra "PDF completo", 2026-08-13): departureTime/arrivalTime
+        // siguen siendo la VENTANA del viaje (fecha a medianoche), nunca un horario real.
         departureTime: form.departureDate ? `${form.departureDate}T00:00:00` : null,
         arrivalTime: form.returnDate ? `${form.returnDate}T00:00:00` : null,
         passengerCount: form.passengers ? Number(form.passengers) : null,
@@ -68,6 +70,17 @@ function buildFlightPayload(form, canSeeCost) {
         // el ámbito ya guardado"; para "volver a Sin definir" a propósito hace falta el token
         // literal "SinDefinir" (ServiceGeographicScopeText.Cleared en el backend), que SI reconoce.
         geographicScope: form.geographicScope || "SinDefinir",
+        // Aeropuertos (spec 2026-08-13, §2): texto libre, "" -> null.
+        origin: form.origin?.trim() || null,
+        originCity: form.originCity?.trim() || null,
+        destination: form.destination?.trim() || null,
+        destinationCity: form.destinationCity?.trim() || null,
+        // Horarios del papel (spec 2026-08-13, §1/§8.2): "HH:mm" tal cual llega del <input
+        // type="time">, "" -> null. NUNCA viajan dentro de departureTime/arrivalTime.
+        outboundDepartureTime: form.outboundDepartureTime || null,
+        outboundArrivalTime: form.outboundArrivalTime || null,
+        returnDepartureTime: form.returnDepartureTime || null,
+        returnArrivalTime: form.returnArrivalTime || null,
     };
     if (form.rateId) {
         payload.rateId = form.rateId;
@@ -95,6 +108,17 @@ function buildFlightFormInitial(serviceToEdit) {
         // lectura, como texto legible ("Nacional"/"Internacional") o null si nunca se definió.
         // Fallback "" (Sin definir) cuando el backend devuelve null.
         geographicScope: serviceToEdit.geographicScope || "",
+        // Round-trip: aeropuertos, texto libre, fallback "".
+        origin: serviceToEdit.origin || "",
+        originCity: serviceToEdit.originCity || "",
+        destination: serviceToEdit.destination || "",
+        destinationCity: serviceToEdit.destinationCity || "",
+        // Round-trip: el backend devuelve TimeOnly como "HH:mm:ss" (ej. "08:30:00"); el
+        // casillero necesita "HH:mm" — se corta a los primeros 5 caracteres.
+        outboundDepartureTime: (serviceToEdit.outboundDepartureTime || "").slice(0, 5),
+        outboundArrivalTime: (serviceToEdit.outboundArrivalTime || "").slice(0, 5),
+        returnDepartureTime: (serviceToEdit.returnDepartureTime || "").slice(0, 5),
+        returnArrivalTime: (serviceToEdit.returnArrivalTime || "").slice(0, 5),
     };
 }
 
@@ -507,4 +531,135 @@ test("buildFlightFormInitial: sin geographicScope del backend → '' en el form 
     const serviceDesdeBackend = { productName: "AEP–IGR", rateId: "rate-1" };
     const form = buildFlightFormInitial(serviceDesdeBackend);
     assert.equal(form.geographicScope, "");
+});
+
+// ─── Tests: obra "PDF completo" (2026-08-13) — aeropuertos y horarios ─────────
+
+test("buildFlightPayload: aeropuertos/ciudad tipeados → van tal cual en el payload", () => {
+    const form = {
+        routeName: "AEP–MIA",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        origin: "EZE",
+        originCity: "Buenos Aires",
+        destination: "MIA",
+        destinationCity: "Miami",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.origin, "EZE");
+    assert.equal(payload.originCity, "Buenos Aires");
+    assert.equal(payload.destination, "MIA");
+    assert.equal(payload.destinationCity, "Miami");
+});
+
+test("buildFlightPayload: aeropuertos vacíos → null en el payload (ninguno es obligatorio)", () => {
+    const form = {
+        routeName: "AEP–MIA",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.origin, null);
+    assert.equal(payload.originCity, null);
+    assert.equal(payload.destination, null);
+    assert.equal(payload.destinationCity, null);
+});
+
+test("buildFlightPayload: los 4 horarios (Sale/Llega de ida y vuelta) viajan por sus propios campos, NUNCA dentro de departureTime/arrivalTime", () => {
+    // Regla dura de la obra (spec 2026-08-13, §5/§8.2, semántica intocable en FlightSegment.cs):
+    // departureTime/arrivalTime son SOLO la ventana del viaje (fecha a medianoche).
+    const form = {
+        routeName: "AEP–MIA",
+        departureDate: "2026-08-12",
+        returnDate: "2026-08-19",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        outboundDepartureTime: "08:30",
+        outboundArrivalTime: "11:45",
+        returnDepartureTime: "19:00",
+        returnArrivalTime: "23:10",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.outboundDepartureTime, "08:30");
+    assert.equal(payload.outboundArrivalTime, "11:45");
+    assert.equal(payload.returnDepartureTime, "19:00");
+    assert.equal(payload.returnArrivalTime, "23:10");
+    // La ventana del viaje sigue siendo SOLO fecha a medianoche, ningún horario la pisa.
+    assert.equal(payload.departureTime, "2026-08-12T00:00:00");
+    assert.equal(payload.arrivalTime, "2026-08-19T00:00:00");
+});
+
+test("buildFlightPayload: los 4 horarios vacíos → null (ninguno es obligatorio, el PDF omite la línea)", () => {
+    const form = {
+        routeName: "AEP–MIA",
+        departureDate: "2026-08-12",
+        supplierId: "supplier-1",
+        netCost: 0,
+        salePrice: 1800000,
+        currency: "ARS",
+        rateId: "rate-1",
+        newCatalogProduct: null,
+    };
+    const payload = buildFlightPayload(form, true);
+    assert.equal(payload.outboundDepartureTime, null);
+    assert.equal(payload.outboundArrivalTime, null);
+    assert.equal(payload.returnDepartureTime, null);
+    assert.equal(payload.returnArrivalTime, null);
+});
+
+test("buildFlightFormInitial: round-trip — el backend devuelve TimeOnly 'HH:mm:ss', el form corta a 'HH:mm'", () => {
+    // TimeOnly de .NET serializa con segundos (ej. "08:30:00"); el <input type=\"time\">
+    // necesita exactamente 5 caracteres ("08:30") para mostrar el valor sin warning de React.
+    const serviceDesdeBackend = {
+        productName: "AEP–MIA",
+        rateId: "rate-1",
+        outboundDepartureTime: "08:30:00",
+        outboundArrivalTime: "11:45:00",
+        returnDepartureTime: "19:00:00",
+        returnArrivalTime: "23:10:00",
+    };
+    const form = buildFlightFormInitial(serviceDesdeBackend);
+    assert.equal(form.outboundDepartureTime, "08:30");
+    assert.equal(form.outboundArrivalTime, "11:45");
+    assert.equal(form.returnDepartureTime, "19:00");
+    assert.equal(form.returnArrivalTime, "23:10");
+});
+
+test("buildFlightFormInitial: sin horarios del backend → '' en el form (nunca undefined)", () => {
+    const serviceDesdeBackend = { productName: "AEP–MIA", rateId: "rate-1" };
+    const form = buildFlightFormInitial(serviceDesdeBackend);
+    assert.equal(form.outboundDepartureTime, "");
+    assert.equal(form.outboundArrivalTime, "");
+    assert.equal(form.returnDepartureTime, "");
+    assert.equal(form.returnArrivalTime, "");
+});
+
+test("buildFlightFormInitial: round-trip — aeropuertos/ciudad persistidos se precargan en el form", () => {
+    const serviceDesdeBackend = {
+        productName: "AEP–MIA",
+        rateId: "rate-1",
+        origin: "EZE",
+        originCity: "Buenos Aires",
+        destination: "MIA",
+        destinationCity: "Miami",
+    };
+    const form = buildFlightFormInitial(serviceDesdeBackend);
+    assert.equal(form.origin, "EZE");
+    assert.equal(form.originCity, "Buenos Aires");
+    assert.equal(form.destination, "MIA");
+    assert.equal(form.destinationCity, "Miami");
 });

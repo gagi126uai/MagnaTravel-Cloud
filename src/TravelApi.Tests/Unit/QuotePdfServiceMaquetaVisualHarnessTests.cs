@@ -60,16 +60,17 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
     // ================================================================================
 
     [Fact]
-    public void GenerateQuotePdf_MinimalFlightRow_OnlyDepartureTimeLoaded_DoesNotThrow()
+    public void GenerateQuotePdf_MinimalFlightRow_OnlyDepartureDateLoaded_DoesNotThrow()
     {
         var reserva = new Reserva
         {
             Id = 2,
             FlightSegments = new List<FlightSegment>
             {
-                // Único dato garantizado: DepartureTime. Sin llegada, sin aeropuertos, sin chip Directo,
-                // sin equipaje — la fila debe salir con SOLO la hora de salida, nada inventado.
-                new() { Status = "NN", DepartureTime = new DateTime(2027, 3, 1, 9, 0, 0) },
+                // Único dato garantizado: DepartureTime (fecha de ida). Sin ArrivalTime -> vuelo de ida
+                // sola, no hay fila de vuelta. Sin OutboundDepartureTime/OutboundArrivalTime -> la fila
+                // IDA cae al fallback de fecha corta del lado de salida, nada inventado.
+                new() { Status = "NN", DepartureTime = new DateTime(2027, 3, 1) },
             },
         };
 
@@ -81,7 +82,7 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
     }
 
     [Fact]
-    public void GenerateQuotePdf_FlightCrossingMidnight_ShowsPlusOneBadge_DoesNotThrow()
+    public void GenerateQuotePdf_FlightLegCrossingMidnight_ShowsPlusOneBadge_DoesNotThrow()
     {
         var reserva = new Reserva
         {
@@ -93,8 +94,9 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     Status = "NN",
                     Origin = "EZE",
                     Destination = "MAD",
-                    DepartureTime = new DateTime(2027, 3, 1, 23, 30, 0),
-                    ArrivalTime = new DateTime(2027, 3, 2, 13, 10, 0), // llega al día siguiente -> "+1".
+                    DepartureTime = new DateTime(2027, 3, 1), // fecha de ida (ventana del viaje, NO horario).
+                    OutboundDepartureTime = new TimeOnly(23, 30),
+                    OutboundArrivalTime = new TimeOnly(13, 10), // menor que la salida -> "+1" (cruza medianoche).
                     IsDirect = true,
                 },
             },
@@ -242,9 +244,14 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
 
     /// <summary>
     /// Escenario (a) del barrido: los 6 tipos de servicio a la vez (vuelo, hotel, traslado, paquete,
-    /// asistencia, genérico) + formas de pago + condiciones de página 2. El vuelo cruza medianoche de
-    /// verdad (23:15 -&gt; 13:40 del día siguiente) para verificar que el "+1" REAL sigue funcionando
-    /// después del fix de "medianoche de relleno" (no se rompió el caso positivo al arreglar el negativo).
+    /// asistencia, genérico "Otro") + formas de pago + condiciones de página 2.
+    ///
+    /// <para>Obra "PDF completo" (2026-08-13): el vuelo trae los 4 horarios por tramo COMPLETOS —
+    /// <c>DepartureTime</c>/<c>ArrivalTime</c> son solo la VENTANA del viaje (fecha de ida/vuelta, igual
+    /// que el resto de la reserva); los horarios de verdad viven en Outbound*/Return*. La ida cruza
+    /// medianoche DE VERDAD (23:15 -&gt; 01:40) para verificar que el "+1" sigue funcionando con el
+    /// cálculo nuevo (comparación directa de <c>TimeOnly</c>, sin la complejidad de fechas de la ronda
+    /// anterior). El hotel suma el plan de cuotas ("6 CUOTAS 300 USD").</para>
     /// </summary>
     private static Reserva BuildCompleteScenarioReserva()
     {
@@ -266,8 +273,12 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     OriginCity = "Buenos Aires",
                     Destination = "MAD",
                     DestinationCity = "Madrid",
-                    DepartureTime = new DateTime(2027, 4, 10, 23, 15, 0),
-                    ArrivalTime = new DateTime(2027, 4, 11, 13, 40, 0), // cruza medianoche DE VERDAD -> "+1" real, debe seguir apareciendo.
+                    DepartureTime = new DateTime(2027, 4, 10), // fecha de ida -- ventana del viaje, NO horario.
+                    ArrivalTime = new DateTime(2027, 4, 17), // fecha de vuelta -- habilita la fila VUELTA.
+                    OutboundDepartureTime = new TimeOnly(23, 15),
+                    OutboundArrivalTime = new TimeOnly(1, 40), // menor que la salida -> "+1" real (cruza medianoche).
+                    ReturnDepartureTime = new TimeOnly(15, 0),
+                    ReturnArrivalTime = new TimeOnly(19, 20),
                     IsDirect = true,
                     IncludesBackpack = true,
                     IncludesCarryOn = true,
@@ -288,6 +299,8 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     Nights = 7,
                     SalePrice = 2100m,
                     Currency = "USD",
+                    InstallmentsCount = 6,
+                    InstallmentAmount = 300m,
                 },
             },
             TransferBookings = new List<TransferBooking>
@@ -321,11 +334,8 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     Currency = "USD",
                 },
             },
-            // Servicio "genérico" (ServicioReserva, ServiceType=Otro): HOY NO tiene bloque propio en
-            // QuotePdfService (gap real, reportado aparte -- ver el inventario del reporte de esta ronda,
-            // fuera del alcance de los 3 fixes autorizados). Se carga ACÁ A PROPÓSITO para verificar que
-            // una reserva completa con este tipo presente sigue generando un PDF válido (no explota),
-            // aunque el papel no lo dibuje todavía.
+            // Servicio "genérico" (ServicioReserva, ServiceType=Otro): obra "PDF completo" (2026-08-13) le
+            // agrega bloque propio en QuotePdfService (mismo molde que traslado/asistencia).
             Servicios = new List<ServicioReserva>
             {
                 new()
@@ -341,15 +351,16 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
     }
 
     /// <summary>
-    /// Escenario (b) del barrido: vuelo con FECHA cargada pero SIN hora (reproduce el caso real de PROD:
-    /// las dos puntas a medianoche en punto — el vendedor cargó la fecha del tramo, no la hora) + hotel
-    /// sin estrellas ni detalle de habitación + servicio sin moneda cargada.
+    /// Escenario (b) del barrido: vuelo con FECHA de ida/vuelta cargada (ventana del viaje) pero SIN
+    /// ningún horario de tramo cargado (reproduce el caso real de PROD: el vendedor cargó la fecha, no
+    /// la hora) + hotel sin estrellas ni detalle de habitación + servicio sin moneda cargada.
     ///
-    /// <para>Corrección ronda 3 (2026-08-13): el vuelo YA NO debe desaparecer (eso rompía "un servicio
-    /// cargado siempre aparece") — debe imprimirse con la FECHA en el lugar de la hora ("01/05/2027" del
-    /// lado de salida, "02/05/2027" del lado de llegada, sin "+1" ni duración inventados). El resto del
-    /// escenario sigue igual: nada de "ARS" inventada, nada de "Habitación: Doble" cuando nadie cargó el
-    /// detalle.</para>
+    /// <para>Obra "PDF completo" (2026-08-13): con el modelo nuevo esto ya no depende de una heurística
+    /// ("¿las dos puntas caen justo en medianoche?") — simplemente no hay <c>TimeOnly</c> cargado en
+    /// ningún campo Outbound*/Return*, así que las DOS filas (ida y vuelta) caen al fallback de fecha
+    /// corta ("01/05/2027" / "02/05/2027"), sin "+1" ni duración inventados (esos solo salen cuando HAY
+    /// dos horas reales cargadas). El resto del escenario sigue igual: nada de "ARS" inventada, nada de
+    /// "Habitación: Doble" cuando nadie cargó el detalle.</para>
     /// </summary>
     private static Reserva BuildEmptyDataScenarioReserva()
     {
@@ -361,8 +372,8 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                 new()
                 {
                     Status = "NN",
-                    DepartureTime = new DateTime(2027, 5, 1, 0, 0, 0),
-                    ArrivalTime = new DateTime(2027, 5, 2, 0, 0, 0), // fecha sin hora -- debe imprimirse como "01/05/2027 ... 02/05/2027", sin "+1" ni duracion.
+                    DepartureTime = new DateTime(2027, 5, 1), // fecha de ida -- ventana del viaje, NO horario.
+                    ArrivalTime = new DateTime(2027, 5, 2), // fecha de vuelta -- habilita la fila VUELTA, sin horarios de tramo cargados.
                 },
             },
             HotelBookings = new List<HotelBooking>
@@ -427,9 +438,12 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
             BudgetPaymentTermsText =
                 "Seña del 30% al momento de la confirmación, por transferencia bancaria o tarjeta de crédito." +
                 "\n\nSaldo del 70% restante hasta 30 días antes de la fecha de salida. Consultar por planes en cuotas.",
+            // Obra "PDF completo" (2026-08-13): UN vuelo (ida y vuelta como una sola línea de producto,
+            // ADR-018 "producto-primero") imprime DOS FILAS en el PDF — ver ComposeVuelos. DepartureTime/
+            // ArrivalTime son la VENTANA del viaje (fecha de ida/vuelta, igual que las de la reserva); los
+            // horarios de verdad (los del papel) van por Outbound*/Return*.
             FlightSegments = new List<FlightSegment>
             {
-                // Tramo 1 (ida): EZE -> PUJ, directo, con equipaje estructurado (alimenta la línea EQUIPAJE:).
                 new()
                 {
                     Status = "NN",
@@ -437,24 +451,17 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     OriginCity = "Buenos Aires",
                     Destination = "PUJ",
                     DestinationCity = "Punta Cana",
-                    DepartureTime = new DateTime(2027, 2, 10, 8, 30, 0),
-                    ArrivalTime = new DateTime(2027, 2, 10, 12, 45, 0),
+                    DepartureTime = new DateTime(2027, 2, 10), // fecha de ida.
+                    ArrivalTime = new DateTime(2027, 2, 15), // fecha de vuelta -- habilita la fila VUELTA.
+                    OutboundDepartureTime = new TimeOnly(8, 30),
+                    OutboundArrivalTime = new TimeOnly(12, 45),
+                    ReturnDepartureTime = new TimeOnly(14, 0),
+                    ReturnArrivalTime = new TimeOnly(21, 20),
                     IsDirect = true,
+                    // Equipaje estructurado (alimenta la línea EQUIPAJE: de arriba, y los 3 íconos de la fila).
                     IncludesBackpack = true,
                     IncludesCarryOn = true,
                     IncludesCheckedBag = false,
-                },
-                // Tramo 2 (vuelta): PUJ -> EZE, directo.
-                new()
-                {
-                    Status = "NN",
-                    Origin = "PUJ",
-                    OriginCity = "Punta Cana",
-                    Destination = "EZE",
-                    DestinationCity = "Buenos Aires",
-                    DepartureTime = new DateTime(2027, 2, 15, 14, 0, 0),
-                    ArrivalTime = new DateTime(2027, 2, 15, 21, 20, 0),
-                    IsDirect = true,
                 },
             },
             HotelBookings = new List<HotelBooking>

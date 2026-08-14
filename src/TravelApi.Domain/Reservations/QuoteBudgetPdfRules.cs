@@ -78,6 +78,23 @@ public static class QuoteBudgetPdfRules
     }
 
     /// <summary>
+    /// Línea de cuotas del hotel ("6 CUOTAS 280 USD", decisión firmada del dueño, 2026-08-13): SOLO se
+    /// arma si el vendedor cargó los DOS datos (<see cref="HotelBooking.InstallmentsCount"/> Y
+    /// <see cref="HotelBooking.InstallmentAmount"/>) — una cantidad de cuotas sin monto, o un monto sin
+    /// cantidad, no dice nada útil y la regla espejo (decisión #8) prohíbe completar el que falta. Una
+    /// cantidad de cuotas cargada en 0 o negativa (dato sin sentido, no debería pasar el form pero no se
+    /// confía en el frontend) tampoco imprime línea.
+    /// </summary>
+    public static string? BuildInstallmentsLine(int? installmentsCount, decimal? installmentAmount, string? currency)
+    {
+        if (!installmentsCount.HasValue || !installmentAmount.HasValue) return null;
+        if (installmentsCount.Value <= 0) return null;
+
+        var amountLabel = BuildAmountLabel(installmentAmount.Value, currency);
+        return $"{installmentsCount.Value} CUOTAS {amountLabel}";
+    }
+
+    /// <summary>
     /// "1.450" (miles con punto, SIN decimales) para un monto redondo; "1.450,50" (coma decimal,
     /// estilo es-AR) cuando el monto tiene centavos de verdad. La maqueta pide ocultar el ",00" —
     /// nadie escribe un presupuesto a mano con "1.450,00", se ve mas prolijo "1.450" — pero un centavo
@@ -193,28 +210,43 @@ public static class QuoteBudgetPdfRules
         return null;
     }
 
+    /// <summary>
+    /// Línea del servicio "Otro" (<see cref="ServicioReserva"/>, el servicio genérico sin tipo propio):
+    /// mismo criterio que <see cref="BuildTrasladoLine"/> — usa <c>Description</c> (el texto que carga el
+    /// vendedor, mismo campo que usan las fichas del front) y cae a "Otro" cuando quedó vacío. A
+    /// diferencia de los 5 servicios tipados, este NO tiene <c>ProductName</c>; <c>Description</c> es la
+    /// ÚNICA fuente de nombre legible.
+    /// </summary>
+    public static string BuildOtroServiceDisplayName(ServicioReserva servicio)
+    {
+        ArgumentNullException.ThrowIfNull(servicio);
+        return string.IsNullOrWhiteSpace(servicio.Description) ? "Otro" : servicio.Description.Trim();
+    }
+
     // ============================================================================================
-    // Bloque de vuelos REHECHO a la maqueta v2 (2026-08-13, ronda "recalcar la maqueta"): una fila por
-    // TRAMO (no por "ida y vuelta en una sola línea"). <see cref="FlightSegment.DepartureTime"/> es
-    // OBLIGATORIO desde que existe el segmento (ver CreateFlightRequest) — todo tramo vivo tiene una
-    // hora de salida real, nunca inventada. El resto (llegada, aeropuertos, duración) es opcional y se
-    // omite elemento por elemento cuando el vendedor no lo cargó (regla espejo, decisión #8).
+    // Bloque de vuelos REHECHO a la decisión firmada del dueño del 2026-08-13 ("PDF completo"): un
+    // vuelo se dibuja como DOS FILAS COMPLETAS — IDA y VUELTA — calcando el ejemplo BAYAHIBE, cada una
+    // con su hora de salida Y de llegada. Esto SUPERA el diseño de la ronda anterior (una fila por
+    // "tramo" leyendo <see cref="FlightSegment.DepartureTime"/>/<c>ArrivalTime</c> como si fueran
+    // horarios reales): esos dos campos SOLO guardan la FECHA de ida/vuelta desde la ficha
+    // "producto-primero" (ver el comentario grande en <see cref="FlightSegment"/>), nunca una hora de
+    // verdad — por eso el "+1"/duración de la ronda anterior podían salir mal para vuelos cargados por
+    // esa ficha.
     //
-    // NOTA para quien retome esta obra: <see cref="FlightSegment.OutboundDepartureTime"/>/
-    // <c>ReturnDepartureTime</c> (agregados en la TANDA 1 de esta misma obra) quedan SIN USAR acá — se
-    // diseñaron para un vuelo "ida y vuelta como una sola línea de producto", pero la maqueta v2 firmada
-    // pide una fila POR TRAMO con hora de llegada y aeropuertos, que esos dos campos no modelan (no
-    // tienen fecha ni llegada). Se resuelve con los campos ORIGINALES del segmento (Origin/Destination/
-    // DepartureTime/ArrivalTime/IsDirect), que sí encajan con "un tramo, una fila". No se borran los
-    // campos de TANDA 1 (fuera del alcance permitido de esta ronda), pero quedan candidatos a revisar
-    // con el arquitecto si de verdad hacen falta.
+    // Los horarios REALES de cada tramo viven en <see cref="FlightSegment.OutboundDepartureTime"/>/
+    // <c>OutboundArrivalTime</c> (ida) y <c>ReturnDepartureTime</c>/<c>ReturnArrivalTime</c> (vuelta) —
+    // los 4 son <c>TimeOnly?</c>, SIN fecha. Esto simplifica el cálculo de "+1"/duración: ya no hace
+    // falta distinguir "medianoche real" de "medianoche de relleno" (el bug de la ronda anterior,
+    // <c>LooksLikeMissingSchedule</c>) porque un <c>TimeOnly?</c> nulo es SIEMPRE "no cargado", nunca
+    // un relleno ambiguo.
     // ============================================================================================
 
     /// <summary>
     /// Etiqueta de aeropuerto para UNA punta del tramo ("EZE · BUENOS AIRES"): código IATA + ciudad, en
     /// mayúsculas (así la pide la maqueta, chica y gris debajo de la hora). Cada dato es independiente:
     /// si el vendedor cargó uno solo de los dos, se muestra ese solo; sin ninguno de los dos → null (sin
-    /// línea, nunca se inventa un aeropuerto).
+    /// línea, nunca se inventa un aeropuerto). Se reusa tanto para la fila IDA (Origin/OriginCity) como
+    /// para la fila VUELTA (Destination/DestinationCity, invertidos — ver <see cref="HasReturnLeg"/>).
     /// </summary>
     public static string? BuildFlightAirportLabel(string? code, string? city)
     {
@@ -229,121 +261,75 @@ public static class QuoteBudgetPdfRules
     }
 
     /// <summary>
-    /// Duración del tramo ("3h 45m") a partir de la salida y la llegada. Null cuando no hay hora de
-    /// llegada cargada (BUG 2, 2026-06-08: existen tramos solo de ida, ver <see cref="FlightSegment.ArrivalTime"/>),
-    /// cuando el dato cargado es incoherente (llegada antes que salida), o cuando la llegada NO es un dato
-    /// real (<see cref="IsSameInstantArrival"/>/<see cref="LooksLikeMissingSchedule"/>) — la maqueta omite
-    /// el número entero en vez de mostrar algo inventado, negativo o absurdo ("24h" de un tramo sin cargar).
+    /// True si ESTE vuelo tiene una fila de VUELTA para imprimir: el vendedor cargó una fecha de vuelta
+    /// (<see cref="FlightSegment.ArrivalTime"/> — que, por el reparto firmado, guarda la FECHA de vuelta,
+    /// no una hora de llegada). Sin fecha de vuelta cargada, el vuelo es de ida sola: solo se imprime la
+    /// fila IDA (regla espejo, decisión #8: no se inventa una vuelta que nadie cargó).
     /// </summary>
-    public static string? BuildFlightDuration(DateTime departureTime, DateTime? arrivalTime)
+    public static bool HasReturnLeg(FlightSegment flight)
     {
-        if (!arrivalTime.HasValue) return null;
-        if (IsSameInstantArrival(departureTime, arrivalTime.Value)) return null;
-        if (LooksLikeMissingSchedule(departureTime, arrivalTime.Value)) return null;
+        ArgumentNullException.ThrowIfNull(flight);
+        return flight.ArrivalTime.HasValue;
+    }
 
-        var duration = arrivalTime.Value - departureTime;
-        if (duration < TimeSpan.Zero) return null;
+    /// <summary>
+    /// Texto para el lado de SALIDA de una fila de vuelo (ida o vuelta): la hora real cargada ("08:30")
+    /// si el vendedor la anotó, o si no, la FECHA corta del tramo ("10/02/2027") — nunca "00:00"
+    /// inventado. NUNCA null: <paramref name="fallbackLegDate"/> siempre tiene un valor real cuando esta
+    /// fila se decide dibujar (la fecha de ida sale de <see cref="FlightSegment.DepartureTime"/>,
+    /// obligatoria; la fecha de vuelta sale de <c>ArrivalTime</c>, que ya se verificó con
+    /// <see cref="HasReturnLeg"/> antes de llamar acá).
+    /// </summary>
+    public static string BuildFlightLegDepartureText(TimeOnly? structuredDepartureTime, DateTime fallbackLegDate)
+    {
+        return structuredDepartureTime.HasValue
+            ? structuredDepartureTime.Value.ToString("HH:mm")
+            : $"{fallbackLegDate:dd/MM/yyyy}";
+    }
+
+    /// <summary>
+    /// Texto para el lado de LLEGADA de una fila de vuelo. Null cuando el vendedor no cargó la hora de
+    /// llegada de ESTE tramo — a diferencia de la salida, acá NO hay fallback de fecha: el tramo ya tiene
+    /// UNA sola fecha (la que se usó del lado de la salida cuando falta la hora), repetirla del lado de
+    /// la llegada no aporta nada y un tramo "solo con hora de salida" es un dato válido y frecuente
+    /// (vuelo con salida confirmada, llegada todavía sin anotar).
+    /// </summary>
+    public static string? BuildFlightLegArrivalText(TimeOnly? structuredArrivalTime)
+        => structuredArrivalTime?.ToString("HH:mm");
+
+    /// <summary>
+    /// True si la llegada cae DESPUÉS de medianoche respecto de la salida (el vuelo cruza el día) — la
+    /// maqueta lo marca con un "+1" chiquito en rojo al lado de la hora de llegada. Al ser horas SIN
+    /// fecha (<c>TimeOnly</c>), alcanza con comparar "¿la llegada es más temprana en el reloj que la
+    /// salida?": si sale 23:15 y llega 01:40, forzosamente llegó al día siguiente. Null en cualquiera de
+    /// las dos puntas → false (no hay dato real para marcar el cruce, nunca se inventa el badge).
+    /// </summary>
+    public static bool IsFlightLegNextDay(TimeOnly? departureTime, TimeOnly? arrivalTime)
+    {
+        if (!departureTime.HasValue || !arrivalTime.HasValue) return false;
+        return arrivalTime.Value < departureTime.Value;
+    }
+
+    /// <summary>
+    /// Duración del tramo ("3h 45m") a partir de las dos horas cargadas. Null si falta alguna (nunca se
+    /// inventa una duración con un solo dato). Si la llegada "parece" anterior a la salida
+    /// (<see cref="IsFlightLegNextDay"/>, cruce de medianoche) se le suman 24hs antes de restar, para no
+    /// mostrar nunca una duración negativa.
+    /// </summary>
+    public static string? BuildFlightLegDuration(TimeOnly? departureTime, TimeOnly? arrivalTime)
+    {
+        if (!departureTime.HasValue || !arrivalTime.HasValue) return null;
+
+        var duration = arrivalTime.Value - departureTime.Value;
+        if (duration < TimeSpan.Zero)
+        {
+            duration += TimeSpan.FromHours(24);
+        }
 
         var hours = (int)duration.TotalHours;
         var minutes = duration.Minutes;
 
         return minutes == 0 ? $"{hours}h" : $"{hours}h {minutes}m";
-    }
-
-    /// <summary>
-    /// True si la llegada cae un día calendario DESPUÉS de la salida (el vuelo cruza medianoche) — la
-    /// maqueta lo marca con un "+1" chiquito en rojo al lado de la hora de llegada. A diferencia de
-    /// <see cref="FlightSegment.OutboundDepartureTime"/>/<c>ReturnDepartureTime</c> (solo HORA, sin
-    /// fecha), <see cref="FlightSegment.DepartureTime"/>/<c>ArrivalTime</c> sí tienen fecha real: el
-    /// cálculo es exacto, no una suposición.
-    ///
-    /// <para>Fix ronda 2 (2026-08-13): se agrega el guard de <see cref="LooksLikeMissingSchedule"/> — sin
-    /// él, un tramo sin horarios cargados (salida 00:00 día 1, "llegada" 00:00 día 2 puesta por el
-    /// formulario) mostraba un "+1" inventado, porque la fecha SÍ es "el día siguiente" aunque ninguna de
-    /// las dos horas sea real.</para>
-    /// </summary>
-    public static bool IsNextDayArrival(DateTime departureTime, DateTime? arrivalTime)
-    {
-        if (!arrivalTime.HasValue) return false;
-        if (IsSameInstantArrival(departureTime, arrivalTime.Value)) return false;
-        if (LooksLikeMissingSchedule(departureTime, arrivalTime.Value)) return false;
-
-        return arrivalTime.Value.Date > departureTime.Date;
-    }
-
-    /// <summary>
-    /// True cuando la llegada es EXACTAMENTE el mismo instante que la salida (misma fecha y hora, al
-    /// segundo). Pasa cuando el formulario copia la salida como valor de arranque de la llegada y el
-    /// vendedor nunca lo completó de verdad — ningún vuelo real llega en el mismo segundo en que sale.
-    /// En ese caso NO hay llegada real: se omite la hora de llegada, el "+1" y la duración (mostrarlos
-    /// sería inventar un dato que nadie cargó, regla espejo decisión #8).
-    /// </summary>
-    public static bool IsSameInstantArrival(DateTime departureTime, DateTime arrivalTime)
-        => arrivalTime == departureTime;
-
-    /// <summary>
-    /// True cuando NI la salida NI la llegada tienen una hora real cargada: las dos caen justo a las
-    /// 00:00:00 en punto. Bug reportado por el dueño (12/08): un tramo cargado sin horarios rendía
-    /// "00:00 [Directo] 00:00 +1 · 24h" — el formulario completa 00:00 por default cuando el vendedor no
-    /// carga nada, y esas dos medianoches "de relleno" (aunque tengan fechas de calendario distintas)
-    /// generaban un "+1" y una duración de 24h inventados.
-    ///
-    /// <para>Una medianoche real SOLA (una única punta, la otra con hora distinta de 00:00) sigue siendo
-    /// un dato válido y se respeta — por eso se exige que las DOS estén en punto para sospechar "tramo sin
-    /// cargar", nunca alcanza con una sola.</para>
-    /// </summary>
-    public static bool LooksLikeMissingSchedule(DateTime departureTime, DateTime arrivalTime)
-        => departureTime.TimeOfDay == TimeSpan.Zero && arrivalTime.TimeOfDay == TimeSpan.Zero;
-
-    /// <summary>
-    /// Texto para el lado de SALIDA de la fila del vuelo: la hora ("08:30") con horario real cargado, o
-    /// la FECHA corta ("10/02/2027") cuando el vendedor cargó la fecha del tramo pero no la hora (las dos
-    /// puntas quedan exactas a medianoche, ver <see cref="LooksLikeMissingSchedule"/>). NUNCA null:
-    /// <see cref="FlightSegment.DepartureTime"/> es obligatorio desde que el segmento existe.
-    ///
-    /// <para><b>Corrección ronda 3 (2026-08-13, pedido directo del dueño)</b>: la ronda anterior ESCONDÍA
-    /// el tramo entero cuando parecía "sin horario cargado" — el dueño lo rechazó de una: "un servicio
-    /// cargado SIEMPRE aparece" gana sobre "sin dato no se muestra". El caso real de negocio es "el
-    /// vendedor cargó la FECHA del vuelo sin la hora", no "no cargó nada" — por eso ahora se imprime la
-    /// fecha en el lugar de la hora, nunca se hace desaparecer la fila.</para>
-    /// </summary>
-    public static string BuildFlightDepartureTimeText(DateTime departureTime, DateTime? arrivalTime)
-    {
-        if (arrivalTime.HasValue && LooksLikeMissingSchedule(departureTime, arrivalTime.Value))
-        {
-            return $"{departureTime:dd/MM/yyyy}";
-        }
-
-        return $"{departureTime:HH:mm}";
-    }
-
-    /// <summary>
-    /// Texto para el lado de LLEGADA de la fila del vuelo (o null si no corresponde imprimir nada de ese
-    /// lado). Reglas (ronda 3, 2026-08-13):
-    /// <list type="bullet">
-    /// <item>Sin llegada cargada → null (tramo solo de ida, dato real que no existe).</item>
-    /// <item>Llegada = mismo instante que la salida (<see cref="IsSameInstantArrival"/>) → null (no es un
-    /// dato real, es un relleno del formulario que copió la salida).</item>
-    /// <item>"Medianoche exacta en las dos puntas" (<see cref="LooksLikeMissingSchedule"/>): si la fecha
-    /// de llegada es DISTINTA de la de salida, se muestra esa fecha corta ("11/02/2027") — el vendedor SÍ
-    /// cargó un rango de fechas, aunque no la hora. Si es el mismo día, no se repite la fecha del lado de
-    /// la llegada (ya alcanza con la del lado de salida).</item>
-    /// <item>Horario real → la hora ("13:40"), como siempre.</item>
-    /// </list>
-    /// </summary>
-    public static string? BuildFlightArrivalTimeText(DateTime departureTime, DateTime? arrivalTime)
-    {
-        if (!arrivalTime.HasValue) return null;
-        if (IsSameInstantArrival(departureTime, arrivalTime.Value)) return null;
-
-        if (LooksLikeMissingSchedule(departureTime, arrivalTime.Value))
-        {
-            return arrivalTime.Value.Date == departureTime.Date
-                ? null
-                : $"{arrivalTime.Value:dd/MM/yyyy}";
-        }
-
-        return $"{arrivalTime.Value:HH:mm}";
     }
 
     /// <summary>

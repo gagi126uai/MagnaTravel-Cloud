@@ -104,7 +104,11 @@ public class FlightSegmentDto
     // Obra "PDF de presupuesto" (2026-08-11/12): campos opcionales espejo de lo cargado en la ficha.
     // Ver el XML-doc completo en FlightSegment.OutboundDepartureTime y hermanos.
     public TimeOnly? OutboundDepartureTime { get; set; }
+    // Obra "PDF completo" (2026-08-13): horarios de llegada por tramo. Ver FlightSegment.OutboundArrivalTime/
+    // ReturnArrivalTime — mismo criterio que los de salida (opcional, espejo de lo cargado).
+    public TimeOnly? OutboundArrivalTime { get; set; }
     public TimeOnly? ReturnDepartureTime { get; set; }
+    public TimeOnly? ReturnArrivalTime { get; set; }
     public bool? IsDirect { get; set; }
     public bool? IncludesBackpack { get; set; }
     public bool? IncludesCarryOn { get; set; }

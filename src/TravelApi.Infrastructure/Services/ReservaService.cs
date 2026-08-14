@@ -867,6 +867,12 @@ public class ReservaService : IReservaService
             .Include(r => r.TransferBookings)
             .Include(r => r.PackageBookings)
             .Include(r => r.AssistanceBookings)
+            // Obra "PDF completo" (2026-08-13): el bloque "Otro" del renderer lee reserva.Servicios
+            // (ServicioReserva, el servicio genérico sin tipo propio). Sin este Include llega SIEMPRE
+            // vacía acá (no hay lazy loading configurado) y el bloque nunca se dibuja en producción —
+            // bug de cableado encontrado en review, el harness no lo detectaba porque arma la reserva
+            // a mano en memoria, sin pasar por esta query.
+            .Include(r => r.Servicios)
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 

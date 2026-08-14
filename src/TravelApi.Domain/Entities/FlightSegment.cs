@@ -49,12 +49,36 @@ public class FlightSegment : IHasPublicId
     [MaxLength(100)]
     public string? DestinationCity { get; set; } // Buenos Aires
     
+    // ============================================================================================
+    // SEMANTICA INTOCABLE (obra "PDF completo", 2026-08-13, decision firmada del dueño) — LEER ANTES
+    // DE TOCAR DepartureTime/ArrivalTime:
+    //
+    // Desde la ficha "producto-primero" (ADR-018), este par de campos YA NO guarda un horario real de
+    // vuelo: guarda la FECHA de ida (DepartureTime) y la FECHA de vuelta (ArrivalTime), ambas a
+    // medianoche (el front manda "T00:00:00", ver ServiceInlineCard.buildPayload). Son la fuente que
+    // alimenta la VENTANA del viaje (ReservaScheduleCalculator / backfill ADR-053: min/max de fechas de
+    // todos los servicios de la reserva) — NI el guardado NI ese calculo se tocan en esta obra.
+    //
+    // Los horarios DE VERDAD (los que el vendedor anota para que el PDF los imprima, "Sale 08:30hs /
+    // Llega 11:45hs") viven en los 4 campos TimeOnly de mas abajo (OutboundDepartureTime/
+    // OutboundArrivalTime/ReturnDepartureTime/ReturnArrivalTime) — SOLO ellos alimentan el PDF de
+    // presupuesto (ver QuoteBudgetPdfRules). Un vuelo puede tener fecha sin hora (el PDF cae al
+    // fallback de fecha corta) o los 4 horarios completos: son datos INDEPENDIENTES, cargados en
+    // formularios distintos, y el uno no reemplaza al otro.
+    //
+    // Resumen del reparto:
+    //   DepartureTime / ArrivalTime      -> VENTANA del viaje (fechas, motor de estados). NO es horario.
+    //   Outbound* / Return* (TimeOnly?)  -> HORARIOS del papel (PDF de presupuesto). NO es fecha.
+    // ============================================================================================
+
     public DateTime DepartureTime { get; set; }
 
     // BUG 2 (2026-06-08): ArrivalTime es NULLABLE. Existen vuelos solo de ida: un segmento puede no
-    // tener hora de llegada. El modelo es POR SEGMENTO (ida y vuelta = 2 segmentos distintos), asi que
-    // esto NO modela "vuelta" — solo permite que un segmento quede sin hora de llegada. DepartureTime
-    // sigue siendo obligatorio. Los consumidores (ReservaScheduleCalculator, validaciones) toleran null.
+    // tener fecha de vuelta cargada. El modelo es POR SEGMENTO (ida y vuelta = 2 segmentos distintos
+    // en el modal viejo; en la ficha "producto-primero" ida+vuelta viven en UN solo segmento, ver el
+    // reparto de arriba), asi que esto NO modela "vuelta" por si solo — solo permite que un segmento
+    // quede sin fecha de vuelta. DepartureTime sigue siendo obligatorio. Los consumidores
+    // (ReservaScheduleCalculator, validaciones) toleran null.
     public DateTime? ArrivalTime { get; set; }
     
     // Clase y equipaje. ADR-018 Ronda 7 (2026-06-06): la cabina deja de ser obligatoria —
@@ -230,8 +254,18 @@ public class FlightSegment : IHasPublicId
     /// </summary>
     public TimeOnly? OutboundDepartureTime { get; set; }
 
+    /// <summary>
+    /// Horario de LLEGADA de la ida (obra "PDF completo", 2026-08-13): junto con
+    /// <see cref="OutboundDepartureTime"/> arma el tramo de ida completo que pide la maqueta ("Sale
+    /// 08:30hs · Llega 11:45hs"). Null = no informado — el PDF omite ese lado sin inventar nada.
+    /// </summary>
+    public TimeOnly? OutboundArrivalTime { get; set; }
+
     /// <summary>Horario de salida de la VUELTA, mismo criterio que <see cref="OutboundDepartureTime"/>.</summary>
     public TimeOnly? ReturnDepartureTime { get; set; }
+
+    /// <summary>Horario de LLEGADA de la vuelta, mismo criterio que <see cref="OutboundArrivalTime"/>.</summary>
+    public TimeOnly? ReturnArrivalTime { get; set; }
 
     /// <summary>Si el vuelo es directo (sin escalas). Null = no informado (no significa "con escalas").</summary>
     public bool? IsDirect { get; set; }
