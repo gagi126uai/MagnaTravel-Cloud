@@ -30,11 +30,17 @@ public static class ReservaScheduleCalculator
     public static async Task<(DateTime? Start, DateTime? End)> ComputeAsync(
         AppDbContext db, int reservaId, CancellationToken ct = default)
     {
+        // ⚠️ Los predicados de "vigente" van escritos INLINE adentro de cada Where — NO como llamada a
+        // IsCancelledGenericStatusSql/IsCancelledFlightStatusSql. EF Core no traduce un metodo C# propio
+        // a SQL (lo cazo el CI contra Postgres real el 13/08; InMemory lo disimulaba evaluando en
+        // memoria). Los metodos quedan abajo como DEFINICION canonica de referencia: el test
+        // WorkflowStatusHelperEquivalenceTests compara estos inline contra WorkflowStatusHelper para
+        // que nadie los haga divergir sin enterarse.
         var startDates = new List<DateTime>();
         var endDates = new List<DateTime>();
 
         startDates.AddRange(await db.FlightSegments
-            .Where(f => f.ReservaId == reservaId && !IsCancelledFlightStatusSql(f.Status))
+            .Where(f => f.ReservaId == reservaId && !CancelledFlightIataCodes.Contains((f.Status ?? "").Trim().ToUpper()))
             .Select(f => f.DepartureTime)
             .ToListAsync(ct));
 
@@ -42,32 +48,32 @@ public static class ReservaScheduleCalculator
         // el "fin" del segmento es su salida — mismo patron que el transfer (ReturnDateTime ?? PickupDateTime)
         // de mas abajo. Asi una reserva con un unico vuelo de ida no queda sin EndDate.
         endDates.AddRange(await db.FlightSegments
-            .Where(f => f.ReservaId == reservaId && !IsCancelledFlightStatusSql(f.Status))
+            .Where(f => f.ReservaId == reservaId && !CancelledFlightIataCodes.Contains((f.Status ?? "").Trim().ToUpper()))
             .Select(f => f.ArrivalTime ?? f.DepartureTime)
             .ToListAsync(ct));
 
         startDates.AddRange(await db.HotelBookings
-            .Where(h => h.ReservaId == reservaId && !IsCancelledGenericStatusSql(h.Status))
+            .Where(h => h.ReservaId == reservaId && !(h.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(h => h.CheckIn)
             .ToListAsync(ct));
 
         endDates.AddRange(await db.HotelBookings
-            .Where(h => h.ReservaId == reservaId && !IsCancelledGenericStatusSql(h.Status))
+            .Where(h => h.ReservaId == reservaId && !(h.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(h => h.CheckOut)
             .ToListAsync(ct));
 
         startDates.AddRange(await db.TransferBookings
-            .Where(t => t.ReservaId == reservaId && !IsCancelledGenericStatusSql(t.Status))
+            .Where(t => t.ReservaId == reservaId && !(t.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(t => t.PickupDateTime)
             .ToListAsync(ct));
 
         endDates.AddRange(await db.TransferBookings
-            .Where(t => t.ReservaId == reservaId && !IsCancelledGenericStatusSql(t.Status))
+            .Where(t => t.ReservaId == reservaId && !(t.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(t => t.ReturnDateTime ?? t.PickupDateTime)
             .ToListAsync(ct));
 
         startDates.AddRange(await db.PackageBookings
-            .Where(p => p.ReservaId == reservaId && !IsCancelledGenericStatusSql(p.Status))
+            .Where(p => p.ReservaId == reservaId && !(p.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(p => p.StartDate)
             .ToListAsync(ct));
 
@@ -75,7 +81,7 @@ public static class ReservaScheduleCalculator
         // StartDate — mismo patron que el transfer (ReturnDateTime ?? PickupDateTime) de mas arriba —
         // para no inventar una fecha de fin ni romper el List<DateTime>.
         endDates.AddRange(await db.PackageBookings
-            .Where(p => p.ReservaId == reservaId && !IsCancelledGenericStatusSql(p.Status))
+            .Where(p => p.ReservaId == reservaId && !(p.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(p => p.EndDate ?? p.StartDate)
             .ToListAsync(ct));
 
@@ -83,22 +89,22 @@ public static class ReservaScheduleCalculator
         // que el check-in/out de hotel. Si faltara aca, una reserva que SOLO tenga asistencia
         // quedaria sin StartDate/EndDate y el lifecycle/los chips de fecha fallarian en silencio.
         startDates.AddRange(await db.AssistanceBookings
-            .Where(a => a.ReservaId == reservaId && !IsCancelledGenericStatusSql(a.Status))
+            .Where(a => a.ReservaId == reservaId && !(a.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(a => a.ValidFrom)
             .ToListAsync(ct));
 
         endDates.AddRange(await db.AssistanceBookings
-            .Where(a => a.ReservaId == reservaId && !IsCancelledGenericStatusSql(a.Status))
+            .Where(a => a.ReservaId == reservaId && !(a.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(a => a.ValidTo)
             .ToListAsync(ct));
 
         startDates.AddRange(await db.Servicios
-            .Where(s => s.ReservaId == reservaId && !IsCancelledGenericStatusSql(s.Status))
+            .Where(s => s.ReservaId == reservaId && !(s.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(s => s.DepartureDate)
             .ToListAsync(ct));
 
         endDates.AddRange(await db.Servicios
-            .Where(s => s.ReservaId == reservaId && !IsCancelledGenericStatusSql(s.Status))
+            .Where(s => s.ReservaId == reservaId && !(s.Status ?? "").Trim().ToLower().StartsWith("cancel"))
             .Select(s => s.ReturnDate ?? s.DepartureDate)
             .ToListAsync(ct));
 
@@ -134,6 +140,10 @@ public static class ReservaScheduleCalculator
         var normalized = (status ?? string.Empty).Trim().ToUpper();
         return normalized == "UN" || normalized == "UC" || normalized == "HX" || normalized == "NO";
     }
+
+    // Codigos IATA de "vuelo cancelado" para el predicado INLINE de ComputeAsync: EF Core traduce
+    // array.Contains(...) a un IN (...) de SQL — un metodo propio no lo traduce (ver aviso de arriba).
+    private static readonly string[] CancelledFlightIataCodes = { "UN", "UC", "HX", "NO" };
 
     private static DateTime AsUtc(DateTime value) => value.Kind switch
     {
