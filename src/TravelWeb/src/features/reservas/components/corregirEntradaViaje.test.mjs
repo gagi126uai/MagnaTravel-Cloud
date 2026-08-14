@@ -4,7 +4,11 @@
  * Cubre tres áreas:
  *   1. Visibilidad del botón "Sacar de viaje" en ReservaHeader.
  *   2. Validación del motivo en CorregirEntradaViajeModal (mín. 10 chars con trim).
- *   3. Chip "En corrección" y banner "En corrección" en ReservaStatusChips / ReservaDetailPage.
+ *   3. Condición de "En corrección" (reserva.isUnderCorrection === true). ADR-053
+ *      (2026-08-13) cambió DÓNDE se pinta este estado — el chip de ReservaStatusChips
+ *      se retiró y ahora es un renglón ámbar con botón en ReservaDetailPage
+ *      (NeedsDateRecalculationRow) — pero la condición en sí NO cambió, así que estos
+ *      tests siguen valiendo tal cual.
  *
  * Estos tests verifican lógica pura (sin DOM, sin React): replican las condiciones exactas
  * del componente para que un desarrollador trainee pueda entender qué regla está testeando
@@ -238,48 +242,46 @@ test("Contador de caracteres faltantes: más de 10 chars → faltan 0 (nunca neg
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. CHIP "EN CORRECCIÓN"
+// 3. "EN CORRECCIÓN" — CONDICIÓN COMPARTIDA
 //
-// Replica de la condición que muestra el chip.
+// Replica de la condición que decide si se muestra el aviso.
 //
-// Chip (ReservaStatusChips): visible cuando reserva.isUnderCorrection === true.
-//
-// (2026-07-05, spec UX respuesta 2B) El banner separado que existía en
-// ReservaDetailPage se ELIMINÓ: quedaba duplicado con este chip, que se enciende
-// con la MISMA condición exacta. Ahora "En corrección" se ve SOLO acá (chip del
-// header); el aviso completo vive en su title/tooltip.
+// Hasta el 2026-08-04 era el chip de ReservaStatusChips. Desde ADR-053
+// (2026-08-13, P6 firmado): es el renglón ámbar "Falta revisar las fechas del
+// viaje" + botón "Volver a calcular las fechas" de NeedsDateRecalculationRow, en
+// ReservaDetailPage. La condición NUNCA cambió: reserva.isUnderCorrection === true.
 //
 // La reserva en estado "En corrección" ES Confirmada y operativa.
 // No convierte la pantalla en solo-lectura: solo avisa que hay algo pendiente.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Replica de la condición para mostrar el chip "En corrección".
+ * Replica de la condición que muestra el renglón "En corrección".
  * Es exactamente reserva.isUnderCorrection === true.
  */
 function debeVerseIndicadorCorreccion(reserva) {
     return reserva?.isUnderCorrection === true;
 }
 
-test("Chip visible: isUnderCorrection=true", () => {
+test("Aviso visible: isUnderCorrection=true", () => {
     assert.equal(debeVerseIndicadorCorreccion({ isUnderCorrection: true }), true);
 });
 
-test("Chip oculto: isUnderCorrection=false (reserva normal en viaje o confirmada)", () => {
+test("Aviso oculto: isUnderCorrection=false (reserva normal en viaje o confirmada)", () => {
     assert.equal(debeVerseIndicadorCorreccion({ isUnderCorrection: false }), false);
 });
 
-test("Chip oculto: isUnderCorrection no existe en el DTO (DTO viejo)", () => {
+test("Aviso oculto: isUnderCorrection no existe en el DTO (DTO viejo)", () => {
     // Degradación elegante: si el campo no viene, asumimos false.
     assert.equal(debeVerseIndicadorCorreccion({ status: 'Traveling' }), false);
 });
 
-test("Chip oculto: reserva undefined", () => {
+test("Aviso oculto: reserva undefined", () => {
     // Protección contra undefined en el componente (optional chaining).
     assert.equal(debeVerseIndicadorCorreccion(undefined), false);
 });
 
-test("Chip oculto: isUnderCorrection=null (no es true)", () => {
+test("Aviso oculto: isUnderCorrection=null (no es true)", () => {
     assert.equal(debeVerseIndicadorCorreccion({ isUnderCorrection: null }), false);
 });
 

@@ -284,11 +284,14 @@ public class AlertService : IAlertService
     /// condicion extra: la ventana <c>hoy &lt;= firstStart</c> deja afuera sola a una reserva
     /// genuinamente en viaje (su primer inicio quedo en el pasado).</para>
     ///
-    /// <para><b>SIN prefiltro de fecha sobre Reserva.StartDate (B1-bis — NO lo reintroduzcas)</b>: ese
-    /// campo es editable a mano en ambas direcciones y borrable (<c>UpdateDatesAsync</c>), asi que
-    /// cualquier prefiltro sobre el puede SILENCIAR avisos de reservas cuyos servicios si caen en
-    /// ventana. La verdad sobre la ventana la dan SIEMPRE las fechas de los servicios
-    /// (<see cref="UpcomingStartCalculator"/>); el prefiltro es solo Status + ownership.</para>
+    /// <para><b>SIN prefiltro de fecha sobre Reserva.StartDate (B1-bis — NO lo reintroduzcas)</b>: aunque
+    /// ADR-053 (2026-08-13) volvio a <c>Reserva.StartDate</c> CALCULADO y de solo lectura (ya no editable
+    /// a mano — el viejo <c>UpdateDatesAsync</c> que lo permitia fue retirado), sigue siendo un valor
+    /// PERSISTIDO que se actualiza en cada mutacion de servicio: entre el momento en que un servicio
+    /// cambia y el proximo recalculo, puede quedar momentaneamente desalineado. Prefiltrar sobre el
+    /// arriesga SILENCIAR avisos de reservas cuyos servicios si caen en ventana. La verdad sobre la
+    /// ventana la dan SIEMPRE las fechas de los servicios en vivo (<see cref="UpcomingStartCalculator"/>);
+    /// el prefiltro es solo Status + ownership.</para>
     ///
     /// <para><b>Visibilidad</b>: admin ve todas; el vendedor solo SUS reservas
     /// (<c>ResponsibleUserId == caller.UserId</c>), fail-closed sin UserId — identico a CostsToConfirm.</para>

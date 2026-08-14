@@ -344,12 +344,14 @@ public class ReservaDto
     public List<CancelledPenaltyByCurrencyDto> CancelledPenaltiesByCurrency { get; set; } = new();
 
     /// <summary>
-    /// FIX #27 (Tanda 3 del barrido de PROD, 2026-07-23): aviso NO bloqueante (P-20, mismo patron que
-    /// <see cref="TravelApi.Application.Contracts.Reservations.RescheduleReservaResult.Warning"/>). Hoy solo lo
-    /// llena <c>ReservaService.UpdateDatesAsync</c> (corregir StartDate/EndDate a mano) cuando la ventana que el
-    /// usuario guardo NO CONTIENE las fechas reales de los servicios cargados — por ejemplo, corrigio la salida
-    /// pero se olvido de correr tambien la vuelta. Null en cualquier otra lectura de una reserva (no se
-    /// recalcula al pedir el detalle, solo al guardar el cambio que lo dispara).
+    /// Aviso NO bloqueante genérico (P-20), COMPARTIDO por distintos flujos que necesitan avisar algo sin
+    /// frenar la operación (mismo patrón que
+    /// <see cref="TravelApi.Application.Contracts.Reservations.RescheduleReservaResult.Warning"/>). Hoy lo
+    /// llena el semáforo de pasaporte vencido (<c>PassportAlertText</c>). ADR-053 (2026-08-13) usa un campo
+    /// APARTE (<see cref="ScheduleWarning"/>) para el aviso de "la ventana del viaje se movió" — este campo
+    /// genérico dejó de servir para eso (el FIX #27 original de 2026-07-23 que lo llenaba desde
+    /// <c>UpdateDatesAsync</c> quedó retirado junto con ese método): compartir el mismo slot pisaría un
+    /// aviso con el otro en silencio.
     /// </summary>
     public string? Warning { get; set; }
 
@@ -447,18 +449,45 @@ public class ReservaDto
     public int ChildCount { get; set; }
     public int InfantCount { get; set; }
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// ADR-053 (2026-08-13): fecha de SALIDA calculada, de SOLO LECTURA — MIN de las fechas de los
+    /// servicios VIGENTES (los anulados ya no cuentan). Ningun endpoint la edita directamente; para una
+    /// fecha propia del vendedor usar <see cref="PromisedStartDate"/>.
+    /// </summary>
     public DateTime? StartDate { get; set; }
+
+    /// <summary>Fecha de REGRESO calculada, de solo lectura (par de <see cref="StartDate"/>).</summary>
     public DateTime? EndDate { get; set; }
+
     /// <summary>
-    /// Fecha de salida computada del primer servicio cargado (min de fechas).
-    /// Se expone para que la UI pueda sugerir un valor cuando StartDate este vacio.
+    /// ADR-053 (2026-08-13, D3): fecha de salida PROMETIDA — campo nuevo, separado, 100% manual (patrón
+    /// Odoo calculada+prometida). El cálculo de <see cref="StartDate"/> NUNCA la toca. Se edita con
+    /// <c>PATCH /{id}/promised-dates</c>.
     /// </summary>
-    public DateTime? SuggestedStartDate { get; set; }
+    public DateTime? PromisedStartDate { get; set; }
+
+    /// <summary>Fecha de regreso PROMETIDA (par de <see cref="PromisedStartDate"/>).</summary>
+    public DateTime? PromisedEndDate { get; set; }
+
     /// <summary>
-    /// Fecha de regreso computada del ultimo servicio cargado (max de fechas).
-    /// Se expone para que la UI pueda sugerir un valor cuando EndDate este vacio.
+    /// ADR-053 (2026-08-13, D4): true si la ventana calculada necesita que alguien la revise/recalcule a
+    /// propósito (ej. tras "Sacar de viaje"). Estado VISIBLE que reemplaza al viejo candado invisible
+    /// <c>DatesManuallySet</c> — el front ofrece el botón "volver a calcular" (<c>POST
+    /// /{id}/recalculate-dates</c>) cuando está prendido. Se apaga sola con cualquier corrida exitosa del
+    /// escritor único que mueva la ventana, o a mano con ese botón.
     /// </summary>
-    public DateTime? SuggestedEndDate { get; set; }
+    public bool NeedsDateRecalculation { get; set; }
+
+    /// <summary>
+    /// ADR-053 (2026-08-13, D2): aviso NO bloqueante (P-20) de que el último guardado de un servicio
+    /// movió la ventana del viaje. Persistencia efímera: solo aparece en el PRÓXIMO <c>GET</c> del MISMO
+    /// actor que disparó el cambio, y se limpia al leerse (no se vuelve a mostrar). <c>null</c> = no hay
+    /// nada pendiente para este caller. Campo DISTINTO de <see cref="Warning"/> (que ya lo usa el aviso de
+    /// pasaporte vencido) — comparten el mismo slot pisaría uno de los dos avisos en silencio.
+    /// </summary>
+    public string? ScheduleWarning { get; set; }
+
     public DateTime? ClosedAt { get; set; }
     
     // Collections
@@ -592,12 +621,14 @@ public class ReservaDto
     public List<ReservaCancellationCreditLineDto> CancellationCreditByCurrency { get; set; } = new();
 
     /// <summary>
-    /// ADR-036 (2026-06-22): true si la reserva quedo "En corrección" tras un "Sacar de viaje" — esto es,
-    /// volvio a Confirmada PERO con la fecha de salida borrada (StartDate == null), senal de que entro a "En
-    /// viaje" por error y falta recargar la fecha del servicio. El front lo usa para mostrar el cartel/chip
-    /// "En corrección — pendiente revisar fechas". Es DERIVADO (Status == Confirmed && StartDate == null), no
-    /// hay estado ni columna nueva. Cuando se corrige la fecha del servicio, StartDate se recomputa y el flag
-    /// se apaga solo.
+    /// ADR-036 (2026-06-22) + ADR-053 (2026-08-13, D4): true si la reserva quedo "En corrección" tras un
+    /// "Sacar de viaje" — volvio a Confirmada pero la ventana necesita revision. El front lo usa para
+    /// mostrar el cartel/chip "En corrección — pendiente revisar fechas" (CONTRATO sin cambios). FORMULA
+    /// NUEVA (ADR-053): antes era <c>Status == Confirmed &amp;&amp; StartDate == null</c> — invalido bajo
+    /// la decision (1) del dueño, que vuelve StartDate calculado y de solo lectura (ya no se puede "vaciar"
+    /// a mano como semaforo). Ahora es <c>Status == Confirmed &amp;&amp; NeedsDateRecalculation</c>, la
+    /// misma idea con una bandera con nombre propio. Se apaga sola con el proximo recalculo que mueva la
+    /// ventana, o con el boton "volver a calcular".
     /// </summary>
     public bool IsUnderCorrection { get; set; }
 

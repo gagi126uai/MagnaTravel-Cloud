@@ -74,26 +74,18 @@ public partial class BookingService
 
         // 4) Persistir el desplazamiento + el rastro de auditoria en UN solo SaveChanges (atomico: o se mueve
         //    todo y queda auditado, o no se mueve nada). El audit se STAGEA para entrar en la misma transaccion.
-        //
-        //    FIX (2026-07-23): si una correccion manual anterior (UpdateDatesAsync) habia dejado
-        //    reserva.DatesManuallySet=true, RecalculateReservationScheduleAsync (paso 5) ahora RESPETA esa
-        //    marca y no pisa las fechas. Pero "Reprogramar viaje" es TAMBIEN una accion deliberada del
-        //    usuario — que ademas movio TODOS los servicios — y quiere que la cabecera refleje el nuevo
-        //    min/max. Bajamos la marca ACA (misma transaccion que el shift) para que el paso 5 recalcule
-        //    como siempre.
         if (daysShift != 0)
         {
-            reserva.DatesManuallySet = false;
             StageRescheduleAudit(reservaId, daysShift, servicesMoved);
             await _db.SaveChangesAsync(ct);
         }
 
-        // 5) Recalcular StartDate/EndDate de la reserva desde el nuevo min/max de fechas (fuente unica).
-        //    Hace su propio SaveChanges si cambio algo.
-        await RecalculateReservationScheduleAsync(reservaId, ct);
-
-        // Releer las fechas de cabecera ya recalculadas para devolverselas al front.
-        var (newStart, newEnd) = await ReservaScheduleCalculator.ComputeAsync(_db, reservaId, ct);
+        // 5) Recalcular StartDate/EndDate de la reserva desde el nuevo min/max de fechas VIGENTES (ADR-053,
+        //    escritor unico). "Reprogramar viaje" es una accion deliberada que ademas movio TODOS los
+        //    servicios (vivos y cancelados) — el candado invisible que antes frenaba este recalculo
+        //    (DatesManuallySet) ya no existe: el escritor unico SIEMPRE recalcula. Reusa el resultado
+        //    devuelto por la funcion compartida en vez de una segunda lectura (ComputeAsync) aparte.
+        var (newStart, newEnd, _) = await RecalculateReservationScheduleAsync(reservaId, ct);
 
         return new RescheduleReservaResult
         {
@@ -166,14 +158,14 @@ public partial class BookingService
     /// de los 6 tipos (vuelo, hotel, transfer, paquete, asistencia, generico). Las fechas nullables solo se
     /// mueven si tienen valor (null queda null). Devuelve la cantidad de servicios desplazados.
     ///
-    /// <para><b>DECISION — se mueven TAMBIEN los servicios cancelados/anulados</b>: el calculo de fechas de la
-    /// reserva (<see cref="ReservaScheduleCalculator"/>) incluye a proposito los servicios cancelados (ADR-019
-    /// R8, alimenta el StartDate persistido que mueve el lifecycle). Si reprogramaramos solo los vivos, al
-    /// recalcular StartDate/EndDate (que mira TODAS las filas) la cabecera no reflejaria limpiamente el shift, y
-    /// un re-shift no seria simetrico. Mover el itinerario completo (vivos + cancelados) mantiene coherente la
-    /// relacion fechas&lt;-&gt;reserva y hace la operacion idempotente al revertir (+N y luego -N vuelve al origen).
-    /// La plata NO cambia: las fechas no entran en el costo ni en el saldo, asi que mover un servicio cancelado
-    /// solo corrige su fecha historica, no reactiva nada.</para>
+    /// <para><b>DECISION — se mueven TAMBIEN los servicios cancelados/anulados</b>: esta obra (ADR-053,
+    /// 2026-08-13) es DELIBERADA en no cambiar este comportamiento: por fidelidad historica del itinerario,
+    /// "reprogramar" sigue moviendo TODOS los servicios, cancelados incluidos. Lo que SI cambio con ADR-053
+    /// es que la CABECERA (StartDate/EndDate) ya NO incluye a los cancelados en su MIN/MAX (reemplazo de
+    /// ADR-019 R8 — ver <see cref="ReservaScheduleCalculator"/>): despues de un shift, la ventana de la
+    /// reserva se recalcula SOLO desde los servicios vigentes, aunque los cancelados tambien se hayan
+    /// movido junto con ellos. La plata NO cambia: las fechas no entran en el costo ni en el saldo, asi que
+    /// mover un servicio cancelado solo corrige su fecha historica, no reactiva nada.</para>
     ///
     /// <para><b>Kind de las fechas</b>: <see cref="DateTime.AddDays"/> preserva el <see cref="DateTimeKind"/>.
     /// Todas las fechas se persisten con Kind=Utc ("fecha de pared disfrazada de Utc", ver

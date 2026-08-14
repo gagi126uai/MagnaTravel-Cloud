@@ -9,17 +9,20 @@ namespace TravelApi.Infrastructure.Services;
 /// Paquete StartDate, Aereo DepartureTime, Traslado PickupDateTime, Asistencia ValidFrom, generico
 /// DepartureDate). Devuelve fecha "de pared" date-only con Kind=Utc.
 ///
-/// <para><b>OJO — en el sistema coexisten TRES definiciones de "cuando empieza" la reserva, A PROPOSITO
-/// (ADR-019 R8). NO las unifiques:</b></para>
+/// <para><b>ADR-053 (2026-08-13) REEMPLAZA ADR-019 R8</b>: antes coexistian TRES definiciones distintas de
+/// "cuando empieza" la reserva, a proposito. Ahora quedan DOS, y comparten el MISMO predicado de
+/// "vigente" (excluir cancelados/anulados):</b></para>
 /// <list type="number">
-///   <item><see cref="ReservaScheduleCalculator"/>: MIN/MAX <b>CON</b> servicios cancelados. Alimenta el
-///   StartDate/EndDate persistidos de la Reserva y con eso el lifecycle (historico, mueve estados).</item>
-///   <item>Este helper: MIN <b>SIN</b> cancelados. Alimenta el aviso de la campanita y el endpoint de
-///   dismiss — un servicio cancelado no debe disparar avisos (Ronda 5 de la guia UX).</item>
+///   <item><see cref="ReservaScheduleCalculator"/>: MIN/MAX de servicios <b>VIGENTES</b> (ya NO incluye
+///   cancelados — ADR-053 reemplazo formal de R8). Alimenta el StartDate/EndDate PERSISTIDOS de la Reserva,
+///   escritos por su escritor unico <c>RecalculateAndPersistAsync</c>.</item>
+///   <item>Este helper: MIN <b>SIN</b> cancelados, en LOTE, para el aviso de la campanita y el endpoint de
+///   dismiss (forma distinta a la de arriba: muchas reservas a la vez, con optimizacion de tope superior —
+///   por eso siguen siendo dos funciones, no una sola, aunque ya comparten predicado).</item>
 ///   <item>El job <c>ReservaLifecycleAutomationService.AutoTransitionConfirmedToTravelingAsync</c> decide
-///   la promocion Confirmed → Traveling con el StartDate <b>PERSISTIDO</b> (el MIN con cancelados, ademas
-///   editable a mano) — no con ninguno de los dos calculos en vivo. Deuda preexistente nombrada en el
-///   ADR: puede promover antes de tiempo si el servicio mas temprano esta cancelado.</item>
+///   la promocion Confirmed → Traveling con el StartDate <b>PERSISTIDO</b> — que, desde ADR-053, YA excluye
+///   cancelados igual que este helper. La vieja deuda ("puede promover antes de tiempo si el servicio mas
+///   temprano esta cancelado") queda CERRADA como efecto colateral de esta obra.</item>
 /// </list>
 ///
 /// <para>Es EL UNICO lugar donde se define "primer inicio" para el aviso: lo usan el bucket

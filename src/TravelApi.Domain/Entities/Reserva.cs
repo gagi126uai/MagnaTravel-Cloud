@@ -299,23 +299,73 @@ public class Reserva : IHasPublicId
     
     // Dates
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// ADR-053 (2026-08-13): fecha de SALIDA calculada, de SOLO LECTURA — reemplaza ADR-019 R8. Es el MIN
+    /// de las fechas de inicio de los servicios VIGENTES (los ANULADOS ya no cuentan). El ÚNICO escritor es
+    /// <c>ReservaScheduleCalculator.RecalculateAndPersistAsync</c>, que corre en la MISMA transacción que la
+    /// mutación de servicio que la dispara (alta/edición/borrado/conversión de presupuesto) — nunca a mano.
+    /// Para editar una intención propia (no calculada) usar <see cref="PromisedStartDate"/>.
+    /// </summary>
     public DateTime? StartDate { get; set; }
+
+    /// <summary>Fecha de REGRESO calculada, de solo lectura (par de <see cref="StartDate"/>). Ver su XML-doc.</summary>
     public DateTime? EndDate { get; set; }
     public DateTime? ClosedAt { get; set; }
 
     /// <summary>
-    /// FIX (2026-07-23): true cuando alguien corrigio StartDate/EndDate A MANO desde la ficha
-    /// (ver <c>ReservaService.UpdateDatesAsync</c>). Antes, CUALQUIER guardado posterior de un
-    /// servicio (hotel, vuelo, transfer, paquete, asistencia) volvia a pisar esas fechas con el
-    /// MIN/MAX automatico de los servicios (<c>BookingService.RecalculateReservationScheduleAsync</c>),
-    /// borrando la correccion manual sin que nadie lo pidiera.
-    ///
-    /// <para>Default false = comportamiento de SIEMPRE (el recalculo automatico manda). Se prende
-    /// SOLO cuando el usuario corrige a mano; desde ahi, las fechas manuales tienen prioridad y el
-    /// recalculo automatico deja de tocarlas. Es aditivo: filas viejas quedan en false, sin cambio
-    /// de comportamiento para ellas.</para>
+    /// COLUMNA MUERTA desde ADR-053 (2026-08-13, "fechas del viaje calculadas y de solo lectura"). Ya
+    /// NADIE la lee ni la escribe: el candado invisible que representaba se reemplazó por el estado
+    /// VISIBLE <see cref="NeedsDateRecalculation"/> + el botón "volver a calcular" (decisión del dueño
+    /// 2026-08-11). La columna se DROPEA en la migración <c>Adr053_M2_DropDatesManuallySet</c>, que se
+    /// deploya en un release APARTE (ver D6.2 del ADR: el <c>DROP COLUMN</c> tiene una ventana real de
+    /// rotura durante el deploy si va junto con las columnas nuevas — separarlo la elimina). Se deja la
+    /// propiedad viva en esta tanda (F1) solo para que el scaffold de <c>Adr053_M1</c> no intente
+    /// dropearla por su cuenta.
     /// </summary>
     public bool DatesManuallySet { get; set; } = false;
+
+    /// <summary>
+    /// ADR-053 (2026-08-13): "fecha prometida" de salida — patrón Odoo calculada+prometida. Campo NUEVO,
+    /// separado, 100% MANUAL: el escritor único de <see cref="StartDate"/>/<see cref="EndDate"/>
+    /// (<c>ReservaScheduleCalculator.RecalculateAndPersistAsync</c>) NUNCA la toca. Se ofrece el PAR
+    /// (salida y regreso prometidas) porque la reserva ya tiene un par CALCULADO — un singular prometido
+    /// obligaría a elegir arbitrariamente cuál de las dos cubre.
+    /// </summary>
+    public DateTime? PromisedStartDate { get; set; }
+
+    /// <summary>Fecha de regreso PROMETIDA (par de <see cref="PromisedStartDate"/>). Ver su XML-doc.</summary>
+    public DateTime? PromisedEndDate { get; set; }
+
+    /// <summary>
+    /// ADR-053 (2026-08-13): estado VISIBLE que reemplaza al candado invisible <see cref="DatesManuallySet"/>
+    /// (ya muerto). Se prende en dos casos: (1) "Sacar de viaje" (<c>CorrectTravelingEntryAsync</c>) — antes
+    /// borraba <c>StartDate</c> a mano como señal de "revisar la fecha del servicio"; ahora que
+    /// <c>StartDate</c> es de solo lectura, esta bandera cumple ese rol sin inventar un valor de fecha falso.
+    /// (2) Cualquier caso futuro no previsto donde alguien necesite marcar "esta ventana no es confiable,
+    /// hace falta recalcular". Se apaga sola con cualquier corrida EXITOSA del escritor único (D1), o a
+    /// mano con el botón "volver a calcular" (<c>POST /{id}/recalculate-dates</c>).
+    /// </summary>
+    public bool NeedsDateRecalculation { get; set; } = false;
+
+    /// <summary>
+    /// ADR-053 (2026-08-13, D2/D2.1): aviso NO bloqueante (P-20) de que el último guardado de un servicio
+    /// movió la ventana del viaje — persistencia EFÍMERA, se lee y se limpia en el próximo <c>GET</c> del
+    /// MISMO actor que generó el cambio (<see cref="PendingScheduleWarningByUserId"/>). Es un campo
+    /// DISTINTO del <c>Warning</c> genérico de <c>ReservaDto</c> (que ya lo usa el aviso de pasaporte
+    /// vencido) — comparten slot solo si se reutilizara el mismo campo, y eso pisaría uno de los dos avisos
+    /// en silencio; por eso este vive en su propia columna.
+    /// </summary>
+    public string? PendingScheduleWarning { get; set; }
+
+    /// <summary>
+    /// Dueño del aviso pendiente de arriba: el <c>UserId</c> del actor cuya mutación disparó el cambio de
+    /// ventana. El consumo es estrictamente <c>PendingScheduleWarningByUserId == callerUserId</c> (ADR-053
+    /// B6/B7) — ni un Admin distinto del autor, ni el job de reparación (que nunca escribe este campo,
+    /// "actor null = sin aviso") lo consumen. Null junto con <see cref="PendingScheduleWarning"/> = null
+    /// significa "no hay nada pendiente".
+    /// </summary>
+    public string? PendingScheduleWarningByUserId { get; set; }
 
     /// <summary>
     /// ADR-050 (2026-07-24, "Volver atrás deshace la anulación"): instante EXACTO en que se ejecutó el acto de

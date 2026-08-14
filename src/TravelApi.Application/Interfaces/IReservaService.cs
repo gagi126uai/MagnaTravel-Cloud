@@ -37,7 +37,12 @@ public interface IReservaService
     Task<PassengerDto> UpdatePassengerAsync(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated, CancellationToken ct = default);
     Task RemovePassengerAsync(string passengerPublicIdOrLegacyId, CancellationToken ct = default);
     Task<ReservaDto> UpdatePassengerCountsAsync(string reservaPublicIdOrLegacyId, PassengerCountsRequest counts, CancellationToken ct = default);
-    Task<ReservaDto> UpdateDatesAsync(string reservaPublicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken ct = default);
+
+    /// <summary>ADR-053 (2026-08-13, D3): edita la fecha prometida (par manual, nunca pisa StartDate/EndDate calculados).</summary>
+    Task<ReservaDto> UpdatePromisedDatesAsync(string reservaPublicIdOrLegacyId, UpdatePromisedDatesRequest request, CancellationToken ct = default);
+
+    /// <summary>ADR-053 (2026-08-13, D4): botón "volver a calcular" — fuerza el recálculo incondicional y apaga NeedsDateRecalculation.</summary>
+    Task<ReservaDto> RecalculateDatesAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default);
 
     /// <summary>
     /// Obra "PDF de presupuesto" (decisión #2 firmada, 2026-08-11/12): guarda/borra el texto de "Formas

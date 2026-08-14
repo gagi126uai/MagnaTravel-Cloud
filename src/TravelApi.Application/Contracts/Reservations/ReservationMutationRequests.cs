@@ -30,17 +30,18 @@ public record PassengerCountsRequest(
     int InfantCount);
 
 /// <summary>
-/// Editar manualmente las fechas de salida/regreso de la reserva. Se usa para casos
-/// donde las fechas no se pueden derivar de los servicios (servicios sin fecha clara,
-/// reservas viejas con StartDate/EndDate=null, o overrides explicitos del operador).
-/// Ambos campos son opcionales: enviar null deja la fecha sin cambios; enviar una
-/// fecha la setea; para "borrar" una fecha pasar `clearStartDate` / `clearEndDate`.
+/// ADR-053 (2026-08-13, D3): edita la "fecha prometida" de la reserva — campo nuevo, separado y 100%
+/// manual (patrón Odoo calculada+prometida). Reemplaza al viejo <c>UpdateReservaDatesRequest</c>: bajo la
+/// decisión (1) del dueño, <c>StartDate</c>/<c>EndDate</c> pasaron a ser 100% calculados y de solo lectura
+/// — ya no tiene sentido "corregirlos a mano". Ambos campos son opcionales: enviar null deja la fecha
+/// prometida sin cambios; enviar una fecha la setea; para "borrar" una fecha prometida pasar
+/// <c>ClearPromisedStartDate</c> / <c>ClearPromisedEndDate</c>.
 /// </summary>
-public record UpdateReservaDatesRequest(
-    DateTime? StartDate,
-    DateTime? EndDate,
-    bool ClearStartDate = false,
-    bool ClearEndDate = false);
+public record UpdatePromisedDatesRequest(
+    DateTime? PromisedStartDate,
+    DateTime? PromisedEndDate,
+    bool ClearPromisedStartDate = false,
+    bool ClearPromisedEndDate = false);
 
 /// <summary>
 /// REPROGRAMAR VIAJE (2026-06-23): mueve TODAS las fechas de TODOS los servicios de una reserva

@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Data;
+using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -360,8 +361,12 @@ public class QuoteService : IQuoteService
             PayerId = quote.CustomerId,
             SourceLeadId = quote.LeadId,
             SourceQuoteId = quote.Id,
-            StartDate = quote.TravelStartDate,
-            EndDate = quote.TravelEndDate,
+            // ADR-053 (2026-08-13, B1 del review — agujero #4 de escritor unico, §1.3): StartDate/EndDate
+            // YA NO se copian directo de la cabecera del presupuesto. Bajo la decision (1) del dueño son
+            // CALCULADOS desde los servicios reales que se crean mas abajo — se recalculan con el escritor
+            // unico despues del foreach, ANTES del commit (ver mas abajo). Copiar directo dejaba la
+            // cabecera potencialmente desalineada de los servicios reales (items sin RateId con fecha
+            // propia, o un fallback que el mapeo no usa).
             // Even though generic File Service calculates dynamically, we still populate DB bounds
             TotalCost = quote.TotalCost,
             TotalSale = quote.TotalSale,
@@ -567,6 +572,23 @@ public class QuoteService : IQuoteService
                 _db.Servicios.Add(res);
             }
         }
+
+        // ADR-053 (2026-08-13, B1 del review — agujero #4 de escritor unico, §1.3): recalculamos la
+        // cabecera desde los servicios REALES recien creados, dentro de la MISMA transaccion Serializable,
+        // antes del commit final. Flush intermedio NECESARIO: el escritor unico lee los servicios con una
+        // query SQL normal (ReservaScheduleCalculator.ComputeAsync), que no ve entidades todavia
+        // pendientes en el ChangeTracker — sin este SaveChanges, la query correria contra una BD que
+        // todavia no tiene los servicios que acabamos de "Add"-ear, y el calculo daria null/null.
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // Actor resuelto INLINE (D1, B5): QuoteService no tiene, hoy, ningun helper propio de actor (a
+        // diferencia de BookingService.GetActor()/ReservaService.ResolveAuditActor()) — mismo patron de
+        // claims que usan esos dos.
+        var actorUser = _httpContextAccessor?.HttpContext?.User;
+        var actorUserId = actorUser?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var actorUserName = actorUser?.FindFirstValue(ClaimTypes.Name) ?? actorUser?.Identity?.Name;
+        await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+            _db, file.Id, actorUserId, actorUserName, cancellationToken, _logger);
 
         // Link quote to the file
         quote.ConvertedReservaId = file.Id;

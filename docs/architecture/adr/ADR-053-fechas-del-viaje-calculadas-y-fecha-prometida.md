@@ -1,9 +1,8 @@
 # ADR-053 — Fechas del viaje: calculadas y de solo lectura (Salida/Regreso) + campo nuevo "fecha prometida"
 
-- **Status**: PROPUESTO — Round 2 (cierra los 4 bloqueantes B1-B4 y las 2 mejoras M1-M2 del
-  `software-architect-reviewer`, round 1). Negocio: decisiones (1)-(5) YA FIRMADAS por el dueño el
-  2026-08-11 (NO reabrir). Técnica: a revisar de nuevo antes de implementar.
-- **Date**: 2026-08-12 (round 1) / 2026-08-12 (round 2, mismo día)
+- **Status**: PROPUESTO — Round 3 (cierra B5-B7, M3-M4 del round 2 review). Negocio: decisiones (1)-(5) YA
+  FIRMADAS por el dueño el 2026-08-11 (NO reabrir). Técnica: lista para veredicto final del reviewer.
+- **Date**: 2026-08-12 (round 1) / 2026-08-12 (round 2) / 2026-08-13 (round 3)
 - **Autor**: software-architect, sobre código real inspeccionado (§1). Cada afirmación de este documento
   está atada a un archivo y una línea, o marcada explícitamente como propuesta/no verificada.
 - **Related**: **ADR-019** (este ADR REEMPLAZA su regla R8 — "el MIN/MAX de la reserva incluye servicios
@@ -143,8 +142,8 @@ de F-2) si no se cierran como parte de esta obra.
 `CorrectTravelingEntryAsync` ("Sacar de viaje", `ReservaService.cs:2330-2409`) hoy borra `StartDate` a
 propósito (`:2391`) como señal de "esta reserva necesita que alguien revise la fecha del servicio", y usa
 esa MISMA señal (`Status == Confirmed && StartDate == null`) para armar
-`ReservaDto.IsUnderCorrection` (`ReservaService.cs:3601-3603`), que pinta el chip "En corrección" en el
-front (`ReservaDto.cs:587-595`). Bajo la decisión (1), `StartDate` es de solo lectura y la recalcula el
+`ReservaDto.IsUnderCorrection` (`ReservaService.cs:3704-3706`), que pinta el chip "En corrección" en el
+front (`ReservaDto.cs:594-602`). Bajo la decisión (1), `StartDate` es de solo lectura y la recalcula el
 único escritor — **poner `null` a mano deja de ser válido** (T-7) y, además, si la reserva todavía tiene
 servicios vigentes, el próximo recálculo lo volvería a llenar igual, sin que nadie haya corregido nada.
 **Esto no lo pidió el dueño explícitamente, pero es una consecuencia directa y obligatoria de la decisión
@@ -179,24 +178,57 @@ calculada en cada lectura. Motivos:
 
 **El cambio real es CUÁL función es el escritor, y que sea UNA sola.** `ReservaScheduleCalculator.ComputeAsync`
 cambia su predicado para excluir servicios cancelados/anulados — esto ES el reemplazo de ADR-019 R8. Se
-extrae una función compartida (nombre propuesto `ReservaScheduleCalculator.RecalculateAndPersistAsync(db,
-reservaId, ct)`, mismo archivo) que:
+extrae una función compartida — firma **corregida en round 3 (B5)**:
+
+```
+ReservaScheduleCalculator.RecalculateAndPersistAsync(
+    db, reservaId, string? actorUserId, string? actorUserName, ct)
+```
+
+(mismo archivo), con `actorUserId`/`actorUserName` **nullable**. Que:
 
 1. Lee `Reserva.StartDate`/`EndDate` actuales.
 2. Llama a `ComputeAsync` (ya con el predicado nuevo — D1.1).
-3. Si cambió, persiste (`SaveChangesAsync`) y limpia `NeedsDateRecalculation` si estaba prendida (D4).
+3. Si cambió, persiste (`SaveChangesAsync`) y limpia `NeedsDateRecalculation` si estaba prendida (D4). El
+   aviso (`PendingScheduleWarning`, D2.1) se escribe DENTRO de esta misma función, **solo cuando
+   `actorUserId != null`** (D2.1, B7) — el escritor único sigue siendo uno solo; lo que cambia es que ya no
+   depende de un `GetActor()` global fijo, sino de lo que cada llamador le pase.
 4. Devuelve `(DateTime? Start, DateTime? End, bool Changed)` para que el llamador arme el aviso suave (D2).
 
+**Por qué la firma cambia (B5 del review, round 2)**: la v2 de este documento daba por sentado un
+`GetActor()` compartido, pero `ReservaScheduleCalculator` es un servicio de infraestructura sin
+`IHttpContextAccessor` propio, y los tres servicios que lo van a llamar resuelven el actor cada uno a su
+manera, verificado contra el código real:
+
+- `BookingService`: helper privado `GetActor()` (`BookingService.cs:2561-2567`), ya usado por
+  `StageRescheduleAudit` y otros audit trails del mismo archivo.
+- `ReservaService`: helper privado `ResolveAuditActor()` (`ReservaService.cs:101-108`) — mismo patrón,
+  nombre distinto; ya usado en `AddServiceAsync`/otros audit trails del archivo.
+- `QuoteService`: **verificado que NO existe ningún helper de actor hoy** (`grep` de `userId|actor|
+  NameIdentifier` sobre `QuoteService.cs` no devuelve resultados) — el servicio tiene
+  `_httpContextAccessor` inyectado (`:24`) pero nunca lo usa para resolver identidad. Para
+  `ConvertToFileCoreAsync` (D1, D7) hay que resolver el actor inline con el mismo patrón de claims que
+  `ReservaService.ResolveAuditActor()` (2-3 líneas, sin agregar un helper nuevo formal — a criterio de
+  quien implemente si vale la pena extraerlo).
+
+Cada call-site pasa **su propio** `(actorUserId, actorUserName)` a `RecalculateAndPersistAsync` — el
+escritor único conserva la cohesión (una sola función que decide y persiste), pero deja de asumir de dónde
+sale el actor.
+
 **Los 16 sitios existentes** (§1.3) pasan a llamar a esta función en vez de al método privado de
-`BookingService`. **Los 4 agujeros encontrados** (`AddServiceAsync`/`UpdateServiceAsync` del genérico,
-`RemoveServiceAsync` unificado, `QuoteService.ConvertToFileCoreAsync`) y **el job de reparación**
-(`AutoRepairTravelingDatesAsync`) también pasan a llamarla — esto cierra la violación de T-7 que ya existe
-hoy (§1.3), no solo la que introduce esta obra. `BookingService.RecalculateReservationScheduleAsync` (el
-método privado actual) se retira; su único rol pasa a la función compartida. Para
-`QuoteService.ConvertToFileCoreAsync` puntualmente: se saca la asignación directa de `:363-364` y se llama
-a `RecalculateAndPersistAsync(_db, file.Id, ct)` después del `foreach` que crea los servicios (`:569`) y
-ANTES del `SaveChangesAsync`/`CommitAsync` finales (`:586-587`) — misma transacción `Serializable`, ningún
-commit parcial con la cabecera desalineada.
+`BookingService`, pasando el actor que resuelven con `GetActor()`. **Los 4 agujeros encontrados**
+(`AddServiceAsync`/`UpdateServiceAsync` del genérico, `RemoveServiceAsync` unificado,
+`QuoteService.ConvertToFileCoreAsync`) también pasan a llamarla con su actor resuelto (`ResolveAuditActor()`
+para los tres de `ReservaService`; resolución inline para `QuoteService`) — esto cierra la violación de T-7
+que ya existe hoy (§1.3), no solo la que introduce esta obra. **El job de reparación**
+(`AutoRepairTravelingDatesAsync`) también pasa a llamarla, pero con `actorUserId: null, actorUserName: null`
+a propósito — no corre en un `HttpContext`, no hay actor humano que avise (B7, D2.1). `BookingService.
+RecalculateReservationScheduleAsync` (el método privado actual) se retira; su único rol pasa a la función
+compartida. Para `QuoteService.ConvertToFileCoreAsync` puntualmente: se saca la asignación directa de
+`:363-364` y se llama a `RecalculateAndPersistAsync(_db, file.Id, actorUserId, actorUserName, ct)` (actor
+resuelto inline, arriba) después del `foreach` que crea los servicios (`:569`) y ANTES del
+`SaveChangesAsync`/`CommitAsync` finales (`:586-587`) — misma transacción `Serializable`, ningún commit
+parcial con la cabecera desalineada.
 
 #### D1.1 — Predicado "vigente" (B2 del review): el canónico de `WorkflowStatusHelper`, no el literal de `UpcomingStartCalculator`
 
@@ -234,11 +266,18 @@ EQUIVALENTE inline, traducible a SQL (EF Core sí traduce `.Trim()`, `.ToLower()
 !new[] { "UN", "UC", "HX", "NO" }.Contains((status ?? "").Trim().ToUpper())
 ```
 
-Se agrega un test unitario que compara, para un muestreo de strings de estado reales (incluido
-`"Cancelada"`, `"CANCELADO"`, `" Cancelado"`, `"Cancelacion"` como falso-positivo a NO excluir — ver
-comentario de `MapGenericStatus` sobre por qué `StartsWith` y no `Contains`), que el resultado del inline
-de arriba coincide EXACTO con el de `WorkflowStatusHelper.MapGenericStatus`/`MapFlightStatus` — así, si
-alguien las hace divergir en un refactor futuro, el test lo agarra (ver también M1, D7).
+Se agrega un test unitario que compara, para un muestreo de strings de estado reales (incluido `"Cancelada"`,
+`"CANCELADO"`, `" Cancelado"`), que el resultado del inline de arriba coincide EXACTO con el de
+`WorkflowStatusHelper.MapGenericStatus`/`MapFlightStatus` — así, si alguien las hace divergir en un refactor
+futuro, el test lo agarra (ver también M1, D7). **Corrección round 3 (M3)**: la v2 de este documento usaba
+`"Cancelacion"` como ejemplo de "falso-positivo a NO excluir" — pero `"cancelacion".StartsWith("cancel")` da
+`true`, así que el predicado SÍ la excluiría; no era un contraejemplo válido y se saca sin reemplazo. Hoy NO
+existe ningún estado real que empiece con `"cancel"` y NO signifique cancelado — verificado contra
+`WorkflowStatusHelperTests` (ninguno de sus casos lo es; los contraejemplos que sí prueba ese archivo, `"A
+confirmar"`/`"sin emitir"`/etc., son para la rama `confirm`/`emit` de `MapGenericStatus`, no para `cancel`,
+`WorkflowStatusHelper.cs:41-47`). Si el negocio alguna vez crea un estado así (ej. "Cancelación en trámite"
+que NO deba tratarse como ya-cancelado), este predicado se revisa entonces — no es un caso a simular hoy con
+un dato inventado.
 
 **Alternativa descartada — "calculadas al vuelo" (sin persistir)**: obligaría a reescribir la consulta de
 Deudores, el índice de listado y las dos queries de lifecycle como agregaciones en caliente sobre 6 tablas;
@@ -287,14 +326,33 @@ Columna nueva en `"TravelFiles"`: `"PendingScheduleWarning"` (`text`, nullable) 
 - **Se escribe** por la función compartida de D1 cuando el recálculo cambia la ventana, en la MISMA
   transacción que la mutación (mismo trigger que ya diseñaba D2) — pisa cualquier valor anterior
   (last-write-wins, ver caso de dos ediciones abajo). Guarda también el `UserId` del actor que disparó el
-  cambio (`GetActor()`, mismo helper que ya usa `StageRescheduleAudit`).
+  cambio — **corrección round 3 (B5)**: ya no viene de un `GetActor()` fijo dentro de la función compartida,
+  sino del parámetro `actorUserId` que cada call-site le pasa (D1). **Corrección round 3 (B7)**: **si
+  `actorUserId` es `null` — hoy, únicamente `AutoRepairTravelingDatesAsync` (el job de reparación, sin
+  `HttpContext`) — la función NO escribe ningún `PendingScheduleWarning`.** El recálculo y la persistencia de
+  `StartDate`/`EndDate` corren igual (D1); lo único que se suprime es el aviso, porque no hay a quién
+  avisarle. Regla explícita: **actor `null` = sin aviso.**
 - **Se lee y se limpia en el mismo `GetReservaByIdAsync`** que arma `ReservaDto` (`ReservaService.cs`
   alrededor de `:799`, donde hoy vive `BuildDatesCoherenceWarningAsync`): si hay un valor pendiente Y el
-  `UserId` del caller coincide con `PendingScheduleWarningByUserId` (o el caller es Admin/`view_all`, mismo
-  criterio de alcance que el resto de la ficha), se copia a `dto.ScheduleWarning` y se limpia la columna
-  (`UPDATE` a `NULL` en la misma lectura — consumo de una sola vez, patrón "toast leído"). Si el `UserId`
-  NO coincide, el valor queda intacto para que lo consuma su dueño en su próximo `GET` (no se le muestra a
-  un tercero que está mirando la misma reserva, ni se le pisa el aviso al que lo generó).
+  `UserId` del caller coincide con `PendingScheduleWarningByUserId`, se copia a `dto.ScheduleWarning` y se
+  limpia la columna. **Corrección round 3 (B6): se elimina la cláusula "o el caller es Admin/`view_all`"**
+  que tenía la v2 — el reviewer marcó esa excepción como error de categoría: visibilidad de datos (quién
+  puede VER la ficha) no es lo mismo que ownership de una notificación efímera (quién generó el aviso y a
+  quién le sirve). Consumo estrictamente `PendingScheduleWarningByUserId == callerUserId`. La comparación es
+  **null-safe** (B7): `callerUserId != null && callerUserId == pendingUserId` — un pendiente con
+  `PendingScheduleWarningByUserId` en `null` (por diseño, nunca lo escribe el job de reparación; solo podría
+  aparecer por datos viejos de una corrida previa a este fix) **NUNCA matchea a nadie**, ni siquiera a un
+  caller cuyo propio `UserId` viniera `null`. Si el `UserId` NO coincide (o el pendiente no tiene dueño), el
+  valor queda intacto para que lo consuma su dueño real en su próximo `GET` (no se le muestra a un tercero
+  que está mirando la misma reserva, incluido un Admin distinto del autor, ni se le pisa el aviso al que lo
+  generó). **Mecanismo de limpieza (M4)**: `GetReservaByIdAsync` es 100% `AsNoTracking()`
+  (`ReservaService.cs:3336-3351`) — la limpieza NO convierte esa lectura en tracked; es un `ExecuteUpdateAsync`
+  puntual (EF Core 8) sobre la fila (`SET "PendingScheduleWarning" = NULL, "PendingScheduleWarningByUserId" =
+  NULL WHERE "Id" = @id`), separado de la query de lectura. Nota menor aceptada: dos `GET` concurrentes del
+  mismo actor pueden ambos leer el pendiente antes de que el primero lo limpie y duplicar el toast en el
+  front (double-toast) — sin corrupción de datos, solo un mensaje repetido. Si eso molestara en la práctica,
+  el remedio es un `UPDATE ... RETURNING` atómico (lee y limpia en un solo statement) en vez del
+  `ExecuteUpdateAsync` + lectura separados de hoy; no se construye ahora, se deja anotado.
 - **Vencimiento silencioso**: si el pendiente tiene más de un día de antigüedad cuando se lee, se descarta
   SIN mostrarlo (se limpia igual, pero `dto.ScheduleWarning` queda `null`). Motivo: la decisión (2) pide un
   aviso "EN EL MOMENTO" — mostrarlo días después, fuera de contexto (el usuario ya se fue de la pantalla y
@@ -523,12 +581,14 @@ repo):
    - Los 16 sitios existentes de `BookingService` + `Reschedule.cs`.
    - Los 3 agujeros de `ReservaService` (`AddServiceAsync`, `UpdateServiceAsync`, `RemoveServiceAsync` del
      genérico/unificado).
-   - `AutoRepairTravelingDatesAsync` (job de reparación).
+   - `AutoRepairTravelingDatesAsync` (job de reparación) — llama con `actorUserId: null, actorUserName: null`
+     (B5/B7, D1, D2.1): recalcula y persiste igual, pero nunca escribe `PendingScheduleWarning`.
    - **`QuoteService.ConvertToFileCoreAsync`** (B1 del review, §1.3): sacar la asignación directa de
-     `StartDate`/`EndDate` desde `quote.TravelStartDate`/`TravelEndDate` (`:363-364`) y llamar a
-     `RecalculateAndPersistAsync(_db, file.Id, ct)` después del `foreach` de creación de servicios (`:569`)
-     y antes del `SaveChangesAsync`/`CommitAsync` finales (`:586-587`) — dentro de la MISMA transacción
-     `Serializable` que ya abre el método (`:331`).
+     `StartDate`/`EndDate` desde `quote.TravelStartDate`/`TravelEndDate` (`:363-364`), resolver el actor
+     inline desde `_httpContextAccessor` (D1 — no existe helper propio en `QuoteService` hoy) y llamar a
+     `RecalculateAndPersistAsync(_db, file.Id, actorUserId, actorUserName, ct)` después del `foreach` de
+     creación de servicios (`:569`) y antes del `SaveChangesAsync`/`CommitAsync` finales (`:586-587`) —
+     dentro de la MISMA transacción `Serializable` que ya abre el método (`:331`).
 
    Retirar `BookingService.RecalculateReservationScheduleAsync` (privado, se reemplaza por la función
    compartida).
@@ -556,11 +616,13 @@ Tests clave de F1 (backend, unit InMemory salvo el de integración del backfill)
 
 - **Predicado canónico (D1.1, B2)**: para cada uno de los 6 tipos, un servicio en estado `"Cancelado"`
   queda excluido — Y TAMBIÉN `"Cancelada"` (femenino, caso explícito pedido por el review), `"CANCELADO"`
-  (mayúsculas), `" Cancelado"` (espacio). Caso negativo obligatorio: un estado como `"Cancelacion
-  solicitada"` (si existiera) NO debe excluirse solo por contener la palabra — mismo criterio
-  `StartsWith`/no-`Contains` que ya prueba `WorkflowStatusHelperTests`. Test de igualdad: el predicado
-  inline usado en LINQ produce el MISMO resultado que `WorkflowStatusHelper.MapGenericStatus`/
-  `MapFlightStatus` para un muestreo de strings reales.
+  (mayúsculas), `" Cancelado"` (espacio). **Corrección round 3 (M3)**: se saca el caso negativo
+  `"Cancelacion solicitada"` que traía la v2 — `"cancelacion".StartsWith("cancel")` es `true`, así que ese
+  ejemplo se auto-contradecía (el propio predicado lo excluiría, no era un caso negativo válido). Hoy no
+  hay ningún estado real que empiece con "cancel" y no sea cancelado (D1.1); si el negocio crea uno en el
+  futuro, se agrega el caso negativo entonces. Test de igualdad: el predicado inline usado en LINQ produce
+  el MISMO resultado que `WorkflowStatusHelper.MapGenericStatus`/`MapFlightStatus` para un muestreo de
+  strings reales.
 - `ReservaScheduleCalculator`: un servicio cancelado de cada uno de los 6 tipos queda EXCLUIDO del MIN/MAX
   (caso borde: el servicio cancelado era el único, la reserva queda con `Start`/`End` en `null`).
 - Escritor único: los 16+4+1 sitios recalculan en la MISMA transacción que su mutación (ya sea con un test
@@ -575,9 +637,14 @@ Tests clave de F1 (backend, unit InMemory salvo el de integración del backfill)
   `null`; borrar un servicio ⇒ sin aviso (pero `StartDate`/`EndDate` sí se actualizan).
 - **`PendingScheduleWarning` (D2.1, B3)**: se limpia en el primer `GET` que lo entrega (segundo `GET`
   inmediato del mismo actor ⇒ `null`); un `GET` de OTRO usuario (o de un caller sin `UserId` que no
-  matchea) NO lo consume ni lo limpia; dos ediciones seguidas del MISMO actor antes de su próximo `GET` ⇒
-  solo sobrevive el aviso de la SEGUNDA edición (regresión explícita del caso "se pisa", documentado en
-  D2.1); un pendiente con más de un día de antigüedad se limpia pero NO se muestra.
+  matchea) NO lo consume ni lo limpia; **caso nuevo round 3 (B6)**: un `GET` de un **Admin distinto del
+  autor** tampoco lo consume ni lo limpia — ya no hay excepción de alcance por rol, solo
+  `PendingScheduleWarningByUserId == callerUserId` (null-safe, B7); dos ediciones seguidas del MISMO actor
+  antes de su próximo `GET` ⇒ solo sobrevive el aviso de la SEGUNDA edición (regresión explícita del caso
+  "se pisa", documentado en D2.1); un pendiente con más de un día de antigüedad se limpia pero NO se
+  muestra; **caso nuevo round 3 (B7)**: el job de reparación (`AutoRepairTravelingDatesAsync`, actor `null`)
+  recalcula y persiste `StartDate`/`EndDate` pero NUNCA escribe `PendingScheduleWarning` — el siguiente
+  `GET` de cualquier actor no encuentra ningún pendiente que atribuir a ese recálculo.
 - `PATCH /{id}/promised-dates`: setea/borra cada campo independientemente; NUNCA toca `StartDate`/`EndDate`;
   respeta el candado de estado (ADR-035) y el de autorización (ADR-020 F4); rechazado si la reserva está
   Cerrada/Perdida/Anulada/PendingOperatorRefund.
@@ -729,6 +796,35 @@ del backfill en verde.
     la primera) — aceptado para no construir una cola de notificaciones por un aviso no bloqueante (D2.1).
 
 ## Changelog
+
+**Round 3 (2026-08-13)** — cierra B5-B7 y M3-M4 del `software-architect-reviewer` (round 2), verificados
+contra código real antes de aplicar:
+
+- **B5**: la firma de la función compartida cambia a `RecalculateAndPersistAsync(db, reservaId,
+  actorUserId, actorUserName, ct)`, con actor **nullable**. Cada call-site resuelve su propio actor:
+  `BookingService.GetActor()` (`:2561-2567`), `ReservaService.ResolveAuditActor()` (`:101-108`), y para
+  `QuoteService` — verificado que hoy NO existe ningún helper de actor — resolución inline. El aviso
+  (`PendingScheduleWarning`) se sigue escribiendo DENTRO de la función compartida, ahora condicionado a
+  `actorUserId != null` (D1, D2.1).
+- **B6**: se elimina la cláusula "o el caller es Admin/`view_all`" del consumo de
+  `PendingScheduleWarning` — el reviewer la marcó como error de categoría (visibilidad de datos ≠ ownership
+  de una notificación efímera). Consumo estrictamente `PendingScheduleWarningByUserId == callerUserId`
+  (D2.1, D7).
+- **B7**: el job de reparación (`AutoRepairTravelingDatesAsync`) pasa actor `null` — recalcula y persiste
+  igual, pero JAMÁS escribe `PendingScheduleWarning` ("actor null = sin aviso", regla explícita en D2.1). La
+  comparación de consumo es null-safe: `callerUserId != null && callerUserId == pendingUserId` (D2.1, D7).
+- **M3**: se saca el caso de test `"Cancelacion solicitada"` de D1.1 y de la lista de tests de F1 —
+  `"cancelacion".StartsWith("cancel")` es `true`, el ejemplo se auto-contradecía. Nota agregada: hoy no
+  existe ningún estado real que empiece con "cancel" y no signifique cancelado (verificado contra
+  `WorkflowStatusHelperTests`); si el negocio crea uno, se revisa entonces (D1.1, D7).
+- **M4**: agregada en D2.1 la mecánica de limpieza — `GetReservaByIdAsync` es 100% `AsNoTracking()`
+  (`ReservaService.cs:3336-3351`), así que la limpieza de `PendingScheduleWarning` usa un `ExecuteUpdateAsync`
+  puntual (EF Core 8) sobre la fila, sin convertir la lectura en tracked. Anotada la nota menor del reviewer:
+  dos `GET` concurrentes del mismo actor pueden duplicar el toast (sin corrupción); el remedio, si hiciera
+  falta, es un `UPDATE ... RETURNING` atómico — no construido ahora.
+- **Citas corregidas** (drift por la tanda de PDF del mismo día): `ReservaService.cs:3601-3603` →
+  `:3704-3706` (asignación de `IsUnderCorrection`); `ReservaDto.cs:587-595` → `:594-602` (su XML-doc,
+  `src/TravelApi.Application/DTOs/ReservaDto.cs`).
 
 **Round 2 (2026-08-12)** — cierra los 4 bloqueantes y las 2 mejoras del `software-architect-reviewer`
 (round 1), todos verificados contra código real antes de aplicar:

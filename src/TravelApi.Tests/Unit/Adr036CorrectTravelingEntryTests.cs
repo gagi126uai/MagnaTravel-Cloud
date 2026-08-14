@@ -134,7 +134,7 @@ public class Adr036CorrectTravelingEntryTests
     // ============================= (1) Camino feliz =============================
 
     [Fact]
-    public async Task CorrectTravelingEntry_FromTravelingNoCaeNoVoucher_ReturnsToConfirmed_ClearsStartDate_LogsCorrection()
+    public async Task CorrectTravelingEntry_FromTravelingNoCaeNoVoucher_ReturnsToConfirmed_SetsNeedsDateRecalculation_LogsCorrection()
     {
         await using var context = CreateContext();
         var reserva = await SeedTravelingAsync(context);
@@ -142,6 +142,7 @@ public class Adr036CorrectTravelingEntryTests
         reserva.LastRegressionReason = "Algo viejo";
         reserva.LastRegressionAt = DateTime.UtcNow.AddDays(-1);
         await context.SaveChangesAsync();
+        var startDateBeforeCorrection = reserva.StartDate;
 
         var sut = CreateService(context);
         var dto = await sut.CorrectTravelingEntryAsync(
@@ -149,7 +150,10 @@ public class Adr036CorrectTravelingEntryTests
 
         var stored = await context.Reservas.AsNoTracking().SingleAsync(r => r.Id == reserva.Id);
         Assert.Equal(EstadoReserva.Confirmed, stored.Status);
-        Assert.Null(stored.StartDate);                  // StartDate borrado (sale del filtro del job)
+        // ADR-053 (2026-08-13): StartDate pasa a ser CALCULADO y de solo lectura — "Sacar de viaje" ya NO
+        // lo borra (ni lo toca). La señal de "hace falta revisar" pasa a NeedsDateRecalculation.
+        Assert.Equal(startDateBeforeCorrection, stored.StartDate);
+        Assert.True(stored.NeedsDateRecalculation);
         Assert.Null(stored.LastRegressionReason);       // franja naranja limpiada
         Assert.Null(stored.LastRegressionAt);
 
@@ -175,11 +179,14 @@ public class Adr036CorrectTravelingEntryTests
         await using var context = CreateContext();
         var reserva = await SeedTravelingAsync(context);
 
-        // Sacamos de viaje -> Confirmed con StartDate null.
+        // Sacamos de viaje -> Confirmed con NeedsDateRecalculation=true (ADR-053, StartDate NO se toca).
         await CreateService(context).CorrectTravelingEntryAsync(
             reserva.PublicId.ToString(), ValidRequest(), "admin-test", "Admin Test", CancellationToken.None);
 
-        // El job corre esa misma noche: NO debe volver a promover (StartDate null la saca de candidatos).
+        // El job corre esa misma noche: NO debe volver a promover. Ojo — esto YA NO depende de StartDate
+        // (que sigue siendo <= hoy, sin tocar): depende del guard nuevo "!NeedsDateRecalculation" que
+        // ADR-053 agrega al filtro de candidatos (si no existiera, el job repromovería la misma noche y
+        // "Sacar de viaje" quedaría sin efecto).
         var promoted = await CreateJob(context).AutoTransitionConfirmedToTravelingAsync(CancellationToken.None);
 
         Assert.Equal(0, promoted);

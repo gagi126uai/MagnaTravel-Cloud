@@ -215,38 +215,38 @@ public class ReservaLifecycleAutomationService
     ///
     /// Si una reserva no tiene servicios (no podemos inferir), queda como esta.
     ///
-    /// <para>FIX N1 (2026-07-23, nit de review T-7): si alguien corrigio las fechas A MANO
-    /// (<c>Reserva.DatesManuallySet</c>, ver <c>ReservaService.UpdateDatesAsync</c>), este job de
-    /// reparacion NO la toca. Caso borde real: una reserva En viaje con EndDate null Y una
-    /// correccion manual previa (ej. el operador ya sabe la fecha real de regreso aunque los
-    /// servicios cargados no la reflejen) — sin este filtro, la proxima corrida del job pisaria
-    /// esa correccion con el recompute automatico, el mismo bug que el fix de esta tanda cerro
-    /// para el guardado de servicios.</para>
+    /// <para>ADR-053 (2026-08-13): el candado invisible <c>Reserva.DatesManuallySet</c> que antes frenaba
+    /// este job (FIX N1, 2026-07-23) quedo MUERTO — ya no hay "modo manual" que proteger, el escritor unico
+    /// (<see cref="ReservaScheduleCalculator.RecalculateAndPersistAsync"/>) siempre recalcula desde los
+    /// servicios VIGENTES. Este job pasa a llamar a ESE escritor unico, con <c>actorUserId: null</c> a
+    /// proposito (B7 del ADR): corre sin <c>HttpContext</c>, no hay un actor humano a quien avisarle, asi
+    /// que recalcula y persiste la fecha IGUAL pero NUNCA escribe el aviso suave
+    /// <c>PendingScheduleWarning</c>.</para>
     /// </summary>
     public async Task<int> AutoRepairTravelingDatesAsync(CancellationToken ct = default)
     {
         // Limite defensivo: si por alguna razon hay miles de reservas en este
         // estado, evitamos un OOM. La proxima corrida levanta el resto.
-        var orphans = await _db.Reservas
-            .Where(r => r.Status == EstadoReserva.Traveling && r.EndDate == null && !r.DatesManuallySet)
+        var orphanIds = await _db.Reservas
+            .Where(r => r.Status == EstadoReserva.Traveling && r.EndDate == null)
+            .Select(r => r.Id)
             .Take(500)
             .ToListAsync(ct);
 
         var repaired = 0;
-        foreach (var reserva in orphans)
+        foreach (var reservaId in orphanIds)
         {
-            var (start, end) = await ReservaScheduleCalculator.ComputeAsync(_db, reserva.Id, ct);
-            if (!end.HasValue) continue; // sin servicios, no podemos inferir
-            reserva.StartDate = start;
-            reserva.EndDate = end;
-            repaired++;
+            var (_, end, changed) = await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                _db, reservaId, actorUserId: null, actorUserName: null, ct, _logger);
+            // "changed" tambien es true cuando el calculo sigue sin poder inferir nada (ej. cae de
+            // algun valor viejo a null/null) — solo contamos como REPARADA la reserva que efectivamente
+            // quedo con un EndDate utilizable, igual criterio que el guard viejo "sin servicios, no
+            // podemos inferir".
+            if (changed && end.HasValue) repaired++;
         }
 
         if (repaired > 0)
         {
-            // Esto NO cambia el Status (solo rellena fechas faltantes), asi que no aplica el
-            // re-chequeo de transicion. Un solo SaveChanges, como siempre.
-            await _db.SaveChangesAsync(ct);
             _logger.LogInformation("Auto-repaired {Repaired} Reserva(s) Traveling con EndDate=null.", repaired);
         }
 
@@ -268,9 +268,18 @@ public class ReservaLifecycleAutomationService
     public async Task<int> AutoTransitionConfirmedToTravelingAsync(CancellationToken ct = default)
     {
         var today = DateTime.UtcNow.Date;
+
+        // ADR-053 (2026-08-13, decision de implementacion — cierra un agujero que el ADR no nombro
+        // explicitamente pero que su propio diseño (D4) exige): "Sacar de viaje" ya NO borra StartDate
+        // (paso a solo lectura); en su lugar prende NeedsDateRecalculation=true SIN tocar la fecha. Si
+        // este job no la respetara, una reserva recien corregida podria re-promoverse la MISMA noche
+        // (StartDate sigue siendo <= hoy, exactamente por lo que estaba En viaje) — el boton "Sacar de
+        // viaje" quedaria anulado en la practica. Se reintenta cuando alguien confirme la fecha (guardando
+        // un servicio, o con el boton "volver a calcular").
         var candidates = await _db.Reservas
             .Where(r => r.Status == EstadoReserva.Confirmed
-                && r.StartDate.HasValue && r.StartDate.Value.Date <= today)
+                && r.StartDate.HasValue && r.StartDate.Value.Date <= today
+                && !r.NeedsDateRecalculation)
             .ToListAsync(ct);
 
         // ADR-040 (cuenta corriente): para bifurcar el candado de pago por modo de cobro, precargamos en una sola

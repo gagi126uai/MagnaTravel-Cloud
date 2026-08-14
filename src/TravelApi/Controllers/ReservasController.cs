@@ -844,14 +844,18 @@ public class ReservasController : ControllerBase
         }
     }
 
-    [HttpPatch("{publicIdOrLegacyId}/dates")]
+    // ADR-053 (2026-08-13): reemplaza a PATCH /{id}/dates (retirado — StartDate/EndDate pasaron a ser
+    // 100% calculados y de solo lectura, decision (1) del dueño). "Fecha prometida" es un par manual
+    // aparte, nunca pisado por el calculo. Mismo permiso/ownership que la edicion vieja de cabecera.
+    [HttpPatch("{publicIdOrLegacyId}/promised-dates")]
     [RequirePermission(Permissions.ReservasEdit)]
     [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
-    public async Task<ActionResult> UpdateDates(string publicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult> UpdatePromisedDates(
+        string publicIdOrLegacyId, UpdatePromisedDatesRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var dto = await _reservaService.UpdateDatesAsync(publicIdOrLegacyId, request, cancellationToken);
+            var dto = await _reservaService.UpdatePromisedDatesAsync(publicIdOrLegacyId, request, cancellationToken);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -861,6 +865,29 @@ public class ReservasController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    // ADR-053 (2026-08-13, D4): botón "volver a calcular" — fuerza el recálculo de StartDate/EndDate
+    // desde los servicios vigentes, incondicionalmente, y apaga NeedsDateRecalculation. Mismas dos
+    // compuertas que promised-dates (estado + autorización).
+    [HttpPost("{publicIdOrLegacyId}/recalculate-dates")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult> RecalculateDates(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.RecalculateDatesAsync(publicIdOrLegacyId, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
         }
         catch (InvalidOperationException ex)
         {

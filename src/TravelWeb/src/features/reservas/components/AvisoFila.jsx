@@ -16,8 +16,13 @@ import React from 'react';
  * Este componente NO decide qué aviso corresponde ni cuándo mostrarlo — esa decisión
  * sigue viviendo en avisosFicha.js (fuente única de "qué avisos hay que mostrar").
  * Acá solo se pinta la fila con el texto y el botón que le pasan.
+ *
+ * `botonDeshabilitado` (ADR-053, 2026-08-13): opcional, para el caso de un botón que
+ * dispara una llamada al backend (ej. "Volver a calcular las fechas") — evita el doble
+ * click mientras la llamada está en curso. Por defecto false: la mayoría de los avisos
+ * de esta fila no lo necesitan.
  */
-export function AvisoFila({ variante = 'info', children, textoBoton, onClickBoton, dataTestId }) {
+export function AvisoFila({ variante = 'info', children, textoBoton, onClickBoton, dataTestId, botonDeshabilitado = false }) {
     const estilosPorVariante = {
         accion: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200',
         info: 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300',
@@ -42,7 +47,8 @@ export function AvisoFila({ variante = 'info', children, textoBoton, onClickBoto
                 <button
                     type="button"
                     onClick={onClickBoton}
-                    className={`flex-shrink-0 rounded-lg border px-3 py-1 text-xs font-bold transition-colors ${estilosBotonPorVariante[variante] || estilosBotonPorVariante.info}`}
+                    disabled={botonDeshabilitado}
+                    className={`flex-shrink-0 rounded-lg border px-3 py-1 text-xs font-bold transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${estilosBotonPorVariante[variante] || estilosBotonPorVariante.info}`}
                 >
                     {textoBoton}
                 </button>

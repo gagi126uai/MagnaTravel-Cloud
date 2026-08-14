@@ -2,7 +2,7 @@ import React from 'react';
 import { getMoneyStatus } from "../moneyStatus";
 
 /**
- * Chips complementarios de la reserva: tres ejes independientes + corrección opcional.
+ * Chips complementarios de la reserva: tres ejes independientes (Pago, Viaje, Factura).
  *
  * Fix (2026-08-04, pedido del dueño viendo PROD — maqueta firmada línea 1412 "Pago: … · Factura: …"):
  * el Eje Pago ahora se muestra SIEMPRE, con el estado que corresponda (Pagada / Sin
@@ -31,14 +31,14 @@ import { getMoneyStatus } from "../moneyStatus";
  *
  * Eje Factura: siempre visible (ADR-037). Lee reserva.invoicingStatus.
  *
- * Chip "En corrección" (2026-06-22): tratamiento secundario (ámbar/gris chico).
- *   Aparece cuando reserva.isUnderCorrection === true.
- *   Indica que la reserva fue sacada de viaje por corrección y está congelada para
- *   el pase automático; no compite con el badge de estado operativo grande.
+ * Chip "En corrección" RETIRADO (ADR-053, 2026-08-13): vivía acá como chip chico
+ * cuando reserva.isUnderCorrection === true. Se reemplazó por un renglón ámbar con
+ * botón propio ("Volver a calcular las fechas") en ReservaDetailPage.jsx — ese
+ * mismo dato ya no se dice dos veces (P-16).
  *
  * Flags que provee el backend en ReservaDto (leídos por getMoneyStatus, no acá):
  *   collectionStatus, hasOverdueDebt, isWithinUnpaidAlertWindow, cancelledMoneyContext.
- * Flags propios de este componente: invoicingStatus, isUnderCorrection.
+ * Flags propios de este componente: invoicingStatus.
  *
  * Feedback 2026-06-19 (cambio 6): chips más chicos para no competir con el badge de estado.
  */
@@ -247,19 +247,12 @@ export function ReservaStatusChips({ reserva }) {
                 </span>
             </span>
 
-            {/* Chip "En corrección": tratamiento secundario, no compite con el badge grande.
-                Solo aparece cuando isUnderCorrection=true — la reserva fue sacada de viaje
-                por corrección y está congelada para el pase automático hasta que se corrija
-                la fecha del servicio (spec UX 2026-06-22). */}
-            {reserva.isUnderCorrection && (
-                <span
-                    data-testid="chip-en-correccion"
-                    className={`${CLASE_CHIP_ESTANDAR} bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800`}
-                    title="Pendiente revisar fechas — congelada para el pase automático a viaje"
-                >
-                    En corrección
-                </span>
-            )}
+            {/* Chip "En corrección" RETIRADO (ADR-053, 2026-08-13, P6 — respuesta firmada
+                del dueño, opción B): antes vivía acá como chip chico. Ahora ese mismo estado
+                (reserva.isUnderCorrection === true) se muestra como un RENGLÓN ámbar con el
+                botón "Volver a calcular las fechas" al lado — ver NeedsDateRecalculationRow.jsx
+                en ReservaDetailPage.jsx. El chip se saca del todo para no decir el mismo dato
+                dos veces (P-16): ahora ese renglón es la ÚNICA forma de verlo. */}
 
         </span>
     );

@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Undo2, Users, Plus, RefreshCw, Check } from "lucide-react";
 import { api } from "../../../api";
-import { showConfirm, showError, showSuccess, showWarning } from "../../../alerts";
+import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
@@ -22,7 +22,7 @@ import { CapacityWarning } from "../components/CapacityWarning";
 import { AvisosPlegadosBar } from "../components/AvisosPlegadosBar";
 import { AvisoFila } from "../components/AvisoFila";
 import { getServiciosSinConfirmar, construirAvisosInformativos } from "../avisosFicha";
-import { EditReservaDatesModal } from "../components/EditReservaDatesModal";
+import { NeedsDateRecalculationRow } from "../components/NeedsDateRecalculationRow";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
 import { PaymentTermsCard } from "../components/PaymentTermsCard";
@@ -901,7 +901,6 @@ export default function ReservaDetailPage() {
   const [showEditAuthModal, setShowEditAuthModal] = useState(false);
   // ADR-020: modal para marcar una cotizacion/presupuesto como Perdida.
   const [showMarkLostModal, setShowMarkLostModal] = useState(false);
-  const [showEditDatesModal, setShowEditDatesModal] = useState(false);
   // Tanda 2 (2026-06-22): modal de corrección "Sacar de viaje" — solo Admin + Traveling + capability.
   const [showCorrectTravelingModal, setShowCorrectTravelingModal] = useState(false);
   // Tanda 3 (2026-06-23): modal "Reprogramar viaje" — mueve todas las fechas de servicios.
@@ -1287,26 +1286,11 @@ export default function ReservaDetailPage() {
   const handleAbrirDeshacer = () =>
     buscarCancelacionYAbrirPanel(() => setShowDeshacerWaiveInline(true));
 
-  const handleSaveReservaDates = async (payload) => {
-    // Lanza si falla para que el modal muestre el error inline.
-    try {
-      const actualizada = await api.patch(`/reservas/${publicId}/dates`, payload);
-      showSuccess("Fechas actualizadas");
-      // Bug #27 del barrido (pieza que faltó en la Tanda 3): el motor compara las fechas
-      // recién guardadas contra las de los servicios y manda `warning` con el texto firmado
-      // ("Ojo: las fechas que guardaste no coinciden..."). La pantalla nunca lo mostraba —
-      // detectado en la prueba integral E2E del 2026-07-25. Aviso no bloqueante → toast warning.
-      if (actualizada?.warning) {
-        showWarning(actualizada.warning);
-      }
-      setShowEditDatesModal(false);
-      await fetchReserva({ showLoading: false, preserveOnError: true });
-    } catch (error) {
-      const message = getApiErrorMessage(error, "No se pudieron actualizar las fechas.");
-      showError(message);
-      throw new Error(message);
-    }
-  };
+  // handleSaveReservaDates (PATCH /reservas/{id}/dates) fue RETIRADO (ADR-053,
+  // 2026-08-13): Salida/Regreso pasaron a ser 100% calculadas, ese endpoint ya no
+  // existe en el backend. Su reemplazo (PATCH /promised-dates, "fecha prometida al
+  // cliente") vive inline en PromisedDatesBlock.jsx — refresca la ficha con el mismo
+  // callback onPromisedDatesChanged que se le pasa a ReservaHeader más abajo.
 
   /**
    * Flujo "El cliente aceptó": pasa DIRECTO a En gestión sin abrir modal de nombres.
@@ -1434,7 +1418,11 @@ export default function ReservaDetailPage() {
           }
         }}
         onRevert={() => setShowRevertModal(true)}
-        onEditDates={() => setShowEditDatesModal(true)}
+        // ADR-053 (2026-08-13): refresca la ficha completa después de guardar/borrar
+        // la "fecha prometida al cliente" — mismo patrón silencioso que el resto de
+        // los refrescos post-guardado de esta pantalla (sin spinner, sin perder lo
+        // que ya está en pantalla si el refetch en sí fallara).
+        onPromisedDatesChanged={() => fetchReserva({ showLoading: false, preserveOnError: true })}
         // "Eliminar reserva" fue SACADO de la ficha (Tanda 2 del rediseño, 2026-08-03,
         // regla absoluta del dueño: nada de negocio se borra). handleDeleteReserva
         // queda sin usar acá a propósito — no se toca el hook/endpoint.
@@ -1518,15 +1506,20 @@ export default function ReservaDetailPage() {
         onChanged={() => fetchReserva({ showLoading: false, preserveOnError: true })}
       />
 
-      {/* ═══ TIRA DE AVISOS (spec UX 2026-07-05, respuestas 1C/2B/3A/4B/5A) ═══════════
+      {/* ═══ TIRA DE AVISOS (spec UX 2026-07-05, respuestas 1C/2B/3A/4B/5A + ADR-053
+          2026-08-13, P5/P6) ═══════════════════════════════════════════════════════
           "Arriba la foto, abajo solo lo que hay que hacer": primero la FOTO del estado
           (carteles de estado terminal / en viaje — no cambian, van primero), después lo
           ACCIONABLE siempre visible (banner "con cambios" grande, candado en una línea),
           y al final lo INFORMATIVO plegado ("N avisos más"). Orden de abajo hacia abajo:
             1) Carteles de estado terminal / en viaje / pregunta de multa (sin cambios).
-            2) Banner "con cambios" (ADR-027) — accionable, grande, con botón "Dar OK".
-            3) Franja del candado en una línea — accionable, con botón "Pedí autorización".
-            4) Barra plegada "N avisos más" — informativos (servicios sin confirmar, capacidad). */}
+            2) Aviso suave "esto te movió las fechas del viaje" (ADR-053 ScheduleWarning)
+               — ámbar, una línea, sin botón. Se consume solo (no se repite al recargar).
+            3) Banner "con cambios" (ADR-027) — accionable, grande, con botón "Dar OK".
+            4) Franja del candado en una línea — accionable, con botón "Pedí autorización".
+            5) Renglón "Falta revisar las fechas del viaje" (ADR-053, reemplaza al viejo
+               chip "En corrección") — accionable, con botón "Volver a calcular las fechas".
+            6) Barra plegada "N avisos más" — informativos (servicios sin confirmar, capacidad). */}
 
       {/* ─── Carteles de estado ────────────────────────────────────────────────────
           Feedback 2026-06-19: UN SOLO cartel que explica el estado actual.
@@ -2016,6 +2009,21 @@ export default function ReservaDetailPage() {
         ) : null;
       })()}
 
+      {/* Aviso suave "che, esto te movió las fechas del viaje" (ADR-053, spec UX
+          2026-08-13, P5 — respuesta FIRMADA del dueño: renglón ÁMBAR, contra la
+          recomendación de gris del diseñador). Va JUSTO DEBAJO de los carteles de
+          estado terminal (la "foto", orden firmado 2026-07-05) y ARRIBA de todo lo
+          demás de la tira. El backend arma el texto en criollo y lo manda listo
+          para pintar (T-13 del ADR) — el front NO lo reescribe ni lo resume.
+          Se consume solo: el backend lo limpia al leerlo, así que en la PRÓXIMA
+          recarga de la ficha ya no está (por eso NO tiene botón de cerrar "✕" —
+          cerrarlo a mano no agrega nada, y no persiste nada en el front). */}
+      {reserva.scheduleWarning && (
+        <AvisoFila variante="accion" dataTestId="aviso-fechas-viaje-movidas">
+          {reserva.scheduleWarning}
+        </AvisoFila>
+      )}
+
       {/* ADR-027: franja amarilla "Confirmada con cambios".
           Aparece cuando el vendedor edito precio o costo de un servicio en una reserva viva
           (InManagement/Confirmed/Traveling) y el dueño todavía no revisó el cambio.
@@ -2172,12 +2180,18 @@ export default function ReservaDetailPage() {
         puedeAutorizar={hasPermission("reservas.authorize_locked_edit")}
       />
 
-      {/* (2026-07-05) Banner "En corrección" ELIMINADO (spec UX, respuesta 2B): quedaba
-          duplicado con el chip "En corrección" del header (ReservaStatusChips), que ya
-          se enciende con la MISMA condición exacta (reserva.isUnderCorrection === true —
-          verificado antes de borrar, sin achicar la condición). El aviso completo ("Se
-          sacó de viaje por una corrección...") vive ahora solo como title/tooltip del
-          chip; no hace falta repetirlo en un banner aparte. */}
+      {/* ADR-053 (2026-08-13, P6 — respuesta FIRMADA del dueño, opción B): el viejo
+          chip chico "En corrección" del header (ReservaStatusChips) SE RETIRA y este
+          renglón ámbar pasa a ser la ÚNICA forma de ver reserva.isUnderCorrection===true
+          — con su propio botón de salida ("Volver a calcular las fechas"), P-11. Mismo
+          lugar que ocupaba el banner "En corrección" viejo (retirado el 2026-07-05):
+          después del candado, antes de los avisos plegados — es de la misma familia
+          accionable. El componente ya se auto-oculta cuando no hace falta (P7). */}
+      <NeedsDateRecalculationRow
+        reserva={reserva}
+        publicId={publicId}
+        onRecalculated={() => fetchReserva({ showLoading: false, preserveOnError: true })}
+      />
 
       {/* ── Estados activos: orientan al vendedor sobre el siguiente paso ── */}
       {reserva.status === "Quotation" ? (
@@ -2887,12 +2901,8 @@ export default function ReservaDetailPage() {
         />
       )}
 
-      <EditReservaDatesModal
-        isOpen={showEditDatesModal}
-        reserva={reserva}
-        onClose={() => setShowEditDatesModal(false)}
-        onSave={handleSaveReservaDates}
-      />
+      {/* EditReservaDatesModal fue RETIRADO (ADR-053, 2026-08-13): Salida/Regreso ya
+          no se editan a mano, el modal y su PATCH /dates dejaron de existir. */}
 
       {/* ADR-020 F4: modal para solicitar autorizacion de edicion en reservas bloqueadas. */}
       {showEditAuthModal && (

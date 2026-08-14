@@ -389,6 +389,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // si Hangfire reintenta el job. Configuracion (indice UNIQUE) en OnModelCreating.
     public DbSet<ArcaIdempotencyKey> ArcaIdempotencyKeys => Set<ArcaIdempotencyKey>();
 
+    // ADR-053 (2026-08-13): rastro DURABLE de las reservas cuya ventana (StartDate/EndDate) cambio con el
+    // backfill masivo del deploy. Una fila por reserva CUYO valor cambio (no una por cada reserva del
+    // sistema). Se llena UNA sola vez desde SQL crudo en la migracion Adr053_M1 (Adr053BackfillSql) y se
+    // conserva para siempre (no se exporta y borra). Configuracion (FK, indice) en OnModelCreating.
+    public DbSet<Adr053TripWindowBackfillLog> Adr053TripWindowBackfillLogs => Set<Adr053TripWindowBackfillLog>();
+
     // FC1.3 Fase 3 (ADR-010, 2026-05-29): bandeja de reconciliacion de NC parciales
     // con recibos vivos. El caso (padre) nace junto al Payment reversal en
     // AfipService.ApplyPartialCreditNoteReversalAsync; las hijas son el snapshot de
@@ -514,6 +520,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // se maneja con re-chequeo defensivo del estado origen (ver ReservaLifecycleAutomationService y
             // ReservaAutoStateService) + reconciliacion nocturna. Mejora futura: locking optimista fino.
             entity.Property(f => f.WhatsAppPhoneOverride).HasMaxLength(50);
+
+            // ADR-053 (2026-08-13): NeedsDateRecalculation es NOT NULL con default false a nivel BD —
+            // sin el HasDefaultValue, la migracion (AddColumn NOT NULL sobre una tabla con filas
+            // existentes) no sabria que valor ponerle a las reservas viejas. false = comportamiento
+            // "sin correccion pendiente" para TODAS las filas existentes (correcto: el chip "En
+            // correccion" solo tiene sentido hacia adelante, desde un "Sacar de viaje" nuevo).
+            entity.Property(f => f.NeedsDateRecalculation).HasDefaultValue(false);
 
             // ADR-048 T5 (2026-07-17, hardening): indices de los dos ejes materializados. Habilitan que un
             // filtro/orden futuro del listado (ej. "mostrame las Facturada y devuelta") corra indexado en
@@ -2680,6 +2693,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(k => k.Key)
                   .IsUnique()
                   .HasDatabaseName("IX_ArcaIdempotencyKeys_Key");
+        });
+
+        // ===== Adr053TripWindowBackfillLog (2026-08-13, backfill de "fechas del viaje calculadas") =====
+        // Rastro DURABLE de las reservas cuya ventana cambio con el backfill masivo. Ver comentario de la
+        // entidad para el por que completo (D5 del ADR-053).
+        modelBuilder.Entity<Adr053TripWindowBackfillLog>(entity =>
+        {
+            entity.HasOne<Reserva>()
+                  .WithMany()
+                  .HasForeignKey(l => l.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // Una reserva puede aparecer a lo sumo una vez en el log (el backfill corre una unica vez,
+            // marcado por __EFMigrationsHistory) — el indice no es UNIQUE porque no hay riesgo real de
+            // doble-insercion (no es un mecanismo anti-duplicados como ArcaIdempotencyKey), solo acelera
+            // la consulta "que le paso a la reserva X" que menciona D6.1 del ADR.
+            entity.HasIndex(l => l.ReservaId);
         });
 
         // ===== ExchangeRateQuote (ADR-011 enmienda 2026-08-05, "tipo de cambio real") =====

@@ -727,74 +727,93 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(reservaId);
     }
 
-    public async Task<ReservaDto> UpdateDatesAsync(string reservaPublicIdOrLegacyId, UpdateReservaDatesRequest request, CancellationToken ct = default)
+    /// <summary>
+    /// ADR-053 (2026-08-13) D3: edita la "fecha prometida" de la reserva — campo NUEVO, separado y 100%
+    /// MANUAL (par de <c>PromisedStartDate</c>/<c>PromisedEndDate</c>). Reemplaza al viejo
+    /// <c>UpdateDatesAsync</c>: bajo la decisión (1) del dueño, <c>StartDate</c>/<c>EndDate</c> pasaron a
+    /// ser 100% calculados y de solo lectura — no tiene sentido "corregirlos a mano". Pasar
+    /// <c>ClearPromisedStartDate</c>/<c>ClearPromisedEndDate</c> = true borra el valor; una fecha en el
+    /// campo lo setea; ninguno de los dos sin clear no toca nada.
+    ///
+    /// <para>Mismas DOS compuertas que tenía <c>UpdateDatesAsync</c> (candado por ESTADO, ADR-035, +
+    /// candado de AUTORIZACIÓN en Confirmada, ADR-020 F4) — la fecha prometida sigue siendo un dato de
+    /// cabecera. NO reusa el guard fiscal CODE-03 (<c>GetReservaDatesMutationBlockReasonAsync</c>): ese
+    /// guard protege el PERÍODO FISCAL declarado en una factura/voucher ya emitido; la fecha prometida es
+    /// una nota interna de planificación, sin rol fiscal — bloquearla contra un CAE vivo sería una
+    /// restricción nueva sin justificación (D3 del ADR).</para>
+    /// </summary>
+    public async Task<ReservaDto> UpdatePromisedDatesAsync(
+        string reservaPublicIdOrLegacyId, UpdatePromisedDatesRequest request, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
         // ADR-035 (2026-06-19): PRIMERA COMPUERTA — en una reserva CERRADA (Closed/Lost/Cancelled/
-        // PendingOperatorRefund) las fechas/datos de cabecera son solo lectura DURA: ninguna autorizacion las
-        // desbloquea. Corre ANTES del candado de autorizacion (EnsureReservaEditableAsync) y del guard fiscal
-        // (factura/voucher), que quedan intactos para los estados vivos.
+        // PendingOperatorRefund) los datos de cabecera son solo lectura DURA: ninguna autorizacion los
+        // desbloquea. Corre ANTES del candado de autorizacion.
         await ReservaCapacityRules.EnsureReservaDataEditableByStateAsync(_context, reservaId, ct);
 
-        // ADR-020 F4: cambiar fechas de una reserva confirmada requiere autorizacion (candado).
+        // ADR-020 F4: editar la fecha prometida de una reserva confirmada requiere autorizacion (candado).
         await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.ReservaDataEdited,
-            entityType: "Reserva", entityId: reservaId, summary: "Fechas de la reserva", ct: ct);
+            entityType: "Reserva", entityId: reservaId, summary: "Fecha prometida de la reserva", ct: ct);
 
-        // B1.15 Fase 0' (CODE-03): cambiar fechas con factura AFIP viva o voucher
-        // emitido rompe la coherencia con el periodo declarado en el comprobante.
-        var blockReason = await MutationGuards.GetReservaDatesMutationBlockReasonAsync(_context, reservaId, ct);
-        if (blockReason != null)
+        // Las fechas se normalizan a Kind=Utc porque las columnas Postgres son 'timestamp with time zone'
+        // y Npgsql exige Kind=Utc al persistir.
+        if (request.ClearPromisedStartDate)
+            reserva.PromisedStartDate = null;
+        else if (request.PromisedStartDate.HasValue)
+            reserva.PromisedStartDate = NormalizeUtcOrNull(request.PromisedStartDate);
+
+        if (request.ClearPromisedEndDate)
+            reserva.PromisedEndDate = null;
+        else if (request.PromisedEndDate.HasValue)
+            reserva.PromisedEndDate = NormalizeUtcOrNull(request.PromisedEndDate);
+
+        if (reserva.PromisedStartDate.HasValue && reserva.PromisedEndDate.HasValue
+            && reserva.PromisedEndDate.Value.Date < reserva.PromisedStartDate.Value.Date)
         {
-            _logger.LogWarning(
-                "UpdateDatesAsync rejected. ReservaId={ReservaId}. Reason={Reason}",
-                reservaId, blockReason);
-            throw new InvalidOperationException(blockReason);
+            throw new ArgumentException(
+                "La fecha de regreso prometida no puede ser anterior a la fecha de salida prometida.");
         }
-
-        // Permite editar StartDate/EndDate explicitamente. Pasar `clearXxxDate=true`
-        // borra el valor; pasar la fecha en el campo lo setea; null sin clear no toca.
-        // Las fechas se normalizan a Kind=Utc porque las columnas Postgres son
-        // 'timestamp with time zone' y Npgsql exige Kind=Utc al persistir.
-        if (request.ClearStartDate)
-            reserva.StartDate = null;
-        else if (request.StartDate.HasValue)
-            reserva.StartDate = NormalizeUtcOrNull(request.StartDate);
-
-        if (request.ClearEndDate)
-            reserva.EndDate = null;
-        else if (request.EndDate.HasValue)
-            reserva.EndDate = NormalizeUtcOrNull(request.EndDate);
-
-        if (reserva.StartDate.HasValue && reserva.EndDate.HasValue
-            && reserva.EndDate.Value.Date < reserva.StartDate.Value.Date)
-        {
-            throw new ArgumentException("La fecha de regreso no puede ser anterior a la fecha de salida.");
-        }
-
-        // FIX (2026-07-23): a partir de aca, las fechas quedan corregidas A MANO. El recalculo
-        // automatico que corre al guardar cualquier servicio (BookingService.RecalculateReservationScheduleAsync)
-        // respeta este flag y deja de pisarlas. PR-12 (rastro de quien/cuando): la traza de ESTE cambio
-        // ya la deja ReservaLockGuard.EnsureCanEditAsync de arriba, pero SOLO cuando la reserva esta
-        // Confirmada (bajo candado) — en Presupuesto/En gestion (edicion libre, el caso mas comun) no
-        // queda ningun rastro de quien corrigio ni cuando. No se agrega trazabilidad nueva aca: es una
-        // decision de negocio (que campos auditar en estados libres) que excede este fix puntual.
-        reserva.DatesManuallySet = true;
 
         await _context.SaveChangesAsync(ct);
+        return await GetReservaByIdAsync(reservaId);
+    }
 
-        var dto = await GetReservaByIdAsync(reservaId);
+    /// <summary>
+    /// ADR-053 (2026-08-13) D4: botón "volver a calcular" — fuerza el recálculo de
+    /// <c>StartDate</c>/<c>EndDate</c> desde los servicios VIGENTES, incondicionalmente (aunque la ventana
+    /// no cambie), y apaga <c>NeedsDateRecalculation</c>. Sirve para el caso de "Sacar de viaje" (confirmar
+    /// que la ventana actual ya es confiable, sin tocar ningún servicio) y, de yapa, queda como red de
+    /// seguridad operativa general para cualquier caso no previsto.
+    ///
+    /// <para>Mismas dos compuertas que <see cref="UpdatePromisedDatesAsync"/> (estado + autorización).</para>
+    /// </summary>
+    public async Task<ReservaDto> RecalculateDatesAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
 
-        // FIX #27 (Tanda 3, 2026-07-23): aviso suave (P-20, nunca bloquea) si la ventana que el usuario
-        // acaba de guardar a mano NO CUBRE las fechas reales de los servicios cargados (ej: corrigio la
-        // salida pero se olvido de correr tambien la vuelta). Se compara DESPUES de guardar, contra el
-        // MISMO calculo que usa el recalculo automatico (ReservaScheduleCalculator), asi el aviso usa
-        // exactamente la misma nocion de "fecha real" que el resto del sistema.
-        dto.Warning = await BuildDatesCoherenceWarningAsync(reservaId, reserva.StartDate, reserva.EndDate, ct);
+        await ReservaCapacityRules.EnsureReservaDataEditableByStateAsync(_context, reservaId, ct);
+        await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.ReservaDataEdited,
+            entityType: "Reserva", entityId: reservaId, summary: "Volver a calcular fechas del viaje", ct: ct);
 
-        return dto;
+        var (actorUserId, actorUserName) = ResolveAuditActor();
+        await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+            _context, reservaId, actorUserId, actorUserName, ct, _logger);
+
+        // El escritor unico solo apaga NeedsDateRecalculation cuando la ventana efectivamente CAMBIA (D1
+        // punto 3). Este botón tiene que apagarla SIEMPRE que se lo use, incluso si nada cambió — ej.
+        // "Sacar de viaje" en una reserva sin servicios vigentes: la ventana se queda en null/null (no hay
+        // "cambio" que detectar), pero el usuario ya confirmó que no hace falta revisar más.
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva != null && reserva.NeedsDateRecalculation)
+        {
+            reserva.NeedsDateRecalculation = false;
+            await _context.SaveChangesAsync(ct);
+        }
+
+        return await GetReservaByIdAsync(reservaId);
     }
 
     // ============================================================================================
@@ -887,41 +906,6 @@ public class ReservaService : IReservaService
 
         var pdfBytes = _quotePdfService.GenerateQuotePdf(reserva, agencySettings, conditions, logoBytes, porPersona, cantidadPasajerosCargados);
         return (pdfBytes, reserva.NumeroReserva);
-    }
-
-    /// <summary>
-    /// Compara la ventana de cabecera recien guardada (<paramref name="headerStart"/>/<paramref name="headerEnd"/>)
-    /// contra el MIN/MAX real de fechas de los servicios cargados (<see cref="ReservaScheduleCalculator"/>). Si
-    /// la cabecera NO CONTIENE ese rango real (o quedo sin fecha donde los servicios si tienen), devuelve el
-    /// texto de aviso fijo; si no hay servicios cargados todavia, no hay nada contra que comparar (null, sin
-    /// aviso). Comparacion por fecha-calendario (.Date): un desfasaje de horas dentro del mismo dia no cuenta.
-    /// </summary>
-    private async Task<string?> BuildDatesCoherenceWarningAsync(
-        int reservaId, DateTime? headerStart, DateTime? headerEnd, CancellationToken ct)
-    {
-        var (servicesStart, servicesEnd) = await ReservaScheduleCalculator.ComputeAsync(_context, reservaId, ct);
-
-        // Sin servicios cargados todavia: no hay "fecha real" contra la cual comparar.
-        if (!servicesStart.HasValue && !servicesEnd.HasValue)
-            return null;
-
-        var headerCoversServiceStart = servicesStart.HasValue
-            && headerStart.HasValue
-            && headerStart.Value.Date <= servicesStart.Value.Date;
-        var headerCoversServiceEnd = servicesEnd.HasValue
-            && headerEnd.HasValue
-            && headerEnd.Value.Date >= servicesEnd.Value.Date;
-
-        var servicesHaveNoStart = !servicesStart.HasValue;
-        var servicesHaveNoEnd = !servicesEnd.HasValue;
-
-        var startIsCoherent = servicesHaveNoStart || headerCoversServiceStart;
-        var endIsCoherent = servicesHaveNoEnd || headerCoversServiceEnd;
-
-        if (startIsCoherent && endIsCoherent)
-            return null;
-
-        return "Ojo: las fechas que guardaste no coinciden con las de los servicios cargados. Revisá que sea lo que querés.";
     }
 
     /// <summary>
@@ -2484,21 +2468,18 @@ public class ReservaService : IReservaService
         if (reason.Length < 10)
             throw new ArgumentException("Indicá un motivo para sacar de viaje (al menos 10 caracteres).");
 
-        // (6) Se le BORRA StartDate. Por que null y no recomputar: la fecha de salida es derivada de los servicios;
-        // ponerla en null saca la reserva del filtro de candidatos del job (AutoTransitionConfirmedToTravelingAsync
-        // exige StartDate.HasValue && StartDate <= hoy), evitando que esa misma noche la vuelva a promover. Ademas
-        // refleja la realidad: entro por error y falta recargar la fecha del servicio. Cuando se corrija la fecha
-        // del servicio, RecalculateReservationScheduleAsync recomputa StartDate desde los servicios (si queda
-        // futura, el job no la toma). Verificado (grep 2026-06-22): nada calcula plata/comision/vencimiento sobre
-        // Reserva.StartDate — solo filtros de urgencia/worklist y display; borrarla no descuadra ningun monto.
-        reserva.StartDate = null;
-
-        // FIX (2026-07-23): esta accion cuenta con que el PROXIMO guardado de un servicio recompute
-        // StartDate solo (comentario de arriba). Si una correccion manual anterior habia dejado
-        // DatesManuallySet=true, ese recalculo automatico quedaria frenado (ver BookingService.
-        // RecalculateReservationScheduleAsync) y StartDate seguiria en null para siempre. "Sacar de
-        // viaje" es en si misma una correccion de excepcion que pide recalculo fresco: bajamos la marca.
-        reserva.DatesManuallySet = false;
+        // (6) ADR-053 (2026-08-13, D4): bajo la decision (1) del dueño, StartDate es CALCULADO y de SOLO
+        // LECTURA — poner null a mano ya no es valido (y ademas el proximo recalculo lo volveria a llenar
+        // igual si la reserva todavia tiene servicios vigentes, sin que nadie haya corregido nada). En vez
+        // de la vieja señal "StartDate == null", se prende NeedsDateRecalculation: un estado VISIBLE con
+        // nombre propio en vez de una fecha usada como semaforo. El chip "En correccion" del front (
+        // IsUnderCorrection) pasa a leer esta bandera (ver GetReservaByIdAsync). Ademas,
+        // AutoTransitionConfirmedToTravelingAsync excluye a las reservas con esta marca prendida de su
+        // candidatura — sin eso, la MISMA noche el job la volveria a promover a Traveling (StartDate sigue
+        // siendo <= hoy, exactamente por lo que estaba En viaje) y "Sacar de viaje" quedaria sin efecto.
+        // Se apaga sola con el proximo guardado de un servicio que mueva la ventana, o con el boton
+        // "volver a calcular" (POST /{id}/recalculate-dates).
+        reserva.NeedsDateRecalculation = true;
 
         // (7/8) Vuelve a Confirmed por el PUNTO ÚNICO de transición: rastro auditable con Direction = "Correction"
         // (valor NUEVO, exclusivo de esta accion; ningun consumidor backend ramifica sobre Direction) + limpieza del
@@ -3478,12 +3459,10 @@ public class ReservaService : IReservaService
             startDate: file.StartDate,
             today: DateTime.UtcNow.Date);
 
-        // Sugerencia de fechas computadas desde los servicios cargados — la UI las
-        // usa para pre-rellenar inputs cuando StartDate/EndDate estan en null.
-        // Costo: 5 queries chicas en una operacion de detalle (no es hot path).
-        var (suggestedStart, suggestedEnd) = await ReservaScheduleCalculator.ComputeAsync(_context, file.Id);
-        dto.SuggestedStartDate = suggestedStart;
-        dto.SuggestedEndDate = suggestedEnd;
+        // ADR-053 (2026-08-13): SuggestedStartDate/SuggestedEndDate SE RETIRAN — existian solo para
+        // "sugerir un valor cuando StartDate esta vacio, para precargar el input" de la vieja edicion
+        // manual (UpdateDatesAsync, tambien retirada). Con StartDate/EndDate de solo lectura ya no hay
+        // ningun input que precargar con una sugerencia (D7.9, limpieza — no se pierde funcionalidad).
 
         // ADR-017 (pill "creado en esta venta"): el detalle NO incluye la nav Rate de los servicios
         // (a proposito: incluirla cambiaria campos preexistentes como RatePublicId/IsPriceSynced en
@@ -3699,16 +3678,51 @@ public class ReservaService : IReservaService
         // Reusa las mismas senales que las capacidades (estado + plata viva), sin estado ni columna nueva.
         PopulateCancellationCase(dto, file.Status, hasLiveCae, hasAnyLivePayment);
 
-        // ADR-036 (2026-06-22): "En corrección" = volvio a Confirmada con la fecha de salida borrada tras un
-        // "Sacar de viaje" (StartDate null). Derivado, sin estado nuevo. El front muestra el chip "En corrección".
+        // ADR-036 (2026-06-22) + ADR-053 (2026-08-13, D4): "En corrección" = volvio a Confirmada tras un
+        // "Sacar de viaje". Formula NUEVA: antes dependia de "StartDate == null" (una fecha usada como
+        // semaforo, invalido bajo la decision (1) — StartDate es calculado y de solo lectura); ahora
+        // depende de la bandera con nombre propio NeedsDateRecalculation. El CONTRATO de cara al front NO
+        // cambia (mismo nombre de campo, mismo chip "En corrección").
         dto.IsUnderCorrection =
             string.Equals(file.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase)
-            && !file.StartDate.HasValue;
+            && file.NeedsDateRecalculation;
 
         // ADR-035 Decision 2 / C5: la moneda principal (default del cobro) la decide el backend, nunca el front.
         dto.MonedaPrincipal = ResolvePrimaryCurrency(dto.PorMoneda);
 
+        // ADR-053 D2.1: consumo-al-leer del aviso suave efimero. Se muestra y se limpia SOLO si el caller
+        // ES el mismo actor que disparo el cambio de ventana (comparacion null-safe, B6/B7 — un pendiente
+        // sin dueño, o un caller sin UserId, NUNCA matchea). Si NO es el dueño (incluido un Admin distinto
+        // del autor), el valor queda INTACTO para que lo consuma su dueño real en su proximo GET.
+        if (!string.IsNullOrEmpty(file.PendingScheduleWarning))
+        {
+            var callerUserId = GetCurrentUserIdOrNull();
+            var ownedByCaller = callerUserId != null && callerUserId == file.PendingScheduleWarningByUserId;
+            if (ownedByCaller)
+            {
+                dto.ScheduleWarning = file.PendingScheduleWarning;
+                await ClearPendingScheduleWarningAsync(file.Id, CancellationToken.None);
+            }
+        }
+
         return dto;
+    }
+
+    /// <summary>
+    /// ADR-053 D2.1 (M4): limpia el aviso suave efimero DESPUES de entregarlo a su dueño. <c>GetReservaByIdAsync</c>
+    /// es 100% <c>AsNoTracking()</c> (no queremos que esta limpieza convierta esa lectura grande en
+    /// tracked) — se resuelve con una consulta chica y SEPARADA por Id, sobre una entidad recien trackeada
+    /// solo para este UPDATE puntual (2 columnas). Nota menor aceptada por el ADR: dos <c>GET</c>
+    /// concurrentes del mismo actor pueden ambos leer el pendiente antes de que el primero lo limpie
+    /// (double-toast en el front, sin corrupcion de datos).
+    /// </summary>
+    private async Task ClearPendingScheduleWarningAsync(int reservaId, CancellationToken ct)
+    {
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva == null) return;
+        reserva.PendingScheduleWarning = null;
+        reserva.PendingScheduleWarningByUserId = null;
+        await _context.SaveChangesAsync(ct);
     }
 
     /// <summary>
@@ -4313,6 +4327,14 @@ public class ReservaService : IReservaService
 
         _context.Servicios.Add(reservation);
         await _context.SaveChangesAsync();
+
+        // ADR-053 (2026-08-13, cierre del agujero #1 de escritor unico — §1.3 del ADR): el servicio
+        // GENERICO nunca recalculaba la cabecera. El alta pasa a llamar al escritor unico con el actor
+        // real (dispara el aviso suave si la ventana se movio).
+        var (addActorUserId, addActorUserName) = ResolveAuditActor();
+        await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+            _context, reservaId, addActorUserId, addActorUserName, ct, _logger);
+
         await UpdateBalanceAsync(reservaId);
 
         // ADR-022 §4.10 (fix P1): el servicio generico participa de la deuda del proveedor, pero hasta
@@ -4481,6 +4503,15 @@ public class ReservaService : IReservaService
 
         await _context.SaveChangesAsync();
 
+        // ADR-053 (2026-08-13, cierre del agujero #1 de escritor unico — §1.3 del ADR): la edicion del
+        // servicio GENERICO tocaba DepartureDate/ReturnDate directo y nunca recalculaba la cabecera.
+        if (service.ReservaId.HasValue)
+        {
+            var (editActorUserId, editActorUserName) = ResolveAuditActor();
+            await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                _context, service.ReservaId.Value, editActorUserId, editActorUserName, ct, _logger);
+        }
+
         // ADR-027 (detalle): armamos el descriptor del cambio (que servicio, antes/despues) y lo pasamos a
         // UpdateBalanceAsync, que decide (estado vivo) si marca la reserva y registra el detalle. Si no cambio
         // ni precio ni costo, el descriptor no tiene cambio significativo y el trigger no hace nada.
@@ -4533,7 +4564,15 @@ public class ReservaService : IReservaService
             _context.Servicios.Remove(service);
             var resId = service.ReservaId;
             await _context.SaveChangesAsync(ct);
-            if (resId.HasValue) await UpdateBalanceAsync(resId.Value);
+            // ADR-053 (2026-08-13, agujero #2 de escritor unico — §1.3): el borrado del generico por este
+            // camino UNIFICADO nunca recalculaba la cabecera. Actor NULL a proposito: D2 dice que los
+            // borrados duros arreglan la fecha PERO no dejan aviso suave.
+            if (resId.HasValue)
+            {
+                await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                    _context, resId.Value, actorUserId: null, actorUserName: null, ct, _logger);
+                await UpdateBalanceAsync(resId.Value);
+            }
             if (removedSupplierId.HasValue) await RecalculateSupplierDebtAsync(removedSupplierId.Value, ct);
             return;
         }
@@ -4551,6 +4590,10 @@ public class ReservaService : IReservaService
             _context.FlightSegments.Remove(flight);
             var resId = flight.ReservaId;
             await _context.SaveChangesAsync(ct);
+            // ADR-053 (2026-08-13, agujero #2 de escritor unico — §1.3): el borrado UNIFICADO (este path,
+            // distinto de BookingService.DeleteFlightAsync) nunca recalculaba la cabecera. Actor NULL: D2.
+            await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                _context, resId, actorUserId: null, actorUserName: null, ct, _logger);
             await UpdateBalanceAsync(resId);
             return;
         }
@@ -4568,6 +4611,9 @@ public class ReservaService : IReservaService
             _context.HotelBookings.Remove(hotel);
             var resId = hotel.ReservaId;
             await _context.SaveChangesAsync(ct);
+            // ADR-053 (2026-08-13, agujero #2 de escritor unico — §1.3): idem Flight, actor NULL (D2).
+            await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                _context, resId, actorUserId: null, actorUserName: null, ct, _logger);
             await UpdateBalanceAsync(resId);
             return;
         }
@@ -4585,6 +4631,9 @@ public class ReservaService : IReservaService
             _context.TransferBookings.Remove(transfer);
             var resId = transfer.ReservaId;
             await _context.SaveChangesAsync(ct);
+            // ADR-053 (2026-08-13, agujero #2 de escritor unico — §1.3): idem Flight, actor NULL (D2).
+            await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                _context, resId, actorUserId: null, actorUserName: null, ct, _logger);
             await UpdateBalanceAsync(resId);
             return;
         }
@@ -4602,6 +4651,9 @@ public class ReservaService : IReservaService
             _context.PackageBookings.Remove(package);
             var resId = package.ReservaId;
             await _context.SaveChangesAsync(ct);
+            // ADR-053 (2026-08-13, agujero #2 de escritor unico — §1.3): idem Flight, actor NULL (D2).
+            await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                _context, resId, actorUserId: null, actorUserName: null, ct, _logger);
             await UpdateBalanceAsync(resId);
             return;
         }
@@ -4620,6 +4672,9 @@ public class ReservaService : IReservaService
             _context.AssistanceBookings.Remove(assistance);
             var resId = assistance.ReservaId;
             await _context.SaveChangesAsync(ct);
+            // ADR-053 (2026-08-13, agujero #2 de escritor unico — §1.3): idem Flight, actor NULL (D2).
+            await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+                _context, resId, actorUserId: null, actorUserName: null, ct, _logger);
             await UpdateBalanceAsync(resId);
             return;
         }

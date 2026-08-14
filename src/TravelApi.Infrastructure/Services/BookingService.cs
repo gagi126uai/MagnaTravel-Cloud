@@ -760,28 +760,22 @@ public partial class BookingService : IBookingService
         }
     }
 
-    private async Task RecalculateReservationScheduleAsync(int reservaId, CancellationToken ct)
+    /// <summary>
+    /// ADR-053 (2026-08-13): wrapper fino que resuelve el actor del <c>HttpContext</c> y delega en el
+    /// escritor único <c>ReservaScheduleCalculator.RecalculateAndPersistAsync</c> — reemplaza al viejo
+    /// <c>RecalculateReservationScheduleAsync</c> privado (que hacía su propio recálculo+persistencia acá
+    /// adentro, respetando el candado invisible <c>DatesManuallySet</c>, ya retirado). Un alta/edición pasa
+    /// SIEMPRE el actor real (dispara el aviso suave si la ventana se movió); un borrado duro pasa
+    /// <paramref name="withScheduleWarning"/><c>=false</c> — D2: "no hay aviso que confirmar cuando lo que
+    /// se hizo fue borrar" — que se traduce en pasar <c>actorUserId: null</c> al escritor único (B7: "actor
+    /// null = sin aviso"), el ÚNICO mecanismo de supresión que expone la función compartida.
+    /// </summary>
+    private async Task<(DateTime? Start, DateTime? End, bool Changed)> RecalculateReservationScheduleAsync(
+        int reservaId, CancellationToken ct, bool withScheduleWarning = true)
     {
-        var reserva = await _db.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct);
-        if (reserva == null) return;
-
-        // FIX (2026-07-23): si el usuario corrigio las fechas A MANO (ReservaService.UpdateDatesAsync),
-        // el recalculo automatico NO las pisa. Antes, guardar CUALQUIER servicio (hotel, vuelo,
-        // transfer, paquete, asistencia) volvia a correr este metodo y sobreescribia la correccion
-        // manual con el MIN/MAX automatico — la fecha "corregida" se perdia en el proximo guardado.
-        // Reservas sin correccion manual (el caso de siempre) siguen recalculando exactamente igual.
-        if (reserva.DatesManuallySet) return;
-
-        // El calculo del min/max de fechas de servicios vive en ReservaScheduleCalculator
-        // para poder reusarlo desde el lifecycle automation y al construir DTOs.
-        var (nextStart, nextEnd) = await ReservaScheduleCalculator.ComputeAsync(_db, reservaId, ct);
-
-        if (reserva.StartDate != nextStart || reserva.EndDate != nextEnd)
-        {
-            reserva.StartDate = nextStart;
-            reserva.EndDate = nextEnd;
-            await _db.SaveChangesAsync(ct);
-        }
+        var (actorUserId, actorUserName) = withScheduleWarning ? GetActor() : (null, null);
+        return await ReservaScheduleCalculator.RecalculateAndPersistAsync(
+            _db, reservaId, actorUserId, actorUserName, ct, _logger);
     }
 
     private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken ct)
@@ -1191,7 +1185,8 @@ public partial class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
         }
 
-        await RecalculateReservationScheduleAsync(reservaId, ct);
+        // D2: un borrado duro recalcula la cabecera IGUAL (la arregla) pero NO deja aviso suave.
+        await RecalculateReservationScheduleAsync(reservaId, ct, withScheduleWarning: false);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
@@ -1488,7 +1483,8 @@ public partial class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
         }
 
-        await RecalculateReservationScheduleAsync(reservaId, ct);
+        // D2: un borrado duro recalcula la cabecera IGUAL (la arregla) pero NO deja aviso suave.
+        await RecalculateReservationScheduleAsync(reservaId, ct, withScheduleWarning: false);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
@@ -1728,7 +1724,8 @@ public partial class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
         }
 
-        await RecalculateReservationScheduleAsync(reservaId, ct);
+        // D2: un borrado duro recalcula la cabecera IGUAL (la arregla) pero NO deja aviso suave.
+        await RecalculateReservationScheduleAsync(reservaId, ct, withScheduleWarning: false);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
@@ -1978,7 +1975,8 @@ public partial class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
         }
 
-        await RecalculateReservationScheduleAsync(reservaId, ct);
+        // D2: un borrado duro recalcula la cabecera IGUAL (la arregla) pero NO deja aviso suave.
+        await RecalculateReservationScheduleAsync(reservaId, ct, withScheduleWarning: false);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 
@@ -2259,7 +2257,8 @@ public partial class BookingService : IBookingService
             await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
         }
 
-        await RecalculateReservationScheduleAsync(reservaId, ct);
+        // D2: un borrado duro recalcula la cabecera IGUAL (la arregla) pero NO deja aviso suave.
+        await RecalculateReservationScheduleAsync(reservaId, ct, withScheduleWarning: false);
         await _reservaService.UpdateBalanceAsync(reservaId);
     }
 

@@ -181,23 +181,23 @@ public class Adr035PassengerAndDatesStateGateTests
 
     [Theory]
     [MemberData(nameof(ReadOnlyStates))]
-    public async Task UpdateDates_OnReadOnlyState_Rejected_EvenWithLiveAuthorization(string status)
+    public async Task UpdatePromisedDates_OnReadOnlyState_Rejected_EvenWithLiveAuthorization(string status)
     {
         await using var ctx = NewContext();
         SeedReserva(ctx, status);
         AddLiveAuthorization(ctx);
         await ctx.SaveChangesAsync();
 
-        var request = new UpdateReservaDatesRequest(
-            StartDate: DateTime.UtcNow.AddDays(10),
-            EndDate: DateTime.UtcNow.AddDays(20));
+        var request = new UpdatePromisedDatesRequest(
+            PromisedStartDate: DateTime.UtcNow.AddDays(10),
+            PromisedEndDate: DateTime.UtcNow.AddDays(20));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            NewService(ctx).UpdateDatesAsync("1", request, CancellationToken.None));
+            NewService(ctx).UpdatePromisedDatesAsync("1", request, CancellationToken.None));
 
         var reserva = await ctx.Reservas.AsNoTracking().SingleAsync();
-        Assert.Null(reserva.StartDate); // sin cambios
-        Assert.Null(reserva.EndDate);
+        Assert.Null(reserva.PromisedStartDate); // sin cambios
+        Assert.Null(reserva.PromisedEndDate);
     }
 
     [Fact]
@@ -218,15 +218,15 @@ public class Adr035PassengerAndDatesStateGateTests
     }
 
     [Fact]
-    public async Task ReadOnlyMessage_Dates_ForCancelled_MentionsReadOnly_NoAmounts()
+    public async Task ReadOnlyMessage_PromisedDates_ForCancelled_MentionsReadOnly_NoAmounts()
     {
         await using var ctx = NewContext();
         SeedReserva(ctx, EstadoReserva.Cancelled);
         await ctx.SaveChangesAsync();
 
-        var request = new UpdateReservaDatesRequest(StartDate: DateTime.UtcNow, EndDate: DateTime.UtcNow.AddDays(1));
+        var request = new UpdatePromisedDatesRequest(PromisedStartDate: DateTime.UtcNow, PromisedEndDate: DateTime.UtcNow.AddDays(1));
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            NewService(ctx).UpdateDatesAsync("1", request, CancellationToken.None));
+            NewService(ctx).UpdatePromisedDatesAsync("1", request, CancellationToken.None));
 
         Assert.Contains("solo lectura", ex.Message, StringComparison.OrdinalIgnoreCase);
         // El motivo es texto de estado, sin montos/costos.
@@ -266,7 +266,7 @@ public class Adr035PassengerAndDatesStateGateTests
 
     [Theory]
     [MemberData(nameof(EarlyStages))]
-    public async Task UpdateDates_OnEarlyStages_Allowed(string status)
+    public async Task UpdatePromisedDates_OnEarlyStages_Allowed(string status)
     {
         await using var ctx = NewContext();
         SeedReserva(ctx, status);
@@ -279,8 +279,8 @@ public class Adr035PassengerAndDatesStateGateTests
         // armado del DTO de respuesta puede fallar en este entorno de test (IMapper mockeado solo para
         // PassengerDto), pero eso es ORTOGONAL al gate: lo importante es que las fechas YA se guardaron y que
         // el motivo (si hubo excepcion) NO es del gate de estado ni del candado.
-        var ex = await Record.ExceptionAsync(() => NewService(ctx).UpdateDatesAsync("1",
-            new UpdateReservaDatesRequest(StartDate: start, EndDate: end), CancellationToken.None));
+        var ex = await Record.ExceptionAsync(() => NewService(ctx).UpdatePromisedDatesAsync("1",
+            new UpdatePromisedDatesRequest(PromisedStartDate: start, PromisedEndDate: end), CancellationToken.None));
 
         if (ex is InvalidOperationException ioe)
         {
@@ -288,10 +288,10 @@ public class Adr035PassengerAndDatesStateGateTests
             Assert.DoesNotContain("candado", ioe.Message, StringComparison.OrdinalIgnoreCase);
         }
 
-        // Las fechas se persistieron antes de armar el DTO de respuesta: la edicion ocurrio.
+        // Las fechas prometidas se persistieron antes de armar el DTO de respuesta: la edicion ocurrio.
         var reserva = await ctx.Reservas.AsNoTracking().SingleAsync();
-        Assert.NotNull(reserva.StartDate);
-        Assert.NotNull(reserva.EndDate);
+        Assert.NotNull(reserva.PromisedStartDate);
+        Assert.NotNull(reserva.PromisedEndDate);
     }
 
     // =====================================================================================================
@@ -348,20 +348,20 @@ public class Adr035PassengerAndDatesStateGateTests
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    public async Task UpdateDates_OnFirmState_WithoutAuthorization_Throws_LikeToday(string status)
+    public async Task UpdatePromisedDates_OnFirmState_WithoutAuthorization_Throws_LikeToday(string status)
     {
         await using var ctx = NewContext();
         SeedReserva(ctx, status);
         await ctx.SaveChangesAsync();
 
-        // Editar fechas en firme SIGUE pidiendo autorizacion (candado ADR-020 F4). El gate de estado deja
-        // pasar; el candado corta. Sin autorizacion viva -> 409, igual que hoy.
-        var request = new UpdateReservaDatesRequest(StartDate: DateTime.UtcNow.AddDays(3), EndDate: DateTime.UtcNow.AddDays(9));
+        // Editar la fecha prometida en firme SIGUE pidiendo autorizacion (candado ADR-020 F4). El gate de
+        // estado deja pasar; el candado corta. Sin autorizacion viva -> 409, igual que hoy.
+        var request = new UpdatePromisedDatesRequest(PromisedStartDate: DateTime.UtcNow.AddDays(3), PromisedEndDate: DateTime.UtcNow.AddDays(9));
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            NewService(ctx).UpdateDatesAsync("1", request, CancellationToken.None));
+            NewService(ctx).UpdatePromisedDatesAsync("1", request, CancellationToken.None));
 
         var reserva = await ctx.Reservas.AsNoTracking().SingleAsync();
-        Assert.Null(reserva.StartDate); // el candado bloqueo antes de persistir
+        Assert.Null(reserva.PromisedStartDate); // el candado bloqueo antes de persistir
     }
 
     // =====================================================================================================

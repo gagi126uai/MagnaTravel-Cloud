@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, AlertTriangle, Undo2, Pencil, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal, Ban, FileText, Send, Loader2 } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Undo2, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal, Ban, FileText, Send, Loader2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
@@ -7,6 +7,7 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo, ReservaStatusBadge } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
+import { TripDatesRow } from "./TripDatesRow";
 import { isAdmin } from "../../../auth";
 import { faltaTitularConNombre } from "../lib/pasajeroHint";
 import { isReservaAnulada } from "../moneyStatus";
@@ -34,24 +35,6 @@ function downloadBlob(blob, fileName) {
     link.click();
     link.remove();
     window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-}
-
-// Bug "fechas corridas un día" (2026-07-16): startDate/endDate de la reserva son
-// fechas-solo-día (el usuario elige un día calendario, no una hora). El backend las
-// guarda como medianoche UTC ("...T00:00:00Z"). Si las pasamos por new Date(value)
-// y pedimos el día en hora LOCAL (UTC-3), la medianoche UTC del 23/05 cae a las
-// 21:00 del 22/05 en Argentina y el usuario ve "22/05/2026" en vez de "23/05/2026".
-// Por eso leemos el día/mes/año directo del texto (string-split), igual que
-// MonthNavigator y ReprogramarViajeModal — nunca pasamos por new Date() para esto.
-function formatTripDate(value) {
-    if (!value) return null;
-    const soloFecha = String(value).split("T")[0];
-    // Validacion numerica estricta (mismo criterio que la formatDate central):
-    // un valor que no sea yyyy-MM-dd de verdad devuelve null, jamas texto basura.
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(soloFecha);
-    if (!match) return null;
-    const [, anio, mes, dia] = match;
-    return `${dia}/${mes}/${anio}`;
 }
 
 /**
@@ -182,8 +165,11 @@ function MenuAccionesExcepcion({ items }) {
  * - onCancelReserva: callback para abrir el flujo de anulacion en linea
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
- * - Los callbacks onStatusChange, onArchive, onRevert, onEditDates, onReschedule son manejados por el padre
+ * - Los callbacks onStatusChange, onArchive, onRevert, onReschedule son manejados por el padre
  * - onReschedule: callback que abre ReprogramarViajeModal; se muestra cuando capabilities.canReschedule.allowed === true (G5, 2026-06-24).
+ * - onPromisedDatesChanged: callback que dispara el padre (ADR-053, 2026-08-13) para
+ *   refrescar la ficha completa después de guardar/borrar la "fecha prometida al
+ *   cliente" — ver TripDatesRow.jsx/PromisedDatesBlock.jsx.
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
  *   Si viene null/undefined no se muestra nada (diseño conservador).
@@ -195,8 +181,8 @@ export function ReservaHeader({
     onStatusChange,
     onArchive,
     onRevert,
-    onEditDates,
     onReschedule,
+    onPromisedDatesChanged,
     canCancelReserva = false,
     onCancelReserva,
     onRequestEdit,
@@ -213,7 +199,7 @@ export function ReservaHeader({
 
     // ─── Candado C1 (spec UX 2026-07-22) ─────────────────────────────────────────
     // Reserva Confirmada SIN autorización de edición viva: los botones de edición de
-    // esta cabecera (Editar fechas, Reprogramar viaje) se muestran "gris + candadito"
+    // esta cabecera (fecha prometida, Reprogramar viaje) se muestran "gris + candadito"
     // en vez de encendidos. Al tocarlos, en vez de disparar la acción, abren la misma
     // ventana de destrabar que ya usa la franja ámbar (onRequestEdit → EditAuthorizationModal).
     const candadoDeEdicionActivo = tieneCandadoDeEdicionActivo(reserva);
@@ -246,10 +232,13 @@ export function ReservaHeader({
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
 
-    // ─── Botón "Editar fechas" ────────────────────────────────────────────────────
-    // Feedback 2026-06-19: se oculta cuando canEditReservaData.allowed === false.
-    // En estados terminales (Lost, Cancelled, Closed) el backend manda allowed=false.
-    // Fallback (sin capabilities): lógica local por estado.
+    // ─── Edición de "fecha prometida al cliente" (ADR-053, 2026-08-13) ───────────
+    // Misma capability que antes gateaba el viejo botón "Editar fechas"
+    // (canEditReservaData): Salida/Regreso pasaron a ser calculadas y de solo
+    // lectura, pero el backend sigue usando este MISMO permiso/candado para la
+    // "fecha prometida" nueva (PATCH /promised-dates usa la misma cadena de
+    // compuertas que el viejo PATCH /dates — ver ADR-053 D3). Se oculta cuando
+    // canEditReservaData.allowed === false (estados terminales) — feedback 2026-06-19.
     const editReservaDataCap = getCapability('canEditReservaData');
     const canEditDates = editReservaDataCap.allowed
         // Fallback defensivo si el campo no vino: estados activos clásicos
@@ -263,8 +252,8 @@ export function ReservaHeader({
     // no por canEditServices. canReschedule=true solo en {Confirmada, En viaje}.
     // En pre-venta (Quotation/Budget) y en estados terminales = false.
     // Fallback a canEditServices si el backend aún no manda canReschedule (DTO viejo).
-    // "Reprogramar" es diferente de "Editar fechas":
-    //   - "Editar fechas" overridea la cabecera de la reserva (manual, fecha a fecha).
+    // "Reprogramar" es diferente de la "fecha prometida":
+    //   - "Fecha prometida" es una nota aparte, nunca toca los servicios (ADR-053).
     //   - "Reprogramar" mueve TODOS los servicios el mismo delta desde una nueva salida.
     // Se oculta en estados archivados — la reserva archivada es historial.
     const rescheduleCap = capabilities?.canReschedule ?? getCapability('canEditServices');
@@ -403,9 +392,6 @@ export function ReservaHeader({
             testId: 'reserva-menu-sacar-de-viaje',
         });
     }
-
-    const startLabel = formatTripDate(reserva.startDate);
-    const endLabel = formatTripDate(reserva.endDate);
 
     // Gate de cierre: el viaje tiene que haber terminado y no quedar saldo.
     //
@@ -576,56 +562,25 @@ export function ReservaHeader({
                     <ReservaStatusChips reserva={reserva} />
                 </div>
 
-                {/* Fechas del viaje */}
-                <div className="mt-3 flex items-center gap-3 flex-wrap">
-                    <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-800 dark:bg-slate-900">
-                        <span aria-hidden="true">📅</span>
-                        <span className="font-medium text-slate-500 dark:text-slate-400">Salida:</span>
-                        <span className={startLabel ? "font-bold text-slate-900 dark:text-white" : "italic text-slate-400"}>
-                            {startLabel || "sin cargar"}
-                        </span>
-                        <span className="text-slate-300 dark:text-slate-700">·</span>
-                        <span className="font-medium text-slate-500 dark:text-slate-400">Regreso:</span>
-                        <span className={endLabel ? "font-bold text-slate-900 dark:text-white" : "italic text-slate-400"}>
-                            {endLabel || "sin cargar"}
-                        </span>
-                    </div>
-                    {/* "Editar fechas": visible solo cuando canEditReservaData.allowed === true.
-                        Feedback 2026-06-19: en estados terminales (Lost/Cancelled/Closed) se oculta,
-                        no se deshabilita, porque la reserva está en solo-lectura visual completa.
-                        Candado C1 (2026-07-22): con la reserva Confirmada y SIN autorización viva,
-                        el botón queda gris + candadito y abre la ventana de destrabar en vez de
-                        editar directo (antes ignoraba el candado — bug real, reserva 1052). */}
-                    {canEditDates && onEditDates && (
-                        candadoDeEdicionActivo ? (
-                            <button
-                                onClick={onRequestEdit}
-                                type="button"
-                                data-testid="reserva-action-edit-dates"
-                                aria-label="Editar fechas — bloqueado, pedí autorización"
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                            >
-                                <Lock className="w-3.5 h-3.5" aria-hidden="true" />
-                                Editar fechas
-                            </button>
-                        ) : (
-                            <button
-                                onClick={onEditDates}
-                                type="button"
-                                data-testid="reserva-action-edit-dates"
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                            >
-                                <Pencil className="w-3.5 h-3.5" />
-                                Editar fechas
-                            </button>
-                        )
-                    )}
+                {/* Fechas del viaje (ADR-053, 2026-08-13): TripDatesRow pinta la Salida/Regreso
+                    CALCULADA (solo lectura, ver ese componente) + el bloque opcional de "fecha
+                    prometida al cliente" debajo. "Reprogramar viaje" se queda al lado, tal cual
+                    estaba (spec §1: "esto ya estaba firmado y NO se toca"). items-start porque
+                    el bloque de fechas ahora puede ocupar dos renglones. */}
+                <div className="mt-3 flex items-start gap-3 flex-wrap">
+                    <TripDatesRow
+                        reserva={reserva}
+                        canEditPromisedDates={canEditDates}
+                        candadoDeEdicionActivo={candadoDeEdicionActivo}
+                        onRequestEdit={onRequestEdit}
+                        onPromisedDatesChanged={onPromisedDatesChanged}
+                    />
 
                     {/* "Reprogramar viaje": mueve TODAS las fechas de los servicios desde una nueva fecha de salida.
-                        Distinto de "Editar fechas" (override de cabecera): este corre todo el viaje en bloque.
-                        Visible cuando canEditServices.allowed=true → el backend sabe si la reserva es editable.
-                        Candado C1 (2026-07-22): mismo tratamiento que "Editar fechas" — gris + candadito
-                        cuando la reserva está bloqueada sin autorización viva. */}
+                        Distinto de la "fecha prometida" (nota aparte, nunca toca servicios): este corre
+                        todo el viaje en bloque. Visible cuando canEditServices.allowed=true → el backend
+                        sabe si la reserva es editable. Candado C1 (2026-07-22): gris + candadito cuando
+                        la reserva está bloqueada sin autorización viva. */}
                     {showRescheduleButton && (
                         candadoDeEdicionActivo ? (
                             <button
@@ -644,9 +599,8 @@ export function ReservaHeader({
                                 type="button"
                                 data-testid="reserva-action-reschedule"
                                 // Residuo de coherencia (lavado de cara, 2026-08-11): antes era índigo
-                                // suelto — el mismo molde secundario que "Editar fechas" (su vecino en
-                                // esta misma fila), único color de acción del sistema reservado al
-                                // botón principal.
+                                // suelto — mismo molde secundario que el resto de los botones de esta
+                                // fila, único color de acción del sistema reservado al botón principal.
                                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                                 title="Mueve todas las fechas de los servicios"
                             >
