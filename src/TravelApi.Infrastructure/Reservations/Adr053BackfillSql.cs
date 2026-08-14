@@ -44,44 +44,52 @@ internal static class Adr053BackfillSql
     /// las 2 sentencias de abajo (cada <c>migrationBuilder.Sql(...)</c> es un statement independiente; no hay
     /// forma de compartir un CTE entre dos statements separados).
     /// </summary>
+    // ⚠️ NOMBRES DE COLUMNA REALES DE LA BASE, no los del C# (lección grabada del proyecto, y cazada
+    // de vuelta por el CI 13/08): en las SEIS tablas de servicios la FK a la reserva se llama
+    // ""TravelFileId"" (desalineo histórico Reserva→TravelFiles). El C# la llama ReservaId, pero este
+    // SQL corre crudo contra Postgres y ahí ""ReservaId"" NO EXISTE en esas tablas. La única tabla que
+    // SÍ usa ""ReservaId"" es la nueva Adr053TripWindowBackfillLogs (creada por esta misma migración,
+    // sin renombre).
     private const string ServiceWindowsCte = @"
         svc_windows AS (
-            SELECT ""ReservaId"" AS reserva_id, ""DepartureTime"" AS start_date,
+            SELECT ""TravelFileId"" AS reserva_id, ""DepartureTime"" AS start_date,
                    COALESCE(""ArrivalTime"", ""DepartureTime"") AS end_date
             FROM ""FlightSegments""
             WHERE UPPER(TRIM(COALESCE(""Status"", ''))) NOT IN ('UN', 'UC', 'HX', 'NO')
 
             UNION ALL
 
-            SELECT ""ReservaId"", ""CheckIn"", ""CheckOut""
+            SELECT ""TravelFileId"", ""CheckIn"", ""CheckOut""
             FROM ""HotelBookings""
             WHERE NOT (LOWER(TRIM(COALESCE(""Status"", ''))) LIKE 'cancel%')
 
             UNION ALL
 
-            SELECT ""ReservaId"", ""PickupDateTime"", COALESCE(""ReturnDateTime"", ""PickupDateTime"")
+            SELECT ""TravelFileId"", ""PickupDateTime"", COALESCE(""ReturnDateTime"", ""PickupDateTime"")
             FROM ""TransferBookings""
             WHERE NOT (LOWER(TRIM(COALESCE(""Status"", ''))) LIKE 'cancel%')
 
             UNION ALL
 
-            SELECT ""ReservaId"", ""StartDate"", COALESCE(""EndDate"", ""StartDate"")
+            SELECT ""TravelFileId"", ""StartDate"", COALESCE(""EndDate"", ""StartDate"")
             FROM ""PackageBookings""
             WHERE NOT (LOWER(TRIM(COALESCE(""Status"", ''))) LIKE 'cancel%')
 
             UNION ALL
 
-            SELECT ""ReservaId"", ""ValidFrom"", ""ValidTo""
+            SELECT ""TravelFileId"", ""ValidFrom"", ""ValidTo""
             FROM ""AssistanceBookings""
             WHERE NOT (LOWER(TRIM(COALESCE(""Status"", ''))) LIKE 'cancel%')
 
             UNION ALL
 
-            -- Servicio generico: ReservaId es NULLABLE en esta tabla (un Servicio puede no estar
-            -- ligado a ninguna reserva). Sin el IS NOT NULL, el LEFT JOIN de abajo se rompe.
-            SELECT ""ReservaId"", ""DepartureDate"", COALESCE(""ReturnDate"", ""DepartureDate"")
-            FROM ""Servicios""
-            WHERE ""ReservaId"" IS NOT NULL
+            -- Servicio generico (entidad ServicioReserva): su tabla real se llama ""Reservations""
+            -- (herencia historica, NO ""Servicios"" — verificado en el snapshot, ToTable linea ~6060).
+            -- La FK (""TravelFileId"") es NULLABLE en esta tabla (un Servicio puede no estar ligado a
+            -- ninguna reserva). Sin el IS NOT NULL, el LEFT JOIN de abajo se rompe.
+            SELECT ""TravelFileId"", ""DepartureDate"", COALESCE(""ReturnDate"", ""DepartureDate"")
+            FROM ""Reservations""
+            WHERE ""TravelFileId"" IS NOT NULL
               AND NOT (LOWER(TRIM(COALESCE(""Status"", ''))) LIKE 'cancel%')
         ),
         trip_window_agg AS (

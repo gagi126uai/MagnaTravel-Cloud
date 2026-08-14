@@ -536,6 +536,10 @@ public class SystemDataWipeService : ISystemDataWipeService
         "ApprovalRequests", "CashLedgerEntries", "ArcaIdempotencyKeys", "ManualCashMovements", "PaymentReceipts",
         "VoucherAuditEntries", "VoucherPassengerAssignments", "Vouchers", "PassengerServiceAssignments",
         "ReservaEditAuthorizationChanges", "ReservaEditAuthorizations", "ReservaStatusChangeLogs",
+        // ADR-053 (2026-08-13): rastro del recalculo masivo de fechas — cuelga de TravelFiles con FK,
+        // asi que muere con las reservas. Si falta de esta lista, el preflight fail-closed aborta el
+        // borrado entero (leccion del CI 13/08: el guard lo cazo al primer intento).
+        "Adr053TripWindowBackfillLogs",
         "ReservaAttachments", "ReservaPendingChanges", "CommissionAccruals", "InvoiceTribute", "InvoiceItem",
         "Invoices", "WhatsAppDeliveries", "MessageDeliveries", "UpcomingStartAlertDismissals", "Notifications",
         "HotelBookings", "TransferBookings", "PackageBookings", "AssistanceBookings", "ReservaMoneyByCurrency",
