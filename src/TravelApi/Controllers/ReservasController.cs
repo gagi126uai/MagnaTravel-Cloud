@@ -922,6 +922,32 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // ============================================================================================
+    // Obra "PDF ronda 2" (decisión firmada del dueño, 2026-08-14, spec §6): plan de pagos del total.
+    // Mismo permiso/ownership que "formas de pago" arriba (edición de cabecera de la reserva).
+    // ============================================================================================
+
+    [HttpPut("{publicIdOrLegacyId}/budget-payment-plan")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult> UpdatePaymentPlan(
+        string publicIdOrLegacyId, UpdatePaymentPlanRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.UpdatePaymentPlanAsync(publicIdOrLegacyId, request, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     /// <summary>
     /// PDF de presupuesto que se le manda al cliente (maqueta v2 firmada, 2026-08-11/12). Solo funciona
     /// mientras la reserva es Presupuesto (Cotización/Presupuesto) — <see cref="IReservaService.GetBudgetPdfAsync"/>

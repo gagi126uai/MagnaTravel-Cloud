@@ -90,4 +90,8 @@ public class AssistanceBookingDto
     /// </summary>
     public string? OptionGroup { get; set; }
     public string? OptionLabel { get; set; }
+
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Ver AssistanceBooking.InstallmentsCount/InstallmentAmount.
+    public int? InstallmentsCount { get; set; }
+    public decimal? InstallmentAmount { get; set; }
 }

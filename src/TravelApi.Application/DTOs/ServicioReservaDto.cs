@@ -67,4 +67,8 @@ public class ServicioReservaDto
     /// Null = sin definir (el vendedor no lo cargo).
     /// </summary>
     public string? GeographicScope { get; set; }
+
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Ver ServicioReserva.InstallmentsCount/InstallmentAmount.
+    public int? InstallmentsCount { get; set; }
+    public decimal? InstallmentAmount { get; set; }
 }

@@ -1,3 +1,4 @@
+using System.Linq;
 using AutoMapper;
 using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
@@ -342,6 +343,11 @@ public class MappingProfile : Profile
             // ("Nacional"/"Internacional"/null), nunca el numero crudo (gate de exposicion).
             .ForMember(dest => dest.GeographicScope, opt => opt.MapFrom(src => TravelApi.Domain.Entities.ServiceGeographicScopeText.ToDisplayText(src.GeographicScope)));
 
+        // Obra "PDF ronda 2" (2026-08-14): plan de pagos informativo del total, mapeo por convencion
+        // (Position/DueText/Amount/Currency matchean por nombre) — se ordena EXPLICITO en el map de
+        // Reserva->ReservaDto de abajo, la coleccion de EF no garantiza el orden de insercion.
+        CreateMap<BudgetPaymentPlanInstallment, BudgetPaymentPlanInstallmentDto>();
+
         // Reserva
         CreateMap<Reserva, ReservaDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -360,6 +366,10 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.PackageBookings, opt => opt.MapFrom(src => src.PackageBookings))
             .ForMember(dest => dest.AssistanceBookings, opt => opt.MapFrom(src => src.AssistanceBookings))
             .ForMember(dest => dest.Invoices, opt => opt.MapFrom(src => src.Invoices))
+            // Obra "PDF ronda 2" (2026-08-14): plan de pagos ORDENADO por Position — el renderer y el
+            // frontend siempre lo leen ya en orden de impresion, no confían en el orden de la coleccion.
+            .ForMember(dest => dest.PaymentPlanInstallments, opt => opt.MapFrom(src =>
+                src.PaymentPlanInstallments.OrderBy(p => p.Position)))
             // ADR-027 (detalle): PendingChanges se llena a mano en ReservaService (para enmascarar el costo
             // segun permiso). AutoMapper lo ignora; si no, intentaria mapear la entidad sin map definido.
             .ForMember(dest => dest.PendingChanges, opt => opt.Ignore())

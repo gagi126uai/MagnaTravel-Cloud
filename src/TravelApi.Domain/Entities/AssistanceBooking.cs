@@ -174,6 +174,17 @@ public class AssistanceBooking : IHasPublicId
     [MaxLength(5)]
     public string? OptionLabel { get; set; }
 
+    /// <summary>
+    /// Obra "PDF ronda 2" (2026-08-14, spec §6): plan de cuotas informativo de la asistencia, mismo
+    /// criterio que <see cref="HotelBooking.InstallmentsCount"/> (no toca <see cref="SalePrice"/> ni el
+    /// saldo; el PDF solo imprime la línea si AMBOS campos están cargados).
+    /// </summary>
+    public int? InstallmentsCount { get; set; }
+
+    /// <summary>Monto de cada cuota de la asistencia. Ver <see cref="InstallmentsCount"/>.</summary>
+    [Column(TypeName = "decimal(12,2)")]
+    public decimal? InstallmentAmount { get; set; }
+
     // Capacidad de pasajeros del servicio (mismo contrato que Hotel/Package).
     public int GetExpectedPaxCount() => Adults + Children;
 }

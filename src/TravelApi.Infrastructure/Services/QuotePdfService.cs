@@ -256,15 +256,32 @@ public class QuotePdfService : IQuotePdfService
         page.PageColor(Colors.White); // fondo blanco sin banda -- firma visual de esta maqueta (spec §0).
         page.DefaultTextStyle(x => x.FontSize(9).FontColor(InkColor));
 
-        page.Header().PaddingHorizontal(ContentHorizontalPadding).PaddingTop(24).Column(headerColumn =>
+        // Fix post-inspección visual (2026-08-15): con plan de pagos + varios servicios el contenido de
+        // la página 1 desborda a una página de continuación. QuestPDF repite el Header() en CADA página
+        // -- sin este fix, el HERO ENTERO (destino gigante, eyebrow, línea meta, grilla de datos) se
+        // repetía completo en la página de continuación, robando media página. ShowOnce()/SkipOnce()
+        // (QuestPDF.Fluent.ElementExtensions, verificados por reflexión en el ensamblado 2025.12.4)
+        // condicionan CADA instancia del Header() según en qué página del documento se está dibujando:
+        // el hero completo (identidad + "PRESUPUESTO nro/fecha" + hero) sale SOLO la primera vez que se
+        // dibuja el header; la cabecera compacta (la misma de la página de condiciones: wordmark chico +
+        // "PRESUPUESTO {nro} · {DESTINO}" + filete) sale desde la segunda vez en adelante.
+        var destinationTitle = QuoteBudgetPdfRules.ResolveDestinationTitle(reserva.HotelBookings, reserva.PackageBookings);
+
+        page.Header().PaddingHorizontal(ContentHorizontalPadding).Column(headerColumn =>
         {
-            headerColumn.Item().Row(row =>
+            headerColumn.Item().ShowOnce().PaddingTop(24).Column(fullHeader =>
             {
-                row.RelativeItem().Element(e => ComposeAgencyIdentity(e, agencySettings, logoBytes));
-                row.ConstantItem(170).Element(e => ComposeBudgetIdentityBlock(e, reserva));
+                fullHeader.Item().Row(row =>
+                {
+                    row.RelativeItem().Element(e => ComposeAgencyIdentity(e, agencySettings, logoBytes));
+                    row.ConstantItem(170).Element(e => ComposeBudgetIdentityBlock(e, reserva));
+                });
+
+                fullHeader.Item().PaddingTop(33).Element(e => ComposeHero(e, reserva, accentColor));
             });
 
-            headerColumn.Item().PaddingTop(33).Element(e => ComposeHero(e, reserva, accentColor));
+            headerColumn.Item().SkipOnce().PaddingTop(24)
+                .Element(e => ComposePage2Header(e, agencySettings, logoBytes, reserva.NumeroReserva, destinationTitle));
         });
 
         // Filtrados UNA sola vez acá: los usan tanto el render de cada sección como los flags
@@ -303,8 +320,19 @@ public class QuotePdfService : IQuotePdfService
 
             if (otherRows.Count > 0)
             {
-                ComposeSectionWithRail(content, "OTROS", accentColor, accentHex,
+                // Título "MÁS SERVICIOS" (fix post-inspección visual 2026-08-15, maqueta aprobada) --
+                // el resto del código sigue llamando internamente a este bloque "OTROS" (nombres de
+                // función/comentarios), solo cambió el TEXTO que ve el cliente.
+                ComposeSectionWithRail(content, "MÁS SERVICIOS", accentColor, accentHex,
                     section => ComposeSimpleServiceRows(section, otherRows, porPersona, cantidadPasajerosCargados));
+            }
+
+            // Ronda 2 (2026-08-14, spec §6): sección PASAJEROS -- nodo propio del riel, DESPUÉS de los
+            // servicios y ANTES de la tarjeta de total (mismo lugar que pide la maqueta).
+            if ((reserva.Passengers?.Count ?? 0) > 0)
+            {
+                ComposeSectionWithRail(content, "PASAJEROS", accentColor, accentHex,
+                    section => ComposePassengersContent(section, reserva));
             }
 
             ComposeTotalCard(
@@ -312,6 +340,10 @@ public class QuotePdfService : IQuotePdfService
                 hasFlights: flights.Count > 0, hasHotel: hotels.Count > 0,
                 hasTransfers: transfers.Count > 0, hasOthers: otherRows.Count > 0,
                 porPersona, cantidadPasajerosCargados);
+
+            // Ronda 2 (2026-08-14, spec §6): PLAN DE PAGOS del total, bajo la tarjeta -- solo si hay
+            // filas cargadas (regla espejo, decisión #8: sin filas no hay bloque).
+            ComposePaymentPlanBlock(content, reserva, accentColor);
         });
 
         page.Footer().Element(e => ComposeFooter(e, agencySettings));
@@ -393,6 +425,15 @@ public class QuotePdfService : IQuotePdfService
             // emisión de una factura).
             column.Item().AlignRight().PaddingTop(2)
                 .Text(DateTime.UtcNow.Date.ToString("dd/MM/yyyy")).FontSize(7).FontColor(MutedColor);
+
+            // Ronda 2 (2026-08-14, spec §6): 4ª línea, "Preparado para {cliente}" -- solo si hay pagador
+            // cargado (reserva.Payer). Sin pagador, la línea no se dibuja (regla espejo de siempre).
+            var preparedForLine = QuoteBudgetPdfRules.BuildPreparedForLine(reserva.Payer?.FullName);
+            if (preparedForLine is not null)
+            {
+                column.Item().AlignRight().PaddingTop(2)
+                    .Text(preparedForLine).FontSize(7).FontColor(MutedColor);
+            }
         });
     }
 
@@ -549,7 +590,8 @@ public class QuotePdfService : IQuotePdfService
                     arrivalTime: flight.OutboundArrivalTime,
                     fallbackLegDate: flight.DepartureTime,
                     originCode: flight.Origin, originCity: flight.OriginCity,
-                    destinationCode: flight.Destination, destinationCity: flight.DestinationCity));
+                    destinationCode: flight.Destination, destinationCity: flight.DestinationCity,
+                    stopsCount: flight.OutboundStopsCount));
 
                 // Fila VUELTA: aeropuertos invertidos, solo si el vendedor cargó una fecha de vuelta.
                 if (QuoteBudgetPdfRules.HasReturnLeg(flight))
@@ -561,7 +603,22 @@ public class QuotePdfService : IQuotePdfService
                         arrivalTime: flight.ReturnArrivalTime,
                         fallbackLegDate: flight.ArrivalTime!.Value,
                         originCode: flight.Destination, originCity: flight.DestinationCity,
-                        destinationCode: flight.Origin, destinationCity: flight.OriginCity));
+                        destinationCode: flight.Origin, destinationCity: flight.OriginCity,
+                        stopsCount: flight.ReturnStopsCount));
+                }
+
+                // Ronda 2 (2026-08-14, spec §6): renglón apagado de detalle de escala (0, 1 o 2 líneas,
+                // ida y/o vuelta) + línea de cuotas del vuelo (mismo molde que hotel), debajo de las filas.
+                var stopDetailLines = QuoteBudgetPdfRules.BuildFlightStopDetailLines(flight);
+                foreach (var stopDetailLine in stopDetailLines)
+                {
+                    box.Item().PaddingBottom(2).Text(stopDetailLine).FontSize(7.5f).FontColor(MutedColor);
+                }
+
+                var flightInstallmentsLine = QuoteBudgetPdfRules.BuildInstallmentsLine(flight.InstallmentsCount, flight.InstallmentAmount, flight.Currency);
+                if (flightInstallmentsLine is not null)
+                {
+                    box.Item().PaddingBottom(2).Text(flightInstallmentsLine).FontSize(7.5f).FontColor(MutedColor).LetterSpacing(SlightTracking);
                 }
             }
         });
@@ -583,7 +640,8 @@ public class QuotePdfService : IQuotePdfService
         string? originCode,
         string? originCity,
         string? destinationCode,
-        string? destinationCity)
+        string? destinationCity,
+        int? stopsCount)
     {
         var departureAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(originCode, originCity);
         var arrivalAirportLabel = QuoteBudgetPdfRules.BuildFlightAirportLabel(destinationCode, destinationCity);
@@ -609,17 +667,22 @@ public class QuotePdfService : IQuotePdfService
                     departure.Item().Text(departureAirportLabel).FontSize(7).FontColor(MutedColor).LetterSpacing(SlightTracking);
             });
 
-            // El chip "Directo" se emite SIEMPRE dentro del mismo ancho fijo -- incluso vacío cuando el
-            // vuelo no es directo -- para que la columna de llegada no se corra según el vuelo.
+            // El chip se emite SIEMPRE dentro del mismo ancho fijo -- incluso vacío -- para que la
+            // columna de llegada no se corra según el vuelo. Ronda 2 (2026-08-14): el texto ya no es
+            // SIEMPRE "Directo" -- si el tramo tiene escalas cargadas, el chip de escala PISA al de
+            // "Directo" (ver QuoteBudgetPdfRules.ResolveFlightLegChipText). Fix post-inspección visual
+            // (2026-08-15): el chip NUNCA lleva el lugar (se partía en dos renglones dentro de la
+            // píldora de ancho fijo) -- el lugar vive en el renglón de detalle debajo de las filas.
             row.ConstantItem(50).AlignMiddle().Element(chip =>
             {
-                if (flight.IsDirect == true)
+                var chipText = QuoteBudgetPdfRules.ResolveFlightLegChipText(flight.IsDirect, stopsCount);
+                if (chipText is not null)
                 {
                     // Píldora (ronda de revisión visual, 2026-08-14): con texto 7pt + padding vertical
                     // 3pt arriba/abajo, la caja del chip mide ~14-15pt de alto -- un radio de 8 (algo
                     // más de la mitad) redondea los dos extremos hasta que se ven semicirculares.
                     chip.Border(RailLineWidth).BorderColor(RuleColor).CornerRadius(8)
-                        .PaddingHorizontal(6).PaddingVertical(3).Text("Directo").FontSize(7).FontColor(MutedColor);
+                        .PaddingHorizontal(6).PaddingVertical(3).Text(chipText).FontSize(7).FontColor(MutedColor);
                 }
             });
 
@@ -744,7 +807,15 @@ public class QuotePdfService : IQuotePdfService
             .Where(t => IsLive(t.Status, isFlight: false) && !OptionGroupRules.BelongsToAmbiguousGroup(t.OptionGroup, ambiguousGroups))
             .ToList();
 
-    private sealed record SimpleServiceRow(string DisplayName, decimal SalePrice, string? Currency);
+    /// <summary>
+    /// Fila simple de TRASLADOS/OTROS. <see cref="TypeLabel"/> (ronda 2, spec §6, "MÁS SERVICIOS"): SOLO
+    /// se completa para ítems de OTROS (paquete/asistencia/genérico) -- TRASLADOS ya tiene su propio
+    /// título de sección en el riel, repetir la etiqueta ahí sería redundante. <see cref="InstallmentsCount"/>/
+    /// <see cref="InstallmentAmount"/> generalizan la línea de cuotas del hotel a cualquier servicio simple.
+    /// </summary>
+    private sealed record SimpleServiceRow(
+        string DisplayName, decimal SalePrice, string? Currency, string? TypeLabel,
+        int? InstallmentsCount, decimal? InstallmentAmount);
 
     private static List<SimpleServiceRow> BuildOtrosRows(Reserva reserva, HashSet<string> ambiguousGroups)
     {
@@ -753,27 +824,39 @@ public class QuotePdfService : IQuotePdfService
         foreach (var package in (reserva.PackageBookings ?? new List<PackageBooking>())
             .Where(p => IsLive(p.Status, isFlight: false) && !OptionGroupRules.BelongsToAmbiguousGroup(p.OptionGroup, ambiguousGroups)))
         {
-            rows.Add(new SimpleServiceRow(package.PackageName, package.SalePrice, package.Currency));
+            rows.Add(new SimpleServiceRow(
+                package.PackageName, package.SalePrice, package.Currency,
+                TypeLabel: QuoteBudgetPdfRules.ResolveGenericServiceTypeLabel(ServiceTypes.Package),
+                package.InstallmentsCount, package.InstallmentAmount));
         }
 
         foreach (var assistance in (reserva.AssistanceBookings ?? new List<AssistanceBooking>())
             .Where(a => IsLive(a.Status, isFlight: false) && !OptionGroupRules.BelongsToAmbiguousGroup(a.OptionGroup, ambiguousGroups)))
         {
             var name = string.IsNullOrWhiteSpace(assistance.PlanType) ? "Asistencia" : assistance.PlanType!;
-            rows.Add(new SimpleServiceRow(name, assistance.SalePrice, assistance.Currency));
+            rows.Add(new SimpleServiceRow(
+                name, assistance.SalePrice, assistance.Currency,
+                TypeLabel: QuoteBudgetPdfRules.ResolveGenericServiceTypeLabel(ServiceTypes.Insurance),
+                assistance.InstallmentsCount, assistance.InstallmentAmount));
         }
 
         foreach (var otro in (reserva.Servicios ?? new List<ServicioReserva>())
             .Where(s => IsLive(s.Status, isFlight: false)))
         {
-            rows.Add(new SimpleServiceRow(QuoteBudgetPdfRules.BuildOtroServiceDisplayName(otro), otro.SalePrice, otro.Currency));
+            rows.Add(new SimpleServiceRow(
+                QuoteBudgetPdfRules.BuildOtroServiceDisplayName(otro), otro.SalePrice, otro.Currency,
+                TypeLabel: QuoteBudgetPdfRules.ResolveGenericServiceTypeLabel(otro.ServiceType),
+                otro.InstallmentsCount, otro.InstallmentAmount));
         }
 
         return rows;
     }
 
     private void ComposeSimpleServiceRows(ColumnDescriptor column, IReadOnlyList<TransferBooking> transfers, bool porPersona, int cantidadPasajerosCargados)
-        => ComposeSimpleServiceRows(column, transfers.Select(t => new SimpleServiceRow(QuoteBudgetPdfRules.BuildTrasladoLine(t) ?? "Traslado", t.SalePrice, t.Currency)).ToList(), porPersona, cantidadPasajerosCargados);
+        => ComposeSimpleServiceRows(column, transfers.Select(t => new SimpleServiceRow(
+            QuoteBudgetPdfRules.BuildTrasladoLine(t) ?? "Traslado", t.SalePrice, t.Currency,
+            TypeLabel: null, // TRASLADOS ya tiene su propio título de sección -- sin etiqueta por ítem.
+            t.InstallmentsCount, t.InstallmentAmount)).ToList(), porPersona, cantidadPasajerosCargados);
 
     private void ComposeSimpleServiceRows(ColumnDescriptor column, IReadOnlyList<SimpleServiceRow> rows, bool porPersona, int cantidadPasajerosCargados)
     {
@@ -787,7 +870,24 @@ public class QuotePdfService : IQuotePdfService
 
             column.Item().PaddingTop(isFirst ? 0 : 6).Row(rowContent =>
             {
-                rowContent.RelativeItem().Text(row.DisplayName).FontSize(9.5f).FontColor(InkColor);
+                rowContent.RelativeItem().Column(nameColumn =>
+                {
+                    // Ronda 2 (spec §6): etiqueta de tipo de negocio, caps chicas apagadas, arriba del
+                    // nombre -- SOLO en OTROS (ver comentario de SimpleServiceRow.TypeLabel).
+                    if (row.TypeLabel is not null)
+                    {
+                        nameColumn.Item().Text(row.TypeLabel).FontSize(6.5f).FontColor(MutedColor).LetterSpacing(SectionTitleTracking);
+                    }
+
+                    nameColumn.Item().Text(row.DisplayName).FontSize(9.5f).FontColor(InkColor);
+
+                    var installmentsLine = QuoteBudgetPdfRules.BuildInstallmentsLine(row.InstallmentsCount, row.InstallmentAmount, row.Currency);
+                    if (installmentsLine is not null)
+                    {
+                        nameColumn.Item().PaddingTop(2).Text(installmentsLine).FontSize(7.5f).FontColor(MutedColor).LetterSpacing(SlightTracking);
+                    }
+                });
+
                 rowContent.ConstantItem(140).AlignRight()
                     .Element(e => ComposeBareAmount(e, row.SalePrice, row.Currency, porPersona, cantidadPasajerosCargados, amountFontSize: 9f, currencyFontSize: 9f));
             });
@@ -851,6 +951,82 @@ public class QuotePdfService : IQuotePdfService
             if (!string.IsNullOrWhiteSpace(currency))
             {
                 text.Span(" " + currency).FontSize(currencyFontSize).FontColor(MutedColor);
+            }
+        });
+    }
+
+    // ============================================================================================
+    // PASAJEROS (ronda 2, 2026-08-14, spec §6): grilla de 2 columnas con el nombre de cada pasajero
+    // cargado; los menores de 18 llevan "· N años" apagado. JAMÁS documentos (decisión firmada).
+    // ============================================================================================
+
+    private void ComposePassengersContent(ColumnDescriptor column, Reserva reserva)
+    {
+        var ageReferenceDate = QuoteBudgetPdfRules.ResolvePassengerAgeReferenceDate(reserva.StartDate);
+        var passengerLines = (reserva.Passengers ?? new List<Passenger>())
+            .Select(p => QuoteBudgetPdfRules.BuildPassengerDisplayLine(p.FullName, p.BirthDate, ageReferenceDate))
+            .ToList();
+
+        column.Item().Column(grid =>
+        {
+            for (var i = 0; i < passengerLines.Count; i += 2)
+            {
+                grid.Item().PaddingBottom(4).Row(row =>
+                {
+                    row.RelativeItem().Text(passengerLines[i]).FontSize(9).FontColor(InkColor);
+
+                    if (i + 1 < passengerLines.Count)
+                    {
+                        row.RelativeItem().Text(passengerLines[i + 1]).FontSize(9).FontColor(InkColor);
+                    }
+                    else
+                    {
+                        row.RelativeItem(); // fila impar: la segunda columna queda vacía, no rota el ancho.
+                    }
+                });
+            }
+        });
+    }
+
+    // ============================================================================================
+    // PLAN DE PAGOS (ronda 2, 2026-08-14, spec §6): bloque bajo la tarjeta de total -- etiqueta caps
+    // apagada + una fila por cuota/seña cargada, con filete entre filas. Sin filas, el bloque no
+    // aparece (regla espejo de siempre).
+    // ============================================================================================
+
+    private void ComposePaymentPlanBlock(ColumnDescriptor column, Reserva reserva, Color accentColor)
+    {
+        // El mapeo Reserva->ReservaDto ordena por Position para el resto del sistema; acá partimos
+        // directo de la entidad (el renderer no pasa por DTOs), así que se ordena explícito -- la
+        // colección de EF no garantiza el orden de inserción.
+        var rows = (reserva.PaymentPlanInstallments ?? new List<BudgetPaymentPlanInstallment>())
+            .OrderBy(p => p.Position)
+            .ToList();
+
+        if (rows.Count == 0) return;
+
+        column.Item().PaddingTop(14).Column(block =>
+        {
+            block.Item().Text("PLAN DE PAGOS").FontSize(7).Bold().FontColor(accentColor).LetterSpacing(SectionTitleTracking);
+
+            var isFirst = true;
+            foreach (var row in rows)
+            {
+                if (!isFirst)
+                {
+                    block.Item().PaddingTop(6).BorderTop(RailLineWidth).BorderColor(RuleColor);
+                }
+
+                block.Item().PaddingTop(isFirst ? 8 : 6).Row(rowContent =>
+                {
+                    rowContent.RelativeItem().Text(row.DueText).FontSize(9).FontColor(MutedColor);
+                    rowContent.ConstantItem(140).AlignRight().Text(text =>
+                    {
+                        text.Span(QuoteBudgetPdfRules.BuildAmountLabel(row.Amount, row.Currency)).Bold().FontSize(9).FontColor(InkColor);
+                    });
+                });
+
+                isFirst = false;
             }
         });
     }

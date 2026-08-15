@@ -153,5 +153,16 @@ public class PackageBooking : IHasPublicId
     [MaxLength(5)]
     public string? OptionLabel { get; set; }
 
+    /// <summary>
+    /// Obra "PDF ronda 2" (2026-08-14, spec §6): plan de cuotas informativo del paquete, mismo criterio
+    /// que <see cref="HotelBooking.InstallmentsCount"/> (no toca <see cref="SalePrice"/> ni el saldo; el
+    /// PDF solo imprime la línea si AMBOS campos están cargados).
+    /// </summary>
+    public int? InstallmentsCount { get; set; }
+
+    /// <summary>Monto de cada cuota del paquete. Ver <see cref="InstallmentsCount"/>.</summary>
+    [Column(TypeName = "decimal(12,2)")]
+    public decimal? InstallmentAmount { get; set; }
+
     public int GetExpectedPaxCount() => Adults + Children;
 }

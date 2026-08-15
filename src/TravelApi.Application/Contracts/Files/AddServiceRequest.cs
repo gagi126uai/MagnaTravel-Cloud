@@ -18,5 +18,11 @@ public record AddServiceRequest(
     // Semaforo de DNI vencido para cabotaje (2026-08-03): ambito geografico del servicio, como texto
     // legible ("Nacional"/"Internacional"). Opcional; null o un texto no reconocido = no se toca
     // (validacion SUAVE, ver ServiceGeographicScopeText.ParseOrNull).
-    string? GeographicScope = null
+    string? GeographicScope = null,
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo del servicio generico. Mapeo DIRECTO
+    // (null = borrar), igual que el resto de los campos de este record — este UNICO request sirve tanto
+    // para alta como para edicion, y la ficha inline siempre reenvia los 2 casilleros. Ver
+    // ServicioReserva.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );

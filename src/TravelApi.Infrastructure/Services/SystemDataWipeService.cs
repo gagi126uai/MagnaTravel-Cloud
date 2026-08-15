@@ -540,7 +540,7 @@ public class SystemDataWipeService : ISystemDataWipeService
         // asi que muere con las reservas. Si falta de esta lista, el preflight fail-closed aborta el
         // borrado entero (leccion del CI 13/08: el guard lo cazo al primer intento).
         "Adr053TripWindowBackfillLogs",
-        "ReservaAttachments", "ReservaPendingChanges", "CommissionAccruals", "InvoiceTribute", "InvoiceItem",
+        "ReservaAttachments", "ReservaPendingChanges", "BudgetPaymentPlanInstallments", "CommissionAccruals", "InvoiceTribute", "InvoiceItem",
         "Invoices", "WhatsAppDeliveries", "MessageDeliveries", "UpcomingStartAlertDismissals", "Notifications",
         "HotelBookings", "TransferBookings", "PackageBookings", "AssistanceBookings", "ReservaMoneyByCurrency",
         "FlightSegments", "Payments", "Passengers", "Reservations", "TravelFiles", "BnaExchangeRateSnapshots",

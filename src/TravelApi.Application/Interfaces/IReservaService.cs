@@ -52,6 +52,13 @@ public interface IReservaService
     Task<ReservaDto> UpdateBudgetPaymentTermsAsync(string reservaPublicIdOrLegacyId, UpdateBudgetPaymentTermsRequest request, CancellationToken ct = default);
 
     /// <summary>
+    /// Obra "PDF ronda 2" (decisión firmada del dueño, 2026-08-14, spec §6): reemplaza LA LISTA COMPLETA
+    /// del plan de pagos del total del presupuesto (posiciones 1..N). Lista vacía/null = borra el plan
+    /// entero. Informativo — no toca cobranzas ni cuenta corriente. Sin candado de estado.
+    /// </summary>
+    Task<ReservaDto> UpdatePaymentPlanAsync(string reservaPublicIdOrLegacyId, UpdatePaymentPlanRequest request, CancellationToken ct = default);
+
+    /// <summary>
     /// Obra "PDF de presupuesto" (decisión firmada del dueño, 2026-08-11/12): genera el PDF que se le
     /// manda al cliente. SOLO en etapa Presupuesto (<see cref="TravelApi.Domain.Entities.EstadoReserva.IsPresupuestoStage"/>)
     /// — fuera de esa etapa tira <see cref="InvalidOperationException"/> con un mensaje en criollo.

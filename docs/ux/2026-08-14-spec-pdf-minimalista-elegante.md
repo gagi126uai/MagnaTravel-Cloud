@@ -48,7 +48,8 @@ borde 1.5pt ACENTO, centrado sobre el riel a la altura del título. En QuestPDF:
 superpone su nodo (patrón concreto a criterio del implementador, el resultado visual manda).
 
 **Título de sección**: caps 7pt tracking 2 en ACENTO bold + filete `#e5e7eb` que corre hasta el margen
-derecho. Secciones en orden actual: AÉREOS · HOTEL · TRASLADOS · OPCIONES (grupos como hoy) · OTROS.
+derecho. Secciones en orden actual: AÉREOS · HOTEL · TRASLADOS · OPCIONES (grupos como hoy) · MÁS SERVICIOS
+(renombrada desde "OTROS" en ronda 2, maqueta aprobada).
 
 **Vuelos**: grilla estricta (los anchos fijos ya implementados sirven: avión 22/salida 96/chip 50/
 llegada 96/duración 60pt + elástico + equipaje; ajustar a ojo con la maqueta). Avioncito: SOLO el path
@@ -106,3 +107,39 @@ El de `AgencySettings` (Configuración → Presupuestos y PDF). Sin logo cargado
 - El caller async resuelve la paleta ANTES y se la pasa a `GenerateQuotePdf` como parámetro opcional
   (null → fallback) — nada de I/O dentro del dibujo.
 - El prompt lleva SOLO destino/ciudades — jamás datos del cliente (gate data-exposure).
+
+## 6. Ronda 2 — APROBADA por Gaston (14/08, "me cierra" sobre maqueta actualizada)
+
+Decisiones firmadas (multiple choice 14/08): escalas SIMPLES por tramo · etiqueta por ítem en
+"MÁS SERVICIOS" · cliente en cabecera + sección PASAJEROS con nombres (menores con edad, SIN
+documentos) · cuotas en cualquier servicio Y plan de pagos del total.
+
+**Escalas (por tramo del vuelo, ida y vuelta por separado)**: cantidad de escalas + dónde (texto
+libre corto, ej. "Lima (LIM)") + espera opcional (texto libre, ej. "2h 10m"). En el PDF: si el tramo
+tiene escalas, el chip pasa de "Directo" a "1 escala"/"N escalas" A SECAS (ajuste 14/08 tras render:
+el lugar dentro del chip se partía en dos renglones — el lugar vive SOLO en el renglón de detalle);
+el chip de escala PISA al "Directo" — no conviven. Debajo de las filas de vuelo, un renglón apagado por tramo con
+escala: "Escala en {lugar} · espera {espera}" (partes sin dato se omiten). Campos nuevos en
+`FlightSegment` (migración ADITIVA).
+
+**Cabecera**: cuarta línea del bloque derecho: "Preparado para {cliente}" (nombre del pagador de la
+reserva; sin pagador, la línea no se dibuja).
+
+**Sección PASAJEROS** (nodo propio del riel, después de los servicios, antes del total): grilla de
+2 columnas con `Passenger.FullName`; menores de 18 (según BirthDate) agregan "· N años" apagado.
+Sin datos de documento.
+
+**"MÁS SERVICIOS" con etiqueta por ítem**: cada ítem lleva arriba su etiqueta de tipo en caps chicas
+apagadas (tracking 2): ASISTENCIA AL VIAJERO / EXCURSIÓN / PAQUETE / la categoría visible del servicio
+genérico. Nombres de tipo = los del negocio (los que ya usa `QuoteBudgetPdfRules` para OPCIONES),
+jamás nombres de clases.
+
+**Cuotas en cualquier servicio**: `InstallmentsCount`/`InstallmentAmount` (hoy solo en HotelBooking)
+se agregan a FlightSegment, TransferBooking, PackageBooking, AssistanceBooking y ServicioReserva
+(migración ADITIVA); el PDF los dibuja igual que en hotel ("N cuotas de X {moneda}"), informativos,
+sin tocar la venta total.
+
+**PLAN DE PAGOS del total** (bloque bajo la tarjeta de total): tabla hija nueva
+(fila = texto de cuándo, ej. "Al confirmar la reserva" o "10 de enero de 2027" + monto + moneda,
+ordenadas). Se dibujan tal cual se cargaron; sin filas, el bloque no aparece. Informativo — NO toca
+cobranzas ni cuenta corriente.

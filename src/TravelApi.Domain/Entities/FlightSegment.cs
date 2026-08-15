@@ -280,6 +280,51 @@ public class FlightSegment : IHasPublicId
     public bool? IncludesCheckedBag { get; set; }
 
     // ============================================================================================
+    // Obra "PDF ronda 2" (decisión firmada del dueño, 2026-08-14, spec §6): escalas SIMPLES por tramo
+    // (ida y vuelta por separado) + cuotas del vuelo. Mismo criterio informativo/espejo de siempre: son
+    // datos EXTRA para que el papel sea fiel a lo cargado, ninguno afecta SalePrice ni el saldo.
+    // ============================================================================================
+
+    /// <summary>
+    /// Cantidad de escalas de la IDA. Null = no informado (el chip del PDF sigue mostrando "Directo" si
+    /// <see cref="IsDirect"/> es true). Un valor mayor a 0 hace que el chip "Directo" se reemplace por
+    /// "1 escala · {lugar}" / "N escalas" — el chip de escala PISA al de directo, no conviven (ver
+    /// <c>QuoteBudgetPdfRules</c>).
+    /// </summary>
+    public int? OutboundStopsCount { get; set; }
+
+    /// <summary>Dónde hace la escala la IDA, texto libre corto (ej. "Lima (LIM)"). Null = no informado.</summary>
+    [MaxLength(100)]
+    public string? OutboundStopPlace { get; set; }
+
+    /// <summary>Espera de la escala de la IDA, texto libre (ej. "2h 10m"). Null = no informado.</summary>
+    [MaxLength(50)]
+    public string? OutboundStopWait { get; set; }
+
+    /// <summary>Escala de la VUELTA: mismo criterio que <see cref="OutboundStopsCount"/>.</summary>
+    public int? ReturnStopsCount { get; set; }
+
+    /// <summary>Escala de la VUELTA: mismo criterio que <see cref="OutboundStopPlace"/>.</summary>
+    [MaxLength(100)]
+    public string? ReturnStopPlace { get; set; }
+
+    /// <summary>Escala de la VUELTA: mismo criterio que <see cref="OutboundStopWait"/>.</summary>
+    [MaxLength(50)]
+    public string? ReturnStopWait { get; set; }
+
+    /// <summary>
+    /// Plan de cuotas informativo del vuelo (mismo criterio y mismo par de campos que
+    /// <see cref="HotelBooking.InstallmentsCount"/>/<see cref="HotelBooking.InstallmentAmount"/>, hoy
+    /// generalizado a los 5 servicios tipados + el genérico): no toca <see cref="SalePrice"/> ni el saldo
+    /// del cliente, el PDF solo imprime la línea de cuotas si AMBOS campos están cargados.
+    /// </summary>
+    public int? InstallmentsCount { get; set; }
+
+    /// <summary>Monto de cada cuota del vuelo. Ver <see cref="InstallmentsCount"/>.</summary>
+    [Column(TypeName = "decimal(12,2)")]
+    public decimal? InstallmentAmount { get; set; }
+
+    // ============================================================================================
     // Opciones A/B/C (decisión #1 firmada, 2026-08-11/12): ver el XML-doc completo en
     // TravelApi.Domain.Reservations.OptionGroupRules. Replicado igual en los 5 servicios tipados.
     // ============================================================================================

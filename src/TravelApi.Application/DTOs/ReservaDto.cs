@@ -362,6 +362,12 @@ public class ReservaDto
     /// </summary>
     public string? BudgetPaymentTermsText { get; set; }
 
+    /// <summary>
+    /// Obra "PDF ronda 2" (2026-08-14, spec §6): plan de pagos informativo del total, ya ordenado. Vacío
+    /// = nadie cargó un plan (el PDF omite el bloque entero). Ver <c>BudgetPaymentPlanInstallmentDto</c>.
+    /// </summary>
+    public List<BudgetPaymentPlanInstallmentDto> PaymentPlanInstallments { get; set; } = new();
+
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience
     public decimal TotalCost { get; set; }

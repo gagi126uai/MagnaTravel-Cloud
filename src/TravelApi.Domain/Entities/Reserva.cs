@@ -601,4 +601,12 @@ public class Reserva : IHasPublicId
     /// </summary>
     [MaxLength(4000)]
     public string? BudgetPaymentTermsText { get; set; }
+
+    // ============================================================================================
+    // Obra "PDF ronda 2" (decisión firmada del dueño, 2026-08-14, spec §6): plan de pagos informativo
+    // del TOTAL del presupuesto, filas ordenadas. Ver BudgetPaymentPlanInstallment.
+    // ============================================================================================
+
+    /// <summary>Filas del plan de pagos del total, en orden de <see cref="BudgetPaymentPlanInstallment.Position"/>. Vacío = el bloque no se dibuja en el PDF.</summary>
+    public ICollection<BudgetPaymentPlanInstallment> PaymentPlanInstallments { get; set; } = new List<BudgetPaymentPlanInstallment>();
 }

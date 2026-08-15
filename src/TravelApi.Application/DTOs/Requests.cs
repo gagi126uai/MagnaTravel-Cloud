@@ -94,7 +94,18 @@ public record CreateFlightRequest(
     // que el PDF dibuje la fila completa "Sale ... / Llega ...". Ver FlightSegment.OutboundArrivalTime/
     // ReturnArrivalTime — mismo criterio que los de salida (opcionales, sin default de negocio).
     TimeOnly? OutboundArrivalTime = null,
-    TimeOnly? ReturnArrivalTime = null
+    TimeOnly? ReturnArrivalTime = null,
+    // Obra "PDF ronda 2" (2026-08-14, decision firmada del dueño, spec §6): escalas SIMPLES por tramo
+    // (ida y vuelta por separado) + plan de cuotas informativo del vuelo. Opcionales al final. Ver
+    // FlightSegment.OutboundStopsCount y hermanos, y FlightSegment.InstallmentsCount/InstallmentAmount.
+    int? OutboundStopsCount = null,
+    string? OutboundStopPlace = null,
+    string? OutboundStopWait = null,
+    int? ReturnStopsCount = null,
+    string? ReturnStopPlace = null,
+    string? ReturnStopWait = null,
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record UpdateFlightRequest(
@@ -164,7 +175,19 @@ public record UpdateFlightRequest(
     // OutboundDepartureTime/ReturnDepartureTime de arriba (fix 2026-08-14): null = casillero vaciado a
     // proposito, se borra. Ver FlightSegment.OutboundArrivalTime/ReturnArrivalTime.
     TimeOnly? OutboundArrivalTime = null,
-    TimeOnly? ReturnArrivalTime = null
+    TimeOnly? ReturnArrivalTime = null,
+    // Obra "PDF ronda 2" (2026-08-14): escalas por tramo + cuotas. Mismo mapeo por CONVENCION que los
+    // horarios de arriba (NO anti-clobber): la ficha inline es el UNICO emisor de este UPDATE y siempre
+    // manda los casilleros ("" -> null), asi que null = "el vendedor vacio el casillero" y debe BORRAR
+    // el dato guardado. Ver FlightSegment.OutboundStopsCount y hermanos, InstallmentsCount/InstallmentAmount.
+    int? OutboundStopsCount = null,
+    string? OutboundStopPlace = null,
+    string? OutboundStopWait = null,
+    int? ReturnStopsCount = null,
+    string? ReturnStopPlace = null,
+    string? ReturnStopWait = null,
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record CreateHotelRequest(
@@ -280,7 +303,11 @@ public record CreateTransferRequest(
     DateTime? OperatorPaymentDeadline = null,
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver TransferBooking.OptionGroup/OptionLabel.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Opcionales al final. Ver
+    // TransferBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record UpdateTransferRequest(
@@ -316,7 +343,12 @@ public record UpdateTransferRequest(
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
     // estos campos, ver MappingProfile). Null = no tocar lo ya cargado.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Se mapea por CONVENCION (NO anti-
+    // clobber), mismo criterio que las cuotas de hotel: null = casillero vaciado a proposito, se borra.
+    // Ver TransferBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 // Bloque 3: Asistencia al viajero (seguro). Espeja a CreateHotelRequest/UpdateHotelRequest:
@@ -344,7 +376,11 @@ public record CreateAssistanceRequest(
     DateTime? OperatorPaymentDeadline = null,
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver AssistanceBooking.OptionGroup/OptionLabel.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Opcionales al final. Ver
+    // AssistanceBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record UpdateAssistanceRequest(
@@ -371,7 +407,12 @@ public record UpdateAssistanceRequest(
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
     // estos campos, ver MappingProfile). Null = no tocar lo ya cargado.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Se mapea por CONVENCION (NO anti-
+    // clobber), mismo criterio que las cuotas de hotel: null = casillero vaciado a proposito, se borra.
+    // Ver AssistanceBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record CreatePackageRequest(
@@ -401,7 +442,11 @@ public record CreatePackageRequest(
     DateTime? OperatorPaymentDeadline = null,
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): ver PackageBooking.OptionGroup/OptionLabel.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Opcionales al final. Ver
+    // PackageBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );
 
 public record UpdatePackageRequest(
@@ -431,5 +476,10 @@ public record UpdatePackageRequest(
     // Opciones A/B/C (decision #1 firmada, 2026-08-11/12): anti-clobber en el UPDATE (el map IGNORA
     // estos campos, ver MappingProfile). Null = no tocar lo ya cargado.
     string? OptionGroup = null,
-    string? OptionLabel = null
+    string? OptionLabel = null,
+    // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo. Se mapea por CONVENCION (NO anti-
+    // clobber), mismo criterio que las cuotas de hotel: null = casillero vaciado a proposito, se borra.
+    // Ver PackageBooking.InstallmentsCount/InstallmentAmount.
+    int? InstallmentsCount = null,
+    decimal? InstallmentAmount = null
 );

@@ -77,6 +77,23 @@ public record RescheduleReservaRequest(
 public record UpdateBudgetPaymentTermsRequest(string? Text);
 
 /// <summary>
+/// Obra "PDF ronda 2" (decisión firmada del dueño, 2026-08-14, spec §6): UNA fila del plan de pagos del
+/// TOTAL del presupuesto ("Al confirmar la reserva — 500 USD"). <see cref="DueText"/> es el texto de
+/// cuándo se paga, tal como lo escribe el vendedor (no una fecha estructurada: puede ser "Al confirmar
+/// la reserva" o "10 de enero de 2027", texto libre).
+/// </summary>
+public record PaymentPlanInstallmentRequest(string DueText, decimal Amount, string? Currency);
+
+/// <summary>
+/// Body de <c>PUT /api/reservas/{id}/budget-payment-plan</c>: REEMPLAZA la lista COMPLETA del plan de
+/// pagos del presupuesto, en el orden en que llegan (posiciones 1..N) — mismo criterio de "reemplazo
+/// total" que <see cref="UpdateBudgetPaymentTermsRequest"/>, no un anti-clobber campo-por-campo. Lista
+/// vacía/null BORRA el plan entero (el bloque deja de aparecer en el PDF, regla espejo de la obra: sin
+/// filas cargadas no hay nada que mostrar).
+/// </summary>
+public record UpdatePaymentPlanRequest(IReadOnlyList<PaymentPlanInstallmentRequest>? Installments);
+
+/// <summary>
 /// Request para cambiar el Status de un servicio (Hotel/Transfer/Package/Flight/
 /// ServicioReserva) y opcionalmente el codigo de confirmacion del proveedor.
 /// Usado desde la cuenta corriente del proveedor para permitir al operador

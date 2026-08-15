@@ -295,6 +295,9 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
             ChildCount = 1,
             InfantCount = 0,
             BudgetPaymentTermsText = "Seña del 30% al confirmar. Saldo 70% hasta 30 días antes de la salida.",
+            // Ronda 2 (2026-08-14): "Preparado para {cliente}" en la cabecera -- solo hace falta el
+            // nombre para esta inspección visual, el resto de Customer no importa acá.
+            Payer = new Customer { FullName = "Familia Rodríguez" },
             FlightSegments = new List<FlightSegment>
             {
                 new()
@@ -314,6 +317,11 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     IncludesBackpack = true,
                     IncludesCarryOn = true,
                     IncludesCheckedBag = true,
+                    // Ronda 2 (2026-08-14, spec §6): la VUELTA hace 1 escala en Lima -- el chip pasa de
+                    // "Directo" a "1 escala · Lima (LIM)" en la fila de vuelta (la ida sigue directa).
+                    ReturnStopsCount = 1,
+                    ReturnStopPlace = "Lima (LIM)",
+                    ReturnStopWait = "2h 10m",
                 },
             },
             HotelBookings = new List<HotelBooking>
@@ -363,6 +371,9 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     PlanType = "Asistencia al viajero Full",
                     SalePrice = 90m,
                     Currency = "USD",
+                    // Ronda 2 (2026-08-14): cuotas generalizadas a cualquier servicio (antes solo hotel).
+                    InstallmentsCount = 3,
+                    InstallmentAmount = 30m,
                 },
             },
             // Servicio "genérico" (ServicioReserva, ServiceType=Otro): obra "PDF completo" (2026-08-13) le
@@ -377,6 +388,21 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
                     SalePrice = 350m,
                     Currency = "USD",
                 },
+            },
+            // Ronda 2 (2026-08-14, spec §6): sección PASAJEROS -- 3 pasajeros, una menor (agrega "· N
+            // años" apagado contra la fecha de SALIDA del viaje, 10/04/2027).
+            Passengers = new List<Passenger>
+            {
+                new() { FullName = "Juan Rodríguez", BirthDate = new DateTime(1985, 6, 20) },
+                new() { FullName = "María Gómez de Rodríguez", BirthDate = new DateTime(1988, 3, 15) },
+                new() { FullName = "Sofía Rodríguez", BirthDate = new DateTime(2018, 1, 1) }, // 9 años a la fecha de salida.
+            },
+            // Ronda 2 (2026-08-14, spec §6): PLAN DE PAGOS del total, 3 filas ordenadas.
+            PaymentPlanInstallments = new List<BudgetPaymentPlanInstallment>
+            {
+                new() { Position = 1, DueText = "Al confirmar la reserva", Amount = 1000m, Currency = "USD" },
+                new() { Position = 2, DueText = "10 de enero de 2027", Amount = 1000m, Currency = "USD" },
+                new() { Position = 3, DueText = "Saldo 30 días antes de la salida", Amount = 780m, Currency = "USD" },
             },
         };
     }

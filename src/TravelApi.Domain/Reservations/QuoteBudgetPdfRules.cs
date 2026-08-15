@@ -364,6 +364,156 @@ public static class QuoteBudgetPdfRules
         return minutes == 0 ? $"{hours}h" : $"{hours}h {minutes}m";
     }
 
+    // ============================================================================================
+    // Ronda 2 (decisión firmada del dueño, 2026-08-14, spec §6): escalas SIMPLES por tramo (ida y vuelta
+    // por separado). El chip de escala PISA al "Directo" — nunca conviven — y debajo de las filas de
+    // vuelo va un renglón apagado por tramo CON escala, con "Ida:"/"Vuelta:" solo si AMBOS tramos tienen.
+    // ============================================================================================
+
+    /// <summary>
+    /// Texto del chip de UN tramo (ida o vuelta): si el vendedor cargó escalas (<paramref name="stopsCount"/>
+    /// mayor a 0), el chip de escala PISA al de "Directo" — "1 escala" / "N escalas" a secas, SIN el
+    /// lugar (decisión de diseño, fix post-inspección visual 2026-08-15: el chip vive en una columna de
+    /// ancho fijo de la grilla del vuelo y "1 escala · Lima (LIM)" se partía en dos renglones dentro de
+    /// la píldora; el lugar ya se lee en el renglón de detalle debajo de las filas, ver
+    /// <see cref="BuildFlightStopDetailLines"/>, así que no hace falta repetirlo acá). Sin escalas
+    /// cargadas, cae al comportamiento de siempre: "Directo" si <paramref name="isDirect"/> es true, o
+    /// ningún chip.
+    /// </summary>
+    public static string? ResolveFlightLegChipText(bool? isDirect, int? stopsCount)
+    {
+        if (stopsCount.HasValue && stopsCount.Value > 0)
+        {
+            return stopsCount.Value == 1 ? "1 escala" : $"{stopsCount.Value} escalas";
+        }
+
+        return isDirect == true ? "Directo" : null;
+    }
+
+    /// <summary>
+    /// Renglón de detalle de la escala de UN tramo ("Escala en Lima (LIM) · espera 2h 10m"). Cada parte
+    /// (lugar/espera) se omite si no está cargada; sin ninguna de las dos (el vendedor solo cargó la
+    /// CANTIDAD de escalas, sin detalle), no hay nada más que decir y el renglón se omite entero — el
+    /// chip ya avisó "N escalas", este renglón es solo para el DETALLE extra.
+    /// </summary>
+    private static string? BuildFlightLegStopDetailText(int? stopsCount, string? stopPlace, string? stopWait)
+    {
+        if (!stopsCount.HasValue || stopsCount.Value <= 0) return null;
+
+        var parts = new List<string>();
+        var trimmedPlace = string.IsNullOrWhiteSpace(stopPlace) ? null : stopPlace.Trim();
+        var trimmedWait = string.IsNullOrWhiteSpace(stopWait) ? null : stopWait.Trim();
+
+        if (trimmedPlace is not null) parts.Add($"Escala en {trimmedPlace}");
+        if (trimmedWait is not null) parts.Add($"espera {trimmedWait}");
+
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Arma los renglones de detalle de escala de UN vuelo (0, 1 o 2 líneas: ida y/o vuelta). Cuando
+    /// AMBOS tramos tienen detalle de escala, cada línea se prefija "Ida: "/"Vuelta: " para no
+    /// confundirlas; con un solo tramo con escala, el prefijo sobra (ya está claro de cuál se habla,
+    /// es la única línea del bloque).
+    /// </summary>
+    public static IReadOnlyList<string> BuildFlightStopDetailLines(FlightSegment flight)
+    {
+        ArgumentNullException.ThrowIfNull(flight);
+
+        var outboundText = BuildFlightLegStopDetailText(flight.OutboundStopsCount, flight.OutboundStopPlace, flight.OutboundStopWait);
+        var returnText = BuildFlightLegStopDetailText(flight.ReturnStopsCount, flight.ReturnStopPlace, flight.ReturnStopWait);
+        var bothLegsHaveDetail = outboundText is not null && returnText is not null;
+
+        var lines = new List<string>();
+        if (outboundText is not null) lines.Add(bothLegsHaveDetail ? $"Ida: {outboundText}" : outboundText);
+        if (returnText is not null) lines.Add(bothLegsHaveDetail ? $"Vuelta: {returnText}" : returnText);
+
+        return lines;
+    }
+
+    // ============================================================================================
+    // Ronda 2 (2026-08-14): sección PASAJEROS del riel — nombres + edad de los menores.
+    // ============================================================================================
+
+    /// <summary>
+    /// Fecha contra la que se calcula la edad de un pasajero para la sección PASAJEROS: la fecha de
+    /// SALIDA del viaje si ya se conoce (es la fecha real en que el menor va a viajar), o HOY si
+    /// todavía no hay fecha de salida cargada — nunca se deja la edad sin calcular por falta de
+    /// referencia.
+    /// </summary>
+    public static DateTime ResolvePassengerAgeReferenceDate(DateTime? tripStartDate)
+        => (tripStartDate ?? DateTime.UtcNow).Date;
+
+    /// <summary>
+    /// Edad en años cumplidos de un pasajero a la fecha de referencia (resta simple de años, corregida
+    /// si todavía no pasó el cumpleaños de ese año). Null cuando no hay fecha de nacimiento cargada, o
+    /// cuando el cálculo da negativo (fecha de nacimiento posterior a la referencia — dato inconsistente,
+    /// no se inventa una edad rara).
+    /// </summary>
+    public static int? ComputePassengerAge(DateTime? birthDate, DateTime referenceDate)
+    {
+        if (!birthDate.HasValue) return null;
+
+        var birth = birthDate.Value.Date;
+        var reference = referenceDate.Date;
+        var age = reference.Year - birth.Year;
+        if (reference < birth.AddYears(age)) age--;
+
+        return age < 0 ? null : age;
+    }
+
+    /// <summary>
+    /// Línea de UN pasajero para la sección PASAJEROS: el nombre solo, o "{nombre} · N años" cuando es
+    /// menor de 18 (la maqueta solo destaca la edad de los menores, no la de un adulto). JAMÁS se
+    /// agregan datos de documento (decisión firmada, spec §6: "SIN documentos").
+    /// </summary>
+    public static string BuildPassengerDisplayLine(string fullName, DateTime? birthDate, DateTime ageReferenceDate)
+    {
+        var trimmedName = string.IsNullOrWhiteSpace(fullName) ? string.Empty : fullName.Trim();
+        var age = ComputePassengerAge(birthDate, ageReferenceDate);
+
+        return age.HasValue && age.Value < 18 ? $"{trimmedName} · {age.Value} años" : trimmedName;
+    }
+
+    // ============================================================================================
+    // Ronda 2 (2026-08-14): cabecera "Preparado para {cliente}" + etiqueta de tipo por ítem en OTROS.
+    // ============================================================================================
+
+    /// <summary>
+    /// Cuarta línea del bloque derecho de la cabecera: "Preparado para {cliente}" con el nombre del
+    /// pagador de la reserva. Sin pagador cargado, la línea entera se omite (null) — nunca se dibuja un
+    /// "Preparado para" sin nombre.
+    /// </summary>
+    public static string? BuildPreparedForLine(string? payerFullName)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(payerFullName) ? null : payerFullName.Trim();
+        return trimmed is null ? null : $"Preparado para {trimmed}";
+    }
+
+    /// <summary>
+    /// Etiqueta de tipo de negocio para UN ítem de la sección OTROS ("ASISTENCIA AL VIAJERO", "PAQUETE",
+    /// "EXCURSIÓN"...), a partir del <see cref="ServicioReserva.ServiceType"/> del servicio genérico —
+    /// el MISMO vocabulario de negocio que ya usa <see cref="BuildAmbiguousOptionGroups"/> para las
+    /// OPCIONES (nunca el nombre de una clase C#). Un tipo no reconocido (o "Otro") cae a "SERVICIO": es
+    /// la única etiqueta neutra que sigue siendo legible para el cliente sin inventar una categoría que
+    /// el vendedor no cargó.
+    /// </summary>
+    public static string ResolveGenericServiceTypeLabel(string? serviceType)
+    {
+        var normalized = string.IsNullOrWhiteSpace(serviceType) ? null : serviceType.Trim();
+
+        return normalized switch
+        {
+            ServiceTypes.Flight => "AÉREO",
+            ServiceTypes.Hotel => "HOTEL",
+            ServiceTypes.Transfer => "TRASLADO",
+            ServiceTypes.Insurance => "ASISTENCIA AL VIAJERO",
+            ServiceTypes.Excursion => "EXCURSIÓN",
+            ServiceTypes.Package => "PAQUETE",
+            _ => "SERVICIO",
+        };
+    }
+
     /// <summary>
     /// Destino que se imprime centrado bajo la banda del PDF. Sale del PRIMER hotel vivo (su ciudad) o,
     /// si no hay hotel, del PRIMER paquete vivo (su destino). Es texto RAW (sin transformar a

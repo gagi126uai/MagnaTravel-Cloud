@@ -282,7 +282,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // ADR-027 (detalle "confirmada con cambios", 2026-06-13): cambios de precio/costo pendientes de revisar
     // por reserva (que servicio, que campo, antes/despues). Config en OnModelCreating. Ver ReservaPendingChange.
     public DbSet<ReservaPendingChange> ReservaPendingChanges => Set<ReservaPendingChange>();
-    
+
+    // Obra "PDF ronda 2" (2026-08-14, spec §6): plan de pagos informativo del total del presupuesto.
+    // Config en OnModelCreating. Ver BudgetPaymentPlanInstallment.
+    public DbSet<BudgetPaymentPlanInstallment> BudgetPaymentPlanInstallments => Set<BudgetPaymentPlanInstallment>();
+
     // Sprint 4: Egresos y Configuración
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<SupplierInvoice> SupplierInvoices => Set<SupplierInvoice>();
@@ -1592,6 +1596,24 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasIndex(x => x.ReservaId);
+        });
+
+        // Obra "PDF ronda 2" (2026-08-14, spec §6): plan de pagos informativo del total del presupuesto.
+        // Mismo patron que ReservaPendingChange de arriba (columnas SIN HasColumnName, FK Cascade, indice
+        // por reserva). El indice incluye Position porque el renderer siempre lee el plan ORDENADO.
+        modelBuilder.Entity<BudgetPaymentPlanInstallment>(entity =>
+        {
+            entity.ToTable("BudgetPaymentPlanInstallments");
+            entity.Property(x => x.DueText).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Amount).HasPrecision(18, 2);
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired().HasDefaultValue(Monedas.ARS);
+
+            entity.HasOne(x => x.Reserva)
+                  .WithMany(r => r.PaymentPlanInstallments)
+                  .HasForeignKey(x => x.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => new { x.ReservaId, x.Position });
         });
 
         modelBuilder.Entity<PaymentReceipt>(entity =>

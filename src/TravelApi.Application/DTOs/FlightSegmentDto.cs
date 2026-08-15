@@ -120,4 +120,15 @@ public class FlightSegmentDto
     /// </summary>
     public string? OptionGroup { get; set; }
     public string? OptionLabel { get; set; }
+
+    // Obra "PDF ronda 2" (2026-08-14): escalas por tramo (ida y vuelta por separado) + cuotas del vuelo.
+    // Ver FlightSegment.OutboundStopsCount y hermanos, y FlightSegment.InstallmentsCount/InstallmentAmount.
+    public int? OutboundStopsCount { get; set; }
+    public string? OutboundStopPlace { get; set; }
+    public string? OutboundStopWait { get; set; }
+    public int? ReturnStopsCount { get; set; }
+    public string? ReturnStopPlace { get; set; }
+    public string? ReturnStopWait { get; set; }
+    public int? InstallmentsCount { get; set; }
+    public decimal? InstallmentAmount { get; set; }
 }

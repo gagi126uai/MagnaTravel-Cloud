@@ -505,4 +505,210 @@ public class QuoteBudgetPdfRulesTests
         var servicio = new ServicioReserva { Description = null };
         Assert.Equal("Otro", QuoteBudgetPdfRules.BuildOtroServiceDisplayName(servicio));
     }
+
+    // ================================================================================
+    // Ronda 2 (decisión firmada del dueño, 2026-08-14, spec §6): chip de escala por tramo -- pisa al
+    // "Directo", nunca conviven. Fix post-inspección visual (2026-08-15): el chip NUNCA lleva el lugar
+    // (se partía en dos renglones dentro de la píldora de ancho fijo) -- el lugar vive en el renglón de
+    // detalle debajo de las filas (ver BuildFlightStopDetailLines).
+    // ================================================================================
+
+    [Fact]
+    public void ResolveFlightLegChipText_OneStop_ShowsCountOnly_NeverThePlace()
+    {
+        Assert.Equal("1 escala", QuoteBudgetPdfRules.ResolveFlightLegChipText(isDirect: true, stopsCount: 1));
+    }
+
+    [Fact]
+    public void ResolveFlightLegChipText_TwoOrMoreStops_ShowsCountOnly()
+    {
+        Assert.Equal("2 escalas", QuoteBudgetPdfRules.ResolveFlightLegChipText(isDirect: false, stopsCount: 2));
+    }
+
+    [Fact]
+    public void ResolveFlightLegChipText_StopsOverridesDirect_ChipsNeverCoexist()
+    {
+        // El dato de escalas PISA al de "Directo" cargado -- son mutuamente excluyentes en el chip.
+        Assert.Equal("1 escala", QuoteBudgetPdfRules.ResolveFlightLegChipText(isDirect: true, stopsCount: 1));
+    }
+
+    [Fact]
+    public void ResolveFlightLegChipText_NoStops_FallsBackToDirectoAsBefore()
+    {
+        Assert.Equal("Directo", QuoteBudgetPdfRules.ResolveFlightLegChipText(isDirect: true, stopsCount: null));
+        Assert.Equal("Directo", QuoteBudgetPdfRules.ResolveFlightLegChipText(isDirect: true, stopsCount: 0));
+    }
+
+    [Fact]
+    public void ResolveFlightLegChipText_NoStopsAndNotDirect_ReturnsNull_NoChipAtAll()
+    {
+        Assert.Null(QuoteBudgetPdfRules.ResolveFlightLegChipText(isDirect: null, stopsCount: null));
+        Assert.Null(QuoteBudgetPdfRules.ResolveFlightLegChipText(isDirect: false, stopsCount: 0));
+    }
+
+    // ================================================================================
+    // Ronda 2: renglón de detalle de escala por tramo, con/sin lugar, con/sin espera, ida+vuelta.
+    // ================================================================================
+
+    [Fact]
+    public void BuildFlightStopDetailLines_OnlyOutboundStop_WithPlaceAndWait_NoPrefix()
+    {
+        var flight = new FlightSegment
+        {
+            OutboundStopsCount = 1, OutboundStopPlace = "Lima (LIM)", OutboundStopWait = "2h 10m",
+        };
+
+        var lines = QuoteBudgetPdfRules.BuildFlightStopDetailLines(flight);
+
+        Assert.Single(lines);
+        Assert.Equal("Escala en Lima (LIM) · espera 2h 10m", lines[0]);
+    }
+
+    [Fact]
+    public void BuildFlightStopDetailLines_OnlyPlace_NoWaitLoaded_OmitsWaitPart()
+    {
+        var flight = new FlightSegment { OutboundStopsCount = 1, OutboundStopPlace = "Lima (LIM)", OutboundStopWait = null };
+
+        var lines = QuoteBudgetPdfRules.BuildFlightStopDetailLines(flight);
+
+        Assert.Single(lines);
+        Assert.Equal("Escala en Lima (LIM)", lines[0]);
+    }
+
+    [Fact]
+    public void BuildFlightStopDetailLines_OnlyWait_NoPlaceLoaded_OmitsPlacePart()
+    {
+        var flight = new FlightSegment { OutboundStopsCount = 1, OutboundStopPlace = null, OutboundStopWait = "2h 10m" };
+
+        var lines = QuoteBudgetPdfRules.BuildFlightStopDetailLines(flight);
+
+        Assert.Single(lines);
+        Assert.Equal("espera 2h 10m", lines[0]);
+    }
+
+    [Fact]
+    public void BuildFlightStopDetailLines_StopsCountOnly_NoPlaceNoWait_OmitsLineEntirely()
+    {
+        // El chip ya avisó "N escalas"; sin lugar NI espera no hay nada más que agregar en el detalle.
+        var flight = new FlightSegment { OutboundStopsCount = 1, OutboundStopPlace = null, OutboundStopWait = null };
+
+        Assert.Empty(QuoteBudgetPdfRules.BuildFlightStopDetailLines(flight));
+    }
+
+    [Fact]
+    public void BuildFlightStopDetailLines_BothLegsHaveStops_PrefixesIdaVuelta()
+    {
+        var flight = new FlightSegment
+        {
+            OutboundStopsCount = 1, OutboundStopPlace = "Lima (LIM)",
+            ReturnStopsCount = 1, ReturnStopPlace = "Panamá (PTY)",
+        };
+
+        var lines = QuoteBudgetPdfRules.BuildFlightStopDetailLines(flight);
+
+        Assert.Equal(2, lines.Count);
+        Assert.Equal("Ida: Escala en Lima (LIM)", lines[0]);
+        Assert.Equal("Vuelta: Escala en Panamá (PTY)", lines[1]);
+    }
+
+    [Fact]
+    public void BuildFlightStopDetailLines_NoStopsAtAll_ReturnsEmptyList()
+    {
+        var flight = new FlightSegment();
+        Assert.Empty(QuoteBudgetPdfRules.BuildFlightStopDetailLines(flight));
+    }
+
+    // ================================================================================
+    // Ronda 2: edad de pasajero contra la fecha de salida (o hoy si no hay fecha de salida).
+    // ================================================================================
+
+    [Fact]
+    public void ResolvePassengerAgeReferenceDate_UsesTripStartDate_WhenLoaded()
+    {
+        var tripStart = new DateTime(2027, 4, 10);
+        Assert.Equal(tripStart, QuoteBudgetPdfRules.ResolvePassengerAgeReferenceDate(tripStart));
+    }
+
+    [Fact]
+    public void ResolvePassengerAgeReferenceDate_FallsBackToToday_WhenTripStartMissing()
+    {
+        Assert.Equal(DateTime.UtcNow.Date, QuoteBudgetPdfRules.ResolvePassengerAgeReferenceDate(null));
+    }
+
+    [Fact]
+    public void ComputePassengerAge_BirthdayAlreadyPassedThisYear()
+    {
+        var reference = new DateTime(2027, 4, 10);
+        var birth = new DateTime(2015, 1, 1); // cumplió años en enero, la referencia es en abril.
+        Assert.Equal(12, QuoteBudgetPdfRules.ComputePassengerAge(birth, reference));
+    }
+
+    [Fact]
+    public void ComputePassengerAge_BirthdayNotYetReachedThisYear_SubtractsOne()
+    {
+        var reference = new DateTime(2027, 4, 10);
+        var birth = new DateTime(2015, 12, 25); // el cumpleaños de este año todavía no llegó.
+        Assert.Equal(11, QuoteBudgetPdfRules.ComputePassengerAge(birth, reference));
+    }
+
+    [Fact]
+    public void ComputePassengerAge_NoBirthDate_ReturnsNull()
+    {
+        Assert.Null(QuoteBudgetPdfRules.ComputePassengerAge(null, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void BuildPassengerDisplayLine_Minor_AppendsAge()
+    {
+        var reference = new DateTime(2027, 4, 10);
+        var birth = new DateTime(2015, 1, 1); // 12 años a la fecha de referencia.
+        Assert.Equal("Sofía Pérez · 12 años", QuoteBudgetPdfRules.BuildPassengerDisplayLine("Sofía Pérez", birth, reference));
+    }
+
+    [Fact]
+    public void BuildPassengerDisplayLine_Adult_ShowsNameOnly_NoAgeSuffix()
+    {
+        var reference = new DateTime(2027, 4, 10);
+        var birth = new DateTime(1990, 1, 1); // adulto.
+        Assert.Equal("Juan Pérez", QuoteBudgetPdfRules.BuildPassengerDisplayLine("Juan Pérez", birth, reference));
+    }
+
+    [Fact]
+    public void BuildPassengerDisplayLine_NoBirthDateLoaded_ShowsNameOnly()
+    {
+        var reference = new DateTime(2027, 4, 10);
+        Assert.Equal("Juan Pérez", QuoteBudgetPdfRules.BuildPassengerDisplayLine("Juan Pérez", null, reference));
+    }
+
+    // ================================================================================
+    // Ronda 2: cabecera "Preparado para {cliente}" + etiqueta de tipo por ítem en OTROS.
+    // ================================================================================
+
+    [Fact]
+    public void BuildPreparedForLine_PayerLoaded_ReturnsLine()
+    {
+        Assert.Equal("Preparado para Juan Pérez", QuoteBudgetPdfRules.BuildPreparedForLine("Juan Pérez"));
+    }
+
+    [Fact]
+    public void BuildPreparedForLine_NoPayer_ReturnsNull()
+    {
+        Assert.Null(QuoteBudgetPdfRules.BuildPreparedForLine(null));
+        Assert.Null(QuoteBudgetPdfRules.BuildPreparedForLine("   "));
+    }
+
+    [Theory]
+    [InlineData(ServiceTypes.Insurance, "ASISTENCIA AL VIAJERO")]
+    [InlineData(ServiceTypes.Package, "PAQUETE")]
+    [InlineData(ServiceTypes.Excursion, "EXCURSIÓN")]
+    [InlineData(ServiceTypes.Transfer, "TRASLADO")]
+    [InlineData(ServiceTypes.Hotel, "HOTEL")]
+    [InlineData(ServiceTypes.Flight, "AÉREO")]
+    [InlineData(ServiceTypes.Other, "SERVICIO")]
+    [InlineData(null, "SERVICIO")]
+    [InlineData("un-tipo-que-no-existe", "SERVICIO")]
+    public void ResolveGenericServiceTypeLabel_MapsBusinessVocabulary_NeverAClassName(string? serviceType, string expectedLabel)
+    {
+        Assert.Equal(expectedLabel, QuoteBudgetPdfRules.ResolveGenericServiceTypeLabel(serviceType));
+    }
 }

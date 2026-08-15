@@ -852,6 +852,78 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
+    /// Obra "PDF ronda 2" (decisión firmada del dueño, 2026-08-14, spec §6): reemplaza LA LISTA COMPLETA
+    /// del plan de pagos del total ("Al confirmar la reserva — 500 USD", una fila por cuota/seña). Es
+    /// informativo: no toca cobranzas, cuenta corriente ni el saldo real del cliente. Sin candado de
+    /// estado, mismo criterio que <see cref="UpdateBudgetPaymentTermsAsync"/>.
+    ///
+    /// <para>Reemplazo total (borra todas las filas viejas y crea las nuevas) en vez de editar fila por
+    /// fila: el vendedor siempre arma el plan de nuevo completo desde la ficha, no corrige una fila
+    /// suelta — evita el problema de "match" entre filas viejas y nuevas sin un identificador estable
+    /// del lado del cliente.</para>
+    /// </summary>
+    public async Task<ReservaDto> UpdatePaymentPlanAsync(
+        string reservaPublicIdOrLegacyId, UpdatePaymentPlanRequest request, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var reservaExists = await _context.Reservas.AnyAsync(r => r.Id == reservaId, ct);
+        if (!reservaExists) throw new KeyNotFoundException("Reserva no encontrada");
+
+        var incomingRows = request.Installments ?? Array.Empty<PaymentPlanInstallmentRequest>();
+
+        // Hallazgo de seguridad (review 2026-08-15): sin tope, un request armado a mano (nunca se confía
+        // en el frontend) podría mandar miles de filas y agrandar sin límite esta tabla hija. 24 alcanza
+        // de sobra para cualquier plan de pagos real (ni un plan mensual a 2 años llega a esa cantidad).
+        const int maxRows = 24;
+        if (incomingRows.Count > maxRows)
+        {
+            throw new ArgumentException($"El plan de pagos admite hasta {maxRows} filas.");
+        }
+
+        const int maxDueTextLength = 200;
+        foreach (var row in incomingRows)
+        {
+            if (string.IsNullOrWhiteSpace(row.DueText))
+            {
+                throw new ArgumentException("Cada fila del plan de pagos necesita un texto de cuándo se paga.");
+            }
+
+            if (row.DueText.Trim().Length > maxDueTextLength)
+            {
+                throw new ArgumentException($"El texto de cuándo se paga no puede superar los {maxDueTextLength} caracteres.");
+            }
+
+            if (row.Amount <= 0)
+            {
+                throw new ArgumentException("El monto de cada fila del plan de pagos debe ser mayor a 0.");
+            }
+        }
+
+        var existingRows = await _context.BudgetPaymentPlanInstallments
+            .Where(p => p.ReservaId == reservaId)
+            .ToListAsync(ct);
+        _context.BudgetPaymentPlanInstallments.RemoveRange(existingRows);
+
+        // Se numeran 1..N en el orden en que llegan: el vendedor manda la lista ya ordenada, no hay
+        // forma de "insertar en el medio" (ver XML-doc de BudgetPaymentPlanInstallment.Position).
+        var position = 1;
+        foreach (var row in incomingRows)
+        {
+            _context.BudgetPaymentPlanInstallments.Add(new BudgetPaymentPlanInstallment
+            {
+                ReservaId = reservaId,
+                Position = position++,
+                DueText = row.DueText.Trim(),
+                Amount = row.Amount,
+                Currency = Monedas.Normalizar(row.Currency),
+            });
+        }
+
+        await _context.SaveChangesAsync(ct);
+        return await GetReservaByIdAsync(reservaId);
+    }
+
+    /// <summary>
     /// Genera el PDF de presupuesto que se le manda al cliente (maqueta v2 firmada, 2026-08-11/12). SOLO
     /// funciona en etapa Presupuesto (Cotización/Presupuesto) — ver <see cref="EstadoReserva.IsPresupuestoStage"/>:
     /// una vez que el cliente aceptó, lo que corresponde mostrarle es el voucher/factura, no un
@@ -880,6 +952,13 @@ public class ReservaService : IReservaService
             // bug de cableado encontrado en review, el harness no lo detectaba porque arma la reserva
             // a mano en memoria, sin pasar por esta query.
             .Include(r => r.Servicios)
+            // Obra "PDF ronda 2" (2026-08-14): cabecera "Preparado para {cliente}" (Payer.FullName),
+            // sección PASAJEROS (Passengers) y el bloque PLAN DE PAGOS (PaymentPlanInstallments). Mismo
+            // motivo que el Include de arriba: sin lazy loading, faltar acá deja esos bloques SIEMPRE
+            // vacíos en producción aunque el dato esté cargado en la base.
+            .Include(r => r.Payer)
+            .Include(r => r.Passengers)
+            .Include(r => r.PaymentPlanInstallments)
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
@@ -3342,6 +3421,11 @@ public class ReservaService : IReservaService
             .AsNoTracking()
             .Include(f => f.Payer)
             .Include(f => f.Passengers)
+            // Obra "PDF ronda 2" (2026-08-14/15, bloqueante de review): sin este Include, el PUT del plan
+            // de pagos guardaba bien en la base pero el DTO que devuelve ESTE método (y la ficha que lo
+            // consume) siempre mostraban la lista vacía -- mismo bug de cableado que ya pasó con
+            // reserva.Servicios en GetBudgetPdfAsync (no hay lazy loading configurado).
+            .Include(f => f.PaymentPlanInstallments)
             .Include(f => f.Payments)
             .ThenInclude(p => p.Receipt)
             .Include(f => f.Invoices).ThenInclude(i => i.OriginalInvoice)
@@ -4309,6 +4393,10 @@ public class ReservaService : IReservaService
             // Semaforo de DNI vencido para cabotaje (2026-08-03): texto no reconocido o ausente ->
             // Undefined (default), validacion SUAVE (nunca corta el alta del servicio).
             GeographicScope = ServiceGeographicScopeText.ParseOrNull(request.GeographicScope) ?? ServiceGeographicScope.Undefined,
+            // Obra "PDF ronda 2" (2026-08-14): plan de cuotas informativo — mapeo DIRECTO, no hay nada
+            // que preservar en un alta (el servicio recien nace).
+            InstallmentsCount = request.InstallmentsCount,
+            InstallmentAmount = request.InstallmentAmount,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -4458,6 +4546,13 @@ public class ReservaService : IReservaService
         service.ReturnDate = request.ReturnDate?.ToUniversalTime();
         service.SupplierId = supplierId;
         service.SalePrice = request.SalePrice;
+
+        // Obra "PDF ronda 2" (2026-08-14): mapeo DIRECTO (null = borrar), NO anti-pisado — mismo criterio
+        // que las cuotas del hotel (fix bloqueante de la obra "PDF completo", 2026-08-14): la ficha inline
+        // siempre reenvia los 2 casilleros en cada edicion, asi que null significa "el vendedor vacio el
+        // casillero a proposito" y debe borrar el plan guardado, no conservarlo.
+        service.InstallmentsCount = request.InstallmentsCount;
+        service.InstallmentAmount = request.InstallmentAmount;
 
         // ADR-026 (vencimientos): anti-pisado igual que los tipos catalogados — solo se asigna
         // si el request trae la fecha; un form viejo que no la manda NO borra la fecha cargada.
