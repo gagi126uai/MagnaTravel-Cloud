@@ -15,6 +15,13 @@
  * NUNCA por departureTime/arrivalTime — ver la nota "SEMÁNTICA INTOCABLE" en
  * buildFlightPayload (ServiceInlineCard.jsx) para el porqué.
  *
+ * Obra "PDF ronda 2" (2026-08-14, decisión firmada del dueño, spec §6): escalas SIMPLES por
+ * tramo (ida y vuelta por separado) — cantidad + dónde + espera — pegadas al bloque
+ * "Horarios del vuelo" (arman el mismo tramo). Van por Outbound/ReturnStopsCount|Place|Wait,
+ * campos NUEVOS y distintos del casillero de texto libre "Escalas" (scheduleNotes) que ya
+ * existía más abajo — ese texto libre queda igual, sin tocar. También se agrega el mismo par
+ * "Cuotas"/"Valor por cuota" que ya tiene Hotel (informativo para el PDF).
+ *
  * Permiso `cobranzas.see_cost`:
  *   - Con permiso: ve el campo Costo + ganancia en el footer.
  *   - Sin permiso: no ve costo ni ganancia (jamás "$0").
@@ -159,12 +166,17 @@ export function FlightInlineForm({
     // Y los 4 horarios (Sale/Llega ida y vuelta) también abren "Más detalles" solos si ya
     // tienen valor — los horarios viven DENTRO del acordeón (bloque "Horarios del vuelo",
     // pegado al de aeropuertos), no en la zona principal.
+    // Obra "PDF ronda 2" (2026-08-14): escalas por tramo + cuotas también cuentan para
+    // abrir la sección sola al editar un vuelo que ya las tiene cargadas.
     const tieneDetallesExistentes = Boolean(
         form.pnr || form.ticketNumber || form.baggage || form.scheduleNotes || form.cabinClass ||
         form.isDirect || form.includesBackpack || form.includesCarryOn || form.includesCheckedBag ||
         form.origin || form.originCity || form.destination || form.destinationCity ||
         form.outboundDepartureTime || form.outboundArrivalTime ||
-        form.returnDepartureTime || form.returnArrivalTime
+        form.returnDepartureTime || form.returnArrivalTime ||
+        form.outboundStopsCount || form.outboundStopPlace || form.outboundStopWait ||
+        form.returnStopsCount || form.returnStopPlace || form.returnStopWait ||
+        form.installmentsCount || form.installmentAmount
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -461,7 +473,13 @@ export function FlightInlineForm({
                                 // casilleros "Sale vuelta"/"Llega vuelta" quedan apagados en pantalla
                                 // pero sin esto seguían viajando en el payload — un horario de vuelta
                                 // sin vuelta. Los limpiamos junto con la fecha, no solo los deshabilitamos.
-                                ...(nuevaFechaVuelta ? {} : { returnDepartureTime: "", returnArrivalTime: "" }),
+                                // Mismo criterio para las escalas de vuelta (obra "PDF ronda 2").
+                                ...(nuevaFechaVuelta
+                                    ? {}
+                                    : {
+                                        returnDepartureTime: "", returnArrivalTime: "",
+                                        returnStopsCount: "", returnStopPlace: "", returnStopWait: "",
+                                    }),
                             }));
                             setCamposSugeridos((prev) => ({ ...prev, returnDate: false }));
                             setCamposTocadosAMano((prev) => ({ ...prev, returnDate: true }));
@@ -710,6 +728,97 @@ export function FlightInlineForm({
                                     />
                                 </div>
                             </div>
+                            {/* Escalas por tramo (spec 2026-08-14, ronda 2 §6): cantidad + dónde + espera,
+                                ida y vuelta por separado. Ninguna es obligatoria — vacío = directo/sin
+                                dato, el PDF arma el chip "Directo" solo cuando no hay escalas cargadas.
+                                Distinto del casillero de texto libre "Escalas" (scheduleNotes) de más
+                                abajo: ese sigue siendo una nota libre, este es el dato estructurado que
+                                lee el PDF para el chip y el renglón de detalle. */}
+                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-ida-escalas">Escalas (ida)</label>
+                                    <input
+                                        id="flight-ida-escalas"
+                                        type="text"
+                                        inputMode="numeric"
+                                        className={INPUT_NORMAL}
+                                        value={form.outboundStopsCount || ""}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, outboundStopsCount: sanitizarCantidadPositiva(event.target.value) }))}
+                                        placeholder="0"
+                                        data-testid="flight-ida-escalas"
+                                        aria-label="Cantidad de escalas del tramo de ida"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-ida-escala-donde">Dónde (ida)</label>
+                                    <input
+                                        id="flight-ida-escala-donde"
+                                        type="text"
+                                        className={INPUT_NORMAL}
+                                        value={form.outboundStopPlace || ""}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, outboundStopPlace: event.target.value }))}
+                                        placeholder="Ej: Lima (LIM)"
+                                        data-testid="flight-ida-escala-donde"
+                                        aria-label="Lugar de la escala de ida"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-ida-escala-espera">Espera (ida)</label>
+                                    <input
+                                        id="flight-ida-escala-espera"
+                                        type="text"
+                                        className={INPUT_NORMAL}
+                                        value={form.outboundStopWait || ""}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, outboundStopWait: event.target.value }))}
+                                        placeholder="Ej: 2h 10m"
+                                        data-testid="flight-ida-escala-espera"
+                                        aria-label="Tiempo de espera de la escala de ida"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-vuelta-escalas">Escalas (vuelta)</label>
+                                    <input
+                                        id="flight-vuelta-escalas"
+                                        type="text"
+                                        inputMode="numeric"
+                                        className={INPUT_NORMAL}
+                                        value={form.returnStopsCount || ""}
+                                        disabled={!form.returnDate}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, returnStopsCount: sanitizarCantidadPositiva(event.target.value) }))}
+                                        placeholder="0"
+                                        data-testid="flight-vuelta-escalas"
+                                        aria-label="Cantidad de escalas del tramo de vuelta"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-vuelta-escala-donde">Dónde (vuelta)</label>
+                                    <input
+                                        id="flight-vuelta-escala-donde"
+                                        type="text"
+                                        className={INPUT_NORMAL}
+                                        value={form.returnStopPlace || ""}
+                                        disabled={!form.returnDate}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, returnStopPlace: event.target.value }))}
+                                        placeholder="Ej: Lima (LIM)"
+                                        data-testid="flight-vuelta-escala-donde"
+                                        aria-label="Lugar de la escala de vuelta"
+                                    />
+                                </div>
+                                <div>
+                                    <label className={LABEL_BASE} htmlFor="flight-vuelta-escala-espera">Espera (vuelta)</label>
+                                    <input
+                                        id="flight-vuelta-escala-espera"
+                                        type="text"
+                                        className={INPUT_NORMAL}
+                                        value={form.returnStopWait || ""}
+                                        disabled={!form.returnDate}
+                                        onChange={(event) => setForm((prev) => ({ ...prev, returnStopWait: event.target.value }))}
+                                        placeholder="Ej: 2h 10m"
+                                        data-testid="flight-vuelta-escala-espera"
+                                        aria-label="Tiempo de espera de la escala de vuelta"
+                                    />
+                                </div>
+                            </div>
                         </div>
                         <div>
                             <label className={LABEL_BASE} htmlFor="flight-pnr">Código de reserva (PNR)</label>
@@ -737,21 +846,55 @@ export function FlightInlineForm({
                                 aria-label="Números de ticket"
                             />
                         </div>
+                        {/* Plan de cuotas (spec 2026-08-14, ronda 2 §6): mismo par que ya tiene Hotel
+                            ("Cuotas"/"Valor por cuota"), informativo para el PDF — no participa del
+                            cálculo de Venta total. Va después de los identificadores (PNR/ticket) y
+                            antes de las notas libres, mismo criterio de ubicación que en Hotel. */}
+                        <div>
+                            <label className={LABEL_BASE} htmlFor="flight-cuotas">Cuotas</label>
+                            <input
+                                id="flight-cuotas"
+                                type="text"
+                                inputMode="numeric"
+                                className={INPUT_NORMAL}
+                                value={form.installmentsCount || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, installmentsCount: sanitizarCantidadPositiva(event.target.value) }))}
+                                placeholder="Ej: 6"
+                                data-testid="flight-cuotas"
+                                aria-label="Cantidad de cuotas"
+                            />
+                        </div>
+                        <div>
+                            {/* Sin selector de moneda propio (P-16): se entiende en la moneda que
+                                ya eligió el servicio en el selector "Moneda" de arriba. */}
+                            <label className={LABEL_BASE} htmlFor="flight-valor-cuota">Valor por cuota</label>
+                            <MoneyInput
+                                id="flight-valor-cuota"
+                                className={INPUT_NORMAL}
+                                value={form.installmentAmount || ""}
+                                onChange={(nuevoValor) => setForm((prev) => ({ ...prev, installmentAmount: nuevoValor }))}
+                                data-testid="flight-valor-cuota"
+                                aria-label="Valor de cada cuota"
+                            />
+                        </div>
                         <div className="sm:col-span-2">
-                            {/* Ex "Horarios y escalas" (spec 2026-08-13, §3): mismo campo de texto
-                                libre, mismo dato guardado (scheduleNotes) — solo cambia el nombre para
-                                no competir con los casilleros de hora nuevos (P-16: un dato no se dice
-                                dos veces). Lo ya cargado en este campo no se toca ni se migra. */}
-                            <label className={LABEL_BASE} htmlFor="flight-horarios">Escalas</label>
+                            {/* Ex "Horarios y escalas" (spec 2026-08-13, §3), renombrado de nuevo a
+                                "Notas del vuelo" (fix reviewer, obra "PDF ronda 2" 2026-08-14/15, P-16):
+                                con las escalas estructuradas nuevas (Escalas/Dónde/Espera, más arriba)
+                                el label "Escalas" quedaba compitiendo con esos casilleros — un mismo
+                                concepto no se dice dos veces. Mismo campo de texto libre, mismo dato
+                                guardado (scheduleNotes): solo cambia la etiqueta y el placeholder. Lo
+                                ya cargado en este campo no se toca ni se migra. */}
+                            <label className={LABEL_BASE} htmlFor="flight-horarios">Notas del vuelo</label>
                             <input
                                 id="flight-horarios"
                                 type="text"
                                 className={INPUT_NORMAL}
                                 value={form.scheduleNotes || ""}
                                 onChange={(event) => setForm((prev) => ({ ...prev, scheduleNotes: event.target.value }))}
-                                placeholder="Ej: Escala de 1h en Panamá · Cambia de avión"
+                                placeholder="Ej: Pasajero pidió ventanilla · Equipaje extra acordado"
                                 data-testid="flight-horarios"
-                                aria-label="Escalas"
+                                aria-label="Notas del vuelo"
                             />
                         </div>
                         <div className="sm:col-span-2">

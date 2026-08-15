@@ -116,6 +116,17 @@ const buildGenericServicePayload = (form, serviceToEdit) => ({
     netCost: Number(form.netCost) || 0,
     tax: Number(form.tax) || 0,
     rateId: form.rateId || form.ratePublicId || null,
+    // Plan de cuotas (obra "PDF ronda 2", 2026-08-14, spec §6): dato informativo del PDF de
+    // presupuesto, no participa del cálculo de Venta total. Mismo criterio que el resto de los
+    // tipos de servicio: "" o "0" -> null (el PDF no imprime la línea sin plan cargado). Este
+    // único request (AddServiceRequest) sirve tanto para alta como edición y siempre reenvía
+    // los 2 casilleros — no es anti-clobber.
+    installmentsCount: form.installmentsCount && Number(form.installmentsCount) > 0
+        ? Number(form.installmentsCount)
+        : null,
+    installmentAmount: form.installmentAmount && Number(form.installmentAmount) > 0
+        ? Number(form.installmentAmount)
+        : null,
 });
 
 const unwrapSavedService = (savedService) => savedService?.servicio || savedService?.service || savedService;
@@ -1778,6 +1789,40 @@ function GenericServiceForm({ form, setForm, suppliers, onRateSelect, disabled, 
                 <div>
                     <label className={labelClass}>Confirmación</label>
                     <input className={inputClass} value={form.confirmationNumber || ""} onChange={(event) => setForm({ ...form, confirmationNumber: event.target.value })} disabled={disabled} />
+                </div>
+            </div>
+
+            {/* Plan de cuotas (obra "PDF ronda 2", 2026-08-14, spec §6): dato informativo para el
+                PDF de presupuesto ("6 CUOTAS 280 USD"), mismo par que ya tienen los otros 5 tipos
+                de servicio — no participa del cálculo de Venta/Costo de arriba. */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Cuotas</label>
+                    <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        className={inputClass}
+                        value={form.installmentsCount ?? ""}
+                        onChange={(event) => setForm({ ...form, installmentsCount: event.target.value === "" ? "" : Math.max(Number(event.target.value) || 0, 0) })}
+                        placeholder="Ej: 6"
+                        disabled={disabled}
+                    />
+                </div>
+                <div>
+                    {/* Sin selector de moneda propio: se entiende en la moneda del servicio. */}
+                    <label className={labelClass}>Valor por cuota</label>
+                    <div className="relative">
+                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                        <input
+                            type="number"
+                            step="0.01"
+                            className={`${inputClass} pl-6`}
+                            value={form.installmentAmount ?? ""}
+                            onChange={(event) => setForm({ ...form, installmentAmount: event.target.value === "" ? "" : Number(event.target.value) })}
+                            disabled={disabled}
+                        />
+                    </div>
                 </div>
             </div>
             </>

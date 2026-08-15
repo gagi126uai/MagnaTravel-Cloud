@@ -55,7 +55,9 @@ public static class AiProviderPresets
             DisplayName: "Groq",
             Tagline: "Gratis para arrancar. Es la más simple.",
             BaseUrl: "https://api.groq.com/openai/v1",
-            Model: "llama-3.3-70b-versatile",
+            // 2026-08-15: Groq discontinuó llama-3.3-70b-versatile (deja de responder el 16/08);
+            // su reemplazo recomendado por Groq es este modelo abierto de OpenAI.
+            Model: "openai/gpt-oss-120b",
             IsRecommended: true,
             RequiresManualEndpoint: false),
 

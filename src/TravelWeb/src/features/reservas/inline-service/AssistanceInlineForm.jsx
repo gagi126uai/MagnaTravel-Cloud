@@ -6,7 +6,9 @@
  *   Días (calculados solos) · Pasajeros · Costo · Venta · Moneda
  *
  * Más detalles (plegado):
- *   Confirmación del operador · Números de voucher por pasajero · Upgrades (edad, embarazo, deportes)
+ *   Confirmación del operador · Cuotas / Valor por cuota (obra "PDF ronda 2" 2026-08-14 §6:
+ *   plan de cuotas informativo para el PDF, mismo par que ya tiene Hotel) · Números de
+ *   voucher por pasajero · Upgrades (edad, embarazo, deportes)
  *
  * "Confirmación del operador" es el mismo campo que ya tienen Hotel/Traslado/Paquete: sin
  * cargarlo, el motor de resolución de la reserva nunca da por confirmado el servicio (queda
@@ -167,8 +169,12 @@ export function AssistanceInlineForm({
         : null;
     const ganancia = canSeeCost && costoTotal !== null ? redondearDinero(ventaTotal - costoTotal) : null;
 
-    // "Más detalles" se abre automáticamente al editar si ya hay datos
-    const tieneDetallesExistentes = Boolean(form.voucherNumbers || form.upgrades || form.confirmationNumber);
+    // "Más detalles" se abre automáticamente al editar si ya hay datos. installmentsCount/
+    // installmentAmount (obra "PDF ronda 2", 2026-08-14): plan de cuotas, mismo criterio.
+    const tieneDetallesExistentes = Boolean(
+        form.voucherNumbers || form.upgrades || form.confirmationNumber ||
+        form.installmentsCount || form.installmentAmount
+    );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
 
@@ -527,6 +533,35 @@ export function AssistanceInlineForm({
                                 placeholder="Número o código de confirmación"
                                 data-testid="assistance-confirmacion"
                                 aria-label="Número de confirmación del operador"
+                            />
+                        </div>
+                        {/* Plan de cuotas (spec 2026-08-14, ronda 2 §6): mismo par que Hotel, informativo
+                            para el PDF — no participa del cálculo de Venta total. */}
+                        <div>
+                            <label className={LABEL_BASE} htmlFor="assistance-cuotas">Cuotas</label>
+                            <input
+                                id="assistance-cuotas"
+                                type="text"
+                                inputMode="numeric"
+                                className={INPUT_NORMAL}
+                                value={form.installmentsCount || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, installmentsCount: sanitizarCantidadPositiva(event.target.value) }))}
+                                placeholder="Ej: 6"
+                                data-testid="assistance-cuotas"
+                                aria-label="Cantidad de cuotas"
+                            />
+                        </div>
+                        <div>
+                            {/* Sin selector de moneda propio (P-16): se entiende en la moneda que
+                                ya eligió el servicio en el selector "Moneda" de arriba. */}
+                            <label className={LABEL_BASE} htmlFor="assistance-valor-cuota">Valor por cuota</label>
+                            <MoneyInput
+                                id="assistance-valor-cuota"
+                                className={INPUT_NORMAL}
+                                value={form.installmentAmount || ""}
+                                onChange={(nuevoValor) => setForm((prev) => ({ ...prev, installmentAmount: nuevoValor }))}
+                                data-testid="assistance-valor-cuota"
+                                aria-label="Valor de cada cuota"
                             />
                         </div>
                         <div className="sm:col-span-2">

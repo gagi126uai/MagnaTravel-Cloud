@@ -195,7 +195,7 @@ public class AiSettingsServiceTests
         var dto = await service.UpdateAsync(GroqRequest(), "admin-1", "Gastón", CancellationToken.None);
 
         Assert.Equal("https://api.groq.com/openai/v1", dto.BaseUrl);
-        Assert.Equal("llama-3.3-70b-versatile", dto.Model);
+        Assert.Equal("openai/gpt-oss-120b", dto.Model);
     }
 
     [Fact]

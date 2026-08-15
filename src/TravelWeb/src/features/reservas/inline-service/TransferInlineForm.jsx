@@ -6,7 +6,9 @@
  *   Privado o compartido · Costo · Venta · Moneda
  *
  * Más detalles (plegado):
- *   Número de vuelo asociado · Horario de búsqueda · Confirmación del operador
+ *   Número de vuelo asociado · Horario de búsqueda · Confirmación del operador ·
+ *   Cuotas / Valor por cuota (obra "PDF ronda 2" 2026-08-14 §6: plan de cuotas informativo
+ *   para el PDF, mismo par que ya tiene Hotel)
  *
  * Permiso `cobranzas.see_cost`:
  *   - Con permiso: ve el campo Costo + ganancia en el footer.
@@ -144,8 +146,11 @@ export function TransferInlineForm({
 
     // "Más detalles" se abre automáticamente al editar si ya hay datos en esos campos.
     // vehicleType ya NO se considera acá: subió a la vista principal (es la variante).
+    // installmentsCount/installmentAmount (obra "PDF ronda 2", 2026-08-14): plan de cuotas,
+    // mismo criterio que los demás campos de esta lista.
     const tieneDetallesExistentes = Boolean(
-        form.associatedFlightNumber || form.pickupTime || form.confirmationNumber
+        form.associatedFlightNumber || form.pickupTime || form.confirmationNumber ||
+        form.installmentsCount || form.installmentAmount
     );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
@@ -601,6 +606,35 @@ export function TransferInlineForm({
                                 placeholder="Número o código de confirmación"
                                 data-testid="transfer-confirmacion"
                                 aria-label="Número de confirmación del operador"
+                            />
+                        </div>
+                        {/* Plan de cuotas (spec 2026-08-14, ronda 2 §6): mismo par que Hotel, informativo
+                            para el PDF — no participa del cálculo de Venta total. */}
+                        <div>
+                            <label className={LABEL_BASE} htmlFor="transfer-cuotas">Cuotas</label>
+                            <input
+                                id="transfer-cuotas"
+                                type="text"
+                                inputMode="numeric"
+                                className={INPUT_NORMAL}
+                                value={form.installmentsCount || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, installmentsCount: sanitizarCantidadPositiva(event.target.value) }))}
+                                placeholder="Ej: 6"
+                                data-testid="transfer-cuotas"
+                                aria-label="Cantidad de cuotas"
+                            />
+                        </div>
+                        <div>
+                            {/* Sin selector de moneda propio (P-16): se entiende en la moneda que
+                                ya eligió el servicio en el selector "Moneda" de arriba. */}
+                            <label className={LABEL_BASE} htmlFor="transfer-valor-cuota">Valor por cuota</label>
+                            <MoneyInput
+                                id="transfer-valor-cuota"
+                                className={INPUT_NORMAL}
+                                value={form.installmentAmount || ""}
+                                onChange={(nuevoValor) => setForm((prev) => ({ ...prev, installmentAmount: nuevoValor }))}
+                                data-testid="transfer-valor-cuota"
+                                aria-label="Valor de cada cuota"
                             />
                         </div>
                         {/* Tipo de vehículo: subió a la vista principal (ver más arriba, campo

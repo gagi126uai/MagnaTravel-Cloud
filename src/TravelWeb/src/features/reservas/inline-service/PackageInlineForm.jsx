@@ -6,7 +6,9 @@
  *   Precio por persona · Costo · Venta · Moneda
  *
  * Más detalles (plegado):
- *   Qué incluye (texto libre) · Número de file del operador
+ *   Qué incluye (texto libre) · Número de file del operador · Cuotas / Valor por cuota
+ *   (obra "PDF ronda 2" 2026-08-14 §6: plan de cuotas informativo para el PDF, mismo par
+ *   que ya tiene Hotel)
  *
  * Permiso `cobranzas.see_cost`:
  *   - Con permiso: ve el campo Costo + ganancia en el footer.
@@ -146,8 +148,11 @@ export function PackageInlineForm({
         : null;
     const ganancia = canSeeCost && costoTotal !== null ? redondearDinero(ventaTotal - costoTotal) : null;
 
-    // "Más detalles" se abre automáticamente al editar si ya hay datos
-    const tieneDetallesExistentes = Boolean(form.itinerary || form.fileNumber);
+    // "Más detalles" se abre automáticamente al editar si ya hay datos. installmentsCount/
+    // installmentAmount (obra "PDF ronda 2", 2026-08-14): plan de cuotas, mismo criterio.
+    const tieneDetallesExistentes = Boolean(
+        form.itinerary || form.fileNumber || form.installmentsCount || form.installmentAmount
+    );
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
     // Renglón gris "Último precio" (spec 2026-08-06, §3.2, P9=A) — ver HotelInlineForm.
@@ -552,6 +557,35 @@ export function PackageInlineForm({
                                 placeholder="Ej: PKG-2026-0482"
                                 data-testid="package-file"
                                 aria-label="Número de file del operador"
+                            />
+                        </div>
+                        {/* Plan de cuotas (spec 2026-08-14, ronda 2 §6): mismo par que Hotel, informativo
+                            para el PDF — no participa del cálculo de Venta total. */}
+                        <div>
+                            <label className={LABEL_BASE} htmlFor="package-cuotas">Cuotas</label>
+                            <input
+                                id="package-cuotas"
+                                type="text"
+                                inputMode="numeric"
+                                className={INPUT_NORMAL}
+                                value={form.installmentsCount || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, installmentsCount: sanitizarCantidadPositiva(event.target.value) }))}
+                                placeholder="Ej: 6"
+                                data-testid="package-cuotas"
+                                aria-label="Cantidad de cuotas"
+                            />
+                        </div>
+                        <div>
+                            {/* Sin selector de moneda propio (P-16): se entiende en la moneda que
+                                ya eligió el servicio en el selector "Moneda" de arriba. */}
+                            <label className={LABEL_BASE} htmlFor="package-valor-cuota">Valor por cuota</label>
+                            <MoneyInput
+                                id="package-valor-cuota"
+                                className={INPUT_NORMAL}
+                                value={form.installmentAmount || ""}
+                                onChange={(nuevoValor) => setForm((prev) => ({ ...prev, installmentAmount: nuevoValor }))}
+                                data-testid="package-valor-cuota"
+                                aria-label="Valor de cada cuota"
                             />
                         </div>
                     </div>

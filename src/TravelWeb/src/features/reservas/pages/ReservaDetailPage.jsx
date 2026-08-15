@@ -26,6 +26,7 @@ import { NeedsDateRecalculationRow } from "../components/NeedsDateRecalculationR
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
 import { PaymentTermsCard } from "../components/PaymentTermsCard";
+import { PaymentPlanCard } from "../components/PaymentPlanCard";
 import { ReservaLockBanner } from "../components/ReservaLockBanner";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RegistrarCobroInline } from "../components/RegistrarCobroInline";
@@ -2510,6 +2511,19 @@ export default function ReservaDetailPage() {
                   key={`payment-terms-${reserva?.publicId}`}
                   reservaPublicId={publicId}
                   initialText={reserva?.budgetPaymentTermsText}
+                  onSaved={() => fetchReserva({ showLoading: false, preserveOnError: true })}
+                />
+              )}
+
+              {/* "Plan de pagos" (spec 2026-08-14, ronda 2, §6): tabla de filas del total del
+                  presupuesto, debajo de "Formas de pago" — misma condición de etapa que esa
+                  card (ver el comentario largo de arriba). */}
+              {reserva.status === "Budget" && (
+                <PaymentPlanCard
+                  key={`payment-plan-${reserva?.publicId}`}
+                  reservaPublicId={publicId}
+                  initialInstallments={reserva?.paymentPlanInstallments}
+                  reserva={reserva}
                   onSaved={() => fetchReserva({ showLoading: false, preserveOnError: true })}
                 />
               )}

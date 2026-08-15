@@ -228,6 +228,17 @@ function buildFlightFormInitial(serviceToEdit) {
             outboundArrivalTime: "",
             returnDepartureTime: "",
             returnArrivalTime: "",
+            // Obra "PDF ronda 2" (2026-08-14, spec §6): escalas simples por tramo (cantidad +
+            // dónde + espera, ida y vuelta por separado) + plan de cuotas informativo. Mismo
+            // molde que installmentsCount/installmentAmount de Hotel.
+            outboundStopsCount: "",
+            outboundStopPlace: "",
+            outboundStopWait: "",
+            returnStopsCount: "",
+            returnStopPlace: "",
+            returnStopWait: "",
+            installmentsCount: "",
+            installmentAmount: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -274,6 +285,19 @@ function buildFlightFormInitial(serviceToEdit) {
         outboundArrivalTime: (serviceToEdit.outboundArrivalTime || "").slice(0, 5),
         returnDepartureTime: (serviceToEdit.returnDepartureTime || "").slice(0, 5),
         returnArrivalTime: (serviceToEdit.returnArrivalTime || "").slice(0, 5),
+        // Round-trip: el backend devuelve OutboundStopsCount/ReturnStopsCount (int|null) y
+        // sus lugares/esperas (string|null) en FlightSegmentDto (obra "PDF ronda 2", spec §6).
+        // Fallback "" cuando nunca se cargaron.
+        outboundStopsCount: serviceToEdit.outboundStopsCount != null ? String(serviceToEdit.outboundStopsCount) : "",
+        outboundStopPlace: serviceToEdit.outboundStopPlace || "",
+        outboundStopWait: serviceToEdit.outboundStopWait || "",
+        returnStopsCount: serviceToEdit.returnStopsCount != null ? String(serviceToEdit.returnStopsCount) : "",
+        returnStopPlace: serviceToEdit.returnStopPlace || "",
+        returnStopWait: serviceToEdit.returnStopWait || "",
+        // Round-trip: el backend devuelve installmentsCount (int|null) / installmentAmount
+        // (decimal|null) en FlightSegmentDto. Fallback "" cuando no hay plan de cuotas cargado.
+        installmentsCount: serviceToEdit.installmentsCount != null ? String(serviceToEdit.installmentsCount) : "",
+        installmentAmount: serviceToEdit.installmentAmount != null ? String(serviceToEdit.installmentAmount) : "",
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -298,6 +322,10 @@ function buildTransferFormInitial(serviceToEdit) {
             confirmationNumber: "",
             // vehicleType: texto libre, igual que el modal viejo. "" = no especificado.
             vehicleType: "",
+            // Obra "PDF ronda 2" (2026-08-14, spec §6): plan de cuotas informativo, mismo
+            // molde que Hotel.
+            installmentsCount: "",
+            installmentAmount: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -325,6 +353,11 @@ function buildTransferFormInitial(serviceToEdit) {
         confirmationNumber: serviceToEdit.confirmationNumber || "",
         // Round-trip: el backend devuelve vehicleType en TransferBookingDto; fallback "" (no especificado).
         vehicleType: serviceToEdit.vehicleType || "",
+        // Round-trip: el backend devuelve installmentsCount (int|null) / installmentAmount
+        // (decimal|null) en TransferBookingDto (obra "PDF ronda 2"). Fallback "" cuando no hay
+        // plan de cuotas cargado.
+        installmentsCount: serviceToEdit.installmentsCount != null ? String(serviceToEdit.installmentsCount) : "",
+        installmentAmount: serviceToEdit.installmentAmount != null ? String(serviceToEdit.installmentAmount) : "",
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -346,6 +379,10 @@ function buildPackageFormInitial(serviceToEdit) {
             // operatorPaymentDeadline eliminado en F2: el aviso de campanita viene del backend (firstStartDate).
             // El campo sigue en el backend pero ya no lo enviamos desde la ficha inline.
             itinerary: "", fileNumber: "",
+            // Obra "PDF ronda 2" (2026-08-14, spec §6): plan de cuotas informativo, mismo
+            // molde que Hotel.
+            installmentsCount: "",
+            installmentAmount: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -369,6 +406,11 @@ function buildPackageFormInitial(serviceToEdit) {
         // operatorPaymentDeadline no se carga en la UI (campo eliminado en F2)
         itinerary: serviceToEdit.itinerary || "",
         fileNumber: serviceToEdit.fileNumber || serviceToEdit.confirmationNumber || "",
+        // Round-trip: el backend devuelve installmentsCount (int|null) / installmentAmount
+        // (decimal|null) en PackageBookingDto (obra "PDF ronda 2"). Fallback "" cuando no hay
+        // plan de cuotas cargado.
+        installmentsCount: serviceToEdit.installmentsCount != null ? String(serviceToEdit.installmentsCount) : "",
+        installmentAmount: serviceToEdit.installmentAmount != null ? String(serviceToEdit.installmentAmount) : "",
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -382,6 +424,10 @@ function buildAssistanceFormInitial(serviceToEdit) {
             planName: "", supplierId: "", validFrom: "", validTo: "",
             passengers: "", unitNetCost: "", unitSalePrice: "", currency: "ARS",
             voucherNumbers: "", upgrades: "", confirmationNumber: "",
+            // Obra "PDF ronda 2" (2026-08-14, spec §6): plan de cuotas informativo, mismo
+            // molde que Hotel.
+            installmentsCount: "",
+            installmentAmount: "",
             rateId: null, newCatalogProduct: null,
         };
     }
@@ -416,6 +462,11 @@ function buildAssistanceFormInitial(serviceToEdit) {
         voucherNumbers: serviceToEdit.policyNumber || serviceToEdit.voucherNumbers || "",
         upgrades: serviceToEdit.notes || serviceToEdit.upgrades || "",
         confirmationNumber: serviceToEdit.confirmationNumber || "",
+        // Round-trip: el backend devuelve installmentsCount (int|null) / installmentAmount
+        // (decimal|null) en AssistanceBookingDto (obra "PDF ronda 2"). Fallback "" cuando no
+        // hay plan de cuotas cargado.
+        installmentsCount: serviceToEdit.installmentsCount != null ? String(serviceToEdit.installmentsCount) : "",
+        installmentAmount: serviceToEdit.installmentAmount != null ? String(serviceToEdit.installmentAmount) : "",
         // Fix #3 (auditoría de coherencia 2026-08-10, GRAVE) — ver resolverRateIdDeEdicion
         // en inlineServiceFormHelpers.js para el detalle completo del bug.
         rateId: resolverRateIdDeEdicion(serviceToEdit),
@@ -526,6 +577,29 @@ function buildFlightPayload(formVuelo, canSeeCost) {
         outboundArrivalTime: formVuelo.outboundArrivalTime || null,
         returnDepartureTime: formVuelo.returnDepartureTime || null,
         returnArrivalTime: formVuelo.returnArrivalTime || null,
+        // Escalas por tramo (spec 2026-08-14, ronda 2 §6): mismo criterio de mapeo por
+        // CONVENCIÓN que los 4 horarios de arriba (NO anti-clobber) — ver la nota de
+        // CreateFlightRequest/UpdateFlightRequest en el backend: la ficha inline es el ÚNICO
+        // emisor de este UPDATE y siempre reenvía los casilleros ("" -> null = borra lo que
+        // hubiera guardado). "0" es un string truthy en JS, por eso el > 0 explícito.
+        outboundStopsCount: formVuelo.outboundStopsCount && Number(formVuelo.outboundStopsCount) > 0
+            ? Number(formVuelo.outboundStopsCount)
+            : null,
+        outboundStopPlace: formVuelo.outboundStopPlace?.trim() || null,
+        outboundStopWait: formVuelo.outboundStopWait?.trim() || null,
+        returnStopsCount: formVuelo.returnStopsCount && Number(formVuelo.returnStopsCount) > 0
+            ? Number(formVuelo.returnStopsCount)
+            : null,
+        returnStopPlace: formVuelo.returnStopPlace?.trim() || null,
+        returnStopWait: formVuelo.returnStopWait?.trim() || null,
+        // Plan de cuotas (spec 2026-08-14, ronda 2 §6): dato informativo del PDF, mismo
+        // criterio que Hotel — "" o "0" -> null (el PDF no imprime la línea sin plan cargado).
+        installmentsCount: formVuelo.installmentsCount && Number(formVuelo.installmentsCount) > 0
+            ? Number(formVuelo.installmentsCount)
+            : null,
+        installmentAmount: formVuelo.installmentAmount && Number(formVuelo.installmentAmount) > 0
+            ? Number(formVuelo.installmentAmount)
+            : null,
         // Bug 2 (QA 11/08/2026): Math.max(...,1) — sin esto, un "-1" tipeado a mano
         // (o pegado con el mouse) viajaba tal cual al backend. validarForm() ya lo
         // frena en pantalla; esto es la red final, antes de armar el payload.
@@ -596,6 +670,14 @@ function buildTransferPayload(formTraslado, canSeeCost) {
         // vehicleType: texto libre opcional; null cuando no se especificó.
         vehicleType: formTraslado.vehicleType || null,
         isRoundTrip: false,
+        // Plan de cuotas (spec 2026-08-14, ronda 2 §6): dato informativo del PDF, mismo
+        // criterio que Hotel — "" o "0" -> null (el PDF no imprime la línea sin plan cargado).
+        installmentsCount: formTraslado.installmentsCount && Number(formTraslado.installmentsCount) > 0
+            ? Number(formTraslado.installmentsCount)
+            : null,
+        installmentAmount: formTraslado.installmentAmount && Number(formTraslado.installmentAmount) > 0
+            ? Number(formTraslado.installmentAmount)
+            : null,
     };
     if (formTraslado.rateId) {
         payload.rateId = formTraslado.rateId;
@@ -634,6 +716,14 @@ function buildPackagePayload(formPaquete, canSeeCost) {
         // occupancyBase: "double", "triple", etc. El select ya almacena el valor backend.
         occupancyBase: formPaquete.roomBase || null,
         // operatorPaymentDeadline eliminado en F2: el aviso viene del backend (firstStartDate).
+        // Plan de cuotas (spec 2026-08-14, ronda 2 §6): dato informativo del PDF, mismo
+        // criterio que Hotel — "" o "0" -> null (el PDF no imprime la línea sin plan cargado).
+        installmentsCount: formPaquete.installmentsCount && Number(formPaquete.installmentsCount) > 0
+            ? Number(formPaquete.installmentsCount)
+            : null,
+        installmentAmount: formPaquete.installmentAmount && Number(formPaquete.installmentAmount) > 0
+            ? Number(formPaquete.installmentAmount)
+            : null,
     };
     if (formPaquete.rateId) {
         payload.rateId = formPaquete.rateId;
@@ -682,6 +772,14 @@ function buildAssistancePayload(formAsistencia, canSeeCost) {
         policyNumber: formAsistencia.voucherNumbers || null,
         notes: formAsistencia.upgrades || null,
         confirmationNumber: formAsistencia.confirmationNumber || null,
+        // Plan de cuotas (spec 2026-08-14, ronda 2 §6): dato informativo del PDF, mismo
+        // criterio que Hotel — "" o "0" -> null (el PDF no imprime la línea sin plan cargado).
+        installmentsCount: formAsistencia.installmentsCount && Number(formAsistencia.installmentsCount) > 0
+            ? Number(formAsistencia.installmentsCount)
+            : null,
+        installmentAmount: formAsistencia.installmentAmount && Number(formAsistencia.installmentAmount) > 0
+            ? Number(formAsistencia.installmentAmount)
+            : null,
     };
     if (formAsistencia.rateId) {
         payload.rateId = formAsistencia.rateId;
