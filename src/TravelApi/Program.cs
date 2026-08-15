@@ -598,6 +598,11 @@ builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
 // Obra "PDF de presupuesto" (2026-08-11/12), TANDA 3: renderer del PDF que ve el cliente. Espejo del
 // registro de IInvoicePdfService de arriba.
 builder.Services.AddScoped<IQuotePdfService, QuotePdfService>();
+// Maqueta "PDF minimalista elegante" (2026-08-14 §5): paleta de acento por destino, segundo consumidor
+// del cerebro IA. Scoped porque, como ServiceLineInterpreter, cuelga de IAiConnectionResolver (que lee
+// la base) — el cacheo por 30 dias vive en IMemoryCache (compartido, ya registrado con AddMemoryCache
+// mas arriba), no en el servicio en si.
+builder.Services.AddScoped<IDestinationPaletteService, DestinationPaletteService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IApprovalRequestService, ApprovalRequestService>();
 

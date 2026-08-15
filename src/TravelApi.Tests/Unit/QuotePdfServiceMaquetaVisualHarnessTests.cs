@@ -51,6 +51,37 @@ public class QuotePdfServiceMaquetaVisualHarnessTests
         File.WriteAllBytes(OutputPath, pdfBytes);
     }
 
+    /// <summary>
+    /// Maqueta "minimalista elegante" (spec 2026-08-14): mismo dataset de arriba, pero con un color de
+    /// ACENTO fijo (#0e7c86, categoría "caribe" del set curado de <c>DestinationPaletteService</c>) para
+    /// inspección visual de la paleta por destino sin depender de que haya IA configurada en la máquina
+    /// que corre el test. El PDF queda en disco para revisar a ojo (Read tool).
+    /// </summary>
+    [Fact]
+    public void GenerateQuotePdf_MaquetaSampleData_FixedCaribeAccent_SavedForVisualInspection()
+    {
+        var reserva = BuildSampleReserva();
+        var agencySettings = BuildSampleAgencySettings();
+        var conditions = BuildSampleConditions();
+
+        var service = new QuotePdfService();
+
+        var pdfBytes = service.GenerateQuotePdf(
+            reserva: reserva,
+            agencySettings: agencySettings,
+            conditions: conditions,
+            logoBytes: null,
+            porPersona: true,
+            cantidadPasajerosCargados: reserva.AdultCount + reserva.ChildCount + reserva.InfantCount,
+            accentColorHex: "#0e7c86");
+
+        Assert.NotEmpty(pdfBytes);
+        Assert.Equal("%PDF-", System.Text.Encoding.ASCII.GetString(pdfBytes, 0, 5));
+
+        var path = Path.Combine(Path.GetTempPath(), "pdf-maqueta-check-caribe.pdf");
+        File.WriteAllBytes(path, pdfBytes);
+    }
+
     // ================================================================================
     // Casos borde del render (no cubiertos por la muestra "espejo perfecto" de arriba): la lógica de
     // CADA elemento omitido ya está probada como función pura en QuoteBudgetPdfRulesTests — esto

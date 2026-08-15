@@ -37,4 +37,16 @@
     <InternalsVisibleTo Include="TravelApi.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tipografia Marcellus (Google Fonts, licencia SIL OFL 1.1, ver Assets/Fonts/OFL.txt al lado):
+         spec "PDF minimalista elegante" (2026-08-14), SOLO para el wordmark de la agencia, el destino
+         del hero y el monto de la tarjeta de total en QuotePdfService. Recurso EMBEBIDO (no un archivo
+         suelto en el contenedor de produccion) para que el .dll la lleve adentro sin depender de que el
+         Dockerfile la copie a mano. QuotePdfService la registra en QuestPDF leyendola con
+         GetManifestResourceStream, con try/catch: si el registro falla, el PDF sale igual con la fuente
+         default (jamas se rompe la emision por una fuente decorativa).
+    -->
+    <EmbeddedResource Include="Assets\Fonts\Marcellus-Regular.ttf" />
+  </ItemGroup>
+
 </Project>

@@ -95,6 +95,38 @@ public static class QuoteBudgetPdfRules
     }
 
     /// <summary>
+    /// Subtítulo del bloque de hotel en la maqueta minimalista elegante (spec 2026-08-14 §1):
+    /// "Junior Suite · All inclusive · 7 noches". Junta habitación + régimen + noches, cada parte SOLO
+    /// si el vendedor la cargó (regla espejo, decisión #8) — sin ninguna de las tres, no hay subtítulo.
+    /// </summary>
+    public static string? BuildHotelSubtitleLine(HotelBooking hotel)
+    {
+        ArgumentNullException.ThrowIfNull(hotel);
+        var parts = new List<string>();
+
+        var roomDetail = BuildHotelRoomDetail(hotel);
+        if (roomDetail is not null) parts.Add(roomDetail);
+
+        if (!string.IsNullOrWhiteSpace(hotel.MealPlan)) parts.Add(hotel.MealPlan.Trim());
+
+        if (hotel.Nights > 0)
+        {
+            parts.Add(hotel.Nights == 1 ? "1 noche" : $"{hotel.Nights} noches");
+        }
+
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
+
+    /// <summary>"Doble – Superior" (habitación + categoría). Cada dato es independiente: sin ninguno, null.</summary>
+    private static string? BuildHotelRoomDetail(HotelBooking hotel)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(hotel.RoomType)) parts.Add(hotel.RoomType.Trim());
+        if (!string.IsNullOrWhiteSpace(hotel.RoomCategory)) parts.Add(hotel.RoomCategory.Trim());
+        return parts.Count == 0 ? null : string.Join(" – ", parts);
+    }
+
+    /// <summary>
     /// "1.450" (miles con punto, SIN decimales) para un monto redondo; "1.450,50" (coma decimal,
     /// estilo es-AR) cuando el monto tiene centavos de verdad. La maqueta pide ocultar el ",00" —
     /// nadie escribe un presupuesto a mano con "1.450,00", se ve mas prolijo "1.450" — pero un centavo
@@ -491,6 +523,149 @@ public static class QuoteBudgetPdfRules
     private static bool IsLiveGenericService(PackageBooking p) => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(p.Status));
     private static bool IsLiveGenericService(AssistanceBooking a) => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapGenericStatus(a.Status));
     private static bool IsLiveFlightService(FlightSegment f) => WorkflowStatusHelper.CountsForQuotedTotal(WorkflowStatusHelper.MapFlightStatus(f.Status));
+
+    // ============================================================================================
+    // Maqueta "minimalista elegante" (spec firmada 2026-08-14, docs/ux/2026-08-14-spec-pdf-minimalista-
+    // elegante.md): funciones PURAS nuevas para el hero, la tarjeta de total y la paleta por destino.
+    // Mismo criterio de siempre — nada se inventa, todo sale de datos ya cargados.
+    // ============================================================================================
+
+    /// <summary>Meses cortos en castellano SIN punto ("feb", no "feb."), para la línea meta del hero.</summary>
+    private static readonly string[] ShortMonthNamesEs =
+    {
+        "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic",
+    };
+
+    /// <summary>
+    /// Tamaño del destino en el hero según su largo (§1 de la spec): 55pt hasta 14 caracteres, 40pt hasta
+    /// 24, 30pt si es más largo — un nombre de destino corto ("PUNTA CANA") se puede permitir ser gigante
+    /// sin desbordar la página; uno largo ("SAN CARLOS DE BARILOCHE") necesita achicarse.
+    /// </summary>
+    public static float ResolveHeroDestinationFontSize(string destinationTitle)
+    {
+        ArgumentNullException.ThrowIfNull(destinationTitle);
+        var length = destinationTitle.Trim().Length;
+
+        if (length <= 14) return 55f;
+        if (length <= 24) return 40f;
+        return 30f;
+    }
+
+    /// <summary>
+    /// Eyebrow del hero ("PROPUESTA DE VIAJE" o "PROPUESTA DE VIAJE · 7 NOCHES"): las noches solo se
+    /// agregan si se conocen (mismo dato que ya usa <see cref="BuildSalidaLine"/> del lado del hotel) —
+    /// sin hotel cargado, o sin <c>Nights</c> cargado en ese hotel, el eyebrow sale sin la parte de
+    /// noches en vez de inventar un número.
+    /// </summary>
+    public static string BuildHeroEyebrowText(int? hotelNights)
+    {
+        const string baseText = "PROPUESTA DE VIAJE";
+        if (!hotelNights.HasValue || hotelNights.Value <= 0) return baseText;
+
+        var nightsLabel = hotelNights.Value == 1 ? "1 NOCHE" : $"{hotelNights.Value} NOCHES";
+        return $"{baseText} · {nightsLabel}";
+    }
+
+    /// <summary>
+    /// Línea meta del hero ("27 feb — 6 mar 2027 · 2 pasajeros · República Dominicana"): junta SOLO las
+    /// partes con dato real, separadas por " · " — sin fechas, sin pasajeros cargados (0) o sin país, esa
+    /// parte puntual no aparece (regla espejo, decisión #8: nunca se completa lo que nadie cargó).
+    /// </summary>
+    public static string? BuildHeroMetaLine(DateTime? startDate, DateTime? endDate, int totalPassengers, string? country)
+    {
+        var parts = new List<string>();
+
+        var dateRange = BuildHeroDateRange(startDate, endDate);
+        if (dateRange is not null) parts.Add(dateRange);
+
+        if (totalPassengers > 0)
+        {
+            parts.Add(totalPassengers == 1 ? "1 pasajero" : $"{totalPassengers} pasajeros");
+        }
+
+        var trimmedCountry = string.IsNullOrWhiteSpace(country) ? null : country.Trim();
+        if (trimmedCountry is not null) parts.Add(trimmedCountry);
+
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// "27 feb — 6 mar 2027": el año se imprime UNA sola vez, al final, salvo que el viaje cruce de año
+    /// (ahí se imprime en las dos puntas para que no quede ambiguo). Si además cae dentro del mismo mes,
+    /// el mes tampoco se repite ("10 — 15 feb 2027"). Sin las dos fechas cargadas → null.
+    /// </summary>
+    private static string? BuildHeroDateRange(DateTime? startDate, DateTime? endDate)
+    {
+        if (!startDate.HasValue || !endDate.HasValue) return null;
+
+        var start = startDate.Value.Date;
+        var end = endDate.Value.Date;
+        var startMonth = ShortMonthNamesEs[start.Month - 1];
+        var endMonth = ShortMonthNamesEs[end.Month - 1];
+
+        if (start.Year != end.Year)
+        {
+            return $"{start.Day} {startMonth} {start.Year} — {end.Day} {endMonth} {end.Year}";
+        }
+
+        if (start.Month == end.Month)
+        {
+            return $"{start.Day} — {end.Day} {endMonth} {end.Year}";
+        }
+
+        return $"{start.Day} {startMonth} — {end.Day} {endMonth} {end.Year}";
+    }
+
+    /// <summary>
+    /// Ciudades/destinos de los servicios de la reserva, para prestarle contexto a la IA que elige la
+    /// paleta de color por destino (§5 de la spec) — SOLO ciudades, nada de pasajeros ni datos internos
+    /// (gate data-exposure: lo que entra acá viaja tal cual al prompt del modelo).
+    /// </summary>
+    public static IReadOnlyList<string> CollectDestinationCityHints(Reserva reserva)
+    {
+        ArgumentNullException.ThrowIfNull(reserva);
+
+        var hints = new List<string>();
+
+        foreach (var hotel in reserva.HotelBookings ?? new List<HotelBooking>())
+        {
+            if (!IsLiveGenericService(hotel)) continue;
+            if (!string.IsNullOrWhiteSpace(hotel.City)) hints.Add(hotel.City.Trim());
+        }
+
+        foreach (var package in reserva.PackageBookings ?? new List<PackageBooking>())
+        {
+            if (!IsLiveGenericService(package)) continue;
+            if (!string.IsNullOrWhiteSpace(package.Destination)) hints.Add(package.Destination.Trim());
+        }
+
+        foreach (var flight in reserva.FlightSegments ?? new List<FlightSegment>())
+        {
+            if (!IsLiveFlightService(flight)) continue;
+            if (!string.IsNullOrWhiteSpace(flight.DestinationCity)) hints.Add(flight.DestinationCity.Trim());
+        }
+
+        return hints
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6) // tope chico: es contexto para clasificar en UNA palabra, no un volcado del itinerario.
+            .ToList();
+    }
+
+    /// <summary>
+    /// Nota chica de la tarjeta de total ("Incluye vuelos, hotel y traslados."): se arma SOLO con las
+    /// secciones que el renderer efectivamente dibujó arriba — nunca se afirma que algo está incluido si
+    /// no hay una sección real con esa plata sumada al total.
+    /// </summary>
+    public static string? BuildTotalCardIncludesNote(bool hasFlights, bool hasHotel, bool hasTransfers, bool hasOthers)
+    {
+        var parts = new List<string>();
+        if (hasFlights) parts.Add("vuelos");
+        if (hasHotel) parts.Add("hotel");
+        if (hasTransfers) parts.Add("traslados");
+        if (hasOthers) parts.Add("otros servicios");
+
+        return parts.Count == 0 ? null : "Incluye " + JoinHumanList(parts) + ".";
+    }
 }
 
 /// <summary>Precio ya resuelto para imprimir: el monto y si terminó siendo "por persona" o "total" (ver <see cref="QuoteBudgetPdfRules.ResolveDisplayPrice"/>).</summary>

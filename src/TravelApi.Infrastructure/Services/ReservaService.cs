@@ -52,6 +52,11 @@ public class ReservaService : IReservaService
     // inyecta DI. No hay ciclo: ni QuotePdfService ni ReportService dependen de IReservaService.
     private readonly IQuotePdfService? _quotePdfService;
     private readonly IReportService? _reportService;
+    // Maqueta "PDF minimalista elegante" (2026-08-14 §5): resuelve el color de acento por destino ANTES
+    // de llamar al renderer (que no hace I/O). Opcional por el mismo motivo que los dos de arriba: null
+    // en runtime significa "esta instalación no tiene la ayuda de IA" y el renderer cae solo al color
+    // de respaldo de AgencySettings.PdfBandColorHex — nunca rompe la emisión del PDF.
+    private readonly IDestinationPaletteService? _destinationPaletteService;
 
     /// <summary>
     /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Se usa para
@@ -75,7 +80,8 @@ public class ReservaService : IReservaService
         IAuditService? auditService = null,
         IBookingCancellationService? cancellationService = null,
         IQuotePdfService? quotePdfService = null,
-        IReportService? reportService = null)
+        IReportService? reportService = null,
+        IDestinationPaletteService? destinationPaletteService = null)
     {
         _context = context;
         _mapper = mapper;
@@ -91,6 +97,7 @@ public class ReservaService : IReservaService
         _cancellationService = cancellationService;
         _quotePdfService = quotePdfService;
         _reportService = reportService;
+        _destinationPaletteService = destinationPaletteService;
     }
 
     /// <summary>
@@ -910,7 +917,18 @@ public class ReservaService : IReservaService
         // cargan recien en "En gestion"), asi que la cantidad es la declarada por categoria.
         var cantidadPasajerosCargados = reserva.AdultCount + reserva.ChildCount + reserva.InfantCount;
 
-        var pdfBytes = _quotePdfService.GenerateQuotePdf(reserva, agencySettings, conditions, logoBytes, porPersona, cantidadPasajerosCargados);
+        // Paleta por destino (spec "PDF minimalista elegante", 2026-08-14 §5): se resuelve ACÁ, antes de
+        // llamar al renderer (que no hace I/O). Sin servicio de paleta disponible (ctor de test, o
+        // instalación sin IA) el color queda null y QuotePdfService cae solo al respaldo de la agencia.
+        string? accentColorHex = null;
+        if (_destinationPaletteService is not null)
+        {
+            var destinationTitle = QuoteBudgetPdfRules.ResolveDestinationTitle(reserva.HotelBookings, reserva.PackageBookings);
+            var cityHints = QuoteBudgetPdfRules.CollectDestinationCityHints(reserva);
+            accentColorHex = await _destinationPaletteService.ResolveAccentColorHexAsync(destinationTitle, cityHints, ct);
+        }
+
+        var pdfBytes = _quotePdfService.GenerateQuotePdf(reserva, agencySettings, conditions, logoBytes, porPersona, cantidadPasajerosCargados, accentColorHex);
         return (pdfBytes, reserva.NumeroReserva);
     }
 
