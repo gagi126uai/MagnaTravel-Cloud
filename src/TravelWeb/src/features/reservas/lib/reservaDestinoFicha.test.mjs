@@ -7,7 +7,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listarDestinosDeServiciosCargados, armarLineaDestinoYPasajeros } from "./reservaDestinoFicha.js";
+import {
+  listarDestinosDeServiciosCargados,
+  armarLineaDestinoYPasajeros,
+  armarAvisoPasajerosFaltantes,
+} from "./reservaDestinoFicha.js";
 
 test("sin servicios cargados → lista de destinos vacía", () => {
   assert.deepEqual(listarDestinosDeServiciosCargados({}), []);
@@ -77,4 +81,46 @@ test("armarLineaDestinoYPasajeros: varios destinos distintos se unen con '·'", 
     passengers: [{}],
   };
   assert.equal(armarLineaDestinoYPasajeros(reserva), "Bariloche · Mendoza · 1 pasajero");
+});
+
+// ─── Total DECLARADO (ADR-031) por sobre cargados (Tanda A UX 2026-08-16) ───
+
+test("armarLineaDestinoYPasajeros: con declarado (adultCount+childCount+infantCount) > 0, prioriza el declarado sobre los cargados", () => {
+  const reserva = {
+    hotelBookings: [{ city: "Mendoza" }],
+    adultCount: 2,
+    childCount: 1,
+    infantCount: 0,
+    passengers: [{ fullName: "Titular" }], // solo el titular tiene nombre cargado todavía
+  };
+  assert.equal(armarLineaDestinoYPasajeros(reserva), "Mendoza · 3 pasajeros");
+});
+
+test("armarLineaDestinoYPasajeros: declarado en 0 (reserva vieja, sin ADR-031) cae al conteo de cargados", () => {
+  const reserva = {
+    hotelBookings: [{ city: "Mendoza" }],
+    passengers: [{}, {}],
+  };
+  assert.equal(armarLineaDestinoYPasajeros(reserva), "Mendoza · 2 pasajeros");
+});
+
+// ─── armarAvisoPasajerosFaltantes ───────────────────────────────────────────
+
+test("armarAvisoPasajerosFaltantes: declarado > cargados -> texto en plural", () => {
+  const reserva = { adultCount: 2, childCount: 2, infantCount: 0, passengers: [{ fullName: "Titular" }] };
+  assert.equal(armarAvisoPasajerosFaltantes(reserva), "Faltan cargar 3 pasajeros");
+});
+
+test("armarAvisoPasajerosFaltantes: falta exactamente 1 -> singular", () => {
+  const reserva = { adultCount: 2, childCount: 0, infantCount: 0, passengers: [{ fullName: "Titular" }] };
+  assert.equal(armarAvisoPasajerosFaltantes(reserva), "Falta cargar 1 pasajero");
+});
+
+test("armarAvisoPasajerosFaltantes: declarado y cargados coinciden -> null (nada que avisar)", () => {
+  const reserva = { adultCount: 2, childCount: 0, infantCount: 0, passengers: [{}, {}] };
+  assert.equal(armarAvisoPasajerosFaltantes(reserva), null);
+});
+
+test("armarAvisoPasajerosFaltantes: sin nada declarado (reserva vieja) -> null, no inventa un faltante", () => {
+  assert.equal(armarAvisoPasajerosFaltantes({ passengers: [{}] }), null);
 });

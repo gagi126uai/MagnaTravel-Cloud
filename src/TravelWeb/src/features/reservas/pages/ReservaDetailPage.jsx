@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Undo2, Users, Plus, RefreshCw, Check } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Undo2, Users, Plus, RefreshCw, Check, Lock } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -453,10 +453,13 @@ function EditarEliminarCobro({ payment, puedeEditar = true, onEditarCobro, onDes
         </button>
       )}
       {/* Renglón con candado, SIEMPRE a la vista (nada de tooltip, regla 2026-06-08).
-          Texto real del backend tal cual, sin reescribirlo (MutationGuards.cs / DeleteGuards.cs). */}
+          Texto real del backend tal cual, sin reescribirlo (MutationGuards.cs / DeleteGuards.cs).
+          Ícono Lock de lucide en vez del emoji 🔒 (Tanda A UX 2026-08-16, B.3.4/E.8:
+          se van todos los emojis, un solo juego de íconos lucide). */}
       {motivo && (
-        <p className="w-full text-[11px] leading-snug text-slate-500 dark:text-slate-400" role="note">
-          🔒 {motivo}
+        <p className="flex w-full items-start gap-1 text-[11px] leading-snug text-slate-500 dark:text-slate-400" role="note">
+          <Lock className="mt-0.5 h-3 w-3 flex-shrink-0" aria-hidden="true" />
+          {motivo}
         </p>
       )}
     </>

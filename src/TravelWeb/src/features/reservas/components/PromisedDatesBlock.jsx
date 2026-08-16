@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Pencil, Lock } from 'lucide-react';
+import { Plus, Pencil, Lock, AlertTriangle } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { api } from '../../../api';
 import { showSuccess } from '../../../alerts';
@@ -84,10 +84,18 @@ export function PromisedDatesBlock({ reserva, publicId, canEdit, candadoActivo, 
     };
 
     // ─── Estado 2: formulario en línea ─────────────────────────────────────────
+    // `w-full` (Tanda A UX 2026-08-16, en vez del `w-fit` que tenía antes): este
+    // bloque vive dentro de TripDatesRow, que comparte renglón con el botón
+    // "Reprogramar viaje" (ver ReservaHeader.jsx). Si el form quedaba `w-fit`, al
+    // abrirse ensanchaba esa columna y "Reprogramar viaje" saltaba a mitad de
+    // línea, en diagonal. Con `w-full` (acotado por `max-w-xl` para que no quede
+    // gigante en pantallas anchas) el form SIEMPRE ocupa todo el ancho disponible
+    // del renglón compartido, así el navegador lo manda limpio a su propia línea
+    // completa — "Reprogramar viaje" cae prolijo debajo, nunca a un costado raro.
     if (mostrarFormulario) {
         return (
             <div
-                className="w-fit rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900"
+                className="w-full max-w-xl rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900"
                 data-testid="promised-dates-form"
             >
                 <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -202,10 +210,11 @@ export function PromisedDatesBlock({ reserva, publicId, canEdit, candadoActivo, 
                     (P-16) — solo agrega la alerta de que hay una diferencia. */}
                 {discrepa && (
                     <p
-                        className="text-xs font-semibold text-amber-700 dark:text-amber-400"
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-400"
                         data-testid="promised-dates-discrepancia"
                     >
-                        ⚠ Lo prometido al cliente no coincide con los servicios cargados
+                        <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                        Lo prometido al cliente no coincide con los servicios cargados
                     </p>
                 )}
             </div>

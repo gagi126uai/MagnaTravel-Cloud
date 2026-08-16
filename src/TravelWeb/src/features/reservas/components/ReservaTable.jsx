@@ -12,13 +12,12 @@ import {
   DataGridHeaderRow,
   DataGridRow,
 } from "../../../components/ui/DataGrid";
-import { ReservaStatusBadge, ReservaEstadoSello } from "./ReservaStatusBadge";
+import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSES } from "../lib/reservaMoneyDisplay";
-import { debeMostrarComoSello } from "../lib/reservaEstadoSelloLogic";
 
 /**
  * Tabla del listado de Reservas (versión de escritorio). Tanda 1 rediseño
@@ -51,10 +50,12 @@ import { debeMostrarComoSello } from "../lib/reservaEstadoSelloLogic";
  * nada) y dice "pasajero(s)" entero en vez de la abreviatura "pax" · los importes
  * de Finanzas llevan el cartelito de moneda (CurrencyBadge) al lado en vez del
  * símbolo pegado al número, con las cifras en `tabular-nums` para que las comas
- * queden alineadas leyendo la columna de arriba a abajo (P-3⭐) · el Estado de las
- * reservas ya sin efecto (Anulada/Perdida/Finalizada) se reemplaza por el SELLO en
- * vez del chip de color (ver `debeMostrarComoSello`/`ReservaEstadoSello`). La
- * columna Acciones ("Archivar" + su globito) NO se tocó en esta tanda.
+ * queden alineadas leyendo la columna de arriba a abajo (P-3⭐). La columna
+ * Acciones ("Archivar" + su globito) NO se tocó en esta tanda.
+ *
+ * Decisión del dueño (16/08): el "sello" tipo pasaporte para Anulada/Perdida/
+ * Finalizada se eliminó del sistema — el Estado siempre va con el chip de color
+ * (ver `ReservaStatusBadge`), sin excepciones.
  */
 export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, className }) {
   return (
@@ -145,13 +146,9 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, clas
                   </div>
                 </DataGridCell>
                 <DataGridCell>
-                  {/* El sello reemplaza al chip SOLO en Anulada/Perdida/Finalizada — los
-                      estados vivos (y Archivada) siguen con el chip de toda la vida. */}
-                  {debeMostrarComoSello(reserva) ? (
-                    <ReservaEstadoSello reserva={reserva} />
-                  ) : (
-                    <ReservaStatusBadge status={reserva.status} mostrarCandado />
-                  )}
+                  {/* Decisión del dueño (16/08): se retira el sello del sistema por
+                      completo — todos los estados van con el chip de molde único. */}
+                  <ReservaStatusBadge status={reserva.status} mostrarCandado />
                 </DataGridCell>
                 <DataGridCell>
                   <div className="flex flex-col">

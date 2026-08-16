@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, AlertTriangle, Undo2, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal, Ban, FileText, Send, Loader2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ArrowLeft, AlertTriangle, Undo2, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward, MoreHorizontal, Ban, FileText, Send, Loader2, Archive } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
@@ -11,12 +12,10 @@ import { TripDatesRow } from "./TripDatesRow";
 import { isAdmin } from "../../../auth";
 import { faltaTitularConNombre } from "../lib/pasajeroHint";
 import { isReservaAnulada } from "../moneyStatus";
-import { armarLineaDestinoYPasajeros } from "../lib/reservaDestinoFicha";
+import { armarLineaDestinoYPasajeros, armarAvisoPasajerosFaltantes } from "../lib/reservaDestinoFicha";
 import { palabraTituloReserva, debeOcultarChapitaEstado } from "../lib/reservaHeaderTituloLogic";
 import {
     MODO_PRECIO_PRESUPUESTO,
-    etiquetaChipPrecioPresupuesto,
-    alternarModoPrecioPresupuesto,
     queryParamPricingParaModo,
     porPersonaBooleanParaModo,
 } from "../lib/budgetPdfLogic";
@@ -427,24 +426,34 @@ export function ReservaHeader({
     const palabraTitulo = palabraTituloReserva(reserva.status);
     const ocultarChapitaDeEstado = debeOcultarChapitaEstado(reserva.status);
 
-    // ─── "Emitir PDF" / "Enviar por WhatsApp" (spec 2026-08-12, botones firmados en
-    // §5 de la spec de presupuesto + interruptor "por persona/total" en §3 de la spec de
-    // formas de pago, OPCIÓN A elegida por Gastón) ────────────────────────────────────
-    // El interruptor NO persiste entre visitas a propósito (useState local, nunca se
-    // guarda en ningún lado): cada vez que se abre la ficha vuelve a "Por persona", el
-    // default firmado — así nunca sorprende con un formato viejo elegido semanas atrás.
-    const [modoPrecioPresupuesto, setModoPrecioPresupuesto] = useState(MODO_PRECIO_PRESUPUESTO.PorPersona);
+    // ─── "Emitir PDF" / "Enviar por WhatsApp" (decisión del dueño, 2026-08-16 —
+    // SUPERSEDE el interruptor suelto que había antes en esta cabecera) ────────────────
+    // Ahora "Por persona" vs "Total del viaje" ya NO es un interruptor que el vendedor
+    // deja seteado de antemano: se pregunta EN EL MOMENTO de emitir, con un renglón que
+    // se despliega debajo de la botonera (ver más abajo, `eleccionPrecioPendiente`).
+    // `eleccionPrecioPendiente` guarda CUÁL de los dos botones abrió la elección
+    // ('pdf' | 'whatsapp' | null) — así, cuando el vendedor elige el formato, sabemos
+    // qué acción disparar sin volver a preguntar nada.
+    const [eleccionPrecioPendiente, setEleccionPrecioPendiente] = useState(null);
+    // Si la reserva deja de ser Presupuesto con el renglón de elección abierto (ej. el
+    // vendedor tocó "El cliente aceptó" en otra pestaña y esta se refrescó), los botones
+    // que lo abren desaparecen pero el renglón quedaría huérfano en pantalla: se cierra.
+    useEffect(() => {
+        if (reserva?.status !== 'Budget') {
+            setEleccionPrecioPendiente(null);
+        }
+    }, [reserva?.status]);
     // Candados anti doble click (mismo criterio que issuingId/sendingVoucherId en
     // ReservaVoucherTab.jsx): mientras uno de los dos está en curso, ese botón se apaga y
     // muestra spinner — un segundo click no dispara una segunda descarga/un segundo envío.
     const [generandoPdfPresupuesto, setGenerandoPdfPresupuesto] = useState(false);
     const [enviandoPresupuestoWhatsApp, setEnviandoPresupuestoWhatsApp] = useState(false);
 
-    const handleEmitirPdfPresupuesto = async () => {
+    const handleEmitirPdfPresupuesto = async (modo) => {
         if (generandoPdfPresupuesto) return;
         setGenerandoPdfPresupuesto(true);
         try {
-            const pricing = queryParamPricingParaModo(modoPrecioPresupuesto);
+            const pricing = queryParamPricingParaModo(modo);
             const blob = await api.get(`/reservas/${reserva.publicId}/budget-pdf?pricing=${pricing}`, {
                 responseType: "blob",
             });
@@ -460,13 +469,13 @@ export function ReservaHeader({
     // /messages/…): acá el destinatario no es ambiguo (siempre el cliente/pagador de la
     // reserva, no hay selector de pasajero como en el voucher), así que el back lo
     // resuelve solo — un único click, sin ventana intermedia.
-    const handleEnviarPresupuestoWhatsApp = async () => {
+    const handleEnviarPresupuestoWhatsApp = async (modo) => {
         if (enviandoPresupuestoWhatsApp) return;
         setEnviandoPresupuestoWhatsApp(true);
         try {
             await api.post("/messages/budget", {
                 reservaId: reserva.publicId,
-                porPersona: porPersonaBooleanParaModo(modoPrecioPresupuesto),
+                porPersona: porPersonaBooleanParaModo(modo),
             });
             showSuccess(`Presupuesto enviado por WhatsApp a ${reserva.customerName}.`);
         } catch (error) {
@@ -478,8 +487,30 @@ export function ReservaHeader({
         }
     };
 
+    // Se dispara al tocar "Por persona" o "Total del viaje" en el renglón de elección.
+    // Cierra el renglón ANTES de llamar al backend — así, aunque la emisión tarde, el
+    // vendedor ve que su elección "se tomó" al toque (mismo criterio que el resto de
+    // los flujos de esta ficha: la UI reacciona al click, no espera la respuesta del
+    // servidor para dar feedback de que la acción arrancó).
+    const handleElegirPrecioPresupuesto = (modo) => {
+        const accionQueDisparoLaEleccion = eleccionPrecioPendiente;
+        setEleccionPrecioPendiente(null);
+        if (accionQueDisparoLaEleccion === 'pdf') {
+            handleEmitirPdfPresupuesto(modo);
+        } else if (accionQueDisparoLaEleccion === 'whatsapp') {
+            handleEnviarPresupuestoWhatsApp(modo);
+        }
+    };
+
     return (
-        <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        // `sm:items-start` (antes `sm:items-center`, Tanda A UX 2026-08-16): con
+        // `items-center` la botonera de la derecha se RE-CENTRABA verticalmente cada
+        // vez que el bloque izquierdo crecía (ej. al abrir el form de "fecha
+        // prometida"), lo que hacía "temblar" el header. Con `items-start` la
+        // botonera queda anclada arriba y ya no se mueve — el `sm:mt-7` de la
+        // botonera (más abajo) la alinea visualmente con el título en vez de con
+        // el link chiquito "Volver al listado" que está por encima de este.
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div>
                 <button
                     onClick={onBack}
@@ -519,10 +550,25 @@ export function ReservaHeader({
                     )}
                 </div>
 
-                {/* Cliente en negrita — mismo lugar de siempre. */}
-                <p className="text-base font-bold text-slate-900 dark:text-white mt-2">
-                    {reserva.customerName}
-                </p>
+                {/* Cliente en negrita — mismo lugar de siempre. Tanda A UX 2026-08-16:
+                    si hay customerPublicId, el nombre pasa a ser un link discreto a la
+                    cuenta corriente del cliente (mismo destino y mismo gate que el link
+                    "Ver cuenta del cliente" de EstadoCuentaResumen.jsx — ahí NO hay chequeo
+                    de permiso adicional, solo se pide que el DTO traiga el publicId, así
+                    que acá se replica exactamente eso, sin inventar un permiso que no
+                    existe). Sin publicId queda como texto plano, igual que antes. */}
+                {reserva.customerPublicId ? (
+                    <Link
+                        to={`/customers/${reserva.customerPublicId}/account`}
+                        className="mt-2 inline-block text-base font-bold text-slate-900 transition-colors hover:text-primary hover:underline dark:text-white dark:hover:text-primary"
+                    >
+                        {reserva.customerName}
+                    </Link>
+                ) : (
+                    <p className="text-base font-bold text-slate-900 dark:text-white mt-2">
+                        {reserva.customerName}
+                    </p>
+                )}
 
                 {/* P7: "MUERE" el nombre autogenerado tipo "File F-2026-…" (reserva.name) —
                     la palabra "file" no se ve más acá. En su lugar, esta línea gris muestra
@@ -539,6 +585,21 @@ export function ReservaHeader({
                 ) : (
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5" data-testid="ficha-destino-o-anulados">
                         {armarLineaDestinoYPasajeros(reserva)}
+                    </p>
+                )}
+
+                {/* Aviso discreto (Tanda A UX 2026-08-16): cuando lo DECLARADO (ADR-031,
+                    "somos 4") todavía no coincide con los pasajeros que ya tienen nombre
+                    cargado. Es información, no una leyenda decorativa (P-9/P-15) — texto
+                    a la vista, sin tooltip, en una sola línea. No aplica en Anulada: ahí
+                    la línea de arriba ya muestra el contador de servicios anulados, no
+                    tiene sentido pedir pasajeros de un viaje que quedó sin efecto. */}
+                {!isReservaAnulada(reserva) && armarAvisoPasajerosFaltantes(reserva) && (
+                    <p
+                        className="mt-0.5 truncate text-[11px] text-slate-400 dark:text-slate-500"
+                        data-testid="aviso-pasajeros-faltantes"
+                    >
+                        {armarAvisoPasajerosFaltantes(reserva)}
                     </p>
                 )}
 
@@ -612,7 +673,13 @@ export function ReservaHeader({
                 </div>
             </div>
 
-            {/* Botonera de acciones */}
+            {/* Botonera de acciones + (si corresponde) el renglón de elección de precio.
+                `sm:mt-7` compensa el cambio a `sm:items-start` de arriba: ese offset es
+                aproximadamente el alto del link "Volver al listado" + su margen (texto
+                chico + mb-2), así la botonera queda alineada con el título en vez de con
+                ese link. `flex-col` apila la botonera y (cuando está abierto) el renglón
+                de elección DEBAJO, cada uno en su propia línea — nunca se pisan. */}
+            <div className="flex flex-col items-end gap-2 sm:mt-7">
             {isArchived ? (
                 <div className="flex items-center gap-2 px-4 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
                     <AlertTriangle className="w-4 h-4 text-slate-500" />
@@ -704,32 +771,24 @@ export function ReservaHeader({
                         );
                     })()}
 
-                    {/* "Emitir PDF" / "Enviar por WhatsApp" (spec 2026-08-12, §5 de la spec de
-                        presupuesto): SOLO en etapa Presupuesto, inmediatamente después del botón
-                        principal "El cliente aceptó" y ANTES del separador de acciones
-                        secundarias (Perdida/Archivar/⋯). Ninguno de los dos es relleno — la
-                        principal sigue siendo la única con ese peso visual (B.3 regla de oro). */}
+                    {/* "Emitir PDF" / "Enviar por WhatsApp" (SOLO en etapa Presupuesto,
+                        inmediatamente después del botón principal "El cliente aceptó" y
+                        ANTES del separador de acciones secundarias Perdida/Archivar/⋯).
+                        Ninguno de los dos es relleno — la principal sigue siendo la única
+                        con ese peso visual (B.3 regla de oro).
+
+                        Decisión del dueño (16/08): "Por persona/Total del viaje" ya NO es
+                        un interruptor que se deja seteado antes de tocar el botón — se
+                        pregunta EN EL MOMENTO de emitir. Estos dos botones ya no ejecutan
+                        la acción directo: abren el renglón de elección de más abajo
+                        (`eleccionPrecioPendiente`), que decide el formato y recién ahí
+                        dispara la emisión real. */}
                     {reserva.status === 'Budget' && (
                         <>
-                            {/* Interruptor "Por persona / Total del viaje" (§3 de la spec de
-                                formas de pago, OPCIÓN A elegida por Gastón): molde de chip B.5
-                                (24px, redondo, borde fino) reutilizado como control interactivo
-                                — el vendedor ve QUÉ formato va a emitir antes de tocar el botón. */}
-                            <button
-                                type="button"
-                                onClick={() => setModoPrecioPresupuesto(alternarModoPrecioPresupuesto)}
-                                data-testid="reserva-chip-modo-precio-presupuesto"
-                                aria-pressed={modoPrecioPresupuesto === MODO_PRECIO_PRESUPUESTO.Total}
-                                title="Cambia si el PDF muestra el precio por persona o el total del viaje"
-                                className="inline-flex h-6 items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                            >
-                                {etiquetaChipPrecioPresupuesto(modoPrecioPresupuesto)}
-                            </button>
-
                             <Button
                                 type="button"
                                 variant="outline"
-                                onClick={handleEmitirPdfPresupuesto}
+                                onClick={() => setEleccionPrecioPendiente('pdf')}
                                 disabled={generandoPdfPresupuesto}
                                 data-testid="reserva-action-emitir-pdf-presupuesto"
                             >
@@ -744,7 +803,7 @@ export function ReservaHeader({
                             <Button
                                 type="button"
                                 variant="outline"
-                                onClick={handleEnviarPresupuestoWhatsApp}
+                                onClick={() => setEleccionPrecioPendiente('whatsapp')}
                                 disabled={enviandoPresupuestoWhatsApp}
                                 data-testid="reserva-action-enviar-presupuesto-whatsapp"
                             >
@@ -866,7 +925,9 @@ export function ReservaHeader({
                             problema que el Button de shadcn en ReservaTable.jsx); el envoltorio
                             sí lo recibe siempre.
                             Guía UX 2026-06-22: ocultar en Traveling — archivar es para estados
-                            terminales (Finalizada/Perdida/Anulada), no para algo en curso. */}
+                            terminales (Finalizada/Perdida/Anulada), no para algo en curso.
+                            El emoji 🗄 se reemplaza por el ícono Archive de lucide (Tanda A UX
+                            2026-08-16, mismo patrón que "Anular reserva" con Ban). */}
                         {!esTraveling && (
                             <span title={archiveBlockReason || undefined}>
                                 <button
@@ -875,7 +936,7 @@ export function ReservaHeader({
                                     aria-label="Archivar reserva"
                                     className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
                                 >
-                                    <span aria-hidden="true">🗄</span>
+                                    <Archive className="w-4 h-4" aria-hidden="true" />
                                     Archivar
                                 </button>
                             </span>
@@ -889,6 +950,50 @@ export function ReservaHeader({
                     </div>
                 </div>
             )}
+
+            {/* Renglón de elección "Por persona / Total del viaje" (decisión del dueño,
+                16/08/2026): aparece SOLO cuando se tocó "Emitir PDF" o "Enviar por
+                WhatsApp" en etapa Presupuesto. P-5: vive EN EL FLUJO del documento
+                (renglón propio debajo de la botonera), nunca modal ni popover flotante.
+                "Descartar" cierra sin emitir nada — el vendedor se arrepintió del click. */}
+            {!isArchived && eleccionPrecioPendiente && (
+                <div
+                    className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40"
+                    data-testid="reserva-eleccion-precio-presupuesto"
+                >
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        Precios del presupuesto:
+                    </span>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleElegirPrecioPresupuesto(MODO_PRECIO_PRESUPUESTO.PorPersona)}
+                        data-testid="reserva-eleccion-precio-por-persona"
+                    >
+                        Por persona
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleElegirPrecioPresupuesto(MODO_PRECIO_PRESUPUESTO.Total)}
+                        data-testid="reserva-eleccion-precio-total"
+                    >
+                        Total del viaje
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEleccionPrecioPendiente(null)}
+                        data-testid="reserva-eleccion-precio-descartar"
+                    >
+                        Descartar
+                    </Button>
+                </div>
+            )}
+            </div>
         </div>
     );
 }

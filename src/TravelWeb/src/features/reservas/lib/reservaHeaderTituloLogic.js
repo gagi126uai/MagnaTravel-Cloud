@@ -10,8 +10,8 @@
  *   - Budget (Presupuesto)   → "Presupuesto"
  *   - cualquier otra etapa   → "Reserva"
  *
- * Archivo `.js` PURO (sin JSX) a propósito — misma convención que
- * `reservaEstadoSelloLogic.js`: se puede testear con `node --test` sin montar React.
+ * Archivo `.js` PURO (sin JSX) a propósito — misma convención que el resto de
+ * la carpeta lib/: se puede testear con `node --test` sin montar React.
  */
 const PALABRA_TITULO_POR_ETAPA = {
   Quotation: 'Cotización',

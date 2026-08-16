@@ -2049,10 +2049,11 @@ export function ServiceList({
                                                             queda en false arriba mientras candadoDeEdicionActivo). */}
                                                         {bloqueoAnular.bloqueado && (
                                                             <span
-                                                                className="max-w-[220px] text-right text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                                                                className="inline-flex max-w-[220px] items-center justify-end gap-1 text-right text-[10px] font-semibold text-amber-700 dark:text-amber-400"
                                                                 data-testid={`aviso-bloqueo-anular-${getReservationServicePublicId(svc)}`}
                                                             >
-                                                                🔒 {bloqueoAnular.motivo}
+                                                                <Lock className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                                                                {bloqueoAnular.motivo}
                                                             </span>
                                                         )}
                                                         </>
@@ -2581,10 +2582,11 @@ export function ServiceList({
                                                     {/* Chip "al lado" de la papelera, mismo criterio que desktop. */}
                                                     {bloqueoAnularMobile.bloqueado && (
                                                         <span
-                                                            className="max-w-[200px] text-right text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                                                            className="inline-flex max-w-[200px] items-center justify-end gap-1 text-right text-[10px] font-semibold text-amber-700 dark:text-amber-400"
                                                             data-testid={`aviso-bloqueo-anular-mobile-${getReservationServicePublicId(svc)}`}
                                                         >
-                                                            🔒 {bloqueoAnularMobile.motivo}
+                                                            <Lock className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                                                            {bloqueoAnularMobile.motivo}
                                                         </span>
                                                     )}
                                                     </div>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Lock } from 'lucide-react';
 import { RESERVA_STATUS_LABELS, traducirEstadoReserva } from '../lib/reservaStatusLabels';
 
 /**
@@ -9,7 +10,10 @@ import { RESERVA_STATUS_LABELS, traducirEstadoReserva } from '../lib/reservaStat
  * estado, para que los dashboards (AgentDashboard/AdminDashboard) puedan reusar
  * exactamente el mismo mapeo sin duplicarlo, y para poder testear la traduccion con
  * `node --test` (este archivo .jsx, con JSX de verdad, no se puede importar desde un
- * test plano de Node). Colores e iconos siguen viviendo aca, son solo de presentacion.
+ * test plano de Node). El color sigue viviendo aca, es solo de presentacion.
+ * (Tanda A UX 2026-08-16: se saco el campo `icon` (emojis) de cada estado — B.3.4/E.8
+ * del estandar visual manda un unico juego de iconos lucide, y este campo estaba
+ * muerto: ningun componente lo leia.)
  *
  * Los keys son los strings persistidos en la BD (en ingles, alineados con EstadoReserva.cs).
  *
@@ -37,47 +41,40 @@ export const statusConfig = {
     Quotation: {
         label: RESERVA_STATUS_LABELS.Quotation,
         color: 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700',
-        icon: '📝',
     },
     // Presupuesto: documento armado que el cliente recibe y evalua.
     // Color azul claro — sigue siendo "en curso", pero ya mas formal.
     Budget: {
         label: RESERVA_STATUS_LABELS.Budget,
         color: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
-        icon: '📋',
     },
     // En gestion: el cliente acepto; se solicitan servicios a los operadores.
     // Color celeste/cian — "en movimiento", diferente del azul del presupuesto.
     InManagement: {
         label: RESERVA_STATUS_LABELS.InManagement,
         color: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-900/20 dark:text-cyan-300 dark:border-cyan-800',
-        icon: '⚙️',
     },
     // Confirmada: todos los servicios resueltos. Se activa AUTOMATICAMENTE.
     // Color ambar/naranja — "lista pero en espera del viaje".
     Confirmed: {
         label: RESERVA_STATUS_LABELS.Confirmed,
         color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
-        icon: '🔒',
     },
     // En viaje: el cliente esta viajando. ADR-036: solo lectura.
     Traveling: {
         label: RESERVA_STATUS_LABELS.Traveling,
         color: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
-        icon: '✈️',
     },
     // Finalizada: reserva cerrada, ciclo completo.
     Closed: {
         label: RESERVA_STATUS_LABELS.Closed,
         color: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
-        icon: '✅',
     },
     // Perdida: cotización o presupuesto que el cliente no compró. Queda en historial.
     // Decisión #10 (guia UX 2026-06-08): gris oscuro + tachado visual — indica "no prospero".
     Lost: {
         label: RESERVA_STATUS_LABELS.Lost,
         color: 'bg-slate-300 text-slate-600 border-slate-400 line-through dark:bg-slate-700 dark:text-slate-400 dark:border-slate-600',
-        icon: '❌',
     },
     // Anulada (estado interno: Cancelled): la reserva fue deshecha con proceso fiscal.
     // ADR-036: el termino visible para el usuario es "Anulada" (anular = deshacer el viaje).
@@ -85,7 +82,6 @@ export const statusConfig = {
     Cancelled: {
         label: RESERVA_STATUS_LABELS.Cancelled,
         color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800',
-        icon: '🚫',
     },
     // Esperando reembolso del operador: la reserva fue anulada y hay una multa del operador
     // pendiente de confirmar. Es un estado transitorio después de Cancelled.
@@ -93,13 +89,11 @@ export const statusConfig = {
     PendingOperatorRefund: {
         label: RESERVA_STATUS_LABELS.PendingOperatorRefund,
         color: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-700',
-        icon: '⏳',
     },
     // Archivada: solo lectura, fuera del ciclo activo.
     Archived: {
         label: RESERVA_STATUS_LABELS.Archived,
         color: 'bg-slate-100 text-slate-500 border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
-        icon: '📦',
     },
 };
 
@@ -168,7 +162,7 @@ export function translateStatus(status) {
     return traducirEstadoReserva(status);
 }
 
-/** Devuelve la config completa (label + color + icon) para un status, con fallback a Budget. */
+/** Devuelve la config completa (label + color) para un status, con fallback a Budget. */
 export function getStatusConfig(status) {
     return statusConfig[status] ?? statusConfig.Budget;
 }
@@ -179,11 +173,14 @@ export function getStatusConfig(status) {
  *
  * `mostrarCandado` (Tanda 1 rediseño listado, 2026-08-04, plan B4): opt-in, apagado
  * por default a propósito — este badge se usa en 17+ pantallas distintas y agregar
- * el candado 🔒 a TODAS rompería la maqueta firmada de cada una. Solo el listado de
+ * el candado a TODAS rompería la maqueta firmada de cada una. Solo el listado de
  * Reservas lo prende explícitamente. El candado únicamente tiene sentido visual en
  * "Confirmada" (es el aviso de que editar la reserva pide autorización — ver
- * isStatusLocked): en Traveling/Closed, que también están "bloqueados" para editar,
- * el ícono normal de su propio estado (✈️/✅) ya cumple ese rol.
+ * isStatusLocked).
+ *
+ * Decisión del dueño (16/08): se retiró el "sello" tipo pasaporte del sistema por
+ * completo (supersede P4/B.6 del estándar visual del 11/08) — TODOS los estados,
+ * incluidos Anulada/Perdida/Finalizada, se muestran con este mismo chip.
  */
 export function ReservaStatusBadge({ status, mostrarCandado = false, size = "sm" }) {
     const cfg = getStatusConfig(status);
@@ -198,59 +195,20 @@ export function ReservaStatusBadge({ status, mostrarCandado = false, size = "sm"
     const sizeClasses = size === "lg"
         ? "px-3 py-1 text-xs font-bold uppercase tracking-wider"
         : "px-2.5 py-0.5 text-xs font-medium";
+    // B.5 del estándar visual: un chip nunca lleva emoji. El candado usa el ícono
+    // lucide `Lock` en vez del emoji 🔒 que se usaba antes.
+    const iconSizeClasses = size === "lg" ? "h-3.5 w-3.5" : "h-3 w-3";
     return (
-        <span className={`rounded-full border ${sizeClasses} ${cfg.color}`}>
-            {label}{conCandado ? " 🔒" : ""}
-        </span>
-    );
-}
-
-/**
- * El "sello" de estado — la pieza de identidad propia de MagnaTravel (estándar visual
- * 2026-08-11, sección B.6, "prestado del sello del pasaporte"). Reemplaza al chip de
- * color SOLO en Anulada/Perdida/Finalizada — el set EXACTO de estados que lo llevan
- * vive en `reservaEstadoSelloLogic.js` (`debeMostrarComoSello`), un archivo .js puro
- * que NO se duplica acá (fix bloqueante de review 2026-08-11, I1/I6): quien quiera
- * decidir si una reserva va con sello o con chip importa esa función, no repite el
- * criterio a mano.
- *
- * Fix de review (2026-08-11, I2/I3): el texto va a opacidad PLENA (contraste ≥4.5:1
- * verificado contra fondo blanco y contra el fondo oscuro) — el estado de una reserva
- * es un dato crítico, no se difumina. El efecto "gastado/medio borroneado" de la
- * maqueta queda SOLO en el borde, con un `<span aria-hidden>` decorativo separado que
- * lleva el degradé — el texto nunca pasa por esa máscara.
- *
- * Colores y ángulo copiados tal cual de la maqueta firmada (docs/ux/2026-08-11-maqueta-
- * reservas-firmada.html, clase `.sello`) — no son un capricho de este componente.
- */
-export function ReservaEstadoSello({ reserva, size = 'sm' }) {
-    const label = traducirEstadoReserva(reserva?.status);
-    const sizeClasses = size === 'lg'
-        ? 'px-3.5 py-1 text-sm'
-        : 'px-2.5 py-0.5 text-[11px]';
-
-    return (
-        // `leading-none` + padding chico: con las 3 etiquetas posibles (Anulada/Perdida/
-        // Finalizada) el sello queda bajo, así el giro de -8deg no se come el renglón de
-        // arriba/abajo en la tabla compacta (rotate no mueve el layout, pero un box más
-        // bajo deja más margen visual antes de tocar la fila vecina).
-        <span className="relative inline-block -rotate-[8deg] leading-none">
-            {/* Pieza puramente decorativa (el "gastado" de la maqueta) — separada del
-                texto a propósito, así el difuminado nunca le baja el contraste al dato. */}
-            <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 rounded-md border-2 border-dashed border-[#b4443c] dark:border-rose-400"
-                style={{
-                    maskImage: 'radial-gradient(circle at 30% 60%, black 55%, rgba(0,0,0,0.5) 78%, black 100%)',
-                    WebkitMaskImage: 'radial-gradient(circle at 30% 60%, black 55%, rgba(0,0,0,0.5) 78%, black 100%)',
-                }}
-            />
-            <span
-                data-testid="reserva-estado-sello"
-                className={`relative block whitespace-nowrap font-extrabold uppercase tracking-[0.2em] text-[#b4443c] dark:text-rose-400 ${sizeClasses}`}
-            >
-                {label}
-            </span>
+        <span className={`inline-flex items-center gap-1 rounded-full border ${sizeClasses} ${cfg.color}`}>
+            {label}
+            {conCandado ? (
+                <>
+                    <Lock className={iconSizeClasses} aria-hidden="true" />
+                    {/* El candado es solo visual; este texto oculto conserva el aviso
+                        para lectores de pantalla (el emoji 🔒 de antes a veces se leia). */}
+                    <span className="sr-only">Requiere autorización para editar</span>
+                </>
+            ) : null}
         </span>
     );
 }

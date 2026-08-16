@@ -1,8 +1,8 @@
 /**
- * Reglas puras del interruptor "Por persona / Total del viaje" que acompaña a los botones
- * "Emitir PDF" / "Enviar por WhatsApp" de la cabecera de la reserva (spec
- * docs/ux/2026-08-12-spec-pdf-emision-y-formas-de-pago.md, §3 — Gastón eligió la OPCIÓN A:
- * un chip interruptor pegado a la izquierda de "Emitir PDF", con el molde de chip B.5).
+ * Reglas puras de "Por persona / Total del viaje", la elección de formato que ahora se
+ * pregunta EN EL MOMENTO de tocar "Emitir PDF" / "Enviar por WhatsApp" (decisión del dueño,
+ * 2026-08-16 — reemplaza al interruptor que antes vivía suelto en la cabecera, spec vieja
+ * docs/ux/2026-08-12-spec-pdf-emision-y-formas-de-pago.md §3).
  *
  * Ojo con el contrato REAL del backend (verificado en ReservasController.cs/MessageDtos.cs,
  * no es el que suponía el brief original de esta tanda):
@@ -22,30 +22,6 @@ export const MODO_PRECIO_PRESUPUESTO = {
   PorPersona: "porPersona",
   Total: "total",
 };
-
-const ETIQUETA_CHIP_POR_MODO = {
-  [MODO_PRECIO_PRESUPUESTO.PorPersona]: "Por persona ⇄",
-  [MODO_PRECIO_PRESUPUESTO.Total]: "Total del viaje ⇄",
-};
-
-/**
- * Texto que muestra el chip para el modo actual. Un modo desconocido (nunca debería pasar,
- * pero por las dudas) cae en "Por persona" — el default firmado, nunca deja el chip mudo.
- */
-export function etiquetaChipPrecioPresupuesto(modo) {
-  return ETIQUETA_CHIP_POR_MODO[modo] || ETIQUETA_CHIP_POR_MODO[MODO_PRECIO_PRESUPUESTO.PorPersona];
-}
-
-/**
- * Invierte el modo: un click sobre el chip pasa de "Por persona" a "Total del viaje" y
- * viceversa. Cualquier valor que no sea exactamente "total" se trata como "Por persona"
- * (mismo criterio defensivo que usa el backend con el query param `pricing`).
- */
-export function alternarModoPrecioPresupuesto(modo) {
-  return modo === MODO_PRECIO_PRESUPUESTO.Total
-    ? MODO_PRECIO_PRESUPUESTO.PorPersona
-    : MODO_PRECIO_PRESUPUESTO.Total;
-}
 
 /** Valor del query param `pricing` que espera GET /reservas/{id}/budget-pdf. */
 export function queryParamPricingParaModo(modo) {

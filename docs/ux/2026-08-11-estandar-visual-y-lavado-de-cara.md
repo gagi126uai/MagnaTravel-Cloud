@@ -637,3 +637,19 @@ título (Cotización/Presupuesto); en el resto de las etapas sigue visible.
 Esto SUPERSEDE el ejemplo "Reserva #F-2026-1067" de la maqueta y de la
 sección de tipografía de este documento. El "#" puede persistir como prefijo
 visual en las tablas del listado.
+
+---
+
+## ENMIENDA 2026-08-16 (retiro del sello — decisión del dueño)
+
+El dueño decidió retirar **el sello del sistema por completo**. Esto
+SUPERSEDE la sección **B.6 "El elemento firma: el sello"** de este documento
+y el punto P4 firmado el 11/08 (el sello para Anulada/Perdida/Finalizada).
+
+A partir de esta tanda, **todos** los estados de una reserva —incluidos
+Anulada, Perdida y Finalizada— se muestran con el mismo chip de molde único
+(`ReservaStatusBadge`), sin excepción. Se eliminó el componente
+`ReservaEstadoSello`, el archivo `reservaEstadoSelloLogic.js` y sus tests. La
+identidad propia de MagnaTravel (B.3–B.5, colores, tipografía, disciplina de
+alineación) sigue en pie tal cual — lo único que se da de baja es la pieza
+del sello en sí.

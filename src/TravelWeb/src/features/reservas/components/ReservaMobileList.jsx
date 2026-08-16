@@ -2,13 +2,12 @@ import React from "react";
 import { User, Calendar, AlertCircle, CheckCircle2, FolderOpen, Archive } from "lucide-react";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
-import { ReservaStatusBadge, ReservaEstadoSello } from "./ReservaStatusBadge";
+import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getReservaSaleLines, getReservaFinanzasChips, FINANZAS_CHIP_TONE_CLASSES } from "../lib/reservaMoneyDisplay";
-import { debeMostrarComoSello } from "../lib/reservaEstadoSelloLogic";
 
 /** Ícono/color del círculo de la izquierda, según el chip principal de Finanzas. */
 const ACENTO_POR_TONO = {
@@ -63,14 +62,9 @@ export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState 
                 <AcentoIcon className="h-5 w-5" />
               </div>
             }
-            /* Paridad con la tabla de escritorio (ReservaTable.jsx): el sello reemplaza
-               al chip de color SOLO en Anulada/Perdida/Finalizada — mismo criterio
-               (`debeMostrarComoSello`), nunca duplicado a mano acá. */
-            statusSlot={
-              debeMostrarComoSello(reserva)
-                ? <ReservaEstadoSello reserva={reserva} />
-                : <ReservaStatusBadge status={reserva.status} mostrarCandado />
-            }
+            /* Decisión del dueño (16/08): se retira el sello del sistema por completo —
+               paridad con la tabla de escritorio (ReservaTable.jsx), siempre el chip. */
+            statusSlot={<ReservaStatusBadge status={reserva.status} mostrarCandado />}
             title={`#${reserva.numeroReserva}`}
             subtitle={reserva.destino || null}
             meta={

@@ -75,18 +75,59 @@ export function listarDestinosDeServiciosCargados(reserva) {
 }
 
 /**
+ * Total de pasajeros DECLARADO por el vendedor (ADR-031: cantidad de adultos/
+ * menores/infantes que se carga ANTES de tener el nombre de cada uno). Es
+ * distinto de `reserva.passengers.length`, que es cuántos YA tienen nombre
+ * cargado — ver PassengerList.jsx, que lee estos mismos tres campos del DTO.
+ */
+function totalPasajerosDeclarados(reserva) {
+  const adultCount = reserva?.adultCount ?? 0;
+  const childCount = reserva?.childCount ?? 0;
+  const infantCount = reserva?.infantCount ?? 0;
+  return adultCount + childCount + infantCount;
+}
+
+/**
  * Arma la línea "destino · N pasajeros" del encabezado de la ficha.
  * Si no hay ningún destino cargado, cae a "solo pasajeros" (nunca inventa una
  * ciudad — regla P7: "ciudades reales, sin inventar").
+ *
+ * Tanda A UX (2026-08-16): el "N" ahora prioriza lo DECLARADO (adultCount +
+ * childCount + infantCount, ADR-031) por sobre la cantidad de pasajeros YA
+ * cargados con nombre — así el encabezado muestra el compromiso real de la
+ * venta, no solo lo que se alcanzó a tipear. Si no hay nada declarado (reserva
+ * vieja, de antes de ADR-031), se cae al conteo de pasajeros cargados, como
+ * siempre, para no mostrar "0 pasajeros" mintiendo.
  *
  * @param {object} reserva - DTO de detalle de la reserva.
  * @returns {string}
  */
 export function armarLineaDestinoYPasajeros(reserva) {
   const destinos = listarDestinosDeServiciosCargados(reserva);
-  const cantidadPasajeros = reserva?.passengers?.length ?? 0;
+  const cantidadCargados = reserva?.passengers?.length ?? 0;
+  const declarado = totalPasajerosDeclarados(reserva);
+  const cantidadPasajeros = declarado > 0 ? declarado : cantidadCargados;
   const textoPasajeros = cantidadPasajeros === 1 ? "1 pasajero" : `${cantidadPasajeros} pasajeros`;
 
   if (destinos.length === 0) return textoPasajeros;
   return `${destinos.join(" · ")} · ${textoPasajeros}`;
+}
+
+/**
+ * Aviso discreto cuando lo DECLARADO (ADR-031) todavía no coincide con los
+ * pasajeros que YA tienen nombre cargado — ej. se cargó "somos 4" pero solo se
+ * tipeó el nombre del titular. Devuelve `null` cuando no aplica (nada
+ * declarado, o ya está todo cargado) — el llamador no muestra nada en ese caso.
+ *
+ * @param {object} reserva - DTO de detalle de la reserva.
+ * @returns {string|null}
+ */
+export function armarAvisoPasajerosFaltantes(reserva) {
+  const declarado = totalPasajerosDeclarados(reserva);
+  const cargados = reserva?.passengers?.length ?? 0;
+  if (declarado > 0 && cargados < declarado) {
+    const faltan = declarado - cargados;
+    return faltan === 1 ? "Falta cargar 1 pasajero" : `Faltan cargar ${faltan} pasajeros`;
+  }
+  return null;
 }
