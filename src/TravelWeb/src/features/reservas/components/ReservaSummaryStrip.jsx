@@ -3,6 +3,7 @@ import { formatCurrency } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { isAdmin } from "../../../auth";
 import { getMoneyStatus, isReservaAnulada } from "../moneyStatus";
+import { armarLineasVentaPorMoneda, debeMostrarAvisoSinPasajerosDeclarados } from "../lib/ventaPorMonedaFicha";
 
 // Mismo margen de tolerancia que usa moneyStatus.js (ReservaCollectionStatus.Epsilon):
 // un resto de centavo por conversión de moneda no debe leerse como "hay plata en juego".
@@ -29,11 +30,49 @@ export function ReservaSummaryStrip({ reserva }) {
     const moneyStatus = getMoneyStatus(reserva);
     const esMultimoneda = reserva.esMultimoneda && Array.isArray(reserva.porMoneda) && reserva.porMoneda.length > 1;
 
+    // Decisión firmada del dueño (2026-08-16): "Total del viaje" y "Por persona" a la
+    // vista, SOLO en etapa Presupuesto. Se calcula acá arriba (no adentro de
+    // NumerosMono/Multimoneda) porque no depende de si la reserva es mono o
+    // multimoneda — `ventaPorMoneda` ya viene con una línea por moneda del backend,
+    // así que se pinta igual en los dos casos. Devuelve null (nada que mostrar) si la
+    // reserva no está en Budget o si el backend todavía no manda el campo — ver
+    // ventaPorMonedaFicha.js.
+    const lineasVentaPresupuesto = armarLineasVentaPorMoneda(reserva);
+
     return (
         <div className="mb-8 border-b border-slate-100 pb-6 dark:border-slate-800/50" data-testid="numeros-ficha">
             {esMultimoneda
                 ? <NumerosMultimoneda reserva={reserva} anulada={anulada} moneyStatus={moneyStatus} admin={admin} />
                 : <NumerosMonoMoneda reserva={reserva} anulada={anulada} moneyStatus={moneyStatus} admin={admin} />}
+            {lineasVentaPresupuesto && <VentaPresupuestoPorMoneda lineas={lineasVentaPresupuesto} />}
+        </div>
+    );
+}
+
+/**
+ * "Total del viaje" / "Por persona" — solo en etapa Presupuesto (Budget).
+ * Un renglón por moneda (P-3⭐: pesos y dólares nunca se suman ni se mezclan).
+ * Si `perPerson` viene null para TODAS las monedas (sin pasajeros declarados
+ * todavía), en vez del "Por persona" se muestra un aviso gris discreto UNA sola
+ * vez, no repetido por moneda (P-16).
+ */
+function VentaPresupuestoPorMoneda({ lineas }) {
+    const mostrarAvisoSinPasajeros = debeMostrarAvisoSinPasajerosDeclarados(lineas);
+    return (
+        <div className="mt-3 space-y-1.5" data-testid="venta-presupuesto-por-moneda">
+            {lineas.map((linea) => (
+                <div key={linea.currency} className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+                    <NumeroChico label="Total del viaje" value={formatCurrency(linea.total, linea.currency)} />
+                    {linea.perPerson !== null && (
+                        <NumeroChico label="Por persona" value={formatCurrency(linea.perPerson, linea.currency)} />
+                    )}
+                </div>
+            ))}
+            {mostrarAvisoSinPasajeros && (
+                <p className="text-[11px] text-slate-400 dark:text-slate-500" data-testid="venta-presupuesto-aviso-sin-pasajeros">
+                    Cargá los pasajeros para ver el por persona
+                </p>
+            )}
         </div>
     );
 }

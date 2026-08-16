@@ -3483,6 +3483,33 @@ public class ReservaService : IReservaService
             })
             .ToList();
 
+        // Firmado 16/08 (a/b): total del viaje y "por persona" (declarados), UNA linea por moneda, para
+        // que la ficha los muestre a la vista. Reusa el TotalSale por moneda de arriba (dto.PorMoneda) --
+        // el MISMO numero que ya se ve hoy en la columna "Venta", ninguna cuenta paralela nueva. El
+        // divisor es el mismo que ya usa el PDF de presupuesto (AdultCount+ChildCount+InfantCount
+        // cargados; ver ReservaService.GetBudgetPdfAsync) y la regla de division/redondeo es la MISMA
+        // (QuoteBudgetPdfRules.ResolveDisplayPrice) para que el numero de la ficha y el del PDF nunca
+        // diverjan.
+        var pasajerosDeclarados = file.AdultCount + file.ChildCount + file.InfantCount;
+        dto.VentaPorMoneda = dto.PorMoneda
+            .Select(line =>
+            {
+                decimal? porPersona = null;
+                if (pasajerosDeclarados > 0)
+                {
+                    var display = QuoteBudgetPdfRules.ResolveDisplayPrice(line.TotalSale, pasajerosDeclarados, porPersona: true);
+                    porPersona = display.Amount;
+                }
+
+                return new ReservaVentaPorMonedaDto
+                {
+                    Currency = line.Currency,
+                    Total = line.TotalSale,
+                    PerPerson = porPersona
+                };
+            })
+            .ToList();
+
         // Margen escalar de la reserva (venta confirmada - costo). Crudo aca; se enmascara junto al TotalCost.
         dto.TotalMargin = moneySummary.TotalMargin;
 

@@ -99,6 +99,35 @@ public class ReservaMoneyLineDto
 }
 
 /// <summary>
+/// Firmado 16/08 (decision del dueño, punto a/b): UNA linea de "cuanto vale el viaje" para una MONEDA
+/// -- total y por persona, para que la ficha los muestre a la vista. Regla P-3 (constitucion): nunca se
+/// suman monedas distintas, por eso es lista (una linea por moneda) y no dos escalares sueltos.
+/// </summary>
+public class ReservaVentaPorMonedaDto
+{
+    /// <summary>Moneda ISO 4217 ("ARS"/"USD") de esta linea.</summary>
+    public string Currency { get; set; } = "ARS";
+
+    /// <summary>
+    /// Venta TOTAL de los servicios VIVOS (no cancelados) en esta moneda. Es el MISMO numero que
+    /// <see cref="ReservaMoneyLineDto.TotalSale"/> de <see cref="ReservaDto.PorMoneda"/> -- no es una
+    /// cuenta nueva, se reusa la que ya calcula <c>ReservaMoneyCalculator</c> (la misma que hoy se ve en
+    /// la columna "Venta").
+    /// </summary>
+    public decimal Total { get; set; }
+
+    /// <summary>
+    /// <see cref="Total"/> dividido por los pasajeros DECLARADOS (AdultCount+ChildCount+InfantCount),
+    /// con la MISMA regla y el MISMO redondeo que ya usa el PDF de presupuesto (ver
+    /// <c>TravelApi.Domain.Reservations.QuoteBudgetPdfRules.ResolveDisplayPrice</c>). <c>null</c> cuando
+    /// todavia no se cargo ningun pasajero declarado: dividir por cero no tiene sentido, y a diferencia
+    /// del PDF (que ahi cae a mostrar el total) aca se prefiere <c>null</c> explicito para que el
+    /// frontend sepa que no hubo division, en vez de confundirlo con que total y por persona coinciden.
+    /// </summary>
+    public decimal? PerPerson { get; set; }
+}
+
+/// <summary>
 /// ADR-027 (detalle "confirmada con cambios", 2026-06-13): UN cambio de precio/costo pendiente de revisar.
 /// El front lo muestra en la franja "confirmada con cambios" (que servicio, que campo, de cuanto a cuanto).
 /// Cuando <see cref="Field"/> es costo y el usuario no ve costos, <see cref="OldValue"/>/<see cref="NewValue"/>
@@ -516,6 +545,16 @@ public class ReservaDto
 
     /// <summary>ADR-021: true si la reserva mueve mas de una moneda.</summary>
     public bool EsMultimoneda { get; set; }
+
+    /// <summary>
+    /// Firmado 16/08 (decision del dueño, punto b): total del viaje y "por persona" (declarados), UNA
+    /// linea por moneda, para que la ficha los muestre a la vista sin que el frontend tenga que sumar ni
+    /// dividir nada. Solo tiene sentido de verdad mientras la reserva es presupuesto (todavia no hay
+    /// pasajeros nominales), pero el backend NO gatea por estado: siempre viaja con el mismo criterio
+    /// (mismo TotalSale por moneda + misma division por declarados), y el frontend decide cuando
+    /// mostrarlo. Vacio si la reserva no tiene ninguna venta cargada.
+    /// </summary>
+    public List<ReservaVentaPorMonedaDto> VentaPorMoneda { get; set; } = new();
 
     /// <summary>
     /// ADR-033 (E7/A5, 2026-06-16): ESTADO DE COBRO derivado del saldo POR MONEDA (no persistido, no es

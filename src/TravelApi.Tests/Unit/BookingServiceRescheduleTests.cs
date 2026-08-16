@@ -532,12 +532,19 @@ public class BookingServiceRescheduleTests
     public async Task Reschedule_ToFuture_NoWarning()
     {
         // Un shift que deja la salida en el futuro NO genera aviso.
+        // El shift se calcula relativo a HOY (mismo patron que Reschedule_ToPast): con un
+        // "+5" fijo el test se pudria solo cuando el calendario real pasaba la fecha
+        // sembrada (10/08/2026) — exactamente lo que paso el 16/08/2026 en CI.
         await using var context = CreateContext();
-        var reserva = await SeedMultiTypeAsync(context); // salida 10/08/2026, ya futura respecto de hoy
+        var reserva = await SeedMultiTypeAsync(context);
         var service = CreateService(context, CreateMapper());
 
+        var today = TravelApi.Infrastructure.Time.AgencyTimezone.TodayWallClockUtc();
+        var targetFuture = today.AddDays(30);
+        var shiftToFuture = (int)(targetFuture.Date - HotelCheckIn.Date).TotalDays;
+
         var result = await service.RescheduleAsync(
-            reserva.PublicId.ToString(), new RescheduleReservaRequest(DaysShift: 5), CancellationToken.None);
+            reserva.PublicId.ToString(), new RescheduleReservaRequest(DaysShift: shiftToFuture), CancellationToken.None);
 
         Assert.Null(result.Warning);
     }
