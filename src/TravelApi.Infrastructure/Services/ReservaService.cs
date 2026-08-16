@@ -5469,15 +5469,35 @@ public class ReservaService : IReservaService
 
         _context.Payments.Add(payment);
 
+        // ADR-022 §4.4 (GAP A, cerrado 2026-08-16): el asiento de caja se escribe en la MISMA
+        // SaveChangesAsync que el cobro, igual que el camino canonico (PaymentService.CreatePaymentAsync,
+        // linea ~899). Antes este path legacy NO escribia el asiento del ALTA (aunque SI escribia la
+        // reversa al editar/borrar, ver UpdatePaymentAsync/DeletePaymentAsync mas abajo): un cobro cargado
+        // por aca inflaba el saldo de la reserva pero jamas aparecia en el Libro de Caja — la caja quedaba
+        // "corta" respecto de lo cobrado.
+        //
+        // Decision (b) del ADR: NO delegamos entero en PaymentService.CreatePaymentAsync (opcion (a)).
+        // Ese metodo recibe un DTO de request distinto, valida con PaymentValidationException (no
+        // ArgumentException, que es lo que este endpoint legacy devuelve hoy), hace ownership check y
+        // resuelve el bloque de moneda cruzada — cambiar todo eso cambiaria el contrato HTTP del endpoint
+        // viejo (status codes y mensajes de error incluidos), algo que la tarea pide NO tocar. En cambio
+        // reusamos el MISMO builder puro que usa el camino canonico (CashLedgerEntryFactory.ForPayment):
+        // cero logica de mapeo origen->asiento duplicada a mano, la regla "moneda REAL de caja, nunca la
+        // imputada" sigue viviendo en un solo lugar (el factory).
+        // Sin `if (payment.AffectsCash)`: este alta legacy SIEMPRE fuerza AffectsCash=true unas lineas
+        // arriba, asi que un guard aca seria codigo muerto que insinua un caso que no existe (senalado
+        // por el reviewer 16/08).
+        var ledgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForPayment(
+            payment, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull());
+        _context.CashLedgerEntries.Add(ledgerEntry);
+
         // ARREGLO 1 (atomicidad del cobro, 2026-06-24): este path legacy anidado (POST /api/reservas/{id}/payments)
         // tenia el MISMO problema que PaymentService.CreatePaymentAsync: el alta encadenaba SaveChanges sueltos
-        // (cobro -> recalculo del saldo + comision via UpdateBalanceAsync -> conversion del sobrepago en saldo a
-        // favor del cliente). Si se cortaba despues de crear el credito+puente pero antes del recalculo final, el
-        // excedente quedaba contado dos veces. Lo envolvemos en UNA transaccion (mismo patron que el canonico y
-        // que el resto del service). En InMemory (tests) el provider no soporta transacciones: corre sin ella.
-        //
-        // NOTA: este path no escribe el asiento de caja del cobro (es deuda conocida del camino legacy, no la
-        // tocamos aca); la transaccion igual cubre lo que SI escribe (cobro + saldo + comision + sobrepago).
+        // (cobro + asiento -> recalculo del saldo + comision via UpdateBalanceAsync -> conversion del sobrepago
+        // en saldo a favor del cliente). Si se cortaba despues de crear el credito+puente pero antes del
+        // recalculo final, el excedente quedaba contado dos veces. Lo envolvemos en UNA transaccion (mismo
+        // patron que el canonico y que el resto del service). En InMemory (tests) el provider no soporta
+        // transacciones: corre sin ella.
         if (_context.Database.IsRelational())
         {
             var strategy = _context.Database.CreateExecutionStrategy();

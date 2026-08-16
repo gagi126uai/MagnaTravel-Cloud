@@ -723,6 +723,10 @@ builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteRe
 // del bridge con anti-spam (max N reintentos, una notificacion al limite).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteBridgeReconciliationJob>();
 
+// ADR-022 GAP C (2026-08-16): job que reconcilia el extracto del proveedor (Reembolso recibido, derivado de
+// BookingCancellationLine) contra el Libro de Caja (CashLedgerEntry vigente del mismo reembolso). SOLO avisa.
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.CashLedgerRefundReconciliationJob>();
+
 // FC1.3.F2.6a (plan tactico Fase 2 §FC1.3.F2.6a, 2026-05-28): job que reconcilia NC
 // PARCIALES colgadas en Resultado='PENDING' (el POST a ARCA se encolo pero el resultado
 // nunca se persistio por crash/timeout). Consulta ARCA y reconcilia o escala a manual.
@@ -1097,6 +1101,15 @@ if (hangfireSchedulerEnabled)
         "coherence-watchdog",
         job => job.RunScheduledAsync(CancellationToken.None),
         Cron.Daily(6));
+
+    // ADR-022 GAP C (2026-08-16): reconciliacion extracto-del-proveedor vs Libro de Caja para los reembolsos
+    // de operador. Corre 7am UTC, DESPUES del vigia de coherencia (6am), para no competir con su recalculo de
+    // plata. Es liviano (compara sumas por moneda, SOLO avisa) asi que una vez por dia alcanza: una divergencia
+    // nueva no es un problema de minutos, es una revision que un admin hace cuando abre el sistema.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.CashLedgerRefundReconciliationJob>(
+        "cash-ledger-refund-reconciliation",
+        job => job.RunAsync(CancellationToken.None),
+        Cron.Daily(7));
 
     // ADR-011 (enmienda 2026-08-05, "el dolar nunca falta"): CADA HORA (antes era 1 vez/dia a las
     // 15:00 UTC ≈ 12:00 ART). El job tiene su propio guard barato al inicio

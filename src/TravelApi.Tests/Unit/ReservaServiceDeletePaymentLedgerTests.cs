@@ -25,6 +25,11 @@ namespace TravelApi.Tests.Unit;
 /// (DELETE /api/reservas/{id}/payments/{pid} -> ReservaService.DeletePaymentAsync) DEBE escribir el
 /// contra-asiento de caja, igual que el camino canonico de /api/payments. Antes no lo hacia y la caja
 /// quedaba inflada (el asiento de ingreso seguia vivo sin su reversa).
+///
+/// <para><b>GAP A (2026-08-16):</b> el ALTA por este mismo camino legacy (POST /api/reservas/{id}/payments
+/// -> ReservaService.AddPaymentAsync(int, Payment)) tampoco escribia el asiento del cobro — solo edicion y
+/// borrado lo hacian. Un cobro cargado por aca jamas aparecia en el Libro de Caja. Se agregan los tests que
+/// cubren el ALTA (mas abajo); los de edicion/borrado de arriba siguen intactos.</para>
 /// </summary>
 public class ReservaServiceDeletePaymentLedgerTests
 {
@@ -185,8 +190,10 @@ public class ReservaServiceDeletePaymentLedgerTests
     [Fact]
     public async Task DeletePayment_Legacy_NoLedgerEntry_DoesNotThrow_NoReversal()
     {
-        // Cobro legacy sin asiento (anterior al backfill de ADR-022): el helper es no-op tolerante,
-        // no crashea ni inventa una reversa.
+        // Cobro legacy sin asiento (anterior al backfill de ADR-022, o de un dato historico hipotetico):
+        // el helper es no-op tolerante, no crashea ni inventa una reversa. Este escenario ya NO puede nacer
+        // por el alta legacy (el fix de GAP A hace que TODO alta nueva escriba su asiento), pero se
+        // conserva el test de tolerancia por si queda un dato historico sin backfillear.
         await using var ctx = new AppDbContext(_dbOptions);
         var reserva = SeedReservaWithCashPayment(ctx, withLiveLedgerEntry: false);
         var service = BuildService(ctx);
@@ -196,5 +203,102 @@ public class ReservaServiceDeletePaymentLedgerTests
         Assert.False(await ctx.CashLedgerEntries.AnyAsync());
         var payment = await ctx.Payments.IgnoreQueryFilters().FirstAsync(p => p.Id == 1);
         Assert.True(payment.IsDeleted); // el soft-delete del cobro igual ocurre
+    }
+
+    /// <summary>
+    /// Seedea una reserva "En gestion" con saldo pendiente pero SIN ningun cobro todavia — para probar el
+    /// ALTA de cobro (GAP A) desde cero, sin mezclar con el seed de <see cref="SeedReservaWithCashPayment"/>
+    /// (que ya trae un pago precargado).
+    /// </summary>
+    private static Reserva SeedReservaWithPendingBalance(AppDbContext ctx)
+    {
+        var reserva = new Reserva
+        {
+            Id = 1,
+            PublicId = Guid.NewGuid(),
+            NumeroReserva = "F-2026-0002",
+            Name = "Reserva test alta de cobro",
+            Status = EstadoReserva.InManagement,
+            TotalSale = 1000m,
+            Balance = 1000m // saldo pendiente: EnsureCollectable() lo exige > 0 para permitir el alta.
+        };
+        ctx.Reservas.Add(reserva);
+        ctx.SaveChanges();
+        return reserva;
+    }
+
+    [Fact]
+    public async Task AddPayment_Legacy_WritesExactlyOneLedgerEntry_WithCorrectAmountCurrencyMethod()
+    {
+        // GAP A: el alta por el camino legacy anidado (ReservaService.AddPaymentAsync(int, Payment),
+        // detras de POST /api/reservas/{id}/payments) debe dejar EXACTAMENTE un asiento vigente en el
+        // Libro de Caja, con el monto/moneda/metodo del cobro real — igual que el camino canonico.
+        await using var ctx = new AppDbContext(_dbOptions);
+        var reserva = SeedReservaWithPendingBalance(ctx);
+        var service = BuildService(ctx);
+
+        var payment = new Payment
+        {
+            Amount = 250m,
+            Currency = Monedas.ARS,
+            Method = "Cash",
+            PaidAt = DateTime.UtcNow
+        };
+
+        await service.AddPaymentAsync(reserva.Id, payment);
+
+        var entries = await ctx.CashLedgerEntries.AsNoTracking().ToListAsync();
+        var entry = Assert.Single(entries);
+
+        Assert.Equal(CashLedgerSourceTypes.CustomerPayment, entry.SourceType);
+        Assert.Equal(CashMovementDirections.Income, entry.Direction);
+        Assert.Equal(250m, entry.Amount);
+        Assert.Equal(Monedas.ARS, entry.Currency);
+        Assert.Equal("Cash", entry.Method);
+        Assert.False(entry.IsReversal);
+        Assert.False(entry.IsReversed);
+        Assert.Equal(payment.Id, entry.PaymentId);
+    }
+
+    [Fact]
+    public async Task AddThenUpdateThenDelete_Legacy_LedgerStaysConsistent_NoDuplicateEntries()
+    {
+        // Round-trip completo del camino legacy (alta -> edicion de monto -> borrado), todo por los
+        // metodos publicos reales (no seed manual del asiento): confirma que el fix de GAP A no rompe ni
+        // duplica lo que edicion/borrado ya escribian (§4.5).
+        await using var ctx = new AppDbContext(_dbOptions);
+        var reserva = SeedReservaWithPendingBalance(ctx);
+        var service = BuildService(ctx);
+
+        var payment = new Payment
+        {
+            Amount = 100m,
+            Currency = Monedas.ARS,
+            Method = "Cash",
+            PaidAt = DateTime.UtcNow
+        };
+        await service.AddPaymentAsync(reserva.Id, payment);
+
+        var afterCreate = await ctx.CashLedgerEntries.AsNoTracking().ToListAsync();
+        Assert.Single(afterCreate); // un unico asiento tras el alta
+
+        await service.UpdatePaymentAsync(reserva.Id, payment.Id, new Payment
+        {
+            Amount = 150m,
+            Method = "Cash",
+            Currency = Monedas.ARS,
+            PaidAt = DateTime.UtcNow
+        });
+
+        var afterUpdate = await ctx.CashLedgerEntries.AsNoTracking().ToListAsync();
+        Assert.Equal(3, afterUpdate.Count); // viejo (revertido) + reversa + nuevo
+        var liveAfterUpdate = Assert.Single(afterUpdate.Where(e => !e.IsReversal && !e.IsReversed));
+        Assert.Equal(150m, liveAfterUpdate.Amount);
+
+        await service.DeletePaymentAsync(reserva.Id, payment.Id);
+
+        var afterDelete = await ctx.CashLedgerEntries.AsNoTracking().ToListAsync();
+        Assert.Equal(4, afterDelete.Count); // + la reversa final del borrado
+        Assert.Empty(afterDelete.Where(e => !e.IsReversal && !e.IsReversed)); // neto de caja en 0
     }
 }
