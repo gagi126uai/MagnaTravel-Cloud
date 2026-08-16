@@ -54,6 +54,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDownToLine, Loader2, RefreshCw, Search, Wallet, X } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
@@ -416,7 +417,7 @@ export function UsarSaldoAFavorInline({
   if (loadingEntries && kindDestino !== 3 && kindDestino !== KIND_APLICAR_A_MULTA) {
     return (
       <div
-        className="rounded-xl border-2 border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10 p-5"
+        className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5"
         data-testid="usar-saldo-inline"
         data-state="loading"
       >
@@ -432,19 +433,15 @@ export function UsarSaldoAFavorInline({
   if (errorCarga) {
     return (
       <div
-        className="rounded-xl border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-3"
+        className="rounded-[14px] border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-3"
         data-testid="usar-saldo-inline"
         data-state="error"
       >
         <p className="text-sm text-rose-700 dark:text-rose-300" role="alert">{errorCarga}</p>
         <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onCancelar}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700"
-          >
+          <Button type="button" variant="outline" onClick={onCancelar}>
             Cerrar
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -454,19 +451,15 @@ export function UsarSaldoAFavorInline({
   if (entries.length === 0 && kindDestino !== 3 && kindDestino !== KIND_APLICAR_A_MULTA) {
     return (
       <div
-        className="rounded-xl border-2 border-slate-200 bg-slate-50/40 dark:border-slate-700 dark:bg-slate-900/20 p-5 space-y-3"
+        className="rounded-[14px] border-2 border-slate-200 bg-slate-50/40 dark:border-slate-700 dark:bg-slate-900/20 p-5 space-y-3"
         data-testid="usar-saldo-inline"
         data-state="empty"
       >
         <p className="text-sm text-slate-500">No hay saldo a favor disponible en este momento.</p>
         <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onCancelar}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700"
-          >
+          <Button type="button" variant="outline" onClick={onCancelar}>
             Cerrar
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -479,24 +472,26 @@ export function UsarSaldoAFavorInline({
   // ─── Render: formulario principal ────────────────────────────────────────────
   return (
     <div
-      className="rounded-xl border-2 border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10 p-5 space-y-4"
+      className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5 space-y-4"
       data-testid="usar-saldo-inline"
       data-state="ready"
     >
       {/* Cabecera */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Wallet className="h-4 w-4 text-emerald-600" />
+          <Wallet className="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
           <h4 className="text-sm font-bold text-slate-900 dark:text-white">Usar saldo a favor</h4>
         </div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={onCancelar}
-          className="rounded p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+          className="h-8 w-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
           aria-label="Cerrar ficha de saldo a favor"
         >
-          <X className="h-4 w-4" />
-        </button>
+          <X className="h-4 w-4" aria-hidden="true" />
+        </Button>
       </div>
 
       {/* Selector de bolsillo: visible solo para el flujo retiro simple (0/1/2 sin
@@ -515,7 +510,7 @@ export function UsarSaldoAFavorInline({
             value={entrySeleccionado?.entryPublicId ?? ""}
             onChange={(e) => handleCambiarEntry(e.target.value)}
             disabled={guardando}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
             data-testid="saldo-entry-selector"
           >
             {entries.map((entry) => (
@@ -547,7 +542,7 @@ export function UsarSaldoAFavorInline({
           value={kindDestino}
           onChange={(e) => handleCambiarDestino(Number(e.target.value))}
           disabled={guardando}
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+          className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
           data-testid="saldo-destino-selector"
         >
           {DESTINOS_RETIRO.map((destino) => (
@@ -588,19 +583,21 @@ export function UsarSaldoAFavorInline({
         !loadingNettingPreview &&
         errorNettingPreview && (
           <div
-            className="flex flex-col gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+            className="flex flex-col gap-2 rounded-[10px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
             role="alert"
             data-testid="netting-preview-error"
           >
             <span>{errorNettingPreview}</span>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={cargarNettingPreview}
-              className="inline-flex items-center gap-1.5 self-start rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-200 dark:border-rose-800"
+              className="gap-1.5 self-start"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
               Reintentar
-            </button>
+            </Button>
           </div>
         )}
 
@@ -609,7 +606,7 @@ export function UsarSaldoAFavorInline({
         <div className="space-y-3">
           {avisoPreviaDesactualizada && (
             <div
-              className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+              className="rounded-[10px] border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
               role="alert"
               data-testid="netting-previa-desactualizada"
             >
@@ -623,7 +620,7 @@ export function UsarSaldoAFavorInline({
               Este cliente tiene una multa sin pagar. Antes de devolverle, se descuenta lo
               que debe:
             </p>
-            <div className="space-y-1 rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800 p-3 text-sm" data-testid="netting-desglose">
+            <div className="space-y-1 rounded-[10px] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800 p-3 text-sm" data-testid="netting-desglose">
               <div className="flex items-center justify-between">
                 <span className="text-slate-600 dark:text-slate-400">Saldo a favor</span>
                 <span className="font-semibold text-slate-900 dark:text-white">
@@ -661,7 +658,7 @@ export function UsarSaldoAFavorInline({
                 onChange={(e) => setReferencia(e.target.value)}
                 disabled={guardando}
                 placeholder="Número de comprobante, CBU, etc."
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                 data-testid="saldo-referencia"
               />
             </div>
@@ -682,7 +679,7 @@ export function UsarSaldoAFavorInline({
             </p>
           ) : (
             <div
-              className="max-h-48 overflow-y-auto space-y-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1"
+              className="max-h-48 overflow-y-auto space-y-1 rounded-[10px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1"
               role="listbox"
               aria-label="Multas aplicables"
             >
@@ -697,9 +694,9 @@ export function UsarSaldoAFavorInline({
                     disabled={guardando}
                     role="option"
                     aria-selected={estaSeleccionada}
-                    className={`w-full text-left rounded-md px-3 py-2 text-sm transition-colors flex items-center justify-between gap-2 ${
+                    className={`w-full text-left rounded-[10px] px-3 py-2 text-sm transition-colors flex items-center justify-between gap-2 ${
                       estaSeleccionada
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"
                         : "hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
                     } disabled:opacity-50`}
                     data-testid={`multa-opcion-${multa.debitNotePublicId}`}
@@ -736,7 +733,7 @@ export function UsarSaldoAFavorInline({
                 if (reservaDestinoSeleccionada) setReservaDestinoSeleccionada(null);
               }}
               disabled={guardando}
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+              className="w-full rounded-[10px] border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
               data-testid="saldo-buscador-reserva"
             />
           </div>
@@ -750,7 +747,7 @@ export function UsarSaldoAFavorInline({
             </p>
           ) : (
             <div
-              className="max-h-48 overflow-y-auto space-y-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1"
+              className="max-h-48 overflow-y-auto space-y-1 rounded-[10px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1"
               role="listbox"
               aria-label="Reservas destino disponibles"
             >
@@ -784,9 +781,9 @@ export function UsarSaldoAFavorInline({
                     disabled={guardando}
                     role="option"
                     aria-selected={estaSeleccionada}
-                    className={`w-full text-left rounded-md px-3 py-2 text-sm transition-colors flex items-center justify-between gap-2 ${
+                    className={`w-full text-left rounded-[10px] px-3 py-2 text-sm transition-colors flex items-center justify-between gap-2 ${
                       estaSeleccionada
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"
                         : "hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
                     } disabled:opacity-50`}
                     data-testid={`reserva-opcion-${reservaId}`}
@@ -813,7 +810,7 @@ export function UsarSaldoAFavorInline({
 
           {/* Reserva elegida: confirmación visual de la selección */}
           {reservaDestinoSeleccionada && (
-            <p className="text-xs text-emerald-700 dark:text-emerald-400">
+            <p className="text-xs text-blue-700 dark:text-blue-400">
               Reserva elegida:{" "}
               <strong>{reservaDestinoSeleccionada.numeroReserva}</strong>
               {(reservaDestinoSeleccionada.fileName || reservaDestinoSeleccionada.name) && (
@@ -875,7 +872,7 @@ export function UsarSaldoAFavorInline({
             }}
             disabled={guardando}
             placeholder="0,00"
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
             data-testid="saldo-monto"
           />
           {errorValidacion && (
@@ -903,7 +900,7 @@ export function UsarSaldoAFavorInline({
             onChange={(e) => setReferencia(e.target.value)}
             disabled={guardando}
             placeholder="Número de comprobante, CBU, etc."
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
             data-testid="saldo-referencia"
           />
         </div>
@@ -911,8 +908,8 @@ export function UsarSaldoAFavorInline({
 
       {/* Línea de resumen para kind 3: le muestra al usuario exactamente qué va a pasar. */}
       {kindDestino === 3 && reservaDestinoSeleccionada && monto && parseFloat(monto) > 0 && (
-        <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 px-4 py-2.5">
-          <p className="text-xs text-emerald-700 dark:text-emerald-400">
+        <div className="rounded-[10px] bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 px-4 py-2.5">
+          <p className="text-xs text-blue-700 dark:text-blue-400">
             Se van a aplicar <strong>{formatCurrency(parseFloat(monto), moneda)}</strong>{" "}
             del saldo a favor a la reserva <strong>{reservaDestinoSeleccionada.numeroReserva ?? "—"}</strong>.
           </p>
@@ -921,8 +918,8 @@ export function UsarSaldoAFavorInline({
 
       {/* Línea de resumen para kind 4: mismo patrón que kind 3 (spec §3.1). */}
       {kindDestino === KIND_APLICAR_A_MULTA && multaSeleccionada && monto && parseFloat(monto) > 0 && (
-        <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 px-4 py-2.5">
-          <p className="text-xs text-emerald-700 dark:text-emerald-400">
+        <div className="rounded-[10px] bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 px-4 py-2.5">
+          <p className="text-xs text-blue-700 dark:text-blue-400">
             Se van a aplicar <strong>{formatCurrency(parseFloat(monto), moneda)}</strong>{" "}
             del saldo a favor a la multa de la reserva <strong>{multaSeleccionada.numeroReserva ?? "—"}</strong>.
           </p>
@@ -932,7 +929,7 @@ export function UsarSaldoAFavorInline({
       {/* Nota preventiva para efectivo: el backend puede rechazar con 409 por Ley 25.345
           (vale tanto para el retiro simple como para el neto de la obra b). */}
       {kindDestino === 1 && (
-        <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-lg px-3 py-2">
+        <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-[10px] px-3 py-2">
           Ley 25.345: los pagos en efectivo tienen un tope legal. Si el monto lo supera, el sistema lo va a rechazar y te va a indicar que uses transferencia.
         </p>
       )}
@@ -940,7 +937,7 @@ export function UsarSaldoAFavorInline({
       {/* Error del backend (incluye 409 del tope de efectivo y errores de la aplicación) */}
       {errorGuardar && (
         <div
-          className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+          className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
           role="alert"
           data-testid="saldo-error"
         >
@@ -950,17 +947,16 @@ export function UsarSaldoAFavorInline({
 
       {/* Botones: anti-doble-click con disabled={guardando}. En modo neteo o en el
           picker de multa, además se bloquea mientras la previa está cargando/rota. */}
+      {/* Una sola accion rellena en la ficha (B.3): confirmar es la principal (azul
+          boleto). Salir sin guardar dice "Descartar" (B.7: "Cancelar" es palabra
+          del negocio y no se usa para cerrar formularios). */}
       <div className="flex justify-end gap-3 pt-1">
-        <button
+        <Button type="button" variant="outline" onClick={onCancelar} disabled={guardando}>
+          Descartar
+        </Button>
+        <Button
           type="button"
-          onClick={onCancelar}
-          disabled={guardando}
-          className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
-        >
-          Cancelar
-        </button>
-        <button
-          type="button"
+          variant="default"
           onClick={handleConfirmar}
           disabled={
             guardando
@@ -968,17 +964,17 @@ export function UsarSaldoAFavorInline({
             || ((kindDestino === 1 || kindDestino === 2 || kindDestino === KIND_APLICAR_A_MULTA) && !!errorNettingPreview)
             || (kindDestino === KIND_APLICAR_A_MULTA && !hayMultasAplicables)
           }
-          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+          className="gap-2"
           data-testid="saldo-confirmar"
         >
           {guardando ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               Procesando…
             </>
           ) : (
             <>
-              <ArrowDownToLine className="h-4 w-4" />
+              <ArrowDownToLine className="h-4 w-4" aria-hidden="true" />
               {kindDestino === 0
                 ? "Cerrar aviso"
                 : kindDestino === 3 || kindDestino === KIND_APLICAR_A_MULTA
@@ -990,7 +986,7 @@ export function UsarSaldoAFavorInline({
                 : "Confirmar retiro"}
             </>
           )}
-        </button>
+        </Button>
       </div>
     </div>
   );

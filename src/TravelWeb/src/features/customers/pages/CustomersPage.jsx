@@ -57,18 +57,21 @@ export default function CustomersPage() {
         subtitle="Tus pasajeros y empresas, con la cuenta corriente de cada uno."
         actions={
           <>
+            {/* Estandar visual (B.3): en esta pantalla la accion principal es "Nuevo
+                Cliente" (para lo que existe Clientes). "Nuevo presupuesto" es una salida
+                lateral hacia Reservas, por eso va secundaria (borde), nunca rellena. */}
             <Button
               type="button"
               variant="outline"
               onClick={() => navigate("/reservas?create=1")}
-              className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-900/60 dark:bg-slate-900 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+              className="gap-2"
             >
               <Plus className="h-4 w-4" />
               Nuevo presupuesto
             </Button>
             <Button
               onClick={() => handleOpenModal()}
-              className="gap-2 bg-indigo-600 text-white shadow-md hover:bg-indigo-700 hover:shadow-lg"
+              className="gap-2"
             >
               <Plus className="h-4 w-4" />
               Nuevo Cliente
@@ -79,7 +82,7 @@ export default function CustomersPage() {
 
       <ListToolbar
         searchSlot={
-          <div className="flex items-center gap-2 rounded-lg border bg-card/50 px-3 py-2 shadow-sm transition-all focus-within:ring-2 focus-within:ring-indigo-500/20 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/50">
+          <div className="flex items-center gap-2 rounded-[10px] border bg-card/50 px-3 py-2 shadow-sm transition-all focus-within:ring-2 focus-within:ring-ring/20 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/50">
             <Search className="h-4 w-4 text-muted-foreground" />
             <input
               type="text"

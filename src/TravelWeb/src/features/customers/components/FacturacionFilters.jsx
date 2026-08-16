@@ -24,10 +24,11 @@
  *       que incluye "anulada" (AnnulmentStatus.Succeeded) además de "anulando".
  */
 import { Search, X } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { OPCIONES_TIPO_FILTRO, OPCIONES_ESTADO_FILTRO } from "../lib/facturacionFilters";
 
-const etiquetaSelect = "rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
-const etiquetaInput = "w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white";
+const etiquetaSelect = "rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
+const etiquetaInput = "w-full rounded-[10px] border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-sm transition-shadow focus:ring-2 focus:ring-ring dark:border-slate-800 dark:bg-slate-900 dark:text-white";
 
 export function FacturacionFilters({ filters, onChange, onReset, totalResultados, isLoading, estadoOpciones }) {
   // Usa las opciones de estado que le pasen; si no llegan, usa el set por defecto
@@ -167,16 +168,18 @@ export function FacturacionFilters({ filters, onChange, onReset, totalResultados
         </div>
 
         {/* Botón para limpiar todos los filtros y volver al período por defecto */}
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onReset}
-          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+          className="gap-1.5"
           data-testid="filtro-reset"
           aria-label="Limpiar filtros"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
           Limpiar
-        </button>
+        </Button>
 
         {/* Contador de resultados */}
         <span className="ml-auto text-sm text-slate-500 dark:text-slate-400" data-testid="filtro-total-resultados">

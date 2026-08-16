@@ -18,7 +18,8 @@
  * debajo como dato de SOLO LECTURA — nunca se esconde.
  */
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw, Search, XCircle } from "lucide-react";
+import { Loader2, Lock, RefreshCw, Search, XCircle } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -41,7 +42,7 @@ import {
 } from "../lib/customerDocumentLogic";
 
 const inputClass =
-  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 dark:bg-slate-950 dark:border-slate-800 dark:text-white dark:disabled:bg-slate-900";
+  "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 dark:bg-slate-950 dark:border-slate-800 dark:text-white dark:disabled:bg-slate-900";
 const labelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
 
 /**
@@ -53,7 +54,11 @@ const labelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
  *   - onGuardado: callback tras un guardado exitoso — el padre recarga el overview para
  *     que el banner ámbar y el encabezado reflejen los datos nuevos (spec §7).
  */
-export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuardado }) {
+// B.3 regla 2 ("si hay dos rellenas, una está de más"): mismo criterio que
+// EstadoCuentaClienteTab — cuando el padre tiene abierta otra ficha con SU propio
+// boton principal relleno (ej. "Usar saldo a favor"), "Guardar cambios" se degrada
+// a outline (mismo texto, mismo handler) hasta que esa ficha se cierre.
+export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuardado, hayFichaPrimariaAbierta = false }) {
   // ── Carga del detalle del cliente (fuente de los campos editables) ─────────
   const [loading, setLoading] = useState(true);
   const [errorCarga, setErrorCarga] = useState(null);
@@ -211,15 +216,17 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
     return (
       <div className="flex flex-col items-center gap-3 py-10 text-center" data-testid="datos-cliente-load-error">
         <p className="text-sm text-rose-600 dark:text-rose-400">{errorCarga}</p>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={cargarCliente}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          className="gap-1.5"
           data-testid="datos-cliente-load-retry"
         >
-          <RefreshCw className="h-3.5 w-3.5" />
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
           Reintentar
-        </button>
+        </Button>
       </div>
     );
   }
@@ -280,24 +287,27 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
                 className={`${inputClass} pr-10 font-mono`}
                 data-testid="customer-datos-document-number"
               />
-              {/* Lupita AFIP: SOLO para los tipos que están en el padrón (CUIT/CUIL/DNI) */}
+              {/* Lupita AFIP: SOLO para los tipos que están en el padrón (CUIT/CUIL/DNI).
+                  Se queda <button> nativo (no el molde Button): es un icono-afijo DENTRO
+                  del input (absolute, p-1, ~24px) — el tamano minimo del molde
+                  (size="icon", 40x40px) desborda el input y rompe el posicionamiento. */}
               {tipoDocumentoTieneBusquedaAfip(formData.tipoDocumento) && (
                 <button
                   type="button"
                   onClick={handleAfipSearch}
                   disabled={documentoDeshabilitado}
                   title="Buscar en AFIP"
-                  className="absolute right-2 top-2 p-1 text-slate-400 hover:text-indigo-600 disabled:cursor-not-allowed disabled:hover:text-slate-400 transition-colors"
+                  className="absolute right-2 top-2 p-1 text-slate-400 hover:text-primary disabled:cursor-not-allowed disabled:hover:text-slate-400 transition-colors"
                   data-testid="customer-datos-document-search"
                 >
-                  {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
+                  {loadingAfip ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : <Search className="h-4 w-4" />}
                 </button>
               )}
 
               {afipResults.length > 0 && (
-                <div className="absolute left-0 right-0 z-[100] mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                <div className="absolute left-0 right-0 z-[100] mt-1 w-full overflow-hidden rounded-[10px] border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
                   <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
-                    <span className="text-[10px] font-bold uppercase text-slate-500">Resultados AFIP</span>
+                    <span className="text-[11px] font-bold uppercase text-slate-500">Resultados AFIP</span>
                     <button type="button" onClick={() => setAfipResults([])} className="text-slate-400 hover:text-slate-600">
                       <XCircle className="h-3 w-3" />
                     </button>
@@ -308,12 +318,12 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
                         key={indice}
                         type="button"
                         onClick={() => handleAfipSelect(persona)}
-                        className="group w-full border-b border-slate-50 px-4 py-2 text-left transition-colors last:border-0 hover:bg-indigo-50 dark:border-slate-800 dark:hover:bg-indigo-900/30"
+                        className="group w-full border-b border-slate-50 px-4 py-2 text-left transition-colors last:border-0 hover:bg-blue-50 dark:border-slate-800 dark:hover:bg-blue-900/20"
                       >
-                        <div className="truncate text-sm font-medium text-slate-900 group-hover:text-indigo-600 dark:text-white">
+                        <div className="truncate text-sm font-medium text-slate-900 group-hover:text-primary dark:text-white">
                           {persona.razonSocial || `${persona.apellido || ""} ${persona.nombre || ""}`}
                         </div>
-                        <div className="text-[10px] text-slate-500">{persona.id} • {persona.taxCondition}</div>
+                        <div className="text-[11px] text-slate-500">{persona.id} • {persona.taxCondition}</div>
                       </button>
                     ))}
                   </div>
@@ -328,8 +338,9 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
               que es "el documento" el que queda trabado, sin perder el motivo original
               (comprobantes ya emitidos con ese CUIT). */}
           {documentoDeshabilitado && canEdit && (
-            <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="customer-datos-document-locked-note">
-              🔒 El documento no se puede cambiar acá: los comprobantes ya salieron con este CUIT. Si el
+            <p className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400" data-testid="customer-datos-document-locked-note">
+              <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
+              El documento no se puede cambiar acá: los comprobantes ya salieron con este CUIT. Si el
               titular cambió de CUIT, registrá un cliente nuevo.
             </p>
           )}
@@ -405,14 +416,14 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
         </div>
 
         {/* Toggle activo/inactivo: inactivo = no aparece en buscadores, mantiene historial */}
-        <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/30 sm:col-span-2">
+        <div className="flex items-center gap-3 rounded-[10px] border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/30 sm:col-span-2">
           <input
             type="checkbox"
             id="customer-datos-isActive"
             checked={formData.isActive}
             onChange={(event) => setFormData((anterior) => ({ ...anterior, isActive: event.target.checked }))}
             disabled={camposDeshabilitados}
-            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
+            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-ring disabled:cursor-not-allowed"
             data-testid="customer-datos-isActive"
           />
           <label htmlFor="customer-datos-isActive" className={`${labelClass} ${camposDeshabilitados ? "" : "cursor-pointer"}`}>
@@ -438,14 +449,15 @@ export function DatosClienteTab({ customerPublicId, taxIdLocked, canEdit, onGuar
           (spec §5) — todos los campos ya quedaron deshabilitados arriba. */}
       {canEdit && (
         <div className="flex items-center gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-          <button
+          <Button
             type="submit"
+            variant={hayFichaPrimariaAbierta ? "outline" : "default"}
             disabled={saving || !puedeGuardarDatosCliente(formData)}
-            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-indigo-500/25 transition-all hover:bg-indigo-700 disabled:opacity-50"
+            className="px-5"
             data-testid="customer-datos-submit"
           >
             {saving ? "Guardando…" : "Guardar cambios"}
-          </button>
+          </Button>
         </div>
       )}
     </form>

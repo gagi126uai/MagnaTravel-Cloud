@@ -39,7 +39,7 @@ import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import { UsarSaldoAFavorInline } from "../components/UsarSaldoAFavorInline";
 import { FotoDeSaldoCuenta } from "../components/FotoDeSaldoCuenta";
 import { ListaCuentasBancarias } from "../../bank-accounts/components/ListaCuentasBancarias";
-import { Button } from "../../../components/ui/button";
+import { Button, buttonVariants } from "../../../components/ui/button";
 import {
   DataGrid,
   DataGridActionCell,
@@ -125,7 +125,7 @@ function SaldoLineaCuenta({ balance, currency }) {
     return (
       <div className="text-emerald-600 dark:text-emerald-400">
         {formatCurrency(Math.abs(valor), currency)}
-        <span className="ml-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-500 dark:text-emerald-600">
+        <span className="ml-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-500 dark:text-emerald-600">
           a favor
         </span>
       </div>
@@ -183,7 +183,7 @@ function ContextoAnuladaCuenta({ reserva }) {
   return (
     <div className={TONO_CONTEXTO_ANULADA[fila.tono]}>
       {fila.montoTexto && <span className="mr-1">{fila.montoTexto}</span>}
-      <span className="text-[9px] font-semibold uppercase tracking-wider">{fila.texto}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wider">{fila.texto}</span>
     </div>
   );
 }
@@ -548,7 +548,7 @@ export default function CustomerAccountPage() {
           type="button"
           variant="outline"
           onClick={() => navigate(`/reservas?create=1&customerPublicId=${publicId}`)}
-          className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+          className="gap-2"
           disabled={databaseUnavailable}
         >
           <Receipt className="h-4 w-4" />
@@ -604,13 +604,13 @@ export default function CustomerAccountPage() {
         los dos destinos posibles, no solo "otras reservas".
       */}
       {creditApplications.length > 0 && (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900/40 dark:bg-indigo-950/10 overflow-hidden">
-          <div className="px-5 py-3 border-b border-indigo-100 dark:border-indigo-900/30">
-            <h3 className="text-sm font-bold text-indigo-800 dark:text-indigo-300">
+        <div className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
               Saldo a favor aplicado
             </h3>
           </div>
-          <ul className="divide-y divide-indigo-100 dark:divide-indigo-900/20">
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
             {creditApplications.map((aplicacion) => {
               const estaRevirtiendoEsta = revirtiendoAplicacionId === String(aplicacion.applicationPublicId);
               const simbolo = aplicacion.currency === "USD" ? "US$" : "$";
@@ -629,11 +629,11 @@ export default function CustomerAccountPage() {
                         {prefijoDestinoAplicacionSaldo(aplicacion.destinationKind)}{" "}
                         <Link
                           to={`/reservas/${aplicacion.targetReservaPublicId}`}
-                          className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline"
+                          className="text-primary hover:text-primary/80 hover:underline"
                         >
                           {aplicacion.targetReservaNumber ?? "la reserva"}
                         </Link>
-                        <span className="ml-2 font-bold text-indigo-700 dark:text-indigo-400">
+                        <span className="ml-2 font-bold text-slate-700 dark:text-slate-300">
                           −{simbolo}{monto}
                         </span>
                       </p>
@@ -647,23 +647,25 @@ export default function CustomerAccountPage() {
                       </p>
                     </div>
                     {hasPermission("cobranzas.edit") && !estaRevirtiendoEsta && (
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() => {
                           setRevirtiendoAplicacionId(String(aplicacion.applicationPublicId));
                           setMotivoReversion("");
                           setErrorReversion(null);
                         }}
-                        className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-slate-900 dark:text-indigo-400 dark:hover:bg-indigo-950/30 transition-colors"
+                        className="flex-shrink-0 gap-1.5"
                         data-testid={`revertir-aplicacion-${aplicacion.applicationPublicId}`}
                       >
-                        <Undo2 className="h-3.5 w-3.5" />
+                        <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
                         Revertir
-                      </button>
+                      </Button>
                     )}
                   </div>
                   {estaRevirtiendoEsta && (
-                    <div className="mt-3 space-y-2 rounded-lg bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-900/40 p-3">
+                    <div className="mt-3 space-y-2 rounded-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3">
                       <label
                         htmlFor={`motivo-reversion-${aplicacion.applicationPublicId}`}
                         className="text-xs font-semibold text-slate-600 dark:text-slate-400"
@@ -677,34 +679,39 @@ export default function CustomerAccountPage() {
                         onChange={(e) => setMotivoReversion(e.target.value)}
                         disabled={guardandoReversion}
                         placeholder="Indicá el motivo si lo tenés..."
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white disabled:opacity-50 resize-none"
+                        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white disabled:opacity-50 resize-none"
                         data-testid={`motivo-reversion-${aplicacion.applicationPublicId}`}
                       />
                       {errorReversion && (
                         <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">{errorReversion}</p>
                       )}
                       <div className="flex justify-end gap-2">
-                        <button
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => { setRevirtiendoAplicacionId(null); setMotivoReversion(""); setErrorReversion(null); }}
                           disabled={guardandoReversion}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50 transition-colors"
                         >
-                          Cancelar
-                        </button>
-                        <button
+                          {/* "Descartar", no "Cancelar" (B.7): sale del formulario de
+                              reversion sin ejecutarla; "Cancelar" es palabra del negocio. */}
+                          Descartar
+                        </Button>
+                        <Button
                           type="button"
+                          variant="default"
+                          size="sm"
                           onClick={() => handleRevertirAplicacion(String(aplicacion.applicationPublicId), aplicacion.destinationKind)}
                           disabled={guardandoReversion}
-                          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                          className="gap-1.5"
                           data-testid={`confirmar-reversion-${aplicacion.applicationPublicId}`}
                         >
                           {guardandoReversion ? (
-                            <><Loader2 className="h-3 w-3 animate-spin" />Revirtiendo…</>
+                            <><Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />Revirtiendo…</>
                           ) : (
-                            <><Undo2 className="h-3 w-3" />Confirmar reversión</>
+                            <><Undo2 className="h-3 w-3" aria-hidden="true" />Confirmar reversión</>
                           )}
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   )}
@@ -734,7 +741,7 @@ export default function CustomerAccountPage() {
       {debeMostrarBannerDatosFiscales(overview?.hasPendingTaxData) && (
         <div
           data-testid="customer-missing-tax-condition-banner"
-          className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
+          className="flex items-center gap-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
         >
           <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
           <span>
@@ -745,7 +752,7 @@ export default function CustomerAccountPage() {
             type="button"
             onClick={() => setActiveTab("datos")}
             data-testid="customer-missing-tax-condition-cta"
-            className="ml-auto flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-200 dark:hover:bg-amber-900/30"
+            className="ml-auto flex-shrink-0 rounded-[10px] border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-200 dark:hover:bg-amber-900/30"
           >
             Completar datos
           </button>
@@ -769,7 +776,7 @@ export default function CustomerAccountPage() {
               onClick={() => setActiveTab(tab.key)}
               className={`relative pb-4 text-sm font-semibold transition-colors ${
                 activeTab === tab.key
-                  ? "text-indigo-600 dark:text-indigo-400"
+                  ? "text-primary"
                   : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
               }`}
               data-testid={`tab-${tab.key}`}
@@ -777,13 +784,13 @@ export default function CustomerAccountPage() {
               <span className="flex items-center gap-2">
                 {tab.label}
                 {tab.count !== null && (
-                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-800">
+                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500 dark:bg-slate-800">
                     {tab.count}
                   </span>
                 )}
               </span>
               {activeTab === tab.key && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" />
               )}
             </button>
           ))}
@@ -803,7 +810,7 @@ export default function CustomerAccountPage() {
                     placeholder="Buscar en reservas..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                    className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-ring dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                   />
                 </div>
               }
@@ -866,9 +873,11 @@ export default function CustomerAccountPage() {
                               )}
                             </DataGridCell>
                             <DataGridActionCell>
+                              {/* Link (no Button) porque navega con react-router, pero usa el
+                                  mismo molde visual (buttonVariants, B.3) que un boton outline. */}
                               <Link
                                 to={`/reservas/${getPublicId(reserva)}`}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                                className={buttonVariants("outline", "sm")}
                               >
                                 Ver
                               </Link>
@@ -883,7 +892,7 @@ export default function CustomerAccountPage() {
                 {reservas.length === 0 ? (
                   <ListEmptyState
                     title="No hay reservas para mostrar."
-                    className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
+                    className="md:hidden rounded-[14px] border border-dashed border-slate-200 dark:border-slate-800"
                   />
                 ) : (
                   <MobileRecordList>
@@ -925,7 +934,7 @@ export default function CustomerAccountPage() {
                           footerActions={
                             <Link
                               to={`/reservas/${getPublicId(reserva)}`}
-                              className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                              className={buttonVariants("outline", "sm")}
                             >
                               Ver
                             </Link>
@@ -960,6 +969,7 @@ export default function CustomerAccountPage() {
             onRetry={loadEstadoCuenta}
             onNuevaCobranza={() => handleOpenModal(null)}
             canRegistrarCobranza={hasPermission("cobranzas.edit")}
+            hayFichaPrimariaAbierta={Boolean(monedaFichaUsarSaldo)}
           />
         )}
 
@@ -997,6 +1007,7 @@ export default function CustomerAccountPage() {
               taxIdLocked={overview?.taxIdLocked}
               canEdit={hasPermission("clientes.edit")}
               onGuardado={loadOverview}
+              hayFichaPrimariaAbierta={Boolean(monedaFichaUsarSaldo)}
             />
           </div>
         )}

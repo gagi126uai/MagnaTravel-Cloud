@@ -24,6 +24,8 @@
  */
 import { Link } from "react-router-dom";
 import { AlertTriangle, ChevronRight, DollarSign } from "lucide-react";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 import { formatCurrency } from "../../../lib/utils";
 import {
   armarRecuadroMultaPorMoneda,
@@ -38,9 +40,12 @@ const TONO_TEXTO = {
   amber: "text-amber-600 dark:text-amber-400",
 };
 
+// Traduce el tono de pendingPenaltiesLogic.js ("rose"/"amber") al tono del molde
+// StatusChip ("rojo"/"ambar", B.5) — la logica de negocio no se toca, solo se
+// mapea al vocabulario del chip compartido.
 const TONO_CHIP = {
-  rose: "bg-rose-100 text-rose-700 dark:bg-rose-950/30 dark:text-rose-300",
-  amber: "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+  rose: "rojo",
+  amber: "ambar",
 };
 
 export function MultaPendienteDeCobroBlock({ pendingPenalties, onCobrar, canCobrar = false }) {
@@ -53,7 +58,7 @@ export function MultaPendienteDeCobroBlock({ pendingPenalties, onCobrar, canCobr
 
   return (
     <div
-      className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50/30 shadow-sm dark:border-amber-900/40 dark:bg-amber-950/10"
+      className="overflow-hidden rounded-[14px] border border-amber-200 bg-amber-50/30 shadow-sm dark:border-amber-900/40 dark:bg-amber-950/10"
       data-testid="bloque-multas-pendientes"
     >
       <div className="flex items-center gap-2 border-b border-amber-100 px-6 py-4 dark:border-amber-900/30">
@@ -91,7 +96,7 @@ function RecuadroMultaPorMoneda({ total }) {
   const recuadro = armarRecuadroMultaPorMoneda(total);
   return (
     <div
-      className="min-w-[160px] rounded-lg bg-white/70 px-4 py-3 dark:bg-slate-900/40"
+      className="min-w-[160px] rounded-[10px] bg-white/70 px-4 py-3 dark:bg-slate-900/40"
       data-testid={`recuadro-multa-${recuadro.currency}`}
     >
       <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -100,7 +105,7 @@ function RecuadroMultaPorMoneda({ total }) {
       <div className={`mt-0.5 text-xl font-bold ${TONO_TEXTO[recuadro.colorMontoGrande]}`}>
         {recuadro.montoGrandeTexto}
         {recuadro.etiquetaMontoGrande && (
-          <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide align-middle">
+          <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide align-middle">
             {recuadro.etiquetaMontoGrande}
           </span>
         )}
@@ -128,7 +133,7 @@ function FilaMultaPendiente({ item, onCobrar, canCobrar }) {
     >
       <Link
         to={`/reservas/${item.reservaPublicId}`}
-        className="min-w-0 truncate text-sm font-semibold text-slate-900 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-300"
+        className="min-w-0 truncate text-sm font-semibold text-slate-900 hover:text-primary dark:text-white dark:hover:text-primary"
       >
         {item.numeroReserva} · {item.name}
         {item.documentRef && <span className="ml-2 text-xs font-normal text-slate-500">ND {item.documentRef}</span>}
@@ -137,15 +142,15 @@ function FilaMultaPendiente({ item, onCobrar, canCobrar }) {
         <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
           {formatCurrency(item.amount, item.currency)}
         </span>
-        <span
-          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${TONO_CHIP[chip.tono]}`}
-        >
-          {chip.texto}
-        </span>
+        <StatusChip tone={TONO_CHIP[chip.tono]}>{chip.texto}</StatusChip>
+        {/* variant="outline" (no "default"): esta accion se repite por fila — si hubiera
+            varias multas pendientes a la vez, varios botones rellenos competirian entre
+            si y con la accion principal real de la pantalla (B.3, "UNA sola por
+            pantalla"). Mismo criterio que "Ver factura" en la solapa Facturacion. */}
         {isCollectable && canCobrar ? (
-          <button type="button" onClick={() => onCobrar?.(item)} className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
+          <Button type="button" variant="outline" size="sm" onClick={() => onCobrar?.(item)} className="gap-1">
             <DollarSign className="h-3.5 w-3.5" aria-hidden="true" /> Cobrar
-          </button>
+          </Button>
         ) : <ChevronRight className="h-4 w-4 text-slate-400" aria-hidden="true" />}
       </span>
     </div>

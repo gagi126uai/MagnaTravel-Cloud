@@ -22,6 +22,7 @@
  *   - onToggleUsarSaldo(moneda): abre/cierra la ficha inline de esa moneda
  */
 import { Loader2, Wallet } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { construirFotoDeSaldo, debeMostrarBotonUsarSaldo } from "../lib/balanceCompositionLogic";
 
 const TONO_TEXTO = {
@@ -42,7 +43,7 @@ export function FotoDeSaldoCuenta({
   if (loading) {
     return (
       <div
-        className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50"
+        className="rounded-[14px] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50"
         data-testid="foto-saldo-cargando"
       >
         <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Saldo de la cuenta</div>
@@ -59,7 +60,7 @@ export function FotoDeSaldoCuenta({
   if (foto.estado === "vacio") {
     return (
       <div
-        className="rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/40"
+        className="rounded-[14px] border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/40"
         data-testid="foto-saldo-vacio"
       >
         <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Saldo de la cuenta</div>
@@ -71,7 +72,7 @@ export function FotoDeSaldoCuenta({
   if (foto.estado === "alDia") {
     return (
       <div
-        className="rounded-xl border border-emerald-100 bg-emerald-50 p-6 shadow-sm dark:border-emerald-900/30 dark:bg-emerald-900/10"
+        className="rounded-[14px] border border-emerald-100 bg-emerald-50 p-6 shadow-sm dark:border-emerald-900/30 dark:bg-emerald-900/10"
         data-testid="foto-saldo-al-dia"
       >
         <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Saldo de la cuenta</div>
@@ -93,7 +94,7 @@ export function FotoDeSaldoCuenta({
 
   return (
     <div
-      className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50"
+      className="rounded-[14px] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50"
       data-testid="foto-saldo-cuenta"
     >
       <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Saldo de la cuenta</div>
@@ -129,7 +130,7 @@ export function FotoDeSaldoCuenta({
                     <td key={moneda} className="py-2 pl-4 text-right align-top">
                       <div className={`font-semibold ${TONO_TEXTO[celda.tono]}`}>{celda.montoTexto}</div>
                       {notas.map((nota) => (
-                        <div key={nota} className="text-[10px] font-medium text-amber-600 dark:text-amber-500">
+                        <div key={nota} className="text-[11px] font-medium text-amber-600 dark:text-amber-500">
                           {nota}
                         </div>
                       ))}
@@ -147,7 +148,7 @@ export function FotoDeSaldoCuenta({
                     <div className={`text-lg font-extrabold ${TONO_TEXTO[saldo.tono]}`}>{saldo.montoTexto}</div>
                     {saldo.etiqueta && (
                       <div
-                        className={`text-[10px] font-semibold uppercase tracking-wider ${TONO_TEXTO[saldo.tono]}`}
+                        className={`text-[11px] font-semibold uppercase tracking-wider ${TONO_TEXTO[saldo.tono]}`}
                       >
                         {saldo.etiqueta}
                       </div>
@@ -162,21 +163,25 @@ export function FotoDeSaldoCuenta({
 
       {monedasConBoton.length > 0 && (
         <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {/* Secundaria (B.3, variant="outline"): el verde queda para decir "hay plata a
+              favor" (arriba, en la tabla), no para el boton — así no compite con la
+              acción principal de la pantalla. */}
           {monedasConBoton.map((moneda) => (
-            <button
+            <Button
               key={moneda}
               type="button"
+              variant="outline"
               onClick={() => onToggleUsarSaldo(moneda)}
-              className="flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50 dark:border-emerald-800 dark:bg-slate-900 dark:text-emerald-400 dark:hover:bg-emerald-950/30 transition-colors"
+              className="gap-2"
               data-testid={`usar-saldo-btn-${moneda}`}
             >
-              <Wallet className="h-4 w-4" />
+              <Wallet className="h-4 w-4" aria-hidden="true" />
               {monedaFichaAbierta === moneda
                 ? "Cerrar"
                 : monedasConBoton.length > 1
                 ? `Usar saldo a favor (${moneda === "USD" ? "US$" : "$"})`
                 : "Usar saldo a favor"}
-            </button>
+            </Button>
           ))}
         </div>
       )}

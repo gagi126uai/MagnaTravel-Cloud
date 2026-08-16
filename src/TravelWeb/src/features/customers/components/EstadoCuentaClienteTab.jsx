@@ -48,6 +48,7 @@
  */
 import { Link } from "react-router-dom";
 import { BookOpen, Loader2, Plus, RefreshCw } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatEtiquetaDocumentoExtracto, formatCierreExtracto } from "../lib/estadoCuentaFormatting";
@@ -71,6 +72,12 @@ export function EstadoCuentaClienteTab({
   onRetry,
   onNuevaCobranza,
   canRegistrarCobranza,
+  // B.3 regla 2 ("si hay dos rellenas, una está de más"): cuando el padre tiene
+  // abierta OTRA ficha con su propio boton principal relleno (ej. "Usar saldo a
+  // favor"), ese es el que manda en la pantalla — este "Nuevo cobro" se degrada a
+  // outline (mismo texto, mismo handler) hasta que esa ficha se cierre. Default
+  // false para no afectar a nadie que use esta solapa sin esa ficha abierta.
+  hayFichaPrimariaAbierta = false,
 }) {
   const bloques = estadoCuenta?.currencies ?? [];
   const totalLineas = bloques.reduce((acc, bloque) => acc + (bloque.lines?.length ?? 0), 0);
@@ -88,14 +95,10 @@ export function EstadoCuentaClienteTab({
     return (
       <div className="flex flex-col items-center gap-3 py-12 text-center" data-testid="extracto-error">
         <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
-        <button
-          type="button"
-          onClick={onRetry}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
+        <Button type="button" variant="outline" size="sm" onClick={onRetry} className="gap-1.5">
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
           Reintentar
-        </button>
+        </Button>
       </div>
     );
   }
@@ -108,23 +111,28 @@ export function EstadoCuentaClienteTab({
           <BookOpen className="h-5 w-5" />
           <span className="font-semibold">Extracto de cuenta</span>
         </div>
+        {/* Unica accion principal de esta solapa (B.3): azul boleto, no verde — el verde
+            queda reservado para decir "ya cobrado" (estado), no para el boton de accion.
+            Si hay otra ficha abierta con SU propio relleno (ej. "Usar saldo a favor"),
+            este se apaga a outline para no competir (B.3 regla 2). */}
         {canRegistrarCobranza && (
-          <button
+          <Button
             type="button"
+            variant={hayFichaPrimariaAbierta ? "outline" : "default"}
             onClick={onNuevaCobranza}
-            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-500/20 hover:bg-emerald-700 transition-colors"
+            className="gap-2"
             data-testid="btn-nueva-cobranza"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4" aria-hidden="true" />
             Nuevo cobro
-          </button>
+          </Button>
         )}
       </div>
 
       {/* Estado vacío: aún no hay movimientos en ninguna moneda */}
       {totalLineas === 0 && (
         <div
-          className="rounded-xl border border-slate-200 bg-white py-12 text-center dark:border-slate-800 dark:bg-slate-900"
+          className="rounded-[14px] border border-slate-200 bg-white py-12 text-center dark:border-slate-800 dark:bg-slate-900"
           data-testid="extracto-vacio"
         >
           <BookOpen className="mx-auto mb-3 h-8 w-8 text-slate-300 dark:text-slate-600" />
@@ -163,7 +171,7 @@ function BloqueExtractoCliente({ bloque }) {
   const nombreMoneda = bloque.currency === "USD" ? "Dólares" : "Pesos";
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
       {/* Cabecera: solo identifica la moneda (badge + nombre) */}
       <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-5 py-3 dark:border-slate-800 dark:bg-slate-800/10">
         <CurrencyBadge currency={bloque.currency} />
@@ -260,7 +268,7 @@ function FilaExtractoCliente({ linea, currency }) {
         {linea.reservaPublicId && linea.numeroReserva && (
           <Link
             to={`/reservas/${linea.reservaPublicId}`}
-            className="block text-[10px] text-indigo-600 hover:underline dark:text-indigo-400"
+            className="block text-[11px] text-primary hover:underline"
           >
             {linea.numeroReserva}
           </Link>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { User, Mail, Phone, XCircle, Search, Loader2 } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { api } from "../../../api";
 import { showSuccess, showWarning } from "../../../alerts";
@@ -195,7 +196,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="w-full max-w-lg rounded-xl border bg-card p-0 shadow-2xl max-h-[90vh] overflow-y-auto scale-100 animate-in zoom-in-95 duration-200">
+            <div className="w-full max-w-lg rounded-[14px] border bg-card p-0 shadow-2xl max-h-[90vh] overflow-y-auto scale-100 animate-in zoom-in-95 duration-200">
                 {/* Modal Header */}
                 <div className="px-6 py-4 border-b bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
                     <div>
@@ -216,7 +217,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
 
                 {!customer && similarMatches.length > 0 && (
                     <div className="px-6 pt-4">
-                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-950/30">
+                        <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-950/30">
                             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
                                 <Search className="h-3 w-3" /> Quizas te referis a un cliente que ya existe:
                             </div>
@@ -229,12 +230,12 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         className="flex w-full items-center justify-between rounded border border-transparent bg-white/50 px-2 py-1.5 text-left text-xs hover:border-amber-300 hover:bg-white dark:bg-slate-900/40 dark:hover:bg-slate-900"
                                     >
                                         <div>
-                                            <div className="font-bold text-slate-900 dark:text-white">{m.fullName}{!m.isActive ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300">archivado</span> : null}</div>
-                                            <div className="text-[10px] text-slate-500">
+                                            <div className="font-bold text-slate-900 dark:text-white">{m.fullName}{!m.isActive ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300">archivado</span> : null}</div>
+                                            <div className="text-[11px] text-slate-500">
                                                 {m.documentType ? `${m.documentType} ` : ""}{m.documentNumber || ""} {m.phone ? `• ${m.phone}` : ""} {m.email ? `• ${m.email}` : ""}
                                             </div>
                                         </div>
-                                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{m.score}%</span>
+                                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{m.score}%</span>
                                     </button>
                                 ))}
                             </div>
@@ -260,7 +261,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                         type="text"
                                         value={formData.fullName}
                                         onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                                        className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-10 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-indigo-500"
+                                        className="w-full rounded-[10px] border border-input bg-background dark:bg-slate-950 pl-9 pr-10 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                                         placeholder="Ej. Juan Pérez"
                                     />
                                 </div>
@@ -289,7 +290,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                                 setSearchingField(null);
                                             }
                                         }}
-                                        className="rounded-md border border-input bg-background dark:bg-slate-950 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                                        className="rounded-[10px] border border-input bg-background dark:bg-slate-950 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
                                         data-testid="customer-modal-document-type"
                                     >
                                         {DOCUMENT_TYPE_OPTIONS.map((opcion) => (
@@ -305,7 +306,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                             // muestran el ejemplo con guiones y el DNI avisa los 7 u 8 números
                                             // sin puntos que exige el motor (ver documentoAyuda.js).
                                             placeholder={ayudaNumeroDocumento(formData.tipoDocumento)}
-                                            className="w-full rounded-md border border-input bg-background dark:bg-slate-950 py-2 pr-10 px-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                                            className="w-full rounded-[10px] border border-input bg-background dark:bg-slate-950 py-2 pr-10 px-3 text-sm outline-none focus:ring-2 focus:ring-ring font-mono"
                                             value={formData.numeroDocumento}
                                             onChange={(e) => {
                                                 setFormData({ ...formData, numeroDocumento: e.target.value });
@@ -313,22 +314,26 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                             }}
                                             data-testid="customer-modal-document-number"
                                         />
-                                        {/* Lupita AFIP: SOLO para CUIT/CUIL/DNI (mockup firmado) */}
+                                        {/* Lupita AFIP: SOLO para CUIT/CUIL/DNI (mockup firmado).
+                                            Se queda <button> nativo (no el molde Button): es un
+                                            icono-afijo DENTRO del input (absolute, p-1, ~24px) — el
+                                            tamano minimo del molde (size="icon", 40x40px) desborda
+                                            el input y rompe el posicionamiento absoluto. */}
                                         {tipoDocumentoTieneBusquedaAfip(formData.tipoDocumento) && (
                                             <button
                                                 type="button"
                                                 onClick={() => handleAfipSearch(formData.numeroDocumento, "document", { esBusquedaManual: true })}
-                                                className="absolute right-2 top-2 p-1 text-slate-400 hover:text-indigo-600 transition-colors"
+                                                className="absolute right-2 top-2 p-1 text-slate-400 hover:text-primary transition-colors"
                                                 title="Buscar en AFIP"
                                             >
-                                                {loadingAfip && searchingField === "document" ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
+                                                {loadingAfip && searchingField === "document" ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : <Search className="h-4 w-4" />}
                                             </button>
                                         )}
 
                                         {afipResults.length > 0 && searchingField === "document" && (
-                                            <div className="absolute left-0 right-0 z-[100] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                            <div className="absolute left-0 right-0 z-[100] mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[10px] shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                                                 <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
-                                                    <span className="text-[10px] font-bold text-slate-500 uppercase">Resultados AFIP</span>
+                                                    <span className="text-[11px] font-bold text-slate-500 uppercase">Resultados AFIP</span>
                                                     <button type="button" onClick={() => { setAfipResults([]); setSearchingField(null); }} className="text-slate-400 hover:text-slate-600"><XCircle className="h-3 w-3" /></button>
                                                 </div>
                                                 <div className="max-h-48 overflow-y-auto">
@@ -339,10 +344,10 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                                             onClick={() => handleAfipSelect(p)}
                                                             className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/40 border-b last:border-0 border-slate-50 dark:border-slate-800 transition-colors group"
                                                         >
-                                                            <div className="font-medium text-sm text-slate-900 dark:text-white group-hover:text-indigo-600 truncate">
+                                                            <div className="font-medium text-sm text-slate-900 dark:text-white group-hover:text-primary truncate">
                                                                 {p.razonSocial || `${p.apellido} ${p.nombre}`}
                                                             </div>
-                                                            <div className="text-[10px] text-slate-500">{p.id} • {p.taxCondition}</div>
+                                                            <div className="text-[11px] text-slate-500">{p.id} • {p.taxCondition}</div>
                                                         </button>
                                                     ))}
                                                 </div>
@@ -358,7 +363,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                     id="customer-modal-taxConditionId"
                                     value={formData.taxConditionId}
                                     onChange={(e) => setFormData({ ...formData, taxConditionId: parseInt(e.target.value) })}
-                                    className="w-full rounded-md border border-input bg-background dark:bg-slate-950 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                                    className="w-full rounded-[10px] border border-input bg-background dark:bg-slate-950 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
                                 >
                                     <option value={1}>Responsable Inscripto</option>
                                     <option value={6}>Monotributo</option>
@@ -377,7 +382,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                             type="email"
                                             value={formData.email}
                                             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                            className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                                            className="w-full rounded-[10px] border border-input bg-background dark:bg-slate-950 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
                                         />
                                     </div>
                                 </div>
@@ -389,7 +394,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                             type="text"
                                             value={formData.phone}
                                             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                                            className="w-full rounded-md border border-input bg-background dark:bg-slate-950 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                                            className="w-full rounded-[10px] border border-input bg-background dark:bg-slate-950 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
                                         />
                                     </div>
                                 </div>
@@ -401,7 +406,7 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                                     type="text"
                                     value={formData.address}
                                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                                    className="w-full rounded-md border border-input bg-background dark:bg-slate-950 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                                    className="w-full rounded-[10px] border border-input bg-background dark:bg-slate-950 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
                                 />
                             </div>
                         </div>
@@ -417,22 +422,29 @@ export function CustomerFormModal({ isOpen, onClose, customer, onSave }) {
                         )}
                     </div>
 
+                    {/* Una sola accion rellena en la ficha (B.3): "Guardar/Crear" es la
+                        principal (variant="default", azul boleto). El boton de salir sin
+                        guardar dice "Descartar" (B.7 del estandar firmado): "Cancelar" es
+                        palabra del NEGOCIO (cancelar una reserva) y no se usa para cerrar
+                        formularios. */}
                     <div className="flex gap-3 px-6 py-4 border-t bg-slate-50/50 dark:bg-slate-900/50">
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
                             onClick={onClose}
                             disabled={saving}
-                            className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                            className="flex-1"
                         >
-                            Cancelar
-                        </button>
-                        <button
+                            Descartar
+                        </Button>
+                        <Button
                             type="submit"
+                            variant="default"
                             disabled={saving}
-                            className="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-50"
+                            className="flex-1"
                         >
                             {saving ? "Guardando…" : customer ? "Guardar Cambios" : "Crear Cliente"}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>

@@ -1,6 +1,7 @@
 import React from "react";
 import { Mail, Pencil, Phone, Power, Wallet } from "lucide-react";
-import { Badge } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 import {
   DataGrid,
   DataGridActionCell,
@@ -49,10 +50,12 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
             <DataGridRow key={getPublicId(customer)} inactive={!customer.isActive}>
               <DataGridCell className="text-slate-900 dark:text-slate-100">
                 <div className="flex items-center gap-3">
+                  {/* Iniciales del cliente: circulo neutro (gris dato / tinta), sin color
+                      de accion — el azul boleto queda reservado solo para botones (B.1). */}
                   <div
                     className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold shadow-sm ${
                       customer.isActive
-                        ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+                        ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
                         : "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
                     }`}
                   >
@@ -93,46 +96,61 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                   <div className="font-mono font-medium text-emerald-600 dark:text-emerald-400">Al día</div>
                 )}
                 {saldoBadge.estado === "debe" && (
-                  <span className="text-[10px] font-semibold uppercase text-rose-500">Deuda</span>
+                  <StatusChip tone="rojo" className="mt-1">Deuda</StatusChip>
                 )}
                 {saldoBadge.estado === "aFavor" && (
-                  <span className="text-[10px] font-semibold uppercase text-emerald-500">A favor</span>
+                  <StatusChip tone="verde" className="mt-1">A favor</StatusChip>
                 )}
               </DataGridCell>
               <DataGridCell align="center">
-                <Badge
-                  variant={customer.isActive ? "success" : "secondary"}
-                  className={customer.isActive ? "border-transparent bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}
-                >
+                <StatusChip tone={customer.isActive ? "verde" : "neutro"}>
                   {customer.isActive ? "Activo" : "Inactivo"}
-                </Badge>
+                </StatusChip>
               </DataGridCell>
+              {/* Tres acciones por fila (ver cuenta / editar / activar-desactivar): son
+                  huesos existentes, no se tocan. Lo que cambia es la piel: salen del
+                  molde de boton compartido (outline 32px, B.3) en vez de un <button>
+                  a mano con hover indigo suelto. aria-label nuevo (sin cambiar el
+                  title visible) para que el lector de pantalla tenga nombre accesible,
+                  ya que el icono solo no alcanza. */}
               <DataGridActionCell>
-                <button
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onAccountClick(customer)}
                   title="Ver cuenta corriente"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-indigo-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                  aria-label="Ver cuenta corriente"
+                  className="h-8 w-8 p-0"
                 >
-                  <Wallet className="h-4 w-4" />
-                </button>
-                <button
+                  <Wallet className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onEdit(customer)}
                   title="Editar cliente"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-indigo-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                  aria-label="Editar cliente"
+                  className="h-8 w-8 p-0"
                 >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
+                  <Pencil className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onToggleStatus(customer)}
                   title={customer.isActive ? "Desactivar" : "Activar"}
-                  className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm transition-colors ${
+                  aria-label={customer.isActive ? "Desactivar cliente" : "Activar cliente"}
+                  className={`h-8 w-8 p-0 ${
                     customer.isActive
-                      ? "border-slate-200 bg-white text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 dark:border-slate-800 dark:bg-slate-950"
-                      : "border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
+                      ? "text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"
+                      : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
                   }`}
                 >
-                  <Power className="h-4 w-4" />
-                </button>
+                  <Power className="h-4 w-4" aria-hidden="true" />
+                </Button>
               </DataGridActionCell>
             </DataGridRow>
             );
