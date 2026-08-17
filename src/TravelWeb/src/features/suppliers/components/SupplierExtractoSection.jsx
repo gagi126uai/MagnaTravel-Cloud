@@ -55,6 +55,8 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { esAnioRealista, formatCurrency, formatDate, formatDateTime } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 import {
     DataGrid,
     DataGridBody,
@@ -140,7 +142,7 @@ export function SupplierExtractoSection({
 
     if (cargando) {
         return (
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm" data-testid="extracto-loading">
+            <div className="overflow-hidden rounded-[14px] border bg-card shadow-sm" data-testid="extracto-loading">
                 <div className="border-b p-4 flex items-center gap-2">
                     <BookOpen className="h-5 w-5" />
                     <h2 className="font-semibold">Extracto de cuenta</h2>
@@ -155,21 +157,17 @@ export function SupplierExtractoSection({
 
     if (error) {
         return (
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm" data-testid="extracto-error">
+            <div className="overflow-hidden rounded-[14px] border bg-card shadow-sm" data-testid="extracto-error">
                 <div className="border-b p-4 flex items-center gap-2">
                     <BookOpen className="h-5 w-5" />
                     <h2 className="font-semibold">Extracto de cuenta</h2>
                 </div>
                 <div className="flex flex-col items-center gap-3 py-10 text-center">
                     <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
-                    <button
-                        type="button"
-                        onClick={cargarExtracto}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                    >
-                        <RefreshCw className="h-3.5 w-3.5" />
+                    <Button type="button" variant="outline" size="sm" onClick={cargarExtracto} className="gap-1.5">
+                        <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                         Reintentar
-                    </button>
+                    </Button>
                 </div>
             </div>
         );
@@ -178,7 +176,7 @@ export function SupplierExtractoSection({
     return (
         <div className="space-y-4">
             {/* ── Extracto de movimientos ──────────────────────────────────── */}
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm" data-testid="extracto-section">
+            <div className="overflow-hidden rounded-[14px] border bg-card shadow-sm" data-testid="extracto-section">
                 <div className="border-b p-4 flex items-center gap-2">
                     <BookOpen className="h-5 w-5" />
                     <h2 className="font-semibold">Extracto de cuenta</h2>
@@ -222,16 +220,19 @@ export function SupplierExtractoSection({
               El motivo de reversión es opcional.
             */}
             {activeApplications.length > 0 && (
+                // Mismo criterio que el bloque analogo de Clientes (CustomerAccountPage, D1):
+                // la tarjeta es NEUTRA (B.1, "un color, un significado") — el verde queda
+                // reservado para el numero real de saldo, no para decorar todo el panel.
                 <div
-                    className="overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/40 shadow-sm dark:border-emerald-900/40 dark:bg-emerald-950/10"
+                    className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
                     data-testid="aplicaciones-saldo-proveedor"
                 >
-                    <div className="border-b border-emerald-100 px-5 py-3 dark:border-emerald-900/30">
-                        <h3 className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
+                    <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+                        <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
                             Saldo a favor aplicado a reservas
                         </h3>
                     </div>
-                    <ul className="divide-y divide-emerald-100 dark:divide-emerald-900/20">
+                    <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                         {activeApplications.map((aplicacion) => {
                             const aplicacionId = String(aplicacion.applicationPublicId);
                             const estaRevirtiendoEsta = revirtiendoAplicacionId === aplicacionId;
@@ -253,10 +254,10 @@ export function SupplierExtractoSection({
                                         <div className="min-w-0">
                                             <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
                                                 Saldo a favor aplicado a{" "}
-                                                <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                                                <span className="font-bold">
                                                     {aplicacion.targetReservaNumber ?? "la reserva"}
                                                 </span>
-                                                <span className="ml-2 font-bold text-emerald-700 dark:text-emerald-400">
+                                                <span className="ml-2 font-bold text-slate-700 dark:text-slate-300">
                                                     {/* Enmascarar montos si no tiene permiso cobranzas.see_cost */}
                                                     {puedeVerMontos
                                                         ? `−${simbolo}${monto}`
@@ -276,25 +277,27 @@ export function SupplierExtractoSection({
 
                                         {/* Botón Revertir: solo si el usuario tiene el permiso correcto */}
                                         {canRevertir && !estaRevirtiendoEsta && (
-                                            <button
+                                            <Button
                                                 type="button"
+                                                variant="outline"
+                                                size="sm"
                                                 onClick={() => {
                                                     setRevirtiendoAplicacionId(aplicacionId);
                                                     setMotivoReversion("");
                                                     setErrorReversion(null);
                                                 }}
-                                                className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-slate-900 dark:text-emerald-400 dark:hover:bg-emerald-950/30 transition-colors"
+                                                className="flex-shrink-0 gap-1.5"
                                                 data-testid={`revertir-aplicacion-proveedor-${aplicacionId}`}
                                             >
-                                                <Undo2 className="h-3.5 w-3.5" />
+                                                <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
                                                 Revertir
-                                            </button>
+                                            </Button>
                                         )}
                                     </div>
 
                                     {/* Formulario inline de reversión */}
                                     {estaRevirtiendoEsta && (
-                                        <div className="mt-3 space-y-2 rounded-lg bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-900/40 p-3">
+                                        <div className="mt-3 space-y-2 rounded-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3">
                                             <label
                                                 htmlFor={`motivo-reversion-proveedor-${aplicacionId}`}
                                                 className="text-xs font-semibold text-slate-600 dark:text-slate-400"
@@ -308,7 +311,7 @@ export function SupplierExtractoSection({
                                                 onChange={(e) => setMotivoReversion(e.target.value)}
                                                 disabled={guardandoReversion}
                                                 placeholder="Indicá el motivo si lo tenés..."
-                                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white disabled:opacity-50 resize-none"
+                                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white disabled:opacity-50 resize-none"
                                                 data-testid={`motivo-reversion-proveedor-${aplicacionId}`}
                                             />
                                             {errorReversion && (
@@ -317,37 +320,40 @@ export function SupplierExtractoSection({
                                                 </p>
                                             )}
                                             <div className="flex justify-end gap-2">
-                                                <button
+                                                <Button
                                                     type="button"
+                                                    variant="outline"
+                                                    size="sm"
                                                     onClick={() => {
                                                         setRevirtiendoAplicacionId(null);
                                                         setMotivoReversion("");
                                                         setErrorReversion(null);
                                                     }}
                                                     disabled={guardandoReversion}
-                                                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50 transition-colors"
                                                 >
                                                     Cancelar
-                                                </button>
-                                                <button
+                                                </Button>
+                                                <Button
                                                     type="button"
+                                                    variant="destructive"
+                                                    size="sm"
                                                     onClick={() => handleRevertirAplicacion(aplicacionId)}
                                                     disabled={guardandoReversion}
-                                                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                                                    className="gap-1.5"
                                                     data-testid={`confirmar-reversion-proveedor-${aplicacionId}`}
                                                 >
                                                     {guardandoReversion ? (
                                                         <>
-                                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                                            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
                                                             Revirtiendo…
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <Undo2 className="h-3 w-3" />
+                                                            <Undo2 className="h-3 w-3" aria-hidden="true" />
                                                             Confirmar reversión
                                                         </>
                                                     )}
-                                                </button>
+                                                </Button>
                                             </div>
                                         </div>
                                     )}
@@ -375,7 +381,7 @@ function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, ca
     const montosVisibles = montosVisiblesGlobal !== false;
 
     return (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             {/* Cabecera: cada partida se informa por separado. No existe compensación implícita. */}
             <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-2">
@@ -391,7 +397,7 @@ function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, ca
                         ["Saldo aplicable", bloque.prepayment ?? 0, "text-emerald-600 dark:text-emerald-500", "saldo-aplicable"],
                     ].map(([label, amount, color, testId]) => (
                         <div key={testId}>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
                             {montosVisibles ? (
                                 <div className={`text-sm font-extrabold ${color}`} data-testid={`extracto-${testId}-${bloque.currency}`}>
                                     {formatCurrency(amount, bloque.currency)}
@@ -584,7 +590,7 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
                 {/* Guarda contra filas históricas sin backfill (2026-07-27): un registeredAt con
                     año "cero" del motor (0001-01-01) no se muestra — ver esAnioRealista en lib/utils. */}
                 {esPago && pagoCompleto?.registeredAt && esAnioRealista(pagoCompleto.registeredAt) && (
-                    <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                    <div className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
                         Registrado: {formatDateTime(pagoCompleto.registeredAt)}
                     </div>
                 )}
@@ -603,13 +609,14 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
                     )}
                 </span>
                 {esCircuito && (
-                    <span
-                        className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                    <StatusChip
+                        tone="ambar"
+                        className="ml-2"
                         title="Movimiento de una anulación: reduce lo que el operador te tiene que devolver (no es una compra nueva)."
                         data-testid="extracto-anulacion-chip"
                     >
                         Anulación
-                    </span>
+                    </StatusChip>
                 )}
             </DataGridCell>
 

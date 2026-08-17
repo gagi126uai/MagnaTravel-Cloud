@@ -35,6 +35,7 @@ import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency } from "../../../lib/utils";
+import { Button } from "../../../components/ui/button";
 
 export function UsarSaldoOperadorInline({
   supplierId,
@@ -193,7 +194,7 @@ export function UsarSaldoOperadorInline({
   if (loadingReservas) {
     return (
       <div
-        className="rounded-xl border-2 border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10 p-5"
+        className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5"
         data-testid="usar-saldo-operador-inline"
         data-state="loading"
       >
@@ -209,26 +210,18 @@ export function UsarSaldoOperadorInline({
   if (errorCarga) {
     return (
       <div
-        className="rounded-xl border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-3"
+        className="rounded-[14px] border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-3"
         data-testid="usar-saldo-operador-inline"
         data-state="error"
       >
         <p className="text-sm text-rose-700 dark:text-rose-300" role="alert">{errorCarga}</p>
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={cargarReservas}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 transition-colors"
-          >
+          <Button type="button" variant="outline" onClick={cargarReservas}>
             Reintentar
-          </button>
-          <button
-            type="button"
-            onClick={onCancelar}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 transition-colors"
-          >
+          </Button>
+          <Button type="button" variant="outline" onClick={onCancelar}>
             Cerrar
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -238,7 +231,7 @@ export function UsarSaldoOperadorInline({
   if (reservasConDeuda.length === 0) {
     return (
       <div
-        className="rounded-xl border-2 border-slate-200 bg-slate-50/40 dark:border-slate-700 dark:bg-slate-900/20 p-5 space-y-3"
+        className="rounded-[14px] border-2 border-slate-200 bg-slate-50/40 dark:border-slate-700 dark:bg-slate-900/20 p-5 space-y-3"
         data-testid="usar-saldo-operador-inline"
         data-state="empty"
       >
@@ -246,13 +239,9 @@ export function UsarSaldoOperadorInline({
           No hay reservas con deuda en {moneda === "USD" ? "dólares" : "pesos"} para este proveedor.
         </p>
         <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onCancelar}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 transition-colors"
-          >
+          <Button type="button" variant="outline" onClick={onCancelar}>
             Cerrar
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -261,34 +250,39 @@ export function UsarSaldoOperadorInline({
   // ─── Render: formulario principal ──────────────────────────────────────────
   return (
     <div
-      className="rounded-xl border-2 border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10 p-5 space-y-4"
+      className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5 space-y-4"
       data-testid="usar-saldo-operador-inline"
       data-state="ready"
     >
-      {/* Cabecera */}
+      {/* Cabecera. Mismo criterio que UsarSaldoAFavorInline (Clientes, D1): la ficha en
+          si es neutra, el verde queda reservado para el NUMERO del saldo (B.1, "un color,
+          un significado" — no para decorar todo el panel). */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-emerald-600" />
+          <TrendingUp className="h-4 w-4 text-slate-500 dark:text-slate-400" />
           <h4 className="text-sm font-bold text-slate-900 dark:text-white">
             Aplicar saldo a favor a una reserva
           </h4>
         </div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={onCancelar}
-          className="rounded p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+          className="h-8 w-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
           aria-label="Cerrar ficha de aplicación de saldo"
         >
           <X className="h-4 w-4" />
-        </button>
+        </Button>
       </div>
 
-      {/* Saldo disponible como referencia visual */}
-      <div className="rounded-lg bg-emerald-100/60 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-900/40 px-4 py-2">
-        <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+      {/* Saldo disponible como referencia visual: el numero sigue en verde (es plata a
+          favor real), la caja que lo envuelve es neutra. */}
+      <div className="rounded-[10px] bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 px-4 py-2">
+        <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
           Saldo disponible:{" "}
           {puedeVerMontos
-            ? formatCurrency(saldoDisponible, moneda)
+            ? <span className="text-emerald-600 dark:text-emerald-400">{formatCurrency(saldoDisponible, moneda)}</span>
             : <span className="text-slate-400" title="Sin permiso para ver montos">—</span>
           }
         </span>
@@ -313,7 +307,7 @@ export function UsarSaldoOperadorInline({
               if (reservaDestinoSeleccionada) setReservaDestinoSeleccionada(null);
             }}
             disabled={guardando}
-            className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+            className="w-full rounded-[10px] border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
             data-testid="saldo-operador-buscador"
           />
         </div>
@@ -326,7 +320,7 @@ export function UsarSaldoOperadorInline({
         </p>
       ) : (
         <div
-          className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"
+          className="max-h-48 overflow-y-auto rounded-[10px] border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"
           role="listbox"
           aria-label="Reservas destino con deuda"
         >
@@ -349,7 +343,7 @@ export function UsarSaldoOperadorInline({
                 aria-selected={estaSeleccionada}
                 className={`w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 transition-colors ${
                   estaSeleccionada
-                    ? "bg-emerald-100 dark:bg-emerald-900/30"
+                    ? "bg-blue-100 dark:bg-blue-900/40"
                     : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/50"
                 } disabled:opacity-50`}
                 data-testid={`reserva-destino-${reservaId}`}
@@ -378,7 +372,7 @@ export function UsarSaldoOperadorInline({
 
       {/* Reserva elegida: confirmación visual */}
       {reservaDestinoSeleccionada && (
-        <p className="text-xs text-emerald-700 dark:text-emerald-400">
+        <p className="text-xs text-blue-700 dark:text-blue-400">
           Reserva elegida: <strong>{reservaDestinoSeleccionada.numeroReserva ?? "—"}</strong>
           {reservaDestinoSeleccionada.fileName && ` — ${reservaDestinoSeleccionada.fileName}`}
         </p>
@@ -409,7 +403,7 @@ export function UsarSaldoOperadorInline({
           }}
           disabled={guardando}
           placeholder="0,00"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+          className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
           data-testid="saldo-operador-monto"
         />
         {errorValidacion && (
@@ -421,8 +415,8 @@ export function UsarSaldoOperadorInline({
 
       {/* Línea de resumen antes de confirmar */}
       {reservaDestinoSeleccionada && monto && parseFloat(monto) > 0 && (
-        <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 px-4 py-2.5">
-          <p className="text-xs text-emerald-700 dark:text-emerald-400">
+        <div className="rounded-[10px] bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 px-4 py-2.5">
+          <p className="text-xs text-blue-700 dark:text-blue-400">
             Se van a aplicar{" "}
             <strong>{formatCurrency(parseFloat(monto), moneda)}</strong> del saldo a favor
             a la reserva <strong>{reservaDestinoSeleccionada.numeroReserva ?? "—"}</strong>.
@@ -433,7 +427,7 @@ export function UsarSaldoOperadorInline({
       {/* Error del backend */}
       {errorGuardar && (
         <div
-          className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+          className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
           role="alert"
           data-testid="saldo-operador-error"
         >
@@ -443,19 +437,14 @@ export function UsarSaldoOperadorInline({
 
       {/* Botones: anti-doble-click */}
       <div className="flex justify-end gap-3 pt-1">
-        <button
-          type="button"
-          onClick={onCancelar}
-          disabled={guardando}
-          className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
-        >
+        <Button type="button" variant="outline" onClick={onCancelar} disabled={guardando}>
           Cancelar
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={handleConfirmar}
           disabled={guardando}
-          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+          className="gap-2"
           data-testid="saldo-operador-confirmar"
         >
           {guardando ? (
@@ -469,7 +458,7 @@ export function UsarSaldoOperadorInline({
               Aplicar saldo
             </>
           )}
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -46,6 +46,8 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 import { operatorRefundsApi } from "../api/operatorRefundsApi";
 import { construirTextoCuentaReembolso } from "../lib/supplierPageLogic";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 
 // ─── Configuración del semáforo ───────────────────────────────────────────────
 
@@ -57,28 +59,31 @@ import { construirTextoCuentaReembolso } from "../lib/supplierPageLogic";
  * no tiene JsonStringEnumConverter global en Program.cs.
  * Si el backend cambia a string, actualizar las claves de este objeto.
  */
+// "tone" alimenta el molde StatusChip (B.5): neutro = sin urgencia, ambar = se acerca
+// el vencimiento, rojo = vencido. "Abandonado" también es neutro (gris) porque no es una
+// urgencia activa, es un caso que el job ya dio por perdido.
 const SEMAPHORE_CONFIG = {
   0: {
     label: "A tiempo",
-    badgeClass: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
+    tone: "neutro",
     rowClass: "",
     icon: null,
   },
   1: {
     label: "Por vencer",
-    badgeClass: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+    tone: "ambar",
     rowClass: "border-l-2 border-amber-400",
     icon: Clock,
   },
   2: {
     label: "Vencido",
-    badgeClass: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
+    tone: "rojo",
     rowClass: "border-l-2 border-rose-500 bg-rose-50/40 dark:bg-rose-950/10",
     icon: AlertTriangle,
   },
   3: {
     label: "Abandonado",
-    badgeClass: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300",
+    tone: "neutro",
     rowClass: "border-l-2 border-slate-400",
     icon: null,
   },
@@ -87,7 +92,7 @@ const SEMAPHORE_CONFIG = {
 // Fallback para semáforos no reconocidos (por si el backend agrega un valor nuevo)
 const SEMAPHORE_UNKNOWN = {
   label: "Desconocido",
-  badgeClass: "bg-slate-100 text-slate-500",
+  tone: "neutro",
   rowClass: "",
   icon: null,
 };
@@ -174,7 +179,7 @@ function FormReembolsoTardio({ cancellationPublicId, onReopenSuccess }) {
   if (exitoso) {
     return (
       <div
-        className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900/40 dark:bg-emerald-950/20"
+        className="mt-3 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900/40 dark:bg-emerald-950/20"
         data-testid="late-refund-success"
       >
         <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
@@ -196,24 +201,26 @@ function FormReembolsoTardio({ cancellationPublicId, onReopenSuccess }) {
   // Botón "Registrar reembolso tardío" (no abierto)
   if (!abierto) {
     return (
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         onClick={handleAbrir}
         data-testid={`btn-late-refund-${cancellationPublicId}`}
-        className="flex-shrink-0 rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300 dark:hover:bg-indigo-900/40 transition-colors"
+        className="flex-shrink-0"
       >
         Registrar reembolso tardío
-      </button>
+      </Button>
     );
   }
 
   // Formulario abierto en línea (no modal)
   return (
     <div
-      className="mt-3 w-full rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900/40 dark:bg-indigo-950/20"
+      className="mt-3 w-full rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-3"
       data-testid={`form-late-refund-${cancellationPublicId}`}
     >
-      <p className="text-xs font-semibold text-indigo-800 dark:text-indigo-300 mb-2">
+      <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
         Registrar reembolso tardío
       </p>
       <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">
@@ -231,14 +238,14 @@ function FormReembolsoTardio({ cancellationPublicId, onReopenSuccess }) {
         placeholder="Motivo de la reapertura (mínimo 10 caracteres)..."
         rows={2}
         disabled={guardando}
-        className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs dark:border-indigo-800 dark:bg-slate-900 dark:text-white disabled:opacity-60 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
+        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white disabled:opacity-60 focus:outline-none focus:ring-1 focus:ring-ring resize-none"
         aria-label="Motivo del reembolso tardío"
         aria-required="true"
         data-testid={`input-late-refund-reason-${cancellationPublicId}`}
       />
 
       {/* Contador de caracteres: ayuda al usuario a saber cuándo puede confirmar */}
-      <p className={`text-[10px] mt-0.5 ${motivoValido ? "text-slate-400" : "text-amber-600 dark:text-amber-400"}`}>
+      <p className={`text-[11px] mt-0.5 ${motivoValido ? "text-slate-400" : "text-amber-600 dark:text-amber-400"}`}>
         {motivo.trim().length} / 10 caracteres mínimos
       </p>
 
@@ -249,23 +256,24 @@ function FormReembolsoTardio({ cancellationPublicId, onReopenSuccess }) {
       )}
 
       <div className="flex items-center gap-2 mt-3">
-        <button
+        <Button
           type="button"
+          size="sm"
           onClick={handleConfirmar}
           disabled={guardando || !motivoValido}
           data-testid={`btn-confirm-late-refund-${cancellationPublicId}`}
-          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {guardando ? "Reabriendo..." : "Confirmar"}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={handleCancelar}
           disabled={guardando}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
         >
           Cancelar
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -327,17 +335,17 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
             </Link>
 
             {/* Semáforo visual */}
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${semaphoreConfig.badgeClass}`}
+            <StatusChip
+              tone={semaphoreConfig.tone}
               data-testid={`semaphore-${item.bookingCancellationPublicId}`}
             >
               {SemaphoreIcon && <SemaphoreIcon className="h-2.5 w-2.5" />}
               {semaphoreConfig.label}
-            </span>
+            </StatusChip>
 
             {/* Días vencido: solo cuando hay un vencimiento real */}
             {item.semaphore === 2 && item.daysOverdue > 0 && (
-              <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+              <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
                 {item.daysOverdue} día{item.daysOverdue !== 1 ? "s" : ""} vencido
               </span>
             )}
@@ -347,12 +355,9 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
                 qué estado quedó la cancelación" (parcialmente devuelto / cerrada con resto /
                 en proceso). Ej. "Parcialmente devuelto", "Cerrada con resto". */}
             {rowStatusLabel && (
-              <span
-                className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
-                data-testid={`row-status-${item.bookingCancellationPublicId}`}
-              >
+              <StatusChip tone="azul" data-testid={`row-status-${item.bookingCancellationPublicId}`}>
                 {rowStatusLabel}
-              </span>
+              </StatusChip>
             )}
           </div>
 
@@ -381,7 +386,7 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
               fiscal se sigue haciendo SOLO en la reserva; acá no se dispara ninguna acción nueva. */}
           {item.penaltyPendingConfirmation ? (
             <div
-              className="mt-1 flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20"
+              className="mt-1 flex flex-col sm:flex-row sm:items-center gap-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20"
               data-testid={`penalty-pending-${item.bookingCancellationPublicId}`}
             >
               <p className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300">
@@ -390,7 +395,7 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
               </p>
               <Link
                 to={`/reservas/${item.reservaPublicId}`}
-                className="inline-flex items-center gap-1 rounded-lg border border-amber-400 bg-white px-2.5 py-1 text-xs font-bold text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-950/40 transition-colors flex-shrink-0"
+                className="inline-flex items-center gap-1 rounded-[10px] border border-amber-400 bg-white px-2.5 py-1 text-xs font-bold text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-950/40 transition-colors flex-shrink-0"
                 data-testid={`btn-ir-a-confirmar-multa-${item.bookingCancellationPublicId}`}
               >
                 Ir a la reserva a confirmar
@@ -409,10 +414,10 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
                   {item.estimatedRefundsByCurrency.map((linea) => (
                     <div
                       key={linea.currency}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 dark:border-slate-700 dark:bg-slate-800/40 w-fit"
+                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-slate-200 bg-slate-50 px-2.5 py-1 dark:border-slate-700 dark:bg-slate-800/40 w-fit"
                       data-testid={`refund-amount-${item.bookingCancellationPublicId}-${linea.currency}`}
                     >
-                      <span className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
                         {linea.currency}
                       </span>
                       <span className="text-xs text-slate-800 dark:text-slate-200">
@@ -425,7 +430,7 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
 
               {/* Aviso de montos enmascarados: sin permiso cobranzas.see_cost */}
               {item.amountsMasked && (
-                <p className="text-[10px] text-muted-foreground mt-0.5">
+                <p className="text-[11px] text-muted-foreground mt-0.5">
                   No tenés permiso para ver los montos.
                 </p>
               )}
@@ -478,7 +483,7 @@ export function OperatorRefundsPendingSection({ supplierPublicId = null, showSup
 
   return (
     <div
-      className="overflow-hidden rounded-xl border bg-card shadow-sm"
+      className="overflow-hidden rounded-[14px] border bg-card shadow-sm"
       data-testid="operator-refunds-section"
     >
       {/* ── Encabezado ── */}
@@ -496,13 +501,10 @@ export function OperatorRefundsPendingSection({ supplierPublicId = null, showSup
         <div className="flex items-center gap-3">
           {/* Badge de vencidos: advertencia cuando hay items en rojo */}
           {totalVencidos > 0 && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-700 dark:bg-rose-900/30 dark:text-rose-300"
-              data-testid="badge-vencidos"
-            >
+            <StatusChip tone="rojo" data-testid="badge-vencidos">
               <AlertTriangle className="h-3 w-3" />
               {totalVencidos} vencido{totalVencidos !== 1 ? "s" : ""}
-            </span>
+            </StatusChip>
           )}
 
           {/* Conteo total */}
@@ -513,17 +515,19 @@ export function OperatorRefundsPendingSection({ supplierPublicId = null, showSup
           )}
 
           {/* Botón de actualizar manual */}
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={reload}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            className="gap-1.5"
             aria-label="Actualizar lista de reembolsos pendientes"
             data-testid="refresh-operator-refunds"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             Actualizar
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -543,13 +547,9 @@ export function OperatorRefundsPendingSection({ supplierPublicId = null, showSup
           <p className="text-sm text-rose-600 dark:text-rose-400">
             No se pudo cargar la información. Intentá de nuevo.
           </p>
-          <button
-            type="button"
-            onClick={reload}
-            className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
-          >
+          <Button type="button" variant="link" size="sm" onClick={reload} className="h-auto p-0 text-xs">
             Reintentar
-          </button>
+          </Button>
         </div>
       ) : items.length === 0 ? (
         // Empty state: es el estado normal cuando no hay anulaciones esperando reembolso.

@@ -1,6 +1,7 @@
 import React from "react";
 import { Building2, Mail, Pencil, Power, Wallet } from "lucide-react";
-import { Badge } from "../../../components/ui/badge";
+import { StatusChip } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { getPublicId } from "../../../lib/publicIds";
@@ -26,7 +27,7 @@ export function SupplierMobileList({ suppliers, onEdit, onToggleStatus, onAccoun
       <ListEmptyState
         title="No se encontraron operadores"
         description="Ajustá los filtros o creá un operador nuevo."
-        className="md:hidden rounded-xl border border-dashed border-slate-300 dark:border-slate-700"
+        className="md:hidden rounded-[14px] border border-dashed border-slate-300 dark:border-slate-700"
       />
     );
   }
@@ -49,9 +50,9 @@ export function SupplierMobileList({ suppliers, onEdit, onToggleStatus, onAccoun
             </div>
           }
           statusSlot={
-            <Badge variant={supplier.isActive ? "success" : "secondary"} className="text-[10px] px-1.5 py-0.5">
+            <StatusChip tone={supplier.isActive ? "verde" : "neutro"}>
               {supplier.isActive ? "Activo" : "Inactivo"}
-            </Badge>
+            </StatusChip>
           }
           title={supplier.name}
           subtitle={supplier.taxId || "Sin CUIT"}
@@ -86,28 +87,40 @@ export function SupplierMobileList({ suppliers, onEdit, onToggleStatus, onAccoun
           }
           footerActions={
             <>
-              <button
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => onAccountClick(supplier)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                aria-label="Ver cuenta corriente"
+                className="h-8 w-8 p-0"
               >
-                <Wallet className="h-4 w-4" />
-              </button>
-              <button
+                <Wallet className="h-4 w-4" aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => onEdit(supplier)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                aria-label="Editar operador"
+                className="h-8 w-8 p-0"
               >
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button
+                <Pencil className="h-4 w-4" aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => onToggleStatus(supplier)}
-                className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+                aria-label={supplier.isActive ? "Desactivar operador" : "Activar operador"}
+                className={`h-8 w-8 p-0 ${
                   supplier.isActive
-                    ? "border-slate-200 bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-800"
-                    : "border-slate-200 bg-white text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:border-slate-700 dark:bg-slate-800"
+                    ? "text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"
+                    : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
                 }`}
               >
-                <Power className="h-4 w-4" />
-              </button>
+                <Power className="h-4 w-4" aria-hidden="true" />
+              </Button>
             </>
           }
         />

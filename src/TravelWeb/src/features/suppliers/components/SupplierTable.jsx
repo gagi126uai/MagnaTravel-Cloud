@@ -1,6 +1,7 @@
 import React from "react";
 import { Info, Pencil, Power, Wallet } from "lucide-react";
-import { Badge } from "../../../components/ui/badge";
+import { StatusChip } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import {
   DataGrid,
   DataGridActionCell,
@@ -40,7 +41,7 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
             <div className="group relative flex items-center justify-end gap-1 cursor-help">
               Saldo (deuda)
               <Info className="h-3 w-3 text-slate-400" />
-              <div className="pointer-events-none absolute bottom-full right-0 z-10 mb-2 w-64 rounded-lg bg-slate-800 p-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+              <div className="pointer-events-none absolute bottom-full right-0 z-10 mb-2 w-64 rounded-[10px] bg-slate-800 p-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
                 Solo incluye expedientes reservados, operativos o cerrados.
               </div>
             </div>
@@ -105,33 +106,51 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                 )}
               </DataGridCell>
               <DataGridCell align="center">
-                <Badge variant={supplier.isActive ? "success" : "secondary"} className="text-[10px] px-1.5 py-0.5">
+                <StatusChip tone={supplier.isActive ? "verde" : "neutro"}>
                   {supplier.isActive ? "Activo" : "Inactivo"}
-                </Badge>
+                </StatusChip>
               </DataGridCell>
+              {/* Tres acciones por fila (cuenta / editar / activar-desactivar): mismo
+                  criterio que CustomerTable — salen del molde de boton compartido
+                  (outline 32px, B.3) en vez de un <button> a mano con hover indigo suelto. */}
               <DataGridActionCell>
-                <button
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onAccountClick(supplier)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30"
+                  title="Ver cuenta corriente"
+                  aria-label="Ver cuenta corriente"
+                  className="h-8 w-8 p-0"
                 >
-                  <Wallet className="h-4 w-4" />
-                </button>
-                <button
+                  <Wallet className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onEdit(supplier)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30"
+                  title="Editar operador"
+                  aria-label="Editar operador"
+                  className="h-8 w-8 p-0"
                 >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
+                  <Pencil className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onToggleStatus(supplier)}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                  title={supplier.isActive ? "Desactivar" : "Activar"}
+                  aria-label={supplier.isActive ? "Desactivar operador" : "Activar operador"}
+                  className={`h-8 w-8 p-0 ${
                     supplier.isActive
-                      ? "text-slate-500 hover:bg-rose-50 hover:text-rose-600"
-                      : "text-slate-400 hover:bg-emerald-50 hover:text-emerald-600"
+                      ? "text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"
+                      : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
                   }`}
                 >
-                  <Power className="h-4 w-4" />
-                </button>
+                  <Power className="h-4 w-4" aria-hidden="true" />
+                </Button>
               </DataGridActionCell>
             </DataGridRow>
             );

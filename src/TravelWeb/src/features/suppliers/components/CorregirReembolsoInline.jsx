@@ -38,6 +38,7 @@ import {
 } from "../lib/operatorRefundRegisteredLogic";
 import { construirTextoCuentaReembolso } from "../lib/supplierPageLogic";
 import { ErrorAccionReembolsoBanner } from "./ErrorAccionReembolsoBanner";
+import { Button } from "../../../components/ui/button";
 
 export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompletado }) {
   // ─── Carga de destinos posibles (misma fuente que "Registrar reembolso recibido") ──
@@ -102,7 +103,7 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
   if (loadingDestinos) {
     return (
       <div
-        className="mt-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20"
+        className="mt-3 rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-4"
         data-testid={`form-corregir-reembolso-${item.publicId}`}
       >
         <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -117,17 +118,17 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
   if (errorCargaDestinos) {
     return (
       <div
-        className="mt-3 rounded-xl border-2 border-rose-200 bg-rose-50/40 p-4 space-y-2 dark:border-rose-900/40 dark:bg-rose-950/10"
+        className="mt-3 rounded-[14px] border-2 border-rose-200 bg-rose-50/40 p-4 space-y-2 dark:border-rose-900/40 dark:bg-rose-950/10"
         data-testid={`form-corregir-reembolso-${item.publicId}`}
       >
         <p className="text-xs text-rose-700 dark:text-rose-300" role="alert">{errorCargaDestinos}</p>
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={cargarDestinos} className="text-xs text-indigo-600 hover:underline dark:text-indigo-400">
+          <Button type="button" variant="link" size="sm" onClick={cargarDestinos} className="h-auto p-0 text-xs">
             Reintentar
-          </button>
-          <button type="button" onClick={onCerrar} className="text-xs text-slate-500 hover:underline">
+          </Button>
+          <Button type="button" variant="link" size="sm" onClick={onCerrar} className="h-auto p-0 text-xs text-slate-500">
             Cerrar
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -136,12 +137,12 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
   // ─── Render: formulario principal ───────────────────────────────────────────
   return (
     <div
-      className="mt-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 p-4 space-y-3 dark:border-indigo-900/40 dark:bg-indigo-950/20"
+      className="mt-3 rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-4 space-y-3"
       data-testid={`form-corregir-reembolso-${item.publicId}`}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <ArrowRightLeft className="h-4 w-4 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+          <ArrowRightLeft className="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
           <h4 className="text-sm font-bold text-slate-900 dark:text-white">
             Corregir a qué reserva va este reembolso
           </h4>
@@ -174,7 +175,7 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
       {destinos.length === 0 ? (
         // Sin destinos elegibles (spec §6): cartel neutro, no se puede continuar, sugiere Deshacer.
         <p
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+          className="rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
           data-testid="reembolso-corregir-sin-destinos"
         >
           No hay otra reserva anulada de este operador esperando un reembolso en esta moneda.
@@ -183,7 +184,7 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
       ) : (
         <>
           <div
-            className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"
+            className="max-h-48 overflow-y-auto rounded-[10px] border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"
             role="radiogroup"
             aria-label="Reserva destino del reembolso"
           >
@@ -199,7 +200,7 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
                   disabled={guardando}
                   className={`w-full text-left px-3 py-2 flex flex-col gap-0.5 transition-colors ${
                     estaElegido
-                      ? "bg-indigo-100 dark:bg-indigo-900/30"
+                      ? "bg-blue-100 dark:bg-blue-900/40"
                       : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/50"
                   } disabled:opacity-50`}
                   data-testid={`reembolso-corregir-destino-${destino.bookingCancellationPublicId}`}
@@ -229,11 +230,11 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
               placeholder="Contá por qué lo corregís (mínimo 20 caracteres)…"
               rows={2}
               disabled={guardando}
-              className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs dark:border-indigo-800 dark:bg-slate-900 dark:text-white disabled:opacity-60 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
+              className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white disabled:opacity-60 focus:outline-none focus:ring-1 focus:ring-ring resize-none"
               aria-required="true"
               data-testid="reembolso-corregir-motivo"
             />
-            <p className={`text-[10px] mt-0.5 ${motivoValido ? "text-slate-400" : "text-amber-600 dark:text-amber-400"}`}>
+            <p className={`text-[11px] mt-0.5 ${motivoValido ? "text-slate-400" : "text-amber-600 dark:text-amber-400"}`}>
               {motivo.trim().length} / {MOTIVO_ACCION_REEMBOLSO_MIN} caracteres mínimos
             </p>
           </div>
@@ -241,21 +242,23 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
       )}
 
       <div className="flex items-center justify-end gap-2">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onCerrar}
           disabled={guardando}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
         >
           Cancelar
-        </button>
+        </Button>
         {destinos.length > 0 && (
-          <button
+          <Button
             type="button"
+            size="sm"
             onClick={handleConfirmar}
             disabled={!puedeConfirmar}
             data-testid="reembolso-corregir-confirmar"
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="gap-2"
           >
             {guardando && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
             {guardando
@@ -263,7 +266,7 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
               : destinoElegido
                 ? `Mover a la reserva #${destinoElegido.numeroReserva}`
                 : "Mover a la reserva"}
-          </button>
+          </Button>
         )}
       </div>
     </div>

@@ -62,6 +62,7 @@ import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
+import { Button } from "../../../components/ui/button";
 import { SupplierExtractoSection } from "../components/SupplierExtractoSection";
 import { PagarProveedorInline } from "../components/PagarProveedorInline";
 import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
@@ -161,7 +162,7 @@ function RecuadroSaldoOperador({ etiqueta, monto, esquema, puedeVerMontos, curre
 
     return (
         <div
-            className={`inline-flex min-w-[9.5rem] flex-col rounded-lg border px-3 py-2 ${paleta.caja}`}
+            className={`inline-flex min-w-[9.5rem] flex-col rounded-[10px] border px-3 py-2 ${paleta.caja}`}
             data-testid={testId}
         >
             <span className={`text-xs font-bold ${paleta.texto}`}>{etiqueta}</span>
@@ -442,7 +443,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
     };
 
     const inputClass =
-        "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white";
+        "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white";
     const labelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
 
     return (
@@ -588,7 +589,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                 </div>
 
                 {/* Toggle activo/inactivo: inactivo = no aparece en buscadores, pero mantiene historial */}
-                <div className="sm:col-span-2 flex items-center gap-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 p-3">
+                <div className="sm:col-span-2 flex items-center gap-3 rounded-[10px] border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 p-3">
                     <input
                         type="checkbox"
                         id="supplier-isActive"
@@ -596,7 +597,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                         onChange={(event) =>
                             setFormData((anterior) => ({ ...anterior, isActive: event.target.checked }))
                         }
-                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-ring"
                         data-testid="supplier-datos-isActive"
                     />
                     <label htmlFor="supplier-isActive" className={labelClass + " cursor-pointer"}>
@@ -616,7 +617,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                 <button
                     type="button"
                     onClick={() => setMasDetallesAbierto((v) => !v)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary/80"
                     data-testid="supplier-datos-mas-detalles-toggle"
                 >
                     <ChevronRight
@@ -642,18 +643,20 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                                 // El submit del form entero queda bloqueado (cargandoOverride sigue true).
                                 <div
                                     role="alert"
-                                    className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
+                                    className="rounded-[10px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
                                     data-testid="supplier-datos-treasury-fx-override-error"
                                 >
                                     <span>{errorCargaOverride}</span>
-                                    <button
+                                    <Button
                                         type="button"
+                                        variant="outline"
+                                        size="sm"
                                         onClick={cargarConfiguracionAvanzadaOperador}
-                                        className="flex-shrink-0 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-300 dark:border-rose-700"
+                                        className="flex-shrink-0 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-300"
                                         data-testid="supplier-datos-treasury-fx-override-reintentar"
                                     >
                                         Reintentar
-                                    </button>
+                                    </Button>
                                 </div>
                             ) : (
                                 <>
@@ -692,18 +695,20 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                             {errorCargaPenaltyBehavior ? (
                                 <div
                                     role="alert"
-                                    className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
+                                    className="rounded-[10px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
                                     data-testid="supplier-datos-penalty-behavior-error"
                                 >
                                     <span>{errorCargaPenaltyBehavior}</span>
-                                    <button
+                                    <Button
                                         type="button"
+                                        variant="outline"
+                                        size="sm"
                                         onClick={cargarConfiguracionAvanzadaOperador}
-                                        className="flex-shrink-0 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-300 dark:border-rose-700"
+                                        className="flex-shrink-0 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-300"
                                         data-testid="supplier-datos-penalty-behavior-reintentar"
                                     >
                                         Reintentar
-                                    </button>
+                                    </Button>
                                 </div>
                             ) : (
                                 <>
@@ -734,18 +739,17 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
             </div>
 
             <div className="flex items-center gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                <button
+                <Button
                     type="submit"
                     disabled={
                         saving ||
                         !puedeGuardarConTreasuryFxOverride(cargandoOverride) ||
                         !puedeGuardarConPenaltyBehavior(cargandoPenaltyBehavior)
                     }
-                    className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-50"
                     data-testid="supplier-datos-submit"
                 >
                     {saving ? "Guardando..." : "Guardar cambios"}
-                </button>
+                </Button>
             </div>
         </form>
     );
@@ -803,7 +807,7 @@ function SupplierDebtByReservaSection({ publicId, refreshKey }) {
 
     if (loading) {
         return (
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm" data-testid="deuda-loading">
+            <div className="overflow-hidden rounded-[14px] border bg-card shadow-sm" data-testid="deuda-loading">
                 <div className="border-b p-4 flex items-center gap-2">
                     <Layers className="h-5 w-5" />
                     <h2 className="font-semibold">Deuda por reserva</h2>
@@ -818,21 +822,17 @@ function SupplierDebtByReservaSection({ publicId, refreshKey }) {
 
     if (error) {
         return (
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm" data-testid="deuda-error">
+            <div className="overflow-hidden rounded-[14px] border bg-card shadow-sm" data-testid="deuda-error">
                 <div className="border-b p-4 flex items-center gap-2">
                     <Layers className="h-5 w-5" />
                     <h2 className="font-semibold">Deuda por reserva</h2>
                 </div>
                 <div className="flex flex-col items-center gap-3 py-10 text-center">
                     <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
-                    <button
-                        type="button"
-                        onClick={cargarDeuda}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                    >
-                        <RefreshCw className="h-3.5 w-3.5" />
+                    <Button type="button" variant="outline" size="sm" onClick={cargarDeuda} className="gap-1.5">
+                        <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                         Reintentar
-                    </button>
+                    </Button>
                 </div>
             </div>
         );
@@ -845,7 +845,7 @@ function SupplierDebtByReservaSection({ publicId, refreshKey }) {
 
     if (!hayDatos) {
         return (
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm" data-testid="deuda-empty">
+            <div className="overflow-hidden rounded-[14px] border bg-card shadow-sm" data-testid="deuda-empty">
                 <div className="border-b p-4 flex items-center gap-2">
                     <Layers className="h-5 w-5" />
                     <h2 className="font-semibold">Deuda por reserva</h2>
@@ -878,7 +878,7 @@ function SupplierDebtByReservaSection({ publicId, refreshKey }) {
                 Explica que las "—" son por restricción de permisos, no porque no se deba nada. */}
             {!puedeVerMontos && (
                 <div
-                    className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300"
+                    className="rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300"
                     role="status"
                     data-testid="deuda-sin-permiso-aviso"
                 >
@@ -944,7 +944,7 @@ function BloqueDeudaProveedor({ currency, reservas, anticipo, totalDeuda, puedeV
                     : "text-slate-400 dark:text-slate-600";
 
     return (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             {/* Cabecera: moneda + total deuda — misma estructura que BloqueExtractoProveedor */}
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10">
                 <div className="flex items-center gap-2">
@@ -954,7 +954,7 @@ function BloqueDeudaProveedor({ currency, reservas, anticipo, totalDeuda, puedeV
                     </span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                         Total deuda
                     </span>
                     {puedeVerMontos ? (
@@ -1288,7 +1288,7 @@ function EstadoServicioCell({ service, onUpdated, canEdit }) {
                 ese camino reactivo sin tocarlo. */}
             {service.faltaTitularConNombre ? (
                 <span
-                    className="text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                    className="text-[11px] font-semibold text-amber-600 dark:text-amber-400"
                     data-testid={`hint-pasajeros-titular-${service.publicId}`}
                 >
                     Cargá al menos el titular primero
@@ -1310,7 +1310,7 @@ function EstadoServicioCell({ service, onUpdated, canEdit }) {
                 <button
                     type="button"
                     onClick={() => setMostrarCorreccion(true)}
-                    className="text-[10px] text-slate-400 hover:text-slate-600 hover:underline dark:text-slate-500 dark:hover:text-slate-300"
+                    className="text-[11px] text-slate-400 hover:text-slate-600 hover:underline dark:text-slate-500 dark:hover:text-slate-300"
                     data-testid={`btn-corregir-a-mano-${service.publicId}`}
                 >
                     Corregir a mano
@@ -1473,6 +1473,12 @@ export default function SupplierAccountPage() {
     const [monedaUsandoSaldo, setMonedaUsandoSaldo] = useState(null);
     // showReembolsoInline: si la ficha "Registrar reembolso recibido" está abierta (§4, 2026-07-01).
     const [showReembolsoInline, setShowReembolsoInline] = useState(false);
+    // B.3 regla 2 ("si hay dos rellenas, una está de más"): true cuando CUALQUIER ficha en
+    // línea de la fila "Cuenta corriente" está abierta (pago, saldo a favor o reembolso).
+    // Se usa para degradar "Registrar pago" (el único botón azul relleno de este bloque) a
+    // outline mientras tanto — mismo criterio que "Nuevo cobro" en Clientes
+    // (EstadoCuentaClienteTab, prop hayFichaPrimariaAbierta).
+    const algunaFichaCuentaCorrienteAbierta = showPagoInline || Boolean(monedaUsandoSaldo) || showReembolsoInline;
     // reembolsosTabRefreshKey: forzamos el remount de los DOS bloques de la solapa "Reembolsos"
     // (OperatorRefundsPendingSection + OperatorRefundsRegisteredSection, Tanda P2 2026-07-22) al
     // registrar/deshacer/corregir un reembolso, para que la solapa quede consistente sin que el
@@ -1851,13 +1857,16 @@ export default function SupplierAccountPage() {
                 Chips enmascarados sin permiso cobranzas.see_cost (nunca mostrar verde sin permiso).
             ─────────────────────────────────────────────────────────────────── */}
             <div className="flex items-start gap-4">
-                <button
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
                     onClick={() => navigate("/suppliers")}
-                    className="mt-1 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-input bg-background/50 hover:bg-accent flex-shrink-0"
+                    className="mt-1 h-10 w-10 flex-shrink-0"
                     aria-label="Volver al listado de operadores"
                 >
                     <ArrowLeft className="h-5 w-5" />
-                </button>
+                </Button>
 
                 <div className="min-w-0 flex-1">
                     {/* Nombre del proveedor */}
@@ -1903,26 +1912,28 @@ export default function SupplierAccountPage() {
             {!supplier?.taxCondition && (
                 <div
                     data-testid="supplier-missing-tax-condition-banner"
-                    className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
+                    className="flex items-center gap-2 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
                 >
                     <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
                     <span>
                         <span className="font-bold">Faltan los datos fiscales de este operador.</span>
                         {' '}Completá su condición fiscal para poder facturar y hacer anulaciones sin trabas.
                     </span>
-                    <button
+                    <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() => setActiveTab("datos")}
                         data-testid="supplier-missing-tax-condition-cta"
-                        className="ml-auto flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-200 dark:hover:bg-amber-900/30"
+                        className="ml-auto flex-shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200"
                     >
                         Completar datos
-                    </button>
+                    </Button>
                 </div>
             )}
 
             {/* ── Solapas (mismo patrón visual que la ficha de la reserva) ─────── */}
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+            <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
 
                 {/* Barra de navegación entre solapas */}
                 <div className="border-b border-slate-100 bg-slate-50/30 px-4 dark:border-slate-800 dark:bg-slate-800/20 sm:px-6">
@@ -1937,7 +1948,7 @@ export default function SupplierAccountPage() {
                                 data-testid={`supplier-tab-${solapa.id}`}
                                 className={`relative flex items-center gap-2 whitespace-nowrap py-4 text-sm font-semibold transition-all ${
                                     activeTab === solapa.id
-                                        ? "text-indigo-600 dark:text-indigo-400"
+                                        ? "text-primary"
                                         : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                                 }`}
                             >
@@ -1945,7 +1956,7 @@ export default function SupplierAccountPage() {
                                 {solapa.label}
                                 {/* Línea azul inferior del tab activo */}
                                 {activeTab === solapa.id && (
-                                    <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-indigo-600 dark:bg-indigo-400" />
+                                    <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-primary" />
                                 )}
                             </button>
                         ))}
@@ -1975,75 +1986,77 @@ export default function SupplierAccountPage() {
 
                                     {hasPermission("tesoreria.supplier_payments") && (
                                         <>
-                                            {/* "Registrar pago": alterna la ficha de pago en línea.
-                                                Fix bloqueante (review 2026-07-21): deshabilitado mientras
+                                            {/* "Registrar pago": alterna la ficha de pago en línea. Única
+                                                acción principal de este bloque (B.3): azul boleto cuando no
+                                                hay ninguna ficha abierta. Si CUALQUIER ficha de esta fila está
+                                                abierta (la propia u otra: saldo/reembolso), se degrada a
+                                                outline — nunca dos rellenos a la vez (mismo criterio que
+                                                "Nuevo cobro" en Clientes, EstadoCuentaClienteTab). Fix
+                                                bloqueante (review 2026-07-21): deshabilitado mientras
                                                 PagarProveedorInline tiene un guardado en curso (pagoGuardando),
                                                 para que el cajero no pueda cerrar la ficha a mitad de un POST/PUT. */}
-                                            <button
+                                            <Button
                                                 type="button"
+                                                variant={algunaFichaCuentaCorrienteAbierta ? "outline" : "default"}
                                                 onClick={handleToggleFichaPago}
                                                 disabled={pagoGuardando}
                                                 data-testid="btn-registrar-pago"
-                                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                                                    showPagoInline
-                                                        ? "bg-slate-500 hover:bg-slate-600"
-                                                        : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20"
-                                                }`}
+                                                className="gap-2"
                                             >
-                                                <Plus className="h-4 w-4" />
+                                                <Plus className="h-4 w-4" aria-hidden="true" />
                                                 {showPagoInline ? "Cerrar" : "Registrar pago"}
-                                            </button>
+                                            </Button>
 
-                                            {/* "Usar saldo a favor": un botón por cada moneda con saldo verde.
-                                                Si no hay saldo a favor en ninguna moneda, no aparece ningún botón.
-                                                Si hay dos monedas a favor, ambos botones muestran su símbolo. */}
+                                            {/* "Usar saldo a favor": un botón por cada moneda con saldo.
+                                                Secundaria (B.3, variant="outline"): el verde queda para decir
+                                                "hay plata a favor" en los recuadros de arriba, no para el
+                                                botón — así no compite con "Registrar pago". Si no hay saldo a
+                                                favor en ninguna moneda, no aparece ningún botón. Si hay dos
+                                                monedas a favor, ambos botones muestran su símbolo. */}
                                             {monedasAFavor.map((balance) => {
                                                 const simbolo = balance.currency === "USD" ? "US$" : "$";
                                                 const estaAbierto = monedaUsandoSaldo === balance.currency;
                                                 return (
-                                                    <button
+                                                    <Button
                                                         key={balance.currency}
                                                         type="button"
+                                                        variant="outline"
                                                         onClick={() =>
                                                             setMonedaUsandoSaldo((prev) =>
                                                                 prev === balance.currency ? null : balance.currency
                                                             )
                                                         }
                                                         data-testid={`btn-usar-saldo-${balance.currency}`}
-                                                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
-                                                            estaAbierto
-                                                                ? "bg-emerald-200 text-emerald-800 hover:bg-emerald-300 dark:bg-emerald-900/60 dark:text-emerald-200"
-                                                                : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20"
-                                                        }`}
+                                                        className="gap-2"
                                                     >
-                                                        <TrendingUp className="h-4 w-4" />
+                                                        <TrendingUp className="h-4 w-4" aria-hidden="true" />
                                                         {estaAbierto
                                                             ? `Cerrar saldo ${simbolo}`
                                                             : monedasAFavor.length > 1
                                                                 ? `Usar saldo en ${simbolo}`
                                                                 : "Usar saldo a favor"}
-                                                    </button>
+                                                    </Button>
                                                 );
                                             })}
                                         </>
                                     )}
 
                                     {/* "Registrar reembolso recibido": alterna la ficha en línea.
-                                        Requiere AMBOS permisos (registrar en caja + ver los pendientes a imputar). */}
+                                        Secundaria (B.3, variant="outline"), mismo criterio que "Usar saldo
+                                        a favor" — "Registrar pago" es la única acción principal de este
+                                        bloque. Requiere AMBOS permisos (registrar en caja + ver los
+                                        pendientes a imputar). */}
                                     {hasPermission("caja.edit") && hasPermission("tesoreria.supplier_payments") && (
-                                        <button
+                                        <Button
                                             type="button"
+                                            variant="outline"
                                             onClick={() => setShowReembolsoInline((prev) => !prev)}
                                             data-testid="btn-registrar-reembolso"
-                                            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
-                                                showReembolsoInline
-                                                    ? "bg-slate-500 hover:bg-slate-600 text-white"
-                                                    : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
-                                            }`}
+                                            className="gap-2"
                                         >
-                                            <RotateCcw className="h-4 w-4" />
+                                            <RotateCcw className="h-4 w-4" aria-hidden="true" />
                                             {showReembolsoInline ? "Cerrar" : "Registrar reembolso recibido"}
-                                        </button>
+                                        </Button>
                                     )}
                                 </div>
                             )}
@@ -2116,7 +2129,7 @@ export default function SupplierAccountPage() {
                     ─────────────────────────────────────────────────────────────── */}
                     {activeTab === "servicios-comprados" && (
                         <div id="panel-servicios-comprados" role="tabpanel">
-                            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+                            <div className="overflow-hidden rounded-[14px] border bg-card shadow-sm">
                                 <div className="border-b p-4 space-y-4">
                                     <div className="flex items-center justify-between gap-3">
                                         <h2 className="flex items-center gap-2 font-semibold">
@@ -2138,7 +2151,7 @@ export default function SupplierAccountPage() {
                                                     placeholder="Buscar descripción, reserva o archivo..."
                                                     value={serviceSearch}
                                                     onChange={(event) => setServiceSearch(event.target.value)}
-                                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                                    className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                                                 />
                                             </div>
                                         }
@@ -2148,7 +2161,7 @@ export default function SupplierAccountPage() {
                                                 <select
                                                     value={serviceType}
                                                     onChange={(event) => setServiceType(event.target.value)}
-                                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                                    className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                                                 >
                                                     <option value="all">Todos los tipos</option>
                                                     <option value="Aereo">Aereo</option>

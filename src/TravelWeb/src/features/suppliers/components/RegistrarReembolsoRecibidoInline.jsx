@@ -39,6 +39,7 @@ import {
     validarFormularioReembolsoRecibido,
     construirTextoCuentaReembolso,
 } from "../lib/supplierPageLogic";
+import { Button } from "../../../components/ui/button";
 
 // Mismo set de métodos que PagarProveedorInline: el reembolso también es un movimiento
 // de plata físico (transferencia, efectivo, cheque, tarjeta), así que reusamos las
@@ -161,7 +162,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
     if (loadingPendientes) {
         return (
             <div
-                className="rounded-xl border-2 border-indigo-200 bg-indigo-50/40 dark:border-indigo-900/40 dark:bg-indigo-950/10 p-5"
+                className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5"
                 data-testid="registrar-reembolso-inline"
                 data-state="loading"
             >
@@ -177,26 +178,18 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
     if (errorCarga) {
         return (
             <div
-                className="rounded-xl border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-3"
+                className="rounded-[14px] border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-3"
                 data-testid="registrar-reembolso-inline"
                 data-state="error"
             >
                 <p className="text-sm text-rose-700 dark:text-rose-300" role="alert">{errorCarga}</p>
                 <div className="flex justify-end gap-2">
-                    <button
-                        type="button"
-                        onClick={cargarPendientes}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 transition-colors"
-                    >
+                    <Button type="button" variant="outline" onClick={cargarPendientes}>
                         Reintentar
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onCancelar}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 transition-colors"
-                    >
+                    </Button>
+                    <Button type="button" variant="outline" onClick={onCancelar}>
                         Cerrar
-                    </button>
+                    </Button>
                 </div>
             </div>
         );
@@ -206,7 +199,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
     if (filas.length === 0) {
         return (
             <div
-                className="rounded-xl border-2 border-slate-200 bg-slate-50/40 dark:border-slate-700 dark:bg-slate-900/20 p-5 space-y-3"
+                className="rounded-[14px] border-2 border-slate-200 bg-slate-50/40 dark:border-slate-700 dark:bg-slate-900/20 p-5 space-y-3"
                 data-testid="registrar-reembolso-inline"
                 data-state="empty"
             >
@@ -214,13 +207,9 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                     No hay reembolsos pendientes de este operador.
                 </p>
                 <div className="flex justify-end">
-                    <button
-                        type="button"
-                        onClick={onCancelar}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 transition-colors"
-                    >
+                    <Button type="button" variant="outline" onClick={onCancelar}>
                         Cerrar
-                    </button>
+                    </Button>
                 </div>
             </div>
         );
@@ -229,27 +218,30 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
     // ─── Render: formulario principal ──────────────────────────────────────────
     return (
         <div
-            className="rounded-xl border-2 border-indigo-200 bg-indigo-50/40 dark:border-indigo-900/40 dark:bg-indigo-950/10 p-5 space-y-4"
+            className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5 space-y-4"
             data-testid="registrar-reembolso-inline"
             data-state="ready"
         >
-            {/* Cabecera */}
+            {/* Cabecera. Ficha neutra (mismo criterio que UsarSaldoAFavorInline, Clientes D1):
+                el color solo aparece donde tiene un significado real (B.1). */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <RotateCcw className="h-4 w-4 text-indigo-600" />
+                    <RotateCcw className="h-4 w-4 text-slate-500 dark:text-slate-400" />
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
                         Registrar reembolso recibido
                     </h4>
                 </div>
-                <button
+                <Button
                     type="button"
+                    variant="ghost"
+                    size="icon"
                     onClick={onCancelar}
                     disabled={guardando}
-                    className="rounded p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-50"
+                    className="h-8 w-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                     aria-label="Cerrar ficha de reembolso recibido"
                 >
                     <X className="h-4 w-4" />
-                </button>
+                </Button>
             </div>
 
             {/* Selector obligatorio: a qué anulación se imputa. No se permite un monto
@@ -261,12 +253,12 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                 {/* Aviso ÚNICO por pantalla cuando los montos están enmascarados (regla de la guía
                     2026-06-05): los renglones muestran "—", esto explica el porqué una sola vez. */}
                 {!puedeVerMontos && (
-                    <p className="text-[10px] text-muted-foreground" data-testid="aviso-montos-enmascarados">
+                    <p className="text-[11px] text-muted-foreground" data-testid="aviso-montos-enmascarados">
                         No tenés permiso para ver los montos.
                     </p>
                 )}
                 <div
-                    className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"
+                    className="max-h-48 overflow-y-auto rounded-[10px] border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"
                     role="listbox"
                     aria-label="Reembolsos pendientes de este operador"
                 >
@@ -291,7 +283,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                                 title={noRegistrable ? "Este reembolso todavía no se puede registrar." : undefined}
                                 className={`w-full text-left px-4 py-2.5 flex flex-col gap-1 transition-colors ${
                                     estaSeleccionada
-                                        ? "bg-indigo-100 dark:bg-indigo-900/30"
+                                        ? "bg-blue-100 dark:bg-blue-900/40"
                                         : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/50"
                                 } disabled:opacity-50 disabled:cursor-not-allowed`}
                                 data-testid={`reembolso-pendiente-${idx}`}
@@ -305,7 +297,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                                             )}
                                         </p>
                                     </div>
-                                    <span className="flex-shrink-0 text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+                                    <span className="flex-shrink-0 text-[11px] font-black uppercase tracking-wider text-muted-foreground">
                                         {fila.currency}
                                     </span>
                                 </div>
@@ -315,7 +307,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                                     {construirTextoCuentaReembolso(filaParaTexto)}
                                 </p>
                                 {noRegistrable && (
-                                    <p className="text-[10px] text-amber-600 dark:text-amber-400" data-testid={`reembolso-no-registrable-${idx}`}>
+                                    <p className="text-[11px] text-amber-600 dark:text-amber-400" data-testid={`reembolso-no-registrable-${idx}`}>
                                         Todavía no se puede registrar (revisá el estado de la anulación).
                                     </p>
                                 )}
@@ -327,7 +319,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
 
             {/* Elegido: confirmación visual */}
             {filaSeleccionada && (
-                <p className="text-xs text-indigo-700 dark:text-indigo-400">
+                <p className="text-xs text-blue-700 dark:text-blue-400">
                     Reembolso elegido: <strong>reserva {filaSeleccionada.numeroReserva || "—"}</strong>
                     {" "}en {filaSeleccionada.currency === "USD" ? "dólares" : "pesos"}.
                 </p>
@@ -357,7 +349,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                             setErrorGuardar(null);
                         }}
                         placeholder="0,00"
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                         data-testid="reembolso-monto"
                     />
                 </div>
@@ -376,7 +368,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                             setErrorValidacion(null);
                             setErrorGuardar(null);
                         }}
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                         data-testid="reembolso-fecha"
                     />
                 </div>
@@ -390,7 +382,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                         value={metodo}
                         disabled={guardando}
                         onChange={(e) => setMetodo(e.target.value)}
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                         data-testid="reembolso-metodo"
                     >
                         {METODOS_REEMBOLSO.map((m) => (
@@ -410,7 +402,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                         disabled={guardando}
                         onChange={(e) => setReferencia(e.target.value)}
                         placeholder="# Comprobante"
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                         data-testid="reembolso-referencia"
                     />
                 </div>
@@ -426,7 +418,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
             {/* Error del backend: la ficha queda con todo lo cargado para reintentar */}
             {errorGuardar && (
                 <div
-                    className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+                    className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
                     role="alert"
                     data-testid="reembolso-error-guardar"
                 >
@@ -436,19 +428,14 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
 
             {/* Botones: anti-doble-submit (deshabilitados mientras se envía) */}
             <div className="flex justify-end gap-3 pt-1">
-                <button
-                    type="button"
-                    onClick={onCancelar}
-                    disabled={guardando}
-                    className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
-                >
+                <Button type="button" variant="outline" onClick={onCancelar} disabled={guardando}>
                     Cancelar
-                </button>
-                <button
+                </Button>
+                <Button
                     type="button"
                     onClick={handleConfirmar}
                     disabled={guardando}
-                    className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                    className="gap-2"
                     data-testid="reembolso-confirmar"
                 >
                     {guardando ? (
@@ -459,7 +446,7 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                     ) : (
                         "Confirmar"
                     )}
-                </button>
+                </Button>
             </div>
         </div>
     );

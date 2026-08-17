@@ -75,7 +75,7 @@ export default function SuppliersPage() {
           !mostrarNuevoOperador && (
             <Button
               onClick={() => setMostrarNuevoOperador(true)}
-              className="gap-2 bg-indigo-600 text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-700"
+              className="gap-2"
               data-testid="btn-nuevo-operador"
             >
               <Plus className="h-4 w-4" />
@@ -103,17 +103,17 @@ export default function SuppliersPage() {
               placeholder="Buscar por nombre o CUIT..."
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             />
           </div>
         }
         filterSlot={
-          <label className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
+          <label className="flex cursor-pointer select-none items-center gap-2 rounded-[10px] px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
             <input
               type="checkbox"
               checked={showInactive}
               onChange={(event) => setShowInactive(event.target.checked)}
-              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              className="rounded border-slate-300 text-primary focus:ring-primary"
             />
             Mostrar inactivos
           </label>

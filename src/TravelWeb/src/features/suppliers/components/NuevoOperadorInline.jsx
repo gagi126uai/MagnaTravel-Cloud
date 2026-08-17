@@ -31,6 +31,7 @@ import { Building2, ChevronDown, ChevronRight, X } from "lucide-react";
 import { api } from "../../../api";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { Button } from "../../../components/ui/button";
 import {
     FORM_INICIAL,
     TAX_CONDITION_OPTIONS,
@@ -42,7 +43,7 @@ import {
 // Clases reutilizadas para los inputs del formulario.
 // Centralizado acá para que sea fácil de actualizar si el sistema de diseño cambia.
 const INPUT_CLASS =
-    "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-700 dark:text-white disabled:opacity-50";
+    "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-700 dark:text-white disabled:opacity-50";
 const LABEL_CLASS = "text-xs font-semibold text-slate-600 dark:text-slate-400";
 
 export function NuevoOperadorInline({ onCreado, onCancelar }) {
@@ -94,13 +95,16 @@ export function NuevoOperadorInline({ onCreado, onCancelar }) {
 
     return (
         <div
-            className="rounded-xl border-2 border-indigo-200 bg-indigo-50/30 dark:border-indigo-900/40 dark:bg-indigo-950/10 p-5 space-y-4"
+            className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5 space-y-4"
             data-testid="nuevo-operador-inline"
         >
-            {/* Cabecera de la ficha */}
+            {/* Cabecera de la ficha. Mismo criterio que UsarSaldoAFavorInline (Clientes,
+                D1): la tarjeta es NEUTRA — un color de fondo solo si tiene un significado
+                real (B.1), y "hay una ficha abierta" no es un significado, es solo estado
+                de UI. */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <Building2 className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
                         Nuevo operador
                     </h4>
@@ -209,7 +213,7 @@ export function NuevoOperadorInline({ onCreado, onCancelar }) {
                         checked={fiscalDataPending}
                         onChange={(e) => setFiscalDataPending(e.target.checked)}
                         disabled={saving}
-                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className="mt-0.5 rounded border-slate-300 text-primary focus:ring-ring"
                         data-testid="nuevo-op-fiscal-pending"
                     />
                     <div>
@@ -227,7 +231,7 @@ export function NuevoOperadorInline({ onCreado, onCancelar }) {
                     <button
                         type="button"
                         onClick={() => setMostrarMasDetalles((prev) => !prev)}
-                        className="flex items-center gap-1 text-sm font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200"
+                        className="flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80"
                         aria-expanded={mostrarMasDetalles}
                         data-testid="nuevo-op-mas-detalles-toggle"
                     >
@@ -311,7 +315,7 @@ export function NuevoOperadorInline({ onCreado, onCancelar }) {
                 {/* ── Error de guardado: mensaje del backend o de validación ────────── */}
                 {errorGuardar && (
                     <div
-                        className="rounded-lg bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-2 text-sm text-rose-700 dark:text-rose-300"
+                        className="rounded-[10px] bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-2 text-sm text-rose-700 dark:text-rose-300"
                         role="alert"
                         data-testid="nuevo-op-error"
                     >
@@ -321,23 +325,22 @@ export function NuevoOperadorInline({ onCreado, onCancelar }) {
 
                 {/* ── Botones ───────────────────────────────────────────────────────── */}
                 <div className="flex justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                    <button
+                    <Button
                         type="button"
+                        variant="outline"
                         onClick={onCancelar}
                         disabled={saving}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
                         data-testid="nuevo-op-cancelar"
                     >
                         Cancelar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="submit"
                         disabled={saving}
-                        className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 shadow-sm shadow-indigo-500/20 disabled:opacity-50 transition-all"
                         data-testid="nuevo-op-submit"
                     >
                         {saving ? "Creando…" : "Crear operador"}
-                    </button>
+                    </Button>
                 </div>
             </form>
         </div>

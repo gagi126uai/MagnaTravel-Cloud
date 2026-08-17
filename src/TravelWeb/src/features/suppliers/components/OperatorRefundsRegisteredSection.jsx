@@ -26,6 +26,8 @@ import { hasPermission } from "../../../auth";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { useOperatorRefundsRegistered } from "../hooks/useOperatorRefundsRegistered";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 import { DeshacerReembolsoInline } from "./DeshacerReembolsoInline";
 import { CorregirReembolsoInline } from "./CorregirReembolsoInline";
 import { hayMontosEnmascarados } from "../lib/operatorRefundRegisteredLogic";
@@ -70,9 +72,7 @@ function FilaReembolsoRegistrado({
             Reserva #{item.numeroReserva}
           </Link>
           <span className="text-slate-400 line-through">· {item.clienteNombre}</span>
-          <span className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-            Deshecho
-          </span>
+          <StatusChip tone="neutro">Deshecho</StatusChip>
           <span className="text-slate-400 line-through">
             {item.currency} {montoTexto}
           </span>
@@ -102,7 +102,7 @@ function FilaReembolsoRegistrado({
           {item.clienteNombre && (
             <span className="text-slate-500 dark:text-slate-400">· {item.clienteNombre}</span>
           )}
-          <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+          <span className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
             {item.currency}
           </span>
           <span className="text-slate-700 dark:text-slate-300">{montoTexto}</span>
@@ -111,24 +111,26 @@ function FilaReembolsoRegistrado({
 
         {canEdit && (
           <div className="flex flex-shrink-0 gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => onAbrirDeshacer(item)}
               disabled={estaAbierta}
               data-testid="reembolso-deshacer-boton"
-              className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors"
             >
               Deshacer
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => onAbrirCorregir(item)}
               disabled={estaAbierta}
               data-testid="reembolso-corregir-boton"
-              className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors"
             >
               Corregir reserva
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -184,7 +186,7 @@ export function OperatorRefundsRegisteredSection({ supplierPublicId, onAccionCom
 
   return (
     <div
-      className="mt-4 overflow-hidden rounded-xl border bg-card shadow-sm"
+      className="mt-4 overflow-hidden rounded-[14px] border bg-card shadow-sm"
       data-testid="reembolsos-registrados-bloque"
     >
       <div className="flex items-center justify-between border-b px-6 py-4 flex-wrap gap-2">
@@ -208,7 +210,7 @@ export function OperatorRefundsRegisteredSection({ supplierPublicId, onAccionCom
           este bloque quedaba sin explicación. */}
       {!loading && !error && hayMontosEnmascarados(items) && (
         <p
-          className="px-6 pt-3 text-[10px] text-muted-foreground"
+          className="px-6 pt-3 text-[11px] text-muted-foreground"
           data-testid="aviso-montos-enmascarados-registrados"
         >
           No tenés permiso para ver los montos.
@@ -224,9 +226,9 @@ export function OperatorRefundsRegisteredSection({ supplierPublicId, onAccionCom
           <p className="text-sm text-rose-600 dark:text-rose-400">
             No se pudo cargar la información. Intentá de nuevo.
           </p>
-          <button type="button" onClick={reload} className="text-xs text-indigo-600 hover:underline dark:text-indigo-400">
+          <Button type="button" variant="link" size="sm" onClick={reload} className="h-auto p-0 text-xs">
             Reintentar
-          </button>
+          </Button>
         </div>
       ) : items.length === 0 ? (
         <div

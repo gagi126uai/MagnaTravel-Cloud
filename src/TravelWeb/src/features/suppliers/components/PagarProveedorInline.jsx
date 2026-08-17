@@ -93,6 +93,7 @@ import {
     resolverDeudaDeReferenciaParaSobrepago,
 } from "../lib/supplierPageLogic";
 import { OWNER_TYPE, ACCOUNT_TYPE, resolverCuentaPrincipalPorMoneda } from "../../bank-accounts/lib/bankAccountLogic";
+import { Button } from "../../../components/ui/button";
 
 // Mapa de int (enum del backend) → etiqueta visible para el tipo de cuenta bancaria.
 // Se usa en RecuadroDatosTransferencia para mostrar "Caja de Ahorro" / "Cuenta Corriente".
@@ -197,7 +198,7 @@ function RecuadroDatosTransferencia({ supplierId, monedaPago }) {
     if (!cargandoCuentas && errorCuentas) {
         return (
             <div
-                className="rounded-xl border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/10 p-4 space-y-2"
+                className="rounded-[14px] border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/10 p-4 space-y-2"
                 data-testid="recuadro-datos-transferencia-error"
                 role="alert"
             >
@@ -205,13 +206,15 @@ function RecuadroDatosTransferencia({ supplierId, monedaPago }) {
                     <AlertCircle className="h-4 w-4 flex-shrink-0" />
                     No se pudieron cargar los datos bancarios del proveedor.
                 </div>
-                <button
+                <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={cargarCuentas}
-                    className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:bg-slate-900 dark:text-rose-400 transition-colors"
+                    className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-400"
                 >
                     Reintentar
-                </button>
+                </Button>
             </div>
         );
     }
@@ -269,7 +272,7 @@ function RecuadroDatosTransferencia({ supplierId, monedaPago }) {
 
     return (
         <div
-            className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/30 p-4 space-y-3"
+            className="rounded-[14px] border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/30 p-4 space-y-3"
             data-testid="recuadro-datos-transferencia"
         >
             <div className="flex items-center gap-2">
@@ -315,7 +318,7 @@ function RecuadroDatosTransferencia({ supplierId, monedaPago }) {
                                 <select
                                     value={cuentaSeleccionada.publicId}
                                     onChange={(e) => handleCambiarCuenta(e.target.value)}
-                                    className="appearance-none rounded-lg border border-slate-200 bg-white pr-7 pl-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 outline-none focus:ring-2 focus:ring-indigo-400"
+                                    className="appearance-none rounded-[10px] border border-slate-200 bg-white pr-7 pl-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 outline-none focus:ring-2 focus:ring-ring"
                                     data-testid="selector-cuenta-proveedor"
                                     aria-label="Cambiar cuenta bancaria del proveedor"
                                 >
@@ -332,25 +335,27 @@ function RecuadroDatosTransferencia({ supplierId, monedaPago }) {
                         )}
 
                         {/* Botón copiar: llama al detalle para obtener el dato completo */}
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={handleCopiar}
                             disabled={estadoCopia === "copiando" || (!cuentaSeleccionada?.cbuMasked && !cuentaSeleccionada?.aliasMasked)}
-                            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                            className={`gap-1.5 ${
                                 estadoCopia === "copiado"
                                     ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-400"
                                     : estadoCopia === "error"
                                     ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:text-rose-400"
-                                    : "border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                    : ""
                             }`}
                             data-testid="btn-copiar-datos-transferencia"
                         >
                             {estadoCopia === "copiado"
-                                ? <Check className="h-3.5 w-3.5" />
-                                : <Copy className="h-3.5 w-3.5" />
+                                ? <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                                : <Copy className="h-3.5 w-3.5" aria-hidden="true" />
                             }
                             {textoCopiarBoton}
-                        </button>
+                        </Button>
                     </div>
                 </div>
             ) : (
@@ -416,7 +421,7 @@ function SelectorServicioImputacion({ servicios, hayServiciosEnOtraMoneda, servi
                         currency: elegido.currency,
                     });
                 }}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             >
                 <option value="">Sin imputar a un servicio específico</option>
                 {servicios.map((s) => (
@@ -430,7 +435,7 @@ function SelectorServicioImputacion({ servicios, hayServiciosEnOtraMoneda, servi
                 ))}
             </select>
             {servicioSeleccionado && (
-                <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                <p className="text-[11px] text-blue-700 dark:text-blue-400">
                     El pago se imputará al servicio: <strong>{servicioSeleccionado.descripcion}</strong>
                 </p>
             )}
@@ -1073,19 +1078,23 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
 
     return (
         <div
-            className="rounded-xl border-2 border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10 p-5 space-y-4"
+            className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5 space-y-4"
             data-testid="pagar-proveedor-inline"
         >
-            {/* Cabecera de la ficha */}
+            {/* Cabecera de la ficha. Ficha neutra (mismo criterio que UsarSaldoAFavorInline,
+                Clientes D1): el color solo aparece donde tiene un significado real (B.1) —
+                "hay un pago en curso" no es un significado, es solo estado de UI. */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4 text-emerald-600" />
+                    <CreditCard className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
                         {esEdicion ? "Editar pago al proveedor" : "Registrar pago al proveedor"}
                     </h4>
                 </div>
-                <button
+                <Button
                     type="button"
+                    variant="ghost"
+                    size="icon"
                     // Con el cartel de éxito abierto, la X cierra la ficha (el refresco del
                     // padre ya ocurrió al guardar, no acá) — sin cartel, es un cancelar normal.
                     onClick={resultadoExito ? handleCerrarExito : onCancelar}
@@ -1096,17 +1105,17 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                     // o mal (o, peor, volver a abrirla y reintentar sobre un pedido que seguía
                     // en curso).
                     disabled={saving}
-                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="h-8 w-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                     aria-label="Cerrar ficha de pago"
                 >
                     <X className="w-4 h-4" />
-                </button>
+                </Button>
             </div>
 
             {/* Aviso informativo en modo edición de pago cruzado:
                 el monto/TC no son editables porque ya están contabilizados. */}
             {edicionEconomicaBloqueada && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
+                <div className="rounded-[10px] bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
                     Este pago tiene datos contables vinculados. Solo podés cambiar el método, la referencia y las notas.
                 </div>
             )}
@@ -1154,7 +1163,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                     (por ahora limpia el destino, que es lo único que dejó de ser válido). */}
                 {!esEdicion && (reservaSeleccionada || esPagoACuenta || cargoSeleccionado) && (
                     <div
-                        className="flex items-start justify-between gap-3 rounded-lg border border-emerald-300 bg-white dark:bg-slate-800 dark:border-emerald-800 p-3"
+                        className="flex items-start justify-between gap-3 rounded-[10px] border border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 p-3"
                         data-testid="pago-destino-fijado"
                     >
                         <div className="min-w-0 space-y-1">
@@ -1192,27 +1201,31 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                     {/* Link "pagar en otra moneda": reubicado acá (antes vivía en el banner
                                         global, que ahora se oculta cuando el destino es una reserva puntual). */}
                                     {esMultimoneda && !mostrarOtraMoneda && (
-                                        <button
+                                        <Button
                                             type="button"
+                                            variant="link"
+                                            size="sm"
                                             onClick={() => setMostrarOtraMoneda(true)}
-                                            className="text-xs font-medium text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-200 underline underline-offset-2"
+                                            className="h-auto p-0 text-xs"
                                             data-testid="pago-link-otra-moneda"
                                         >
                                             pagar en otra moneda
-                                        </button>
+                                        </Button>
                                     )}
                                 </>
                             )}
                         </div>
-                        <button
+                        <Button
                             type="button"
+                            variant="link"
+                            size="sm"
                             onClick={handleCambiarDestino}
                             disabled={saving}
-                            className="flex-shrink-0 text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline underline-offset-2 dark:text-emerald-400 disabled:opacity-50"
+                            className="h-auto flex-shrink-0 p-0 text-xs"
                             data-testid="pago-cambiar-destino"
                         >
                             Cambiar
-                        </button>
+                        </Button>
                     </div>
                 )}
 
@@ -1223,10 +1236,10 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                     (ese caso ya muestra su propio "Debe: $X" en el encabezado de arriba). */}
                 {saldoBanner !== null && !ocultarBannerGlobalPorDestinoFijado && (
                     <div
-                        className="flex items-center justify-between rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-900/40 px-4 py-2"
+                        className="flex items-center justify-between rounded-[10px] bg-blue-50 border border-blue-200 dark:bg-blue-950/20 dark:border-blue-900/40 px-4 py-2"
                         data-testid="pago-banner-moneda-principal"
                     >
-                        <span className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+                        <span className="text-sm font-semibold text-blue-800 dark:text-blue-300">
                             Pagás en {monedaBanner === "USD" ? "US$" : "$"} —{" "}
                             deuda{" "}
                             {puedeVerMontos
@@ -1237,14 +1250,16 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                         {/* Link "pagar en otra moneda": solo en proveedores con deuda en ambas monedas.
                             No se muestra en modo edición de pago cruzado (ya está determinada la moneda). */}
                         {esMultimoneda && !mostrarOtraMoneda && !edicionEconomicaBloqueada && !cargoSeleccionado && (
-                            <button
+                            <Button
                                 type="button"
+                                variant="link"
+                                size="sm"
                                 onClick={() => setMostrarOtraMoneda(true)}
-                                className="text-xs font-medium text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-200 underline underline-offset-2"
+                                className="h-auto p-0 text-xs"
                                 data-testid="pago-link-otra-moneda"
                             >
                                 pagar en otra moneda
-                            </button>
+                            </Button>
                         )}
                     </div>
                 )}
@@ -1262,7 +1277,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                             value={monto}
                             disabled={saving || edicionEconomicaBloqueada || Boolean(cargoSeleccionado)}
                             onChange={(e) => setMonto(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             placeholder="0,00"
                             data-testid="pago-monto"
                         />
@@ -1276,7 +1291,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                 value={monedaPago}
                                 disabled={saving || edicionEconomicaBloqueada}
                                 onChange={(e) => setMonedaPago(e.target.value)}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 data-testid="pago-moneda"
                             >
                                 {PAYMENT_CURRENCIES.map((currency) => (
@@ -1296,7 +1311,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                 value={saldoImputado}
                                 disabled={saving || edicionEconomicaBloqueada}
                                 onChange={(e) => setSaldoImputado(e.target.value)}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 data-testid="pago-imputar-a"
                             >
                                 {balancesByCurrency.map((b) => (
@@ -1317,7 +1332,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                             value={metodo}
                             disabled={saving}
                             onChange={(e) => setMetodo(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             data-testid="pago-metodo"
                         >
                             {METODOS_PAGO_PROVEEDOR.map((m) => (
@@ -1332,7 +1347,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                             value={fecha}
                             disabled={saving || edicionEconomicaBloqueada}
                             onChange={(e) => setFecha(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                         />
                     </div>
                     <div className="space-y-1">
@@ -1342,7 +1357,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                             value={referencia}
                             disabled={saving}
                             onChange={(e) => setReferencia(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             placeholder="# Comprobante"
                             data-testid="pago-referencia"
                         />
@@ -1354,7 +1369,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                             value={notas}
                             disabled={saving}
                             onChange={(e) => setNotas(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             placeholder="Notas internas…"
                             data-testid="pago-notas"
                         />
@@ -1365,10 +1380,10 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                     Sin esta información no se puede convertir el monto correctamente. */}
                 {esCruzado && (
                     <div
-                        className="rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/50 dark:border-indigo-900/50 dark:bg-indigo-950/20 p-4 space-y-3"
+                        className="rounded-[10px] border-2 border-dashed border-slate-300 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-800/20 p-4 space-y-3"
                         data-testid="recuadro-tipo-cambio"
                     >
-                        <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                             {monedaPago === "ARS"
                                 ? "↕ Pagás en pesos para bajar deuda en dólares: informá el tipo de cambio"
                                 : "↕ Pagás en dólares para bajar deuda en pesos: informá el tipo de cambio"
@@ -1376,7 +1391,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                         </p>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">1 US$ = $ ___</label>
+                                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">1 US$ = $ ___</label>
                                 <input
                                     type="number"
                                     step="0.01"
@@ -1384,18 +1399,18 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                     value={tipoCambio}
                                     disabled={saving || edicionEconomicaBloqueada}
                                     onChange={(e) => setTipoCambio(e.target.value)}
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     placeholder="1.200,00"
                                     data-testid="pago-tipo-cambio"
                                 />
                             </div>
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fuente</label>
+                                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Fuente</label>
                                 <select
                                     value={fuenteTC}
                                     disabled={saving || edicionEconomicaBloqueada}
                                     onChange={(e) => setFuenteTC(Number(e.target.value))}
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     data-testid="pago-fuente-tc"
                                 >
                                     {FUENTES_TC.map((f) => (
@@ -1404,20 +1419,20 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                 </select>
                             </div>
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fecha del TC</label>
+                                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Fecha del TC</label>
                                 <input
                                     type="date"
                                     value={fechaTC}
                                     disabled={saving || edicionEconomicaBloqueada}
                                     onChange={(e) => setFechaTC(e.target.value)}
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     data-testid="pago-fecha-tc"
                                 />
                             </div>
                         </div>
                         {/* Monto equivalente calculado en tiempo real — se muestra cuando hay datos suficientes */}
                         {montoEquivalente != null && (
-                            <p className="text-xs font-medium text-indigo-700 dark:text-indigo-300 mt-1">
+                            <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1">
                                 → Se cancelan{" "}
                                 <strong>{formatCurrency(montoEquivalente, saldoImputado)}</strong>
                                 {" "}de la deuda en {saldoImputado === "USD" ? "dólares" : "pesos"}
@@ -1431,7 +1446,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                     no tocó el modo edición). No se muestra en edición de pago cruzado para
                     simplificar (el pago ya tiene sus imputaciones registradas). */}
                 {esEdicion && !edicionEconomicaBloqueada && !cargoSeleccionado && (
-                    <div className="space-y-3 rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-800/30">
+                    <div className="space-y-3 rounded-[14px] border border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-800/30">
                         <div className="flex items-center gap-2">
                             <Layers className="h-4 w-4 text-slate-500" />
                             <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
@@ -1448,7 +1463,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                 <select
                                     value={reservaSeleccionada?.reservaPublicId || ""}
                                     onChange={handleReservaChange}
-                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                     data-testid="pago-reserva"
                                 >
                                     <option value="">Sin imputar a una reserva específica</option>
@@ -1509,7 +1524,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                     Reusa el mismo componente y las mismas dos validaciones de la Tanda 1
                     (2026-07-18) que ya tenía el formulario viejo. */}
                 {!esEdicion && reservaSeleccionada && !cargoSeleccionado && !esPagoACuenta && (
-                    <div className="space-y-2 rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-800/30">
+                    <div className="space-y-2 rounded-[14px] border border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-800/30">
                         {reservaSinServiciosDelProveedor ? (
                             <p
                                 className="text-xs text-amber-600 dark:text-amber-400"
@@ -1536,7 +1551,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                 {/* Error: queda visible arriba de los botones para que sea lo primero que el usuario vea */}
                 {errorGuardar && (
                     <div
-                        className="rounded-lg bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
+                        className="rounded-[10px] bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
                         role="alert"
                         data-testid="pago-error"
                     >
@@ -1546,22 +1561,17 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
 
                 {/* Botones */}
                 <div className="flex justify-end gap-3 pt-1">
-                    <button
-                        type="button"
-                        onClick={onCancelar}
-                        disabled={saving}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                    >
+                    <Button type="button" variant="outline" onClick={onCancelar} disabled={saving}>
                         Cancelar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="submit"
                         disabled={saving || (!esEdicion && camposIncompletosParaCruzado) || reservaSinServiciosDelProveedor}
-                        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
+                        className="gap-2"
                         data-testid="pago-confirmar"
                     >
                         {saving ? "Guardando…" : esEdicion ? "Guardar cambios" : "Confirmar pago"}
-                    </button>
+                    </Button>
                 </div>
             </form>
             )}
@@ -1572,7 +1582,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                 que arma la frase a partir de `impact` — nunca de un cálculo hecho acá. */}
             {!esEdicion && resultadoExito && (
                 <div
-                    className="rounded-xl border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 dark:border-emerald-800 p-5 space-y-3"
+                    className="rounded-[14px] border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 dark:border-emerald-800 p-5 space-y-3"
                     data-testid="pago-exito"
                     role="status"
                 >
@@ -1586,22 +1596,12 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                         ))}
                     </div>
                     <div className="flex justify-end gap-3 pt-1">
-                        <button
-                            type="button"
-                            onClick={handleVerCuentaExito}
-                            className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:bg-slate-800 dark:border-emerald-800 dark:text-emerald-400 transition-colors"
-                            data-testid="pago-exito-ver-cuenta"
-                        >
+                        <Button type="button" variant="outline" onClick={handleVerCuentaExito} data-testid="pago-exito-ver-cuenta">
                             Ver cuenta
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleCerrarExito}
-                            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 shadow-sm transition-colors"
-                            data-testid="pago-exito-cerrar"
-                        >
+                        </Button>
+                        <Button type="button" onClick={handleCerrarExito} data-testid="pago-exito-cerrar">
                             Cerrar
-                        </button>
+                        </Button>
                     </div>
                 </div>
             )}
@@ -1652,7 +1652,7 @@ function PasoElegirDestinoPago({
                 // no un error). Mismo patrón visual que RecuadroDatosTransferencia de más
                 // arriba en este archivo: cartel rojo + botón para reintentar el mismo pedido.
                 <div
-                    className="rounded-xl border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/10 p-4 space-y-2"
+                    className="rounded-[14px] border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/10 p-4 space-y-2"
                     data-testid="pago-reservas-error"
                     role="alert"
                 >
@@ -1660,21 +1660,23 @@ function PasoElegirDestinoPago({
                         <AlertCircle className="h-4 w-4 flex-shrink-0" />
                         {reservasError}
                     </div>
-                    <button
+                    <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={onReintentarReservas}
-                        className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:bg-slate-900 dark:text-rose-400 transition-colors"
+                        className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-400"
                         data-testid="pago-reservas-reintentar"
                     >
                         Reintentar
-                    </button>
+                    </Button>
                 </div>
             ) : filasDeuda.length === 0 ? (
                 <div className="text-xs text-muted-foreground italic" data-testid="pago-sin-deuda-por-reserva">
                     Este proveedor no tiene reservas con deuda pendiente.
                 </div>
             ) : (
-                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="overflow-x-auto rounded-[14px] border border-slate-200 dark:border-slate-700">
                     <table className="w-full text-sm" data-testid="pago-grilla-deuda">
                         <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
                             <tr>
@@ -1704,14 +1706,14 @@ function PasoElegirDestinoPago({
                                         }
                                     </td>
                                     <td className="px-3 py-2 text-center">
-                                        <button
+                                        <Button
                                             type="button"
+                                            size="sm"
                                             onClick={() => onElegirFila(fila)}
-                                            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-colors"
                                             data-testid={`pago-elegir-fila-${fila.reservaPublicId}-${fila.currency}`}
                                         >
                                             Pagar
-                                        </button>
+                                        </Button>
                                     </td>
                                 </tr>
                             ))}
@@ -1723,14 +1725,14 @@ function PasoElegirDestinoPago({
             {/* "Liquidar cargo facturado aparte": mismo concepto de siempre, reubicado acá
                 (antes vivía escondido dentro del formulario, después del monto). */}
             {puedeVerMontos && openInvoicedCharges.length > 0 && (
-                <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/10">
+                <div className="space-y-1 rounded-[10px] border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/10">
                     <label className="text-xs font-semibold text-amber-800 dark:text-amber-300">
                         Liquidar cargo facturado aparte (opcional)
                     </label>
                     <select
                         value=""
                         onChange={(event) => onElegirCargo(event.target.value)}
-                        className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 dark:border-amber-800 dark:bg-slate-800 dark:text-white"
+                        className="w-full rounded-[10px] border border-amber-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 dark:border-amber-800 dark:bg-slate-800 dark:text-white"
                         data-testid="pago-elegir-cargo"
                     >
                         <option value="">Elegí un cargo del operador…</option>
@@ -1745,16 +1747,11 @@ function PasoElegirDestinoPago({
 
             {/* "Pago a cuenta (sin imputar)": decisión explícita con nombre propio (spec 5.2.2
                 punto 1) — reemplaza al viejo default silencioso de dejar todo vacío. */}
-            <div className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-800/20 p-4 space-y-2">
+            <div className="rounded-[14px] border-2 border-dashed border-slate-300 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-800/20 p-4 space-y-2">
                 <p className="text-xs text-slate-600 dark:text-slate-400">¿No es para ninguna reserva puntual?</p>
-                <button
-                    type="button"
-                    onClick={onElegirPagoACuenta}
-                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 transition-colors"
-                    data-testid="pago-a-cuenta-boton"
-                >
+                <Button type="button" variant="outline" onClick={onElegirPagoACuenta} data-testid="pago-a-cuenta-boton">
                     Pago a cuenta (sin imputar)
-                </button>
+                </Button>
             </div>
         </div>
     );

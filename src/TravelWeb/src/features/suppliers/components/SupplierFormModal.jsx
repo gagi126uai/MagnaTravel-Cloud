@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Wallet } from "lucide-react";
-import { Badge } from "../../../components/ui/badge";
+import { StatusChip } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { formatCurrency } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 // Reutilizamos CURRENCY_OPTIONS del alta para que las etiquetas sean idénticas en ambas superficies.
@@ -102,7 +103,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in zoom-in duration-200">
-            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            <div className="w-full max-w-lg rounded-[14px] bg-white p-6 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                 <div className="flex items-center justify-between mb-6">
                     <div>
                         <h3 className="text-xl font-bold text-slate-900 dark:text-white">
@@ -113,9 +114,9 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                         </p>
                     </div>
                     {supplier && (
-                        <Badge variant={formData.isActive ? "success" : "secondary"}>
+                        <StatusChip tone={formData.isActive ? "verde" : "neutro"}>
                             {formData.isActive ? "Activo" : "Inactivo"}
-                        </Badge>
+                        </StatusChip>
                     )}
                 </div>
 
@@ -129,7 +130,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                                 placeholder="Ej: Despegar Argentina S.A."
                                 value={formData.name}
                                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                             />
                         </div>
 
@@ -140,7 +141,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                                 placeholder="20-12345678-9"
                                 value={formData.taxId}
                                 onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                             />
                         </div>
 
@@ -149,7 +150,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                             <select
                                 value={formData.taxCondition}
                                 onChange={(e) => setFormData({ ...formData, taxCondition: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                             >
                                 <option value="">Seleccionar...</option>
                                 <option value="IVA_RESP_INSCRIPTO">Resp. Inscripto</option>
@@ -166,7 +167,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                             <select
                                 value={formData.defaultCurrency}
                                 onChange={(e) => setFormData({ ...formData, defaultCurrency: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                                 data-testid="supplier-form-defaultCurrency"
                             >
                                 {CURRENCY_OPTIONS.map((opt) => (
@@ -184,7 +185,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                                 placeholder="Nombre contacto"
                                 value={formData.contactName}
                                 onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                             />
                         </div>
 
@@ -195,7 +196,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                                 placeholder="+54 11 ..."
                                 value={formData.phone}
                                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                             />
                         </div>
 
@@ -206,12 +207,12 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                                 placeholder="contacto@proveedor.com"
                                 value={formData.email}
                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                             />
                         </div>
 
                         {supplier && (
-                            <div className="sm:col-span-2 rounded-lg border bg-slate-50 dark:bg-slate-900/50 p-3 flex items-center justify-between">
+                            <div className="sm:col-span-2 rounded-[10px] border bg-slate-50 dark:bg-slate-900/50 p-3 flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <Wallet className="h-4 w-4 text-slate-500" />
                                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Saldo Actual</span>
@@ -248,19 +249,12 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                     </div>
 
                     <div className="flex gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="flex-1 rounded-lg border bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
-                        >
+                        <Button type="button" variant="outline" onClick={onClose} className="flex-1">
                             Cancelar
-                        </button>
-                        <button
-                            type="submit"
-                            className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/25 transition-all"
-                        >
+                        </Button>
+                        <Button type="submit" className="flex-1">
                             {supplier ? "Guardar Cambios" : "Crear Proveedor"}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>

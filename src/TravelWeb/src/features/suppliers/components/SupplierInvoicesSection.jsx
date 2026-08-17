@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, Loader2, Plus, X } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { formatCurrency, formatDate, hoyArgentina } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
@@ -167,13 +168,13 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>;
 
   return <div className="space-y-5">
-    <div className="rounded-xl border bg-card p-4">
+    <div className="rounded-[14px] border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div><h2 className="font-semibold">Facturas recibidas del operador</h2><p className="text-xs text-muted-foreground">Documento comercial, no fiscal AFIP. Reclasifica servicios existentes; no duplica la deuda.</p></div>
-        {puedeCrearFactura && <button type="button" onClick={() => setShowCreate((x) => !x)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">{showCreate ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />} Nueva factura</button>}
+        {puedeCrearFactura && <Button type="button" onClick={() => setShowCreate((x) => !x)} className="gap-2">{showCreate ? <X className="h-4 w-4" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />} Nueva factura</Button>}
       </div>
       {classification.length > 0 && <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        {classification.map((row) => <div key={row.currency} className="rounded-lg bg-slate-50 p-3 dark:bg-slate-900">
+        {classification.map((row) => <div key={row.currency} className="rounded-[10px] bg-slate-50 p-3 dark:bg-slate-900">
           <div className="text-xs font-bold">{row.currency}</div>
           <div className="mt-2 flex justify-between text-sm"><span>Comprometido no facturado</span><b>{formatCurrency(row.committedUnbilled, row.currency)}</b></div>
           <div className="flex justify-between text-sm"><span>Facturado pendiente</span><b>{formatCurrency(row.billedPending, row.currency)}</b></div>
@@ -182,18 +183,18 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
       </div>}
     </div>
 
-    {showCreate && <form onSubmit={createInvoice} className="space-y-4 rounded-xl border bg-card p-4">
+    {showCreate && <form onSubmit={createInvoice} className="space-y-4 rounded-[14px] border bg-card p-4">
       <div className="grid gap-3 md:grid-cols-4">
-        <input required placeholder="Número" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className="rounded-lg border bg-background px-3 py-2" />
-        <select value={form.currency} onChange={(e) => { setForm({ ...form, currency: e.target.value, selected: {} }); setServicePageNumber(1); }} className="rounded-lg border bg-background px-3 py-2"><option>ARS</option><option>USD</option></select>
-        <input required type="date" value={form.issuedAt} onChange={(e) => setForm({ ...form, issuedAt: e.target.value })} className="rounded-lg border bg-background px-3 py-2" />
-        <input required type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="rounded-lg border bg-background px-3 py-2" />
+        <input required placeholder="Número" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className="rounded-[10px] border bg-background px-3 py-2" />
+        <select value={form.currency} onChange={(e) => { setForm({ ...form, currency: e.target.value, selected: {} }); setServicePageNumber(1); }} className="rounded-[10px] border bg-background px-3 py-2"><option>ARS</option><option>USD</option></select>
+        <input required type="date" value={form.issuedAt} onChange={(e) => setForm({ ...form, issuedAt: e.target.value })} className="rounded-[10px] border bg-background px-3 py-2" />
+        <input required type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="rounded-[10px] border bg-background px-3 py-2" />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <input value={serviceSearch} onChange={(e) => { setServiceSearch(e.target.value); setServicePageNumber(1); }} placeholder="Buscar por reserva, servicio o confirmación" className="min-w-64 flex-1 rounded-lg border bg-background px-3 py-2 text-sm" />
+        <input value={serviceSearch} onChange={(e) => { setServiceSearch(e.target.value); setServicePageNumber(1); }} placeholder="Buscar por reserva, servicio o confirmación" className="min-w-64 flex-1 rounded-[10px] border bg-background px-3 py-2 text-sm" />
         <span className="text-xs text-muted-foreground">{Object.keys(form.selected).length} seleccionados</span>
       </div>
-      <div className="max-h-64 space-y-2 overflow-auto rounded-lg border p-2">
+      <div className="max-h-64 space-y-2 overflow-auto rounded-[10px] border p-2">
         {loadingServices && <div className="flex justify-center p-4"><Loader2 className="h-5 w-5 animate-spin" /></div>}
         {eligibleServices.map((service) => { const id = getPublicId(service); return <label key={id} className="flex items-center gap-3 rounded p-2 hover:bg-muted">
           <input type="checkbox" checked={Boolean(form.selected[id])} onChange={() => toggleService(service)} />
@@ -204,44 +205,44 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
         {eligibleServices.length === 0 && <p className="p-3 text-sm text-muted-foreground">No hay servicios confirmados pendientes de facturar en esta moneda. Los servicios sin confirmar todavía no se pueden facturar.</p>}
       </div>
       <div className="flex items-center justify-between text-sm">
-        <button type="button" disabled={servicePageNumber <= 1} onClick={() => setServicePageNumber((page) => page - 1)} className="rounded border px-3 py-1 disabled:opacity-40">Anterior</button>
+        <Button type="button" variant="outline" size="sm" disabled={servicePageNumber <= 1} onClick={() => setServicePageNumber((page) => page - 1)}>Anterior</Button>
         <span>Página {servicesPage.page || 1} de {servicesPage.totalPages || 1}</span>
-        <button type="button" disabled={!servicesPage.totalPages || servicePageNumber >= servicesPage.totalPages} onClick={() => setServicePageNumber((page) => page + 1)} className="rounded border px-3 py-1 disabled:opacity-40">Siguiente</button>
+        <Button type="button" variant="outline" size="sm" disabled={!servicesPage.totalPages || servicePageNumber >= servicesPage.totalPages} onClick={() => setServicePageNumber((page) => page + 1)}>Siguiente</Button>
       </div>
-      <button disabled={saving || Object.keys(form.selected).length === 0} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Guardando…" : "Registrar factura"}</button>
+      <Button type="submit" disabled={saving || Object.keys(form.selected).length === 0}>{saving ? "Guardando…" : "Registrar factura"}</Button>
     </form>}
 
     <div className="space-y-3">
-      {invoices.map((invoice) => <div key={invoice.publicId} className="rounded-xl border bg-card p-4">
+      {invoices.map((invoice) => <div key={invoice.publicId} className="rounded-[14px] border bg-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex gap-3"><FileText className="h-5 w-5 text-indigo-500" /><div><div className="font-semibold">Factura {invoice.number}</div><div className="text-xs text-muted-foreground">Emitida {formatDate(invoice.issuedAt)} · vence {formatDate(invoice.dueDate)} · {statusLabel[invoice.status] || invoice.status}</div></div></div>
+          <div className="flex gap-3"><FileText className="h-5 w-5 text-slate-500 dark:text-slate-400" aria-hidden="true" /><div><div className="font-semibold">Factura {invoice.number}</div><div className="text-xs text-muted-foreground">Emitida {formatDate(invoice.issuedAt)} · vence {formatDate(invoice.dueDate)} · {statusLabel[invoice.status] || invoice.status}</div></div></div>
           <div className="text-right"><div className="font-bold">{invoice.amountsVisible ? formatCurrency(invoice.pending, invoice.currency) : "—"}</div><div className="text-xs text-muted-foreground">pendiente de {invoice.amountsVisible ? formatCurrency(invoice.total, invoice.currency) : "—"}</div></div>
         </div>
         <div className="mt-3 text-xs text-muted-foreground">{invoice.lines.map((x) => `${x.description} · Reserva ${x.reservaNumber || "—"}`).join(" · ")}</div>
-        {invoice.applications?.length > 0 && <div className="mt-3 space-y-1 rounded-lg bg-muted/40 p-2 text-xs">
+        {invoice.applications?.length > 0 && <div className="mt-3 space-y-1 rounded-[10px] bg-muted/40 p-2 text-xs">
           {invoice.applications.map((applied) => <div key={applied.publicId} className="flex flex-wrap items-center justify-between gap-2">
             <span className={applied.isReversed ? "line-through text-muted-foreground" : ""}>
               {formatDate(applied.createdAt)} · {formatCurrency(applied.amount, invoice.currency)}
               {applied.isReversed ? ` · Revertida: ${applied.reversalReason}` : " · Aplicación activa"}
             </span>
-            {canApply && !applied.isReversed && <button type="button" onClick={() => reverseApplication(invoice, applied)} className="rounded border border-amber-300 px-2 py-1 text-amber-700">Revertir aplicación</button>}
+            {canApply && !applied.isReversed && <Button type="button" variant="destructive" size="sm" onClick={() => reverseApplication(invoice, applied)}>Revertir aplicación</Button>}
           </div>)}
         </div>}
         {(canApply || canEdit) && invoice.status !== "pagada" && invoice.status !== "anulada" && <div className="mt-4 flex flex-wrap gap-2 border-t pt-3">
-          {canApply && <><input value={paymentPickers[invoice.publicId]?.search || ""} onChange={(e) => setPaymentPickers((all) => ({ ...all, [invoice.publicId]: { ...all[invoice.publicId], search: e.target.value } }))} placeholder="Buscar pago" className="w-40 rounded-lg border bg-background px-2 py-1.5 text-sm" />
-          <button type="button" onClick={() => loadPaymentPage(invoice, 1)} className="rounded-lg border px-3 py-1.5 text-sm">Buscar</button>
-          <select value={application[invoice.publicId]?.paymentId || ""} onChange={(e) => setApplication({ ...application, [invoice.publicId]: { ...application[invoice.publicId], paymentId: e.target.value } })} className="rounded-lg border bg-background px-2 py-1.5 text-sm"><option value="">Elegir pago registrado</option>{(paymentPickers[invoice.publicId]?.items || []).filter((p) => !p.isOperatorChargeSettlement).map((p) => <option key={getPublicId(p)} value={getPublicId(p)}>{formatDate(p.paidAt)} · {formatCurrency(p.imputedAmount || p.amount, invoice.currency)}</option>)}</select>
-          <input type="number" min="0.01" step="0.01" placeholder="Importe" value={application[invoice.publicId]?.amount || ""} onChange={(e) => setApplication({ ...application, [invoice.publicId]: { ...application[invoice.publicId], amount: e.target.value } })} className="w-32 rounded-lg border bg-background px-2 py-1.5 text-sm" />
-          <button type="button" onClick={() => applyPayment(invoice)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white">Aplicar pago</button>
+          {canApply && <><input value={paymentPickers[invoice.publicId]?.search || ""} onChange={(e) => setPaymentPickers((all) => ({ ...all, [invoice.publicId]: { ...all[invoice.publicId], search: e.target.value } }))} placeholder="Buscar pago" className="w-40 rounded-[10px] border bg-background px-2 py-1.5 text-sm" />
+          <Button type="button" variant="outline" size="sm" onClick={() => loadPaymentPage(invoice, 1)}>Buscar</Button>
+          <select value={application[invoice.publicId]?.paymentId || ""} onChange={(e) => setApplication({ ...application, [invoice.publicId]: { ...application[invoice.publicId], paymentId: e.target.value } })} className="rounded-[10px] border bg-background px-2 py-1.5 text-sm"><option value="">Elegir pago registrado</option>{(paymentPickers[invoice.publicId]?.items || []).filter((p) => !p.isOperatorChargeSettlement).map((p) => <option key={getPublicId(p)} value={getPublicId(p)}>{formatDate(p.paidAt)} · {formatCurrency(p.imputedAmount || p.amount, invoice.currency)}</option>)}</select>
+          <input type="number" min="0.01" step="0.01" placeholder="Importe" value={application[invoice.publicId]?.amount || ""} onChange={(e) => setApplication({ ...application, [invoice.publicId]: { ...application[invoice.publicId], amount: e.target.value } })} className="w-32 rounded-[10px] border bg-background px-2 py-1.5 text-sm" />
+          <Button type="button" size="sm" onClick={() => applyPayment(invoice)}>Aplicar pago</Button>
           {(paymentPickers[invoice.publicId]?.totalPages || 0) > 1 && <span className="inline-flex items-center gap-1 text-xs">
-            <button type="button" disabled={paymentPickers[invoice.publicId].page <= 1} onClick={() => loadPaymentPage(invoice, paymentPickers[invoice.publicId].page - 1)} className="rounded border px-2 py-1 disabled:opacity-40">Anterior</button>
+            <Button type="button" variant="outline" size="sm" disabled={paymentPickers[invoice.publicId].page <= 1} onClick={() => loadPaymentPage(invoice, paymentPickers[invoice.publicId].page - 1)}>Anterior</Button>
             {paymentPickers[invoice.publicId].page}/{paymentPickers[invoice.publicId].totalPages}
-            <button type="button" disabled={paymentPickers[invoice.publicId].page >= paymentPickers[invoice.publicId].totalPages} onClick={() => loadPaymentPage(invoice, paymentPickers[invoice.publicId].page + 1)} className="rounded border px-2 py-1 disabled:opacity-40">Siguiente</button>
+            <Button type="button" variant="outline" size="sm" disabled={paymentPickers[invoice.publicId].page >= paymentPickers[invoice.publicId].totalPages} onClick={() => loadPaymentPage(invoice, paymentPickers[invoice.publicId].page + 1)}>Siguiente</Button>
           </span>}</>}
-          {canEdit && !invoice.applications.some((item) => !item.isReversed) && <button type="button" onClick={() => voidInvoice(invoice)} className="rounded-lg border border-rose-300 px-3 py-1.5 text-sm text-rose-600">Anular</button>}
+          {canEdit && !invoice.applications.some((item) => !item.isReversed) && <Button type="button" variant="destructive" size="sm" onClick={() => voidInvoice(invoice)}>Anular</Button>}
         </div>}
       </div>)}
-      {invoices.length === 0 && <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">Todavía no hay facturas registradas para este operador.</div>}
+      {invoices.length === 0 && <div className="rounded-[14px] border border-dashed p-10 text-center text-sm text-muted-foreground">Todavía no hay facturas registradas para este operador.</div>}
     </div>
   </div>;
 }
