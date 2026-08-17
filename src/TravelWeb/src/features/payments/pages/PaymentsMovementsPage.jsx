@@ -8,6 +8,7 @@ import { MonthNavigator, monthToBounds } from "../../../components/ui/MonthNavig
 import { useFinanceActions } from "../hooks/useFinanceActions";
 import { useInvoicePolling } from "../hooks/useInvoicePolling";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
+import { Button } from "../../../components/ui/button";
 
 // B1.15 Fase D'.B (2026-05-11): pestaña "Movimientos" — timeline cronologico
 // global con filtros. Sirve para "ver todo lo que paso hoy" o conciliar.
@@ -133,7 +134,7 @@ export default function PaymentsMovementsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="relative w-full lg:max-w-md">
@@ -143,7 +144,7 @@ export default function PaymentsMovementsPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Buscar por reserva, cliente, referencia…"
-                className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white pl-9 pr-3 py-1.5 text-sm"
+                className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white pl-9 pr-3 py-1.5 text-sm"
               />
             </div>
             <MonthNavigator
@@ -160,7 +161,7 @@ export default function PaymentsMovementsPage() {
                   key={option.value}
                   type="button"
                   onClick={() => toggleKind(option.value)}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${active ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"}`}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${active ? "bg-primary text-primary-foreground" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"}`}
                 >
                   {option.label}
                 </button>
@@ -170,7 +171,7 @@ export default function PaymentsMovementsPage() {
         </div>
 
         {error ? (
-          <div className="m-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300">
+          <div className="m-6 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300">
             No se pudieron cargar los movimientos.
           </div>
         ) : (
@@ -206,23 +207,25 @@ export default function PaymentsMovementsPage() {
                     : `Mostrando ${totalCount} movimiento${totalCount !== 1 ? "s" : ""} en total`}
                 </span>
                 {activeMonth ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
+                    size="sm"
                     onClick={handleShowAll}
-                    className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                    className="h-auto p-0 text-xs"
                     data-testid="movements-show-all"
                   >
                     Ver historial completo &rarr;
-                  </button>
+                  </Button>
                 ) : (
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
                     onClick={handleBackToCurrentMonth}
-                    className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
                     data-testid="movements-back-to-month"
                   >
                     Volver al mes actual
-                  </button>
+                  </Button>
                 )}
               </div>
             )}

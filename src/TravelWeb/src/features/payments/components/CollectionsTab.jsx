@@ -13,46 +13,36 @@ import {
 } from "../../../components/ui/DataGrid";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
+import { StatusChip } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { formatCurrency, formatDate } from "../lib/financeUtils";
 
 function StatusBadge({ item }) {
   if (item.urgencyStatus === "Urgente") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-rose-600 dark:bg-rose-900/20 dark:text-rose-300">
+      <StatusChip tone="rojo">
         <AlertTriangle className="w-3 h-3" />
         Urgente
-      </span>
+      </StatusChip>
     );
   }
 
   if (item.collectionStatus === "Parcial") {
-    return (
-      <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:bg-amber-900/20 dark:text-amber-300">
-        Parcial
-      </span>
-    );
+    return <StatusChip tone="ambar">Parcial</StatusChip>;
   }
 
-  return (
-    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-800">
-      Pendiente
-    </span>
-  );
+  return <StatusChip tone="neutro">Pendiente</StatusChip>;
 }
 
 function BlockTags({ item }) {
   return (
     <div className="flex flex-wrap gap-2">
-      {item.blocksOperational ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-800">
-          Bloquea operativo
-        </span>
-      ) : null}
+      {item.blocksOperational ? <StatusChip tone="neutro">Bloquea operativo</StatusChip> : null}
       {item.blocksVoucher ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-300">
+        <StatusChip tone="azul">
           <ShieldAlert className="w-3 h-3" />
           Bloquea voucher
-        </span>
+        </StatusChip>
       ) : null}
     </div>
   );
@@ -88,7 +78,7 @@ export function CollectionsTab({ items, onPay }) {
                   <div className="flex flex-col">
                     <Link
                       to={`/reservas/${item.reservaPublicId}`}
-                      className="font-bold text-slate-900 transition-colors hover:text-indigo-600 dark:text-white dark:hover:text-indigo-400"
+                      className="font-bold text-slate-900 transition-colors hover:text-primary dark:text-white dark:hover:text-primary"
                     >
                       {item.numeroReserva}
                     </Link>
@@ -125,14 +115,10 @@ export function CollectionsTab({ items, onPay }) {
                   </div>
                 </DataGridCell>
                 <DataGridActionCell>
-                  <button
-                    type="button"
-                    onClick={() => onPay(item)}
-                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-slate-800 dark:bg-white dark:text-slate-900"
-                  >
+                  <Button type="button" size="sm" onClick={() => onPay(item)} className="gap-2">
                     <Wallet className="w-4 h-4" />
                     Registrar pago
-                  </button>
+                  </Button>
                 </DataGridActionCell>
               </DataGridRow>
             ))
@@ -145,7 +131,7 @@ export function CollectionsTab({ items, onPay }) {
           icon={Wallet}
           title="Todo al dia"
           description="No hay reservas con deuda comercial pendiente."
-          className="md:hidden rounded-xl border border-dashed border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20"
+          className="md:hidden rounded-[14px] border border-dashed border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20"
         />
       ) : (
         <MobileRecordList>
@@ -179,14 +165,10 @@ export function CollectionsTab({ items, onPay }) {
                 </div>
               }
               footerActions={
-                <button
-                  type="button"
-                  onClick={() => onPay(item)}
-                  className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 dark:bg-white dark:text-slate-900"
-                >
+                <Button type="button" size="sm" onClick={() => onPay(item)} className="gap-2">
                   <Wallet className="w-4 h-4" />
                   Pagar
-                </button>
+                </Button>
               }
             />
           ))}

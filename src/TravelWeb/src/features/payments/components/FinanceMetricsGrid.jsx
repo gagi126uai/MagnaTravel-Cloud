@@ -32,7 +32,7 @@ export function FinanceMetricsGrid({ items, columns = "md:grid-cols-3" }) {
         <div
           key={item.label}
           data-testid={item.testId}
-          className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4 shadow-sm"
+          className="rounded-[14px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4 shadow-sm"
         >
           <div className="text-xs uppercase tracking-wider font-semibold text-slate-400 mb-2">
             {item.label}

@@ -30,6 +30,8 @@ import {
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
+import { StatusChip } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatCurrency } from "../lib/financeUtils";
 import { formatDate, formatDateTime } from "../../../lib/utils";
@@ -171,7 +173,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+      <div className="w-full max-w-2xl overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <div>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -195,7 +197,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
             <select
               value={form.direction}
               onChange={(event) => handleChange("direction", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              className="w-full rounded-[10px] border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
             >
               <option value="Income">Ingreso</option>
               <option value="Expense">Egreso</option>
@@ -210,7 +212,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
               min="0.01"
               value={form.amount}
               onChange={(event) => handleChange("amount", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              className="w-full rounded-[10px] border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
               required
             />
           </div>
@@ -221,7 +223,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
               type="datetime-local"
               value={form.occurredAt}
               onChange={(event) => handleChange("occurredAt", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              className="w-full rounded-[10px] border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
             />
           </div>
 
@@ -239,7 +241,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
               onChange={(event) => handleChange("method", event.target.value)}
               readOnly={categoriaEsDeSistema}
               aria-describedby={categoriaEsDeSistema ? "movimiento-manual-method-hint" : undefined}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:read-only:bg-slate-900"
+              className="w-full rounded-[10px] border border-slate-300 px-3 py-2 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:read-only:bg-slate-900"
               required={!categoriaEsDeSistema}
               data-testid="movimiento-manual-method"
             />
@@ -259,7 +261,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
               onChange={(event) => handleChange("category", event.target.value)}
               readOnly={categoriaEsDeSistema}
               aria-describedby={categoriaEsDeSistema ? "movimiento-manual-category-hint" : undefined}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:read-only:bg-slate-900"
+              className="w-full rounded-[10px] border border-slate-300 px-3 py-2 read-only:cursor-not-allowed read-only:bg-slate-50 read-only:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:read-only:bg-slate-900"
               required={!categoriaEsDeSistema}
               data-testid="movimiento-manual-category"
             />
@@ -276,7 +278,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
               type="text"
               value={form.reference}
               onChange={(event) => handleChange("reference", event.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              className="w-full rounded-[10px] border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
             />
           </div>
 
@@ -286,7 +288,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
               value={form.description}
               onChange={(event) => handleChange("description", event.target.value)}
               rows={3}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              className="w-full rounded-[10px] border border-slate-300 px-3 py-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
               required
             />
           </div>
@@ -304,20 +306,12 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
           )}
 
           <div className="md:col-span-2 flex justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200"
-            >
+            <Button type="button" variant="outline" onClick={onClose}>
               Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-            >
+            </Button>
+            <Button type="submit" disabled={saving}>
               {saving ? "Guardando..." : movement ? "Guardar cambios" : "Registrar movimiento"}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -371,28 +365,20 @@ export function MovementsTab({
             </p>
           </div>
           {isAdmin ? (
-            <button
-              type="button"
-              onClick={openCreate}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
+            <Button type="button" onClick={openCreate} className="gap-2">
               <Plus className="h-4 w-4" />
               Nuevo ajuste manual
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
 
       {!showHeader && isAdmin ? (
         <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-          >
+          <Button type="button" onClick={openCreate} className="gap-2">
             <Plus className="h-4 w-4" />
             Nuevo ajuste manual
-          </button>
+          </Button>
         </div>
       ) : null}
 
@@ -456,13 +442,13 @@ export function MovementsTab({
                               según el estado) + data-estado para que QA pueda leer cuál es sin
                               tener que adivinar el nombre del selector. */}
                           {estadoBadge && (
-                            <span
-                              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                            <StatusChip
+                              tone="neutro"
                               data-testid={`movimiento-estado-badge-${movement.publicId}`}
                               data-estado={estadoBadge.estado}
                             >
                               {estadoBadge.etiqueta}
-                            </span>
+                            </StatusChip>
                           )}
                         </div>
                         <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -505,7 +491,7 @@ export function MovementsTab({
                             className={`rounded-lg p-2 transition-colors ${
                               botonesApagados
                                 ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
-                                : "text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
+                                : "text-slate-500 hover:bg-slate-100 hover:text-primary dark:hover:bg-slate-800"
                             }`}
                           >
                             <Pencil className="h-4 w-4" />
@@ -527,7 +513,7 @@ export function MovementsTab({
                           </button>
                         </div>
                         {estadoBadge && (
-                          <span className="text-[9px] text-slate-400 text-right">
+                          <span className="text-[11px] text-slate-400 text-right">
                             {estadoBadge.motivoBotonesApagados}
                           </span>
                         )}
@@ -550,7 +536,7 @@ export function MovementsTab({
           icon={Landmark}
           title="Caja sin movimientos"
           description="Todavia no hay ingresos o egresos registrados en caja."
-          className="md:hidden rounded-xl border border-dashed border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20"
+          className="md:hidden rounded-[14px] border border-dashed border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/20"
         />
       ) : (
         <MobileRecordList>
@@ -568,7 +554,7 @@ export function MovementsTab({
                 // H14: misma key estable que la tabla desktop (movement.publicId).
                 key={movement.publicId}
                 accentSlot={
-                  <div className={`rounded-xl p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
+                  <div className={`rounded-[10px] p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
                     {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                   </div>
                 }
@@ -577,13 +563,13 @@ export function MovementsTab({
                   // desktop (con sufijo "-mobile-" para no duplicar el id en el DOM,
                   // ya que ambas vistas conviven ocultas por CSS) + data-estado.
                   estadoBadge ? (
-                    <span
-                      className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                    <StatusChip
+                      tone="neutro"
                       data-testid={`movimiento-estado-badge-mobile-${movement.publicId}`}
                       data-estado={estadoBadge.estado}
                     >
                       {estadoBadge.etiqueta}
-                    </span>
+                    </StatusChip>
                   ) : null
                 }
                 title={sourceLabels[movement.sourceType] || movement.sourceType}
@@ -625,7 +611,7 @@ export function MovementsTab({
                           className={`rounded-lg p-2 transition-colors ${
                             botonesApagados
                               ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
-                              : "text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
+                              : "text-slate-500 hover:bg-slate-100 hover:text-primary dark:hover:bg-slate-800"
                           }`}
                         >
                           <Pencil className="h-4 w-4" />
@@ -647,13 +633,13 @@ export function MovementsTab({
                         </button>
                       </div>
                       {estadoBadge && (
-                        <span className="text-[9px] text-slate-400 text-right">
+                        <span className="text-[11px] text-slate-400 text-right">
                           {estadoBadge.motivoBotonesApagados}
                         </span>
                       )}
                     </div>
                   ) : (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
                   )
                 }
               />

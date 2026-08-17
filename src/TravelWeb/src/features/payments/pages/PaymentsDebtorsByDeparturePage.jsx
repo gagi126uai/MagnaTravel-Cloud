@@ -49,7 +49,7 @@ export default function PaymentsDebtorsByDeparturePage() {
     const hayDeudores = !loading && !loadError && data.items.length > 0;
 
     return (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
                     {hayDeudores ? `Falta cobrar: ${formatMontosPorMoneda(data.totalsPending)}` : null}
@@ -61,13 +61,13 @@ export default function PaymentsDebtorsByDeparturePage() {
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
                         placeholder="Buscar cliente…"
-                        className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                        className="w-full rounded-[10px] border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                     />
                 </div>
             </div>
 
             {loading ? (
-                // Renglones sueltos: este contenedor ya es una tarjeta (rounded-2xl border
+                // Renglones sueltos: este contenedor ya es una tarjeta (rounded-[14px] border
                 // arriba). <SkeletonTable> trae la suya propia — tarjeta-adentro-de-tarjeta.
                 Array.from({ length: 5 }).map((_, index) => <SkeletonTableRow key={index} cols={4} />)
             ) : loadError ? (

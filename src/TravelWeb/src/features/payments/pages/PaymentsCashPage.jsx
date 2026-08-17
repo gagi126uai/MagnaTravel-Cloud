@@ -140,7 +140,7 @@ export default function PaymentsCashPage() {
               placeholder="Buscar referencia, proveedor o reserva..."
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+              className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
             />
           </div>
         }
@@ -151,7 +151,7 @@ export default function PaymentsCashPage() {
               <select
                 value={directionFilter}
                 onChange={(event) => setDirectionFilter(event.target.value)}
-                className="rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-8 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                className="rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-8 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
               >
                 <option value="all">Ingresos y egresos</option>
                 <option value="income">Solo ingresos</option>
@@ -161,7 +161,7 @@ export default function PaymentsCashPage() {
             <select
               value={sourceFilter}
               onChange={(event) => setSourceFilter(event.target.value)}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+              className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
             >
               <option value="all">Todos los origenes</option>
               <option value="CustomerPayment">Cobranzas</option>
@@ -174,7 +174,7 @@ export default function PaymentsCashPage() {
             <select
               value={currencyFilter}
               onChange={(event) => setCurrencyFilter(event.target.value)}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+              className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
               data-testid="filtro-moneda-caja"
               aria-label="Filtrar por moneda"
             >

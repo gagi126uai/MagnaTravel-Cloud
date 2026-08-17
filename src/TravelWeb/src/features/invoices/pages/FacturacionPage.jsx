@@ -30,6 +30,8 @@ import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { hasPermission } from "../../../auth";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
+import { StatusChip } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import {
   DataGrid,
   DataGridActionCell,
@@ -99,7 +101,7 @@ function renderInvoiceTab(previewWindow, { title, body }) {
   if (!previewWindow || previewWindow.closed) return;
   previewWindow.document.open();
   previewWindow.document.write(
-    `<!doctype html><html lang="es"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><style>:root{color-scheme:light;font-family:Inter,system-ui,sans-serif;background:#e2e8f0;color:#0f172a}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f8fafc 0%,#e2e8f0 100%)}.shell{min-height:100vh;display:flex;flex-direction:column}.header{padding:16px 20px;border-bottom:1px solid #cbd5e1;background:rgba(255,255,255,.96);backdrop-filter:blur(10px)}.eyebrow{margin:0 0 6px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#4f46e5}.title{margin:0;font-size:20px;font-weight:700}.subtitle{margin:6px 0 0;font-size:14px;color:#475569}.content{flex:1;padding:20px}.panel{height:calc(100vh - 117px);border:1px solid #cbd5e1;border-radius:18px;overflow:hidden;background:#fff;box-shadow:0 20px 50px rgba(15,23,42,.15)}.state{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center}.state-title{margin:0;font-size:18px;font-weight:700}.state-text{margin:0;max-width:480px;color:#475569;line-height:1.5}.spinner{width:42px;height:42px;border:4px solid #cbd5e1;border-top-color:#4f46e5;border-radius:999px;animation:spin .9s linear infinite}iframe{width:100%;height:100%;border:0;background:#fff}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body>${body}</body></html>`
+    `<!doctype html><html lang="es"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><style>:root{color-scheme:light;font-family:Inter,system-ui,sans-serif;background:#e2e8f0;color:#0f172a}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f8fafc 0%,#e2e8f0 100%)}.shell{min-height:100vh;display:flex;flex-direction:column}.header{padding:16px 20px;border-bottom:1px solid #cbd5e1;background:rgba(255,255,255,.96);backdrop-filter:blur(10px)}.eyebrow{margin:0 0 6px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#1D4ED8}.title{margin:0;font-size:20px;font-weight:700}.subtitle{margin:6px 0 0;font-size:14px;color:#475569}.content{flex:1;padding:20px}.panel{height:calc(100vh - 117px);border:1px solid #cbd5e1;border-radius:18px;overflow:hidden;background:#fff;box-shadow:0 20px 50px rgba(15,23,42,.15)}.state{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center}.state-title{margin:0;font-size:18px;font-weight:700}.state-text{margin:0;max-width:480px;color:#475569;line-height:1.5}.spinner{width:42px;height:42px;border:4px solid #cbd5e1;border-top-color:#1D4ED8;border-radius:999px;animation:spin .9s linear infinite}iframe{width:100%;height:100%;border:0;background:#fff}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body>${body}</body></html>`
   );
   previewWindow.document.close();
 }
@@ -117,64 +119,48 @@ function renderInvoiceTab(previewWindow, { title, body }) {
  * pantalla global.
  */
 function ChipEstadoFiscal({ invoice }) {
-  // Prioridad: si el comprobante está en proceso de anulación, ese estado es el más urgente.
+  // Molde StatusChip (B.5): AZUL = en curso (esperando a ARCA, no te pide nada),
+  // ámbar = te pide algo, rojo = freno (anulado/rechazado), verde = aprobado.
+  // Prioridad: si el comprobante está en proceso de anulación, ese estado es el
+  // más urgente y tapa al estado fiscal de abajo.
   if (invoice.annulmentStatus === "Pending") {
     return (
-      <span
-        className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-        role="status"
-      >
+      <StatusChip tone="azul" role="status">
         Anulando…
-      </span>
+      </StatusChip>
     );
   }
 
-  // Comprobante ya anulado (AnnulmentStatus.Succeeded)
+  // Comprobante ya anulado (AnnulmentStatus.Succeeded): rojo + tachado, para que
+  // se lea "sin efecto" de un vistazo aunque no se lea el texto del chip.
   if (invoice.annulmentStatus === "Succeeded") {
     return (
-      <span
-        className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-slate-100 text-slate-500 line-through dark:bg-slate-800 dark:text-slate-400"
-        role="status"
-      >
+      <StatusChip tone="rojo" className="line-through" role="status">
         Anulada
-      </span>
+      </StatusChip>
     );
   }
 
-  // Anulación fallida: caso excepcional, se muestra con rojo discreto
+  // Anulación fallida: caso excepcional, mismo tono rojo que el resto de los frenos.
   if (invoice.annulmentStatus === "Failed") {
     return (
-      <span
-        className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400"
-        role="status"
-      >
+      <StatusChip tone="rojo" role="status">
         Error anulación
-      </span>
+      </StatusChip>
     );
   }
 
   // Estado fiscal ARCA (basado en Resultado)
   const resultado = invoice.resultado ?? invoice.Resultado;
   if (resultado === "A") {
-    return (
-      <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-        Aprobado
-      </span>
-    );
+    return <StatusChip tone="verde">Aprobado</StatusChip>;
   }
   if (resultado === "R") {
-    return (
-      <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400">
-        Rechazado
-      </span>
-    );
+    return <StatusChip tone="rojo">Rechazado</StatusChip>;
   }
-  // Sin resultado definitivo: en proceso de emisión ARCA
-  return (
-    <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-      En proceso
-    </span>
-  );
+  // Sin resultado definitivo: en proceso de emisión ARCA — AZUL "en curso" (B.5):
+  // no le pide nada al usuario, solo falta la respuesta de ARCA.
+  return <StatusChip tone="azul">En proceso</StatusChip>;
 }
 
 // ─── Helper de formato ─────────────────────────────────────────────────────────
@@ -367,7 +353,7 @@ export default function FacturacionPage() {
       {/* ─ Encabezado de la pantalla ────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-indigo-100 p-2 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+          <div className="rounded-[10px] bg-slate-100 p-2 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
             <FileText className="h-5 w-5" aria-hidden="true" />
           </div>
           <div>
@@ -382,17 +368,19 @@ export default function FacturacionPage() {
 
         {/* Botón de actualización manual — solo tiene sentido en la solapa "Todos". */}
         {activeTab === TAB_TODOS && (
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={reload}
             disabled={cargando}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
+            className="gap-1.5"
             aria-label="Actualizar lista de comprobantes"
             data-testid="facturacion-global-refresh"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${cargando ? "animate-spin" : ""}`} aria-hidden="true" />
             Actualizar
-          </button>
+          </Button>
         )}
       </div>
 
@@ -408,14 +396,14 @@ export default function FacturacionPage() {
               onClick={() => setSearchParams(tab.key === TAB_TODOS ? {} : { tab: tab.key }, { replace: true })}
               className={`relative pb-3 text-sm font-semibold transition-colors ${
                 activeTab === tab.key
-                  ? "text-indigo-600 dark:text-indigo-400"
+                  ? "text-primary"
                   : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
               }`}
               data-testid={`tab-facturacion-${tab.key}`}
             >
               {tab.label}
               {activeTab === tab.key && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" />
               )}
             </button>
           ))}
@@ -425,7 +413,7 @@ export default function FacturacionPage() {
       {/* Resguardo defensivo: sin ninguna solapa permitida (no debería pasar — el
           guard de la ruta en App.jsx ya exige al menos uno de los 3 permisos). */}
       {allowedTabs.length === 0 && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+        <div className="rounded-[14px] border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
           No tenés permiso para ver ninguna sección de Facturación.
         </div>
       )}
@@ -442,7 +430,7 @@ export default function FacturacionPage() {
       {/* ─ Panel principal (solapa "Todos los comprobantes") ────────────────── */}
       {activeTab === TAB_TODOS && (
       <>
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
 
         {/* Barra de filtros */}
         <div className="border-b border-slate-100 dark:border-slate-800 p-4">
@@ -470,14 +458,16 @@ export default function FacturacionPage() {
             <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
               {error}
             </p>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={reload}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="gap-1.5"
             >
               <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
               Reintentar
-            </button>
+            </Button>
           </div>
         )}
 
@@ -521,7 +511,7 @@ export default function FacturacionPage() {
                         </DataGridCell>
                         <DataGridCell>
                           <div className="flex items-center gap-2">
-                            <Receipt className="h-4 w-4 text-indigo-400 flex-shrink-0" aria-hidden="true" />
+                            <Receipt className="h-4 w-4 text-slate-400 flex-shrink-0" aria-hidden="true" />
                             {/* Nunca el int crudo: siempre texto legible del mapa ARCA */}
                             <span>{formatTipoComprobante(invoice.tipoComprobante)}</span>
                           </div>
@@ -552,16 +542,18 @@ export default function FacturacionPage() {
                           <ChipEstadoFiscal invoice={invoice} />
                         </DataGridCell>
                         <DataGridActionCell>
-                          <button
+                          <Button
                             type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleVerFactura(invoice)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                            className="gap-1.5"
                             data-testid={`ver-factura-${getPublicId(invoice)}`}
                             aria-label={`Ver comprobante ${formatNumeroComprobante(invoice)}`}
                           >
                             <Eye className="h-4 w-4" aria-hidden="true" />
                             Ver
-                          </button>
+                          </Button>
                         </DataGridActionCell>
                       </DataGridRow>
                     );
@@ -574,7 +566,7 @@ export default function FacturacionPage() {
             {items.length === 0 ? (
               <ListEmptyState
                 title="No hay comprobantes para mostrar."
-                className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800 mx-4 mb-4"
+                className="md:hidden rounded-[14px] border border-dashed border-slate-200 dark:border-slate-800 mx-4 mb-4"
                 data-testid="facturacion-global-empty-mobile"
               />
             ) : (
@@ -604,15 +596,16 @@ export default function FacturacionPage() {
                         </>
                       }
                       footerActions={
-                        <button
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => handleVerFactura(invoice)}
-                          className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
                           aria-label={`Ver comprobante ${formatNumeroComprobante(invoice)}`}
                           data-testid={`ver-factura-mobile-${getPublicId(invoice)}`}
                         >
                           Ver
-                        </button>
+                        </Button>
                       }
                     />
                   );

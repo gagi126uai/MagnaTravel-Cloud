@@ -14,6 +14,7 @@
 
 import { Link } from "react-router-dom";
 import { ChevronRight, Inbox, RefreshCw } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { useDebitNotePendingList } from "../../cancellations/hooks/useDebitNotePendingList";
 import { usePendingCreditNoteReviewList } from "../../cancellations/hooks/usePendingCreditNoteReviewList";
 import { fusionarComprobantesPorResolver } from "../../cancellations/lib/comprobantesPorResolverLogic";
@@ -44,22 +45,24 @@ export function ComprobantesPorResolverTab({ puedeVerMultas, puedeVerNotasCredit
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" data-testid="comprobantes-por-resolver">
+    <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" data-testid="comprobantes-por-resolver">
       <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
         <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
           {filas.length > 0 ? `${filas.length} caso(s)` : ""}
         </span>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={handleReload}
           disabled={cargando}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+          className="gap-1.5"
           aria-label="Actualizar comprobantes por resolver"
           data-testid="comprobantes-por-resolver-refresh"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${cargando ? "animate-spin" : ""}`} />
           Actualizar
-        </button>
+        </Button>
       </div>
 
       {cargando ? (
@@ -67,13 +70,9 @@ export function ComprobantesPorResolverTab({ puedeVerMultas, puedeVerNotasCredit
       ) : hayError ? (
         <div className="px-6 py-10 text-center space-y-2">
           <p className="text-sm text-rose-600">No se pudo cargar la lista.</p>
-          <button
-            type="button"
-            onClick={handleReload}
-            className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
-          >
+          <Button type="button" variant="link" size="sm" onClick={handleReload} className="h-auto p-0 text-xs">
             Reintentar
-          </button>
+          </Button>
         </div>
       ) : filas.length === 0 ? (
         <div className="px-6 py-12 text-center space-y-2" data-testid="comprobantes-por-resolver-empty">
@@ -111,7 +110,7 @@ function FilaComprobantePorResolver({ fila }) {
           </span>
         </div>
         <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-4 gap-y-0.5">
-          <span className="font-medium text-orange-700 dark:text-orange-300">{fila.queFalta}</span>
+          <span className="font-medium text-amber-700 dark:text-amber-400">{fila.queFalta}</span>
           <span>{fila.haceCuanto}</span>
         </div>
       </div>
@@ -131,7 +130,7 @@ function FilaComprobantePorResolver({ fila }) {
     <Link
       to={`/reservas/${fila.reservaPublicId}`}
       data-testid={`comprobante-por-resolver-${fila.key}`}
-      className="flex items-center justify-between gap-3 px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-inset"
+      className="flex items-center justify-between gap-3 px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
     >
       {contenido}
     </Link>

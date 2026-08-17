@@ -64,7 +64,7 @@ export default function PaymentsTrashPage() {
         return (
             <div className="flex items-center justify-center min-h-[400px]">
                 <div className="flex flex-col items-center gap-4">
-                    <Loader2 className="h-10 w-10 animate-spin text-indigo-600" />
+                    <Loader2 className="h-10 w-10 animate-spin text-primary" />
                     <p className="text-sm text-muted-foreground animate-pulse">Cargando papelera...</p>
                 </div>
             </div>
@@ -130,7 +130,7 @@ export default function PaymentsTrashPage() {
                         ))}
                     </MobileRecordList>
 
-                    <div className="hidden rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800 md:block">
+                    <div className="hidden rounded-[14px] border border-slate-200 bg-white shadow-sm overflow-hidden dark:bg-slate-900 dark:border-slate-800 md:block">
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm min-w-[700px]">
                             <thead className="bg-slate-50 border-b border-slate-200 dark:bg-slate-950 dark:border-slate-800">
@@ -206,7 +206,7 @@ export default function PaymentsTrashPage() {
                     </div>
                 </>
             ) : (
-                <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-12 text-center">
+                <div className="rounded-[14px] border border-dashed border-slate-300 dark:border-slate-700 p-12 text-center">
                     <div className="mx-auto h-14 w-14 rounded-full bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center mb-4">
                         <Trash2 className="h-7 w-7 text-emerald-400" />
                     </div>
