@@ -22,8 +22,9 @@ import {
     validateProductNameAndCity,
 } from "../lib/ratesLearnedProductsLogic";
 import { VariantCorrectionInlineForm } from "./VariantCorrectionInlineForm";
+import { Button } from "../../../components/ui/button";
 
-const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
+const INPUT_CLASS = "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-900 dark:text-white";
 const LABEL_CLASS = "block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1";
 
 export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
@@ -204,7 +205,7 @@ export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
                                             onClick={() => setVariantKeyEnCorreccion(
                                                 variantKeyEnCorreccion === variant.variantKey ? null : variant.variantKey
                                             )}
-                                            className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+                                            className="text-xs font-semibold text-primary hover:underline"
                                         >
                                             Corregir
                                         </button>
@@ -228,7 +229,7 @@ export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
                                             {supplierPrice.numeroReserva && supplierPrice.reservaPublicId && (
                                                 <Link
                                                     to={`/reservas/${supplierPrice.reservaPublicId}`}
-                                                    className="shrink-0 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+                                                    className="shrink-0 text-xs font-semibold text-primary hover:underline"
                                                 >
                                                     {supplierPrice.numeroReserva}
                                                 </Link>
@@ -243,7 +244,7 @@ export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
             </div>
 
             {errorGuardar && (
-                <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+                <p className="mt-3 rounded-[10px] bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
                     {errorGuardar}
                 </p>
             )}
@@ -252,27 +253,18 @@ export function ProductInlineEditForm({ product, panelId, onCancel, onSaved }) {
                 <button
                     type="button"
                     onClick={irACargaCompleta}
-                    className="text-xs font-semibold text-slate-500 hover:text-indigo-600 dark:text-slate-400"
+                    className="text-xs font-semibold text-slate-500 hover:text-primary dark:text-slate-400"
                 >
                     Carga completa
                 </button>
                 <div className="flex gap-2">
-                    <button
-                        type="button"
-                        onClick={onCancel}
-                        className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                    >
+                    <Button type="button" variant="outline" size="sm" onClick={onCancel}>
                         Cancelar
-                    </button>
+                    </Button>
                     {puedeEditar && (
-                        <button
-                            type="button"
-                            onClick={handleGuardar}
-                            disabled={guardando}
-                            className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                        >
+                        <Button type="button" size="sm" onClick={handleGuardar} disabled={guardando}>
                             {guardando ? "Guardando..." : "Guardar"}
-                        </button>
+                        </Button>
                     )}
                 </div>
             </div>

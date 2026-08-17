@@ -10,8 +10,9 @@
 import { useState } from "react";
 import { FreeTextWithMemoryField } from "./FreeTextWithMemoryField";
 import { buildInitialVariantCorrectionFields } from "../lib/ratesLearnedProductsLogic";
+import { Button } from "../../../components/ui/button";
 
-const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
+const INPUT_CLASS = "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-900 dark:text-white";
 const LABEL_CLASS = "block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1";
 
 export function VariantCorrectionInlineForm({ serviceType, variant, onCancel, onSave }) {
@@ -42,7 +43,7 @@ export function VariantCorrectionInlineForm({ serviceType, variant, onCancel, on
     };
 
     return (
-        <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 dark:border-indigo-900/40 dark:bg-indigo-950/10">
+        <div className="mt-2 rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-3">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {serviceType === "Hotel" && (
                     <>
@@ -121,21 +122,12 @@ export function VariantCorrectionInlineForm({ serviceType, variant, onCancel, on
             {error && <p className="mt-2 text-xs font-semibold text-rose-600">{error}</p>}
 
             <div className="mt-2 flex justify-end gap-2">
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"
-                >
+                <Button type="button" variant="outline" size="sm" onClick={onCancel}>
                     Cancelar
-                </button>
-                <button
-                    type="button"
-                    onClick={handleGuardar}
-                    disabled={guardando}
-                    className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                >
+                </Button>
+                <Button type="button" size="sm" onClick={handleGuardar} disabled={guardando}>
                     {guardando ? "Guardando..." : "Guardar"}
-                </button>
+                </Button>
             </div>
         </div>
     );

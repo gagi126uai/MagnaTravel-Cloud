@@ -18,6 +18,7 @@ import {
     SIMILAR_PRODUCT_DIALOG_DECISION,
 } from "../lib/ratesLearnedProductsLogic";
 import { FreeTextWithMemoryField } from "./FreeTextWithMemoryField";
+import { Button } from "../../../components/ui/button";
 
 // "Otro" NO se ofrece acá (addendum firmado 2026-08-08, V17=C): el servidor lo rechaza
 // con un mensaje pensado para el usuario — es el cajón de sastre de la venta libre, no
@@ -32,7 +33,7 @@ const SERVICE_TYPES = [
     { value: "Excursion", label: "Excursión" },
 ];
 
-const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
+const INPUT_CLASS = "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-900 dark:text-white";
 const LABEL_CLASS = "block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1";
 
 const SERVICE_TYPE_VALUES = new Set(SERVICE_TYPES.map((tipo) => tipo.value));
@@ -123,7 +124,7 @@ export function AddProductInlineForm({ suppliers, defaultServiceType, onCancel, 
 
     return (
         <div
-            className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/10"
+            className="mb-4 rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-4"
             data-testid="add-product-inline-form"
         >
             <form onSubmit={handleSubmit} className="space-y-3">
@@ -289,7 +290,7 @@ export function AddProductInlineForm({ suppliers, defaultServiceType, onCancel, 
                 </div>
 
                 {saveError && (
-                    <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+                    <p className="rounded-[10px] bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
                         {saveError}
                     </p>
                 )}
@@ -298,26 +299,17 @@ export function AddProductInlineForm({ suppliers, defaultServiceType, onCancel, 
                     <button
                         type="button"
                         onClick={() => onOpenCargaCompleta(form)}
-                        className="text-xs font-semibold text-slate-500 hover:text-indigo-600 dark:text-slate-400"
+                        className="text-xs font-semibold text-slate-500 hover:text-primary dark:text-slate-400"
                     >
                         Carga completa
                     </button>
                     <div className="flex gap-2">
-                        <button
-                            type="button"
-                            onClick={onCancel}
-                            disabled={saving}
-                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                        >
+                        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={saving}>
                             Cancelar
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                        >
+                        </Button>
+                        <Button type="submit" size="sm" disabled={saving}>
                             {saving ? "Guardando..." : "Guardar"}
-                        </button>
+                        </Button>
                     </div>
                 </div>
             </form>

@@ -18,6 +18,7 @@ import { showError, showSuccess } from "../../../alerts";
 import { hasPermission } from "../../../auth";
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { ListLoadErrorState } from "../../../components/ui/ListLoadErrorState";
+import { Button } from "../../../components/ui/button";
 import { quitarCandidatoResuelto } from "../lib/duplicatesTrayLogic";
 import { TidyUpLogPanel } from "./TidyUpLogPanel";
 
@@ -109,7 +110,7 @@ export function DuplicatesTray({ onRepetidosCambiaron }) {
         return (
             <div className="space-y-2 p-6" data-testid="duplicates-tray-loading">
                 {Array.from({ length: 3 }).map((_, index) => (
-                    <div key={index} className="h-12 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
+                    <div key={index} className="h-12 animate-pulse rounded-[10px] bg-slate-100 dark:bg-slate-800" />
                 ))}
             </div>
         );
@@ -142,7 +143,7 @@ export function DuplicatesTray({ onRepetidosCambiaron }) {
                         {group.candidates.map((candidate) => {
                             const resolviendo = resolviendoRatePublicId === candidate.ratePublicId;
                             return (
-                                <div key={candidate.ratePublicId} className="flex flex-col gap-1 rounded-lg border border-slate-100 px-3 py-2 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                                <div key={candidate.ratePublicId} className="flex flex-col gap-1 rounded-[10px] border border-slate-100 px-3 py-2 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="min-w-0">
                                         <p className="text-sm text-slate-700 dark:text-slate-200">
                                             {candidate.name}
@@ -162,22 +163,26 @@ export function DuplicatesTray({ onRepetidosCambiaron }) {
                                         los dos endpoints piden ese permiso en el servidor. */}
                                     {puedeEditar && (
                                         <div className="flex shrink-0 gap-2">
-                                            <button
+                                            {/* B.3: acción por fila repetida N veces — nunca relleno azul
+                                                repetido; outline como toda acción de fila del sistema. */}
+                                            <Button
                                                 type="button"
+                                                variant="outline"
+                                                size="sm"
                                                 onClick={() => handleEsElMismo(group, candidate)}
                                                 disabled={resolviendo}
-                                                className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
                                             >
                                                 {resolviendo ? "Uniendo…" : "Es el mismo"}
-                                            </button>
-                                            <button
+                                            </Button>
+                                            <Button
                                                 type="button"
+                                                variant="outline"
+                                                size="sm"
                                                 onClick={() => handleEsOtro(group, candidate)}
                                                 disabled={resolviendo}
-                                                className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300"
                                             >
                                                 Es otro
-                                            </button>
+                                            </Button>
                                         </div>
                                     )}
                                 </div>
@@ -191,7 +196,7 @@ export function DuplicatesTray({ onRepetidosCambiaron }) {
                 <button
                     type="button"
                     onClick={() => setMostrarRegistro((prev) => !prev)}
-                    className="text-sm font-semibold text-slate-500 hover:text-indigo-600 dark:text-slate-400"
+                    className="text-sm font-semibold text-slate-500 hover:text-primary dark:text-slate-400"
                 >
                     Ordenados y unidos por el sistema esta semana: {tidiedUpThisWeek} — Ver qué ordenó
                 </button>

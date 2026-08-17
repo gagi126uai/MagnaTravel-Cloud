@@ -17,6 +17,7 @@ import { showError, showSuccess } from "../../../alerts";
 import { hasPermission } from "../../../auth";
 import { formatDate } from "../../../lib/utils";
 import { puedeDeshacerse, marcarComoDeshecha } from "../lib/duplicatesTrayLogic";
+import { Button } from "../../../components/ui/button";
 
 export function TidyUpLogPanel({ onClose, onUndone }) {
     const puedeEditar = hasPermission("tarifario.edit");
@@ -59,7 +60,7 @@ export function TidyUpLogPanel({ onClose, onUndone }) {
     };
 
     return (
-        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900" data-testid="tidy-up-log-panel">
+        <div className="mt-3 rounded-[14px] border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900" data-testid="tidy-up-log-panel">
             <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Lo que ordenó el sistema</p>
                 <button type="button" onClick={onClose} className="text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400">
@@ -90,14 +91,16 @@ export function TidyUpLogPanel({ onClose, onUndone }) {
                                 <p className="text-xs text-slate-400">{formatDate(accion.performedAt)}</p>
                             </div>
                             {puedeEditar && puedeDeshacerse(accion) && (
-                                <button
+                                <Button
                                     type="button"
+                                    variant="destructive"
+                                    size="sm"
                                     onClick={() => handleDeshacer(accion)}
                                     disabled={deshaciendoId === accion.publicId}
-                                    className="shrink-0 text-xs font-semibold text-indigo-600 hover:underline disabled:opacity-60 dark:text-indigo-400"
+                                    className="shrink-0"
                                 >
                                     {deshaciendoId === accion.publicId ? "Deshaciendo…" : "Deshacer"}
-                                </button>
+                                </Button>
                             )}
                         </li>
                     ))}

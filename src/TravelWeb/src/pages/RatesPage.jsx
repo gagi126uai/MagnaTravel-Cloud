@@ -20,13 +20,14 @@ import { SkeletonTableRow } from "../components/ui/skeleton";
 import { ListEmptyState } from "../components/ui/ListEmptyState";
 import { ListLoadErrorState } from "../components/ui/ListLoadErrorState";
 import { hasPermission } from "../auth";
+import { Button } from "../components/ui/button";
 import { AddProductInlineForm } from "../features/rates/components/AddProductInlineForm";
 import { ProductInlineEditForm } from "../features/rates/components/ProductInlineEditForm";
 import { LearnedProductRow } from "../features/rates/components/LearnedProductRow";
 import { DuplicatesTray } from "../features/rates/components/DuplicatesTray";
 import { pickDefaultServiceTypeTab, columnLabelsForServiceType, emptyTabMessage, resolveTabsForRender } from "../features/rates/lib/learnedProductVariantsLogic";
 
-const SELECT_CLASS = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
+const SELECT_CLASS = "rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
 
 // Solapa especial, aparte de las cinco de tipo de servicio (no es un ServiceType real).
 const REPEATED_TAB_KEY = "Repetidos";
@@ -168,7 +169,7 @@ export default function RatesPage() {
             <header className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="flex items-center gap-3 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                        <div className="rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 p-2.5 text-white shadow-lg shadow-emerald-500/20">
+                        <div className="rounded-[14px] bg-gradient-to-br from-emerald-500 to-teal-600 p-2.5 text-white shadow-lg shadow-emerald-500/20">
                             <DollarSign className="h-6 w-6" />
                         </div>
                         Tarifario
@@ -178,15 +179,18 @@ export default function RatesPage() {
                     </p>
                 </div>
                 {puedeAgregarProducto && !esBandejaRepetidos && (
-                    <button
+                    /* B.3: un solo azul relleno por pantalla — cuando la lista vacía ya
+                       muestra su propio "Agregar producto" azul, este se degrada a outline. */
+                    <Button
                         type="button"
+                        variant={!loading && !loadError && items.length === 0 ? "outline" : "default"}
                         onClick={() => setShowAddForm((prev) => !prev)}
-                        className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-500"
+                        className="gap-2"
                         data-testid="add-product-button"
                     >
                         <Plus className="h-4 w-4" />
                         Agregar producto
-                    </button>
+                    </Button>
                 )}
             </header>
 
@@ -215,14 +219,14 @@ export default function RatesPage() {
                             data-testid={`tab-tarifario-${tab.serviceType}`}
                             className={`flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-[13px] font-medium transition-colors disabled:cursor-not-allowed ${
                                 activa
-                                    ? "border-indigo-600 font-bold text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
+                                    ? "border-primary font-bold text-primary"
                                     : apagada
                                         ? "border-transparent text-slate-400 opacity-55 dark:text-slate-600"
                                         : "border-transparent text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                             }`}
                         >
                             {tab.label}
-                            <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${activa ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}`}>
+                            <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${activa ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}`}>
                                 {tab.count}
                             </span>
                         </button>
@@ -236,19 +240,19 @@ export default function RatesPage() {
                     data-testid="tab-tarifario-Repetidos"
                     className={`ml-auto flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-[13px] font-medium transition-colors ${
                         esBandejaRepetidos
-                            ? "border-indigo-600 font-bold text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
+                            ? "border-primary font-bold text-primary"
                             : "border-transparent text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                 >
                     Repetidos
-                    <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${esBandejaRepetidos ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}`}>
+                    <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${esBandejaRepetidos ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}`}>
                         {repetidosCount}
                     </span>
                 </button>
             </div>
 
             {esBandejaRepetidos ? (
-                <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                     {/* El badge "Repetidos (N)" se pidió UNA vez al entrar (más abajo, useEffect
                         deps []); sin este aviso quedaba desactualizado toda la visita apenas se
                         resolvía un grupo acá adentro (fix ronda 2 de review). */}
@@ -275,7 +279,7 @@ export default function RatesPage() {
                                 value={search}
                                 onChange={(event) => setSearch(event.target.value)}
                                 placeholder="Buscar hotel, vuelo, paquete…"
-                                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                             />
                         </div>
                         <select value={filterSupplierId} onChange={(event) => setFilterSupplierId(event.target.value)} className={SELECT_CLASS}>
@@ -286,7 +290,7 @@ export default function RatesPage() {
                         </select>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                    <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                         <div className={`${gridColumns} gap-3 border-b border-slate-100 px-6 py-3 text-xs font-bold uppercase tracking-wider text-slate-400 dark:border-slate-800`}>
                             <div>{productColumnLabel}</div>
                             {variantColumnLabel && <div>{variantColumnLabel}</div>}
@@ -297,7 +301,7 @@ export default function RatesPage() {
 
                         {loading ? (
                             // Renglones sueltos, SIN el wrapper con borde propio de <SkeletonTable>:
-                            // este contenedor ya tiene su propia tarjeta (rounded-2xl border más
+                            // este contenedor ya tiene su propia tarjeta (rounded-[14px] border más
                             // arriba) — usar el componente completo dibujaba una tarjeta adentro de
                             // otra tarjeta (hallazgo de review 2026-08-07).
                             Array.from({ length: 5 }).map((_, index) => <SkeletonTableRow key={index} cols={variantColumnLabel ? 5 : 4} />)
@@ -310,14 +314,10 @@ export default function RatesPage() {
                                 title={debouncedSearch.trim() ? `No encontramos "${debouncedSearch.trim()}" en tu tarifario.` : emptyTabMessage(activeTab)}
                                 action={
                                     puedeAgregarProducto ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowAddForm(true)}
-                                            className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
-                                        >
+                                        <Button type="button" onClick={() => setShowAddForm(true)} className="gap-2">
                                             <Plus className="h-4 w-4" />
                                             Agregar producto
-                                        </button>
+                                        </Button>
                                     ) : null
                                 }
                             />

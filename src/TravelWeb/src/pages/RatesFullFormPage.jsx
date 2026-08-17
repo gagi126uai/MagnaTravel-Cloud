@@ -20,6 +20,7 @@ import { getPublicId } from "../lib/publicIds";
 import { formatDate, formatCurrency } from "../lib/utils";
 import { PaginationFooter } from "../components/ui/PaginationFooter";
 import { useDebounce } from "../hooks/useDebounce";
+import { Button } from "../components/ui/button";
 
 const serviceTypes = [
     { value: "Aereo", label: "Aéreo", icon: Plane },
@@ -65,7 +66,7 @@ const Modal = ({ isOpen, onClose, title, children, className }) => {
     if (!isOpen) return null;
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm overflow-y-auto">
-            <div className={`w-full overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900 my-8 ${className || "max-w-2xl"}`}>
+            <div className={`w-full overflow-hidden rounded-[14px] bg-white shadow-2xl dark:bg-slate-900 my-8 ${className || "max-w-2xl"}`}>
                 <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h3>
                     <button onClick={onClose} className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white">
@@ -79,7 +80,7 @@ const Modal = ({ isOpen, onClose, title, children, className }) => {
 };
 
 // Clase base para inputs
-const inputClass = "mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:border-indigo-400 dark:focus:bg-slate-700";
+const inputClass = "mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-primary focus:bg-white focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-700";
 const labelClass = "block text-sm font-medium text-slate-700 dark:text-slate-300";
 
 export default function RatesFullFormPage() {
@@ -622,13 +623,13 @@ export default function RatesFullFormPage() {
                     <button
                         type="button"
                         onClick={() => navigate("/rates")}
-                        className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400"
+                        className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-primary dark:text-slate-400"
                     >
                         <ArrowLeft className="h-3.5 w-3.5" />
                         Volver al Tarifario
                     </button>
                     <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
-                        <div className="rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 p-2.5 text-white shadow-lg shadow-emerald-500/20">
+                        <div className="rounded-[14px] bg-gradient-to-br from-emerald-500 to-teal-600 p-2.5 text-white shadow-lg shadow-emerald-500/20">
                             <DollarSign className="h-6 w-6" />
                         </div>
                         Carga completa
@@ -637,11 +638,10 @@ export default function RatesFullFormPage() {
                         Para tarifas con vigencia, variaciones de habitación y demás detalles avanzados.
                     </p>
                 </div>
-                <button onClick={openNewModal}
-                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-500 transition-colors">
+                <Button onClick={openNewModal} className="gap-2">
                     <Plus className="h-4 w-4" />
                     Nueva Tarifa
-                </button>
+                </Button>
             </header>
 
             {/* Filters */}
@@ -663,12 +663,12 @@ export default function RatesFullFormPage() {
                         </option>
                     ))}
                 </select>
-                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                <label className="flex items-center gap-2 rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                     <input
                         type="checkbox"
                         checked={activeOnly}
                         onChange={(e) => setActiveOnly(e.target.checked)}
-                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-slate-300 text-primary focus:ring-ring"
                     />
                     Solo vigentes
                 </label>
@@ -676,12 +676,12 @@ export default function RatesFullFormPage() {
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                <div className="rounded-[10px] border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                     <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Total</div>
                     <div className="text-2xl font-bold mt-1 text-slate-900 dark:text-white">{summary?.totalCount || 0}</div>
                 </div>
                 {["Aereo", "Traslado", "Paquete"].map(type => (
-                    <div key={type} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                    <div key={type} className="rounded-[10px] border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                         <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">{type === "Aereo" ? "Aéreo" : type}</div>
                         <div className={`text-2xl font-bold mt-1 ${type === "Aereo" ? "text-sky-600" : type === "Traslado" ? "text-green-600" : "text-violet-600"}`}>
                             {type === "Aereo"
@@ -693,7 +693,7 @@ export default function RatesFullFormPage() {
                     </div>
                 ))}
                 {/* Hotel stat: count unique hotels, not individual room rates */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                <div className="rounded-[10px] border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
                     <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Hoteles</div>
                     <div className="text-2xl font-bold mt-1 text-amber-600">{summary?.hotelGroupCount || 0}</div>
                     <div className="text-xs text-slate-400 mt-0.5">
@@ -701,7 +701,7 @@ export default function RatesFullFormPage() {
                     </div>
                 </div>
                 {(summary?.expiredCount || 0) > 0 && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/30 dark:bg-red-900/10">
+                    <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 dark:border-red-900/30 dark:bg-red-900/10">
                         <div className="text-xs text-red-600 dark:text-red-400 uppercase font-bold">Vencidas</div>
                         <div className="text-lg font-bold mt-1 text-red-700 dark:text-red-300">
                             {summary?.expiredCount || 0} <span className="text-xs font-normal">Acción requerida</span>
@@ -711,7 +711,7 @@ export default function RatesFullFormPage() {
             </div>
 
             {/* Table / Cards Container */}
-            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden dark:border-slate-700 dark:bg-slate-800">
+            <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden dark:border-slate-700 dark:bg-slate-800">
 
                 {/* Desktop Table View */}
                 <div className="hidden md:block overflow-x-auto">
@@ -779,7 +779,7 @@ export default function RatesFullFormPage() {
                                                 {isExpanded && group.items.map(rate => {
                                                     const isExpired = rate.validTo && new Date(rate.validTo) < new Date();
                                                     return (
-                                                        <tr key={getPublicId(rate)} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-indigo-400'} animate-in fade-in slide-in-from-top-1 duration-200`}>
+                                                        <tr key={getPublicId(rate)} className={`bg-white dark:bg-slate-900 border-l-[6px] ${isExpired ? 'border-l-red-500 bg-red-50/5' : 'border-l-slate-300 dark:border-l-slate-600'} animate-in fade-in slide-in-from-top-1 duration-200`}>
                                                             <td className="px-4 py-2 pl-8">
                                                                 <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
                                                                     <BedDouble className="h-3 w-3 text-slate-400" />
@@ -803,8 +803,28 @@ export default function RatesFullFormPage() {
                                                             </td>
                                                             <td className="px-4 py-2 text-center">
                                                                 <div className="flex justify-center gap-1">
-                                                                    <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg"><Pencil className="h-4 w-4" /></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg"><Trash2 className="h-4 w-4" /></button>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="outline"
+                                                                        size="sm"
+                                                                        onClick={(e) => { e.stopPropagation(); editRate(rate); }}
+                                                                        title="Editar tarifa"
+                                                                        aria-label="Editar tarifa"
+                                                                        className="h-8 w-8 p-0"
+                                                                    >
+                                                                        <Pencil className="h-4 w-4" aria-hidden="true" />
+                                                                    </Button>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="destructive"
+                                                                        size="sm"
+                                                                        onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }}
+                                                                        title="Eliminar tarifa"
+                                                                        aria-label="Eliminar tarifa"
+                                                                        className="h-8 w-8 p-0"
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                                                    </Button>
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -867,8 +887,28 @@ export default function RatesFullFormPage() {
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
                                                     <div className="flex justify-center gap-2">
-                                                        <button onClick={() => editRate(rate)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"><Pencil className="h-4 w-4" /></button>
-                                                        <button onClick={() => deleteRate(getPublicId(rate))} className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={() => editRate(rate)}
+                                                            title="Editar tarifa"
+                                                            aria-label="Editar tarifa"
+                                                            className="h-8 w-8 p-0"
+                                                        >
+                                                            <Pencil className="h-4 w-4" aria-hidden="true" />
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="destructive"
+                                                            size="sm"
+                                                            onClick={() => deleteRate(getPublicId(rate))}
+                                                            title="Eliminar tarifa"
+                                                            aria-label="Eliminar tarifa"
+                                                            className="h-8 w-8 p-0"
+                                                        >
+                                                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                                        </Button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -942,8 +982,28 @@ export default function RatesFullFormPage() {
                                                                     {isExpired ? 'Vencida: ' : 'Vence: '}{formatDate(rate.validTo)}
                                                                 </div>
                                                                 <div className="flex gap-2">
-                                                                    <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1 text-indigo-600 bg-indigo-50 rounded dark:bg-indigo-900/30 dark:text-indigo-400"><Pencil className="h-4 w-4" /></button>
-                                                                    <button onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }} className="p-1 text-rose-600 bg-rose-50 rounded dark:bg-rose-900/30 dark:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="outline"
+                                                                        size="sm"
+                                                                        onClick={(e) => { e.stopPropagation(); editRate(rate); }}
+                                                                        title="Editar tarifa"
+                                                                        aria-label="Editar tarifa"
+                                                                        className="h-8 w-8 p-0"
+                                                                    >
+                                                                        <Pencil className="h-4 w-4" aria-hidden="true" />
+                                                                    </Button>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="destructive"
+                                                                        size="sm"
+                                                                        onClick={(e) => { e.stopPropagation(); deleteRate(getPublicId(rate)); }}
+                                                                        title="Eliminar tarifa"
+                                                                        aria-label="Eliminar tarifa"
+                                                                        className="h-8 w-8 p-0"
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                                                    </Button>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -974,7 +1034,7 @@ export default function RatesFullFormPage() {
                                             <div className="font-bold text-lg text-slate-900 dark:text-white">${rate.salePrice}</div>
                                         </div>
 
-                                        <div className="text-sm text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg">
+                                        <div className="text-sm text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-[10px]">
                                             {getTypeDescription(rate)}
                                         </div>
 
@@ -988,12 +1048,12 @@ export default function RatesFullFormPage() {
                                         </div>
 
                                         <div className="flex justify-end gap-3 pt-2">
-                                            <button onClick={() => editRate(rate)} className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg dark:bg-indigo-900/20 dark:text-indigo-400">
-                                                <Pencil className="h-3.5 w-3.5" /> Editar
-                                            </button>
-                                            <button onClick={() => deleteRate(getPublicId(rate))} className="flex items-center gap-1 text-xs font-medium text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg dark:bg-rose-900/20 dark:text-rose-400">
-                                                <Trash2 className="h-3.5 w-3.5" /> Eliminar
-                                            </button>
+                                            <Button type="button" variant="outline" size="sm" onClick={() => editRate(rate)} className="gap-1">
+                                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Editar
+                                            </Button>
+                                            <Button type="button" variant="destructive" size="sm" onClick={() => deleteRate(getPublicId(rate))} className="gap-1">
+                                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Eliminar
+                                            </Button>
                                         </div>
                                     </div>
                                 )
@@ -1024,9 +1084,9 @@ export default function RatesFullFormPage() {
                             {serviceTypes.slice(0, 4).map(type => (
                                 <button key={type.value} type="button"
                                     onClick={() => handleServiceTypeChange({ target: { value: type.value } })}
-                                    className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all
+                                    className={`flex flex-col items-center gap-1 p-3 rounded-[10px] border-2 transition-all
                                         ${form.serviceType === type.value
-                                            ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
+                                            ? "border-primary bg-primary/10 text-primary"
                                             : "border-slate-200 hover:border-slate-300 dark:border-slate-600 dark:hover:border-slate-500 text-slate-600 dark:text-slate-400"
                                         }`}>
                                     {type.icon && <type.icon className="h-5 w-5" />}
@@ -1061,9 +1121,9 @@ export default function RatesFullFormPage() {
 
                     {/* Campos dinámicos según tipo */}
                     {form.serviceType === "Aereo" && (
-                        <div className="p-4 rounded-xl bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-800 space-y-4">
-                            <div className="flex items-center gap-2 text-sky-700 dark:text-sky-400 font-medium text-sm">
-                                <Plane className="h-4 w-4" /> Datos del Vuelo
+                        <div className="p-4 rounded-[10px] bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
+                            <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-medium text-sm">
+                                <Plane className="h-4 w-4" aria-hidden="true" /> Datos del Vuelo
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
@@ -1103,9 +1163,9 @@ export default function RatesFullFormPage() {
                     )}
 
                     {form.serviceType === "Hotel" && (
-                        <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 space-y-4">
-                            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-medium text-sm">
-                                <Hotel className="h-4 w-4" /> Datos del Hotel
+                        <div className="p-4 rounded-[10px] bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
+                            <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-medium text-sm">
+                                <Hotel className="h-4 w-4" aria-hidden="true" /> Datos del Hotel
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-2">
@@ -1135,7 +1195,7 @@ export default function RatesFullFormPage() {
 
                                 {/* Lista de variaciones agregadas */}
                                 {roomVariations.length > 0 && (
-                                    <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                                    <div className="mb-4 rounded-[10px] border border-slate-200 dark:border-slate-700 overflow-hidden">
                                         <table className="w-full text-xs">
                                             <thead className="bg-slate-50 dark:bg-slate-800">
                                                 <tr>
@@ -1173,7 +1233,7 @@ export default function RatesFullFormPage() {
                                 )}
 
                                 {/* Formulario de Variación */}
-                                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
+                                <div className="p-4 rounded-[10px] bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className={labelClass}>Capacidad</label>
@@ -1205,7 +1265,7 @@ export default function RatesFullFormPage() {
                                                     { id: "Jacuzzi", label: "Jacuzzi" },
                                                     { id: "Kitchen", label: "Cocina" }
                                                 ].map(feature => (
-                                                    <label key={feature.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                                                    <label key={feature.id} className="flex items-center gap-2 cursor-pointer p-2 rounded-[10px] border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
                                                         <input type="checkbox"
                                                             checked={form.roomFeatures?.split(",").includes(feature.id)}
                                                             onChange={e => {
@@ -1215,7 +1275,7 @@ export default function RatesFullFormPage() {
                                                                     : current.filter(f => f !== feature.id);
                                                                 setForm({ ...form, roomFeatures: updated.join(",") });
                                                             }}
-                                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                                                            className="rounded border-slate-300 text-primary focus:ring-ring" />
                                                         <span className="text-sm text-slate-700 dark:text-slate-300">{feature.label}</span>
                                                     </label>
                                                 ))}
@@ -1251,9 +1311,9 @@ export default function RatesFullFormPage() {
                                                 onChange={e => setForm({ ...form, childMaxAge: e.target.value })} placeholder="12" />
                                         </div>
                                         <div className="col-span-2 pt-2">
-                                            <button type="button" onClick={addRoomVariation} className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50/50 p-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400 transition-colors">
-                                                <Plus className="h-4 w-4" /> Agregar esta variante a la lista
-                                            </button>
+                                            <Button type="button" variant="outline" onClick={addRoomVariation} className="w-full gap-2 border-dashed border-2">
+                                                <Plus className="h-4 w-4" aria-hidden="true" /> Agregar esta variante a la lista
+                                            </Button>
                                         </div>
                                         <div className="col-span-2 border-t border-slate-200 dark:border-slate-700 pt-4 mt-2">
                                             <div className="grid grid-cols-3 gap-4">
@@ -1290,7 +1350,7 @@ export default function RatesFullFormPage() {
                     {/* Common Fields */}
                     {form.serviceType !== "Hotel" && (
                         <>
-                            <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700">
+                            <div className="rounded-[10px] bg-slate-50 p-4 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700">
                                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Valores Económicos</h4>
                                 <div className="grid grid-cols-3 gap-4">
                                     <div>
@@ -1317,8 +1377,8 @@ export default function RatesFullFormPage() {
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2 mt-3">
-                                    <button type="button" onClick={applyCommission} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800">
-                                        <Calculator className="h-3 w-3" /> Aplicar {commissionPercent}% de comisión sugerida
+                                    <button type="button" onClick={applyCommission} className="text-xs flex items-center gap-1 text-primary hover:text-primary/80">
+                                        <Calculator className="h-3 w-3" aria-hidden="true" /> Aplicar {commissionPercent}% de comisión sugerida
                                     </button>
                                 </div>
                             </div>
@@ -1345,12 +1405,12 @@ export default function RatesFullFormPage() {
                     </div>
 
                     <div className="pt-4 flex justify-end gap-3 border-t dark:border-slate-700">
-                        <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg transition-colors dark:text-slate-300 dark:hover:bg-slate-800">
+                        <Button type="button" variant="outline" onClick={() => setShowModal(false)}>
                             Cancelar
-                        </button>
-                        <button type="submit" className="px-6 py-2 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-500 shadow-lg shadow-indigo-500/30 transition-all">
+                        </Button>
+                        <Button type="submit">
                             {form.id ? "Guardar Cambios" : "Crear Tarifa"}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </Modal>
