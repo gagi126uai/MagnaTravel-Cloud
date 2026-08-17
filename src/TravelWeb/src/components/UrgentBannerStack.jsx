@@ -81,7 +81,7 @@ export default function UrgentBannerStack() {
         return (
           <div
             key={banner.id}
-            className={`bg-gradient-to-r ${getGradient(banner.type)} text-white text-[9px] md:text-[10px] py-1.5 px-4 text-center font-black uppercase tracking-[0.2em] shadow-lg z-[59] flex items-center justify-center gap-3 border-b animate-in slide-in-from-top-1 duration-300`}
+            className={`bg-gradient-to-r ${getGradient(banner.type)} text-white text-[11px] py-1.5 px-4 text-center font-black uppercase tracking-[0.2em] shadow-lg z-[59] flex items-center justify-center gap-3 border-b animate-in slide-in-from-top-1 duration-300`}
           >
             <Icon className="h-3.5 w-3.5 animate-pulse flex-shrink-0" />
             <span className="drop-shadow-sm flex-1 text-center">{banner.message}</span>

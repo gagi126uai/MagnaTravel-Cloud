@@ -1,4 +1,5 @@
 import { Loader2 } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 
 /**
  * Botón "Probar conexión" + el resultado en la misma línea (§15.4). Probar NO guarda nada:
@@ -12,15 +13,10 @@ import { Loader2 } from "lucide-react";
 export function AiTestConnectionRow({ testing, resultado, onProbar }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <button
-        type="button"
-        onClick={onProbar}
-        disabled={testing}
-        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-      >
-        {testing && <Loader2 className="h-4 w-4 animate-spin" />}
+      <Button type="button" variant="outline" onClick={onProbar} disabled={testing} className="gap-2">
+        {testing && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
         {testing ? "Probando…" : "Probar conexión"}
-      </button>
+      </Button>
       {resultado && (
         <span
           role="status"

@@ -7,6 +7,7 @@ import { formatDateTime } from "../../../lib/utils";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { activateMaintenance, deactivateMaintenance, marcarPedidoLocalPerdido } from "../../../maintenanceState";
 import { RestoreResultadoInline } from "./RestoreResultadoInline";
+import { Button } from "../../../components/ui/button";
 import {
     FRASE_CONFIRMACION_RESTORE,
     MOTIVO_RESTAURAR_TODO_MIN_LENGTH,
@@ -163,7 +164,7 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
                 data-testid="restore-ficha-aviso-version"
                 className={
                     avisoVersion
-                        ? `rounded-lg border p-3 text-xs ${clasesAvisoVersion(avisoVersion.color)}`
+                        ? `rounded-[10px] border p-3 text-xs ${clasesAvisoVersion(avisoVersion.color)}`
                         : "sr-only"
                 }
             >
@@ -181,7 +182,7 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
                 <div
                     role="alert"
                     data-testid="restore-ficha-marca-rechazo"
-                    className="flex items-center justify-between gap-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
+                    className="flex items-center justify-between gap-3 rounded-[10px] border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
                 >
                     <span>{construirTextoMarcaRechazo(rejectionInfo.modo)}</span>
                     <button
@@ -259,20 +260,23 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
             </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <button
+                {/* "Restaurar backup" tambien esta en la lista de acciones destructivas del
+                    estandar (P-14) — antes relleno solido de rojo, ahora el molde compartido. */}
+                <Button
                     type="button"
+                    variant="destructive"
                     data-testid="danger-restore-total"
                     onClick={() => handleAccion(RESTORE_MODO_TOTAL)}
                     disabled={!puedeConfirmarTotal}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
+                    className="gap-2"
                 >
                     {accionEnCurso === RESTORE_MODO_TOTAL ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                     ) : (
-                        <RotateCcw className="h-4 w-4" />
+                        <RotateCcw className="h-4 w-4" aria-hidden="true" />
                     )}
                     {accionEnCurso === RESTORE_MODO_TOTAL ? "Volviendo..." : "Volver a esta copia"}
-                </button>
+                </Button>
 
                 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
                     <button
@@ -280,7 +284,7 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
                         data-testid="danger-restore-ver-contenido"
                         onClick={() => handleAccion(RESTORE_MODO_PRUEBA)}
                         disabled={!puedeConfirmar}
-                        className="text-indigo-600 hover:underline disabled:opacity-50 disabled:no-underline dark:text-indigo-400"
+                        className="text-primary hover:underline disabled:opacity-50 disabled:no-underline"
                     >
                         {accionEnCurso === RESTORE_MODO_PRUEBA ? "Buscando..." : "Ver qué contiene"}
                     </button>
@@ -290,7 +294,7 @@ export function RestoreBackupFicha({ backup, onSuccessTotal }) {
                         data-testid="danger-restore-real"
                         onClick={() => handleAccion(RESTORE_MODO_REAL)}
                         disabled={!puedeConfirmar}
-                        className="text-indigo-600 hover:underline disabled:opacity-50 disabled:no-underline dark:text-indigo-400"
+                        className="text-primary hover:underline disabled:opacity-50 disabled:no-underline"
                     >
                         {accionEnCurso === RESTORE_MODO_REAL ? "Reponiendo..." : "Reponer configuración"}
                     </button>

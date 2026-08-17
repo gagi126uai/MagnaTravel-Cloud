@@ -47,7 +47,7 @@ export function AiAdvancedSettings({
               type="text"
               value={baseUrl}
               onChange={(event) => onChangeBaseUrl(event.target.value)}
-              className="w-full h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+              className="w-full h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
             />
             {baseUrlError && (
               <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
@@ -64,7 +64,7 @@ export function AiAdvancedSettings({
               type="text"
               value={model}
               onChange={(event) => onChangeModel(event.target.value)}
-              className="w-full h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+              className="w-full h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
             />
             {modelError && (
               <p role="alert" className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">
@@ -76,7 +76,7 @@ export function AiAdvancedSettings({
             <button
               type="button"
               onClick={onVolverARecomendados}
-              className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+              className="text-sm font-semibold text-primary hover:text-primary/80"
             >
               Volver a los valores recomendados
             </button>

@@ -63,7 +63,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-md transition-all animate-in fade-in duration-300">
-      <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
+      <div className="w-full max-w-lg overflow-hidden rounded-[14px] bg-white shadow-2xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
         <div className="relative flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-8 py-5 dark:border-slate-800 dark:bg-slate-900/50">
           <div>
             <h3 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{title}</h3>
@@ -87,18 +87,18 @@ const FormField = ({ label, sub, value, onChange, placeholder, type = "text", ic
   <div className="space-y-2">
     <div className="flex items-center justify-between">
       <label className="text-sm font-bold tracking-tight text-slate-700 dark:text-slate-300">{label}</label>
-      {sub && <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{sub}</span>}
+      {sub && <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">{sub}</span>}
     </div>
     <div className="relative group">
       {Icon && (
-        <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-indigo-500">
+        <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-primary">
           <Icon className="h-4.5 w-4.5" strokeWidth={2.25} />
         </div>
       )}
       <Input
         type={type}
         disabled={disabled}
-        className={`h-12 ${Icon ? 'pl-11' : 'pl-4'} bg-slate-50/50 border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-2xl transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 placeholder:text-slate-400`}
+        className={`h-12 ${Icon ? 'pl-11' : 'pl-4'} bg-slate-50/50 border-slate-200 dark:bg-slate-950 dark:border-slate-800 rounded-[10px] transition-all focus:ring-4 focus:ring-ring/10 focus:border-primary placeholder:text-slate-400`}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
@@ -114,7 +114,7 @@ const Terminal = ({ logs }) => {
   }, [logs]);
 
   return (
-    <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 font-mono text-[10px] space-y-1 h-60 overflow-y-auto mt-4 custom-scrollbar" ref={scrollRef}>
+    <div className="bg-slate-950 rounded-[10px] border border-slate-800 p-3 font-mono text-[11px] space-y-1 h-60 overflow-y-auto mt-4 custom-scrollbar" ref={scrollRef}>
       {logs.map((log, i) => (
         <div key={i} className="flex gap-2">
           <span className={log.includes("âœ…") ? "text-emerald-400" : log.includes("âŒ") || log.includes("âš ï¸") ? "text-rose-400" : log.includes("ðŸ“±") ? "text-amber-400" : "text-slate-300"}>
@@ -154,8 +154,11 @@ const Avatar = ({ name, size = "md" }) => {
     lg: "h-12 w-12 text-base"
   };
 
+  // Avatar decorativo (no es boton ni link): sigue en azul indigo numerico, NO en el azul
+  // de accion --primary, para no confundir "esto se puede tocar" con "esto es solo una
+  // inicial" (mismo criterio de tanda D6).
   return (
-    <div className={`flex shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm ring-2 ring-white dark:ring-slate-900 ${sizeClasses[size]}`}>
+    <div className={`flex shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm ring-2 ring-white dark:ring-slate-900 ${sizeClasses[size]}`}>
       {initials}
     </div>
   );
@@ -580,7 +583,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
       </header>
 
       {/* Navigation - Mobile optimized */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-1 shadow-sm overflow-x-auto">
+      <div className="bg-white dark:bg-slate-900/50 rounded-[10px] border border-slate-200 dark:border-slate-800 p-1 shadow-sm overflow-x-auto">
         <nav className="flex space-x-1 min-w-max" aria-label="Tabs">
           {tabs.map((tab) => {
             if (!isTabVisible(tab.id)) return null;
@@ -591,14 +594,14 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all
+                  flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-[10px] transition-all
                   ${isActive
-                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300 shadow-sm"
+                    ? "bg-primary/10 text-primary shadow-sm"
                     : "text-slate-500 hover:text-slate-700 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800"
                   }
                 `}
               >
-                <Icon className={`h-4 w-4 ${isActive ? "text-indigo-600 dark:text-indigo-400" : ""}`} />
+                <Icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
                 {tab.label}
               </button>
             );
@@ -644,7 +647,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
             <div className="relative">
               <Shield className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-slate-400" />
               <select
-                className="w-full h-12 pl-11 pr-4 rounded-2xl border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 appearance-none transition-all"
+                className="w-full h-12 pl-11 pr-4 rounded-[10px] border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-4 focus:ring-ring/10 focus:border-primary appearance-none transition-all"
                 value={modalType === 'create' ? createForm.role : editForm.role}
                 onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, role: e.target.value }) : setEditForm({ ...editForm, role: e.target.value })}
               >
@@ -656,14 +659,14 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
             </div>
           </div>
           {modalType === 'edit' && (
-            <div className="flex items-center gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-3 p-4 rounded-[14px] bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
               <div className="relative flex items-center">
                 <input
                   type="checkbox"
                   id="isActive"
                   checked={editForm.isActive}
                   onChange={(e) => setEditForm({...editForm, isActive: e.target.checked})}
-                  className="h-5 w-5 rounded-lg border-slate-300 text-indigo-600 focus:ring-indigo-500 transition-all cursor-pointer"
+                  className="h-5 w-5 rounded-[10px] border-slate-300 text-primary focus:ring-ring transition-all cursor-pointer"
                 />
               </div>
               <label htmlFor="isActive" className="text-sm font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
@@ -672,8 +675,8 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
             </div>
           )}
           <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setModalType(null)} className="rounded-xl h-12 sm:w-32">Cancelar</Button>
-            <Button onClick={modalType === 'create' ? handleCreateUser : handleEditUser} className="rounded-xl h-12 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20 sm:min-w-[140px]">
+            <Button variant="outline" onClick={() => setModalType(null)} className="h-12 sm:w-32">Cancelar</Button>
+            <Button onClick={modalType === 'create' ? handleCreateUser : handleEditUser} className="h-12 sm:min-w-[140px]">
               {modalType === 'create' ? "Crear Usuario" : "Guardar Cambios"}
             </Button>
           </div>
@@ -687,7 +690,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
         title="Cambiar Contraseña"
       >
         <div className="space-y-6">
-          <div className="flex items-start gap-4 p-5 rounded-2xl bg-amber-50/50 border border-amber-200/50 dark:bg-amber-900/10 dark:border-amber-900/20">
+          <div className="flex items-start gap-4 p-5 rounded-[14px] bg-amber-50/50 border border-amber-200/50 dark:bg-amber-900/10 dark:border-amber-900/20">
             <div className="mt-1 flex-shrink-0">
               <ShieldAlert className="h-5 w-5 text-amber-600" />
             </div>
@@ -708,8 +711,11 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
           />
 
           <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setModalType(null)} className="rounded-xl h-12 sm:w-32">Cancelar</Button>
-            <Button onClick={handlePasswordReset} className="rounded-xl h-12 bg-amber-600 hover:bg-amber-700 text-white shadow-lg shadow-amber-500/20 border-none font-bold min-w-[160px]">
+            <Button variant="outline" onClick={() => setModalType(null)} className="h-12 sm:w-32">Cancelar</Button>
+            {/* Antes era un relleno ambar a mano ("color inventado", prohibido por el
+                estandar B.1) — el aviso de seguridad de arriba ya deja clara la gravedad
+                de la accion, asi que el boton vuelve al unico color de accion de la app. */}
+            <Button onClick={handlePasswordReset} className="h-12 min-w-[160px]">
               Actualizar Contraseña
             </Button>
           </div>
@@ -726,7 +732,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
           <div className="space-y-1.5">
             <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Proveedor</label>
             <select
-              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full rounded-[10px] border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-ring focus:border-primary"
               value={commissionForm.supplierId}
               onChange={e => setCommissionForm({ ...commissionForm, supplierId: e.target.value })}
             >
@@ -740,7 +746,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
           <div className="space-y-1.5">
             <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Tipo de Servicio</label>
             <select
-              className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full rounded-[10px] border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-ring focus:border-primary"
               value={commissionForm.serviceType}
               onChange={e => setCommissionForm({ ...commissionForm, serviceType: e.target.value })}
             >
@@ -756,7 +762,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
               <input
                 type="number"
                 step="0.01"
-                className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                className="w-full rounded-[10px] border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-ring focus:border-primary"
                 value={commissionForm.commissionPercent}
                 onChange={e => setCommissionForm({ ...commissionForm, commissionPercent: parseFloat(e.target.value) || 0 })}
               />
@@ -765,7 +771,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
               <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">Prioridad</label>
               <input
                 type="number"
-                className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                className="w-full rounded-[10px] border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-3 text-sm focus:ring-ring focus:border-primary"
                 value={commissionForm.priority}
                 onChange={e => setCommissionForm({ ...commissionForm, priority: parseInt(e.target.value) || 1 })}
                 placeholder="1 (Más alta)"
@@ -783,8 +789,8 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
           />
 
           <div className="flex flex-col gap-3 pt-6 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setShowCommissionModal(false)} className="rounded-xl h-12 sm:w-32">Cancelar</Button>
-            <Button onClick={saveCommissionRule} className="rounded-xl h-12 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20 sm:min-w-[140px]">
+            <Button variant="outline" onClick={() => setShowCommissionModal(false)} className="h-12 sm:w-32">Cancelar</Button>
+            <Button onClick={saveCommissionRule} className="h-12 sm:min-w-[140px]">
               Guardar Regla
             </Button>
           </div>
@@ -798,14 +804,14 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
                 <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Equipo</h2>
                 <p className="text-sm text-slate-500">Gestiona el acceso a la plataforma.</p>
               </div>
-              <Button onClick={openCreateModal} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg shadow-indigo-500/20">
+              <Button onClick={openCreateModal}>
                 <Plus className="h-4 w-4 mr-2" />
                 Nuevo Usuario
               </Button>
             </div>
 
             {/* Desktop Table - Hidden on Mobile */}
-            <div className="hidden md:block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="hidden md:block bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
               <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
                 <thead className="bg-slate-50 dark:bg-slate-800/50">
                   <tr>
@@ -836,10 +842,20 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        {/* Tres acciones por fila (editar / cambiar clave / eliminar): mismo
+                            criterio que SupplierTable (D4) — salen del molde de boton
+                            compartido en vez de <button> a mano con color por accion. Eliminar
+                            es la unica realmente destructiva (P-14). */}
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => openEditModal(user)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded"><Pencil className="h-4 w-4" /></button>
-                          <button onClick={() => openPasswordModal(user)} className="text-amber-600 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300 p-1 hover:bg-amber-50 dark:hover:bg-amber-900/30 rounded"><Key className="h-4 w-4" /></button>
-                          <button onClick={() => handleDeleteUser(user)} className="text-rose-600 hover:text-rose-900 dark:text-rose-400 dark:hover:text-rose-300 p-1 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded"><Trash2 className="h-4 w-4" /></button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openEditModal(user)} title="Editar usuario" aria-label="Editar usuario" className="h-8 w-8 p-0">
+                            <Pencil className="h-4 w-4" aria-hidden="true" />
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openPasswordModal(user)} title="Cambiar contraseña" aria-label="Cambiar contraseña" className="h-8 w-8 p-0">
+                            <Key className="h-4 w-4" aria-hidden="true" />
+                          </Button>
+                          <Button type="button" variant="destructive" size="sm" onClick={() => handleDeleteUser(user)} title="Eliminar usuario" aria-label="Eliminar usuario" className="h-8 w-8 p-0">
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -851,7 +867,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
             {/* Mobile Smart List */}
             <div className="md:hidden space-y-3">
               {users.map((user) => (
-                <div key={user.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div key={user.id} className="bg-white dark:bg-slate-900 p-4 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm">
                   <div className="flex justify-between items-start mb-3">
                     <div className="flex items-center gap-3">
                       <Avatar name={user.fullName} size="md" />
@@ -867,9 +883,9 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
                       {user.isActive ? 'Activo' : 'Inactivo'}
                     </span>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => openPasswordModal(user)} className="h-8 w-8 p-0 text-amber-600"><Key className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="sm" onClick={() => openEditModal(user)} className="h-8 w-8 p-0 text-indigo-600"><Pencil className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user)} className="h-8 w-8 p-0 text-rose-600"><Trash2 className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="sm" onClick={() => openPasswordModal(user)} className="h-8 w-8 p-0"><Key className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="sm" onClick={() => openEditModal(user)} className="h-8 w-8 p-0"><Pencil className="h-4 w-4" /></Button>
+                      <Button variant="destructive" size="sm" onClick={() => handleDeleteUser(user)} className="h-8 w-8 p-0"><Trash2 className="h-4 w-4" /></Button>
                     </div>
                   </div>
                 </div>
@@ -889,14 +905,17 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
                 <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Reglas de Comisión</h2>
                 <p className="text-sm text-slate-500">Automatiza tus ganancias por proveedor.</p>
               </div>
-              <Button onClick={openNewCommissionModal} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-lg shadow-emerald-500/20">
+              {/* Antes era relleno verde a mano; "Nueva Regla" es la unica accion primaria de
+                  esta pestania, asi que pasa al azul boleto estandar (B.1, un solo color
+                  de accion en toda la app). */}
+              <Button onClick={openNewCommissionModal}>
                 <Plus className="h-4 w-4 mr-2" />
                 Nueva Regla
               </Button>
             </div>
 
             {/* Desktop Table - Hidden on Mobile */}
-            <div className="hidden md:block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="hidden md:block bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
               <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
                 <thead className="bg-slate-50 dark:bg-slate-800/50">
                   <tr>
@@ -925,8 +944,12 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                           <div className="flex justify-end gap-2">
-                            <button onClick={() => editCommissionRule(rule)} className="text-indigo-600 p-1 hover:bg-slate-100 rounded"><Pencil className="h-4 w-4" /></button>
-                            <button onClick={() => deleteCommissionRule(rule.id)} className="text-rose-600 p-1 hover:bg-slate-100 rounded"><Trash2 className="h-4 w-4" /></button>
+                            <Button type="button" variant="outline" size="sm" onClick={() => editCommissionRule(rule)} title="Editar regla" aria-label="Editar regla" className="h-8 w-8 p-0">
+                              <Pencil className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                            <Button type="button" variant="destructive" size="sm" onClick={() => deleteCommissionRule(rule.id)} title="Eliminar regla" aria-label="Eliminar regla" className="h-8 w-8 p-0">
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -939,7 +962,7 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
             {/* Mobile Smart List */}
             <div className="md:hidden grid gap-3">
               {commissionRules.map((rule) => (
-                <div key={rule.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between">
+                <div key={rule.id} className="bg-white dark:bg-slate-900 p-4 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between">
                   <div>
                     <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                       {rule.supplierName || "Todos los Proveedores"}
@@ -953,14 +976,18 @@ Usuarios, permisos y todo lo que configura el día a día de tu agencia.
                   <div className="flex items-center gap-3">
                     <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">{rule.commissionPercent}%</span>
                     <div className="flex flex-col gap-1">
-                      <button onClick={() => editCommissionRule(rule)} className="bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 p-1.5 rounded-lg"><Pencil className="h-3.5 w-3.5" /></button>
-                      <button onClick={() => deleteCommissionRule(rule.id)} className="bg-rose-50 dark:bg-rose-900/30 text-rose-600 p-1.5 rounded-lg"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => editCommissionRule(rule)} title="Editar regla" aria-label="Editar regla" className="h-7 w-7 p-0">
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Button>
+                      <Button type="button" variant="destructive" size="sm" onClick={() => deleteCommissionRule(rule.id)} title="Eliminar regla" aria-label="Eliminar regla" className="h-7 w-7 p-0">
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Button>
                     </div>
                   </div>
                 </div>
               ))}
               {commissionRules.length === 0 && (
-                <div className="text-center py-10 px-4 text-slate-500 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                <div className="text-center py-10 px-4 text-slate-500 bg-slate-50 dark:bg-slate-900/50 rounded-[14px] border border-dashed border-slate-200 dark:border-slate-800">
                   <Briefcase className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p>No tienes reglas configuradas.</p>
                   <Button variant="link" onClick={openNewCommissionModal} className="mt-1">Crear primera regla</Button>

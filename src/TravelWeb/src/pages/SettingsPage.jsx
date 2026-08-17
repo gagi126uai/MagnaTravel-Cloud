@@ -66,7 +66,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-opacity animate-in fade-in">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900 animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-lg overflow-hidden rounded-[14px] bg-white shadow-2xl dark:bg-slate-900 animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h3>
           <button
@@ -89,7 +89,7 @@ const MsgInput = ({ label, sub, value, onChange }) => (
     <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</label>
     <p className="text-[11px] text-slate-500 font-medium">{sub}</p>
     <textarea
-      className="w-full rounded-xl border-slate-200 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-emerald-500 focus:border-emerald-500 min-h-[80px] p-3 shadow-sm"
+      className="w-full rounded-[10px] border-slate-200 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-emerald-500 focus:border-emerald-500 min-h-[80px] p-3 shadow-sm"
       value={value}
       onChange={e => onChange(e.target.value)}
     />
@@ -103,7 +103,7 @@ const Terminal = ({ logs }) => {
   }, [logs]);
 
   return (
-    <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 font-mono text-[10px] space-y-1 h-60 overflow-y-auto mt-4 custom-scrollbar" ref={scrollRef}>
+    <div className="bg-slate-950 rounded-[10px] border border-slate-800 p-3 font-mono text-[11px] space-y-1 h-60 overflow-y-auto mt-4 custom-scrollbar" ref={scrollRef}>
       {logs.map((log, i) => (
         <div key={i} className="flex gap-2">
           <span className={log.includes("âœ…") ? "text-emerald-400" : log.includes("âŒ") || log.includes("âš ï¸") ? "text-rose-400" : log.includes("ðŸ“±") ? "text-amber-400" : "text-slate-300"}>
@@ -143,8 +143,10 @@ const Avatar = ({ name, size = "md" }) => {
     lg: "h-12 w-12 text-base"
   };
 
+  // Avatar decorativo (no es boton ni link): mismo criterio que AdminHubPage/D6 — sigue en
+  // azul indigo numerico, no en el azul de accion --primary.
   return (
-    <div className={`flex shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm ring-2 ring-white dark:ring-slate-900 ${sizeClasses[size]}`}>
+    <div className={`flex shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm ring-2 ring-white dark:ring-slate-900 ${sizeClasses[size]}`}>
       {initials}
     </div>
   );
@@ -588,7 +590,7 @@ Ajustá cómo funciona el sistema para tu agencia.
       </header>
 
       {/* Navigation - Mobile optimized */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-1 shadow-sm overflow-x-auto">
+      <div className="bg-white dark:bg-slate-900/50 rounded-[10px] border border-slate-200 dark:border-slate-800 p-1 shadow-sm overflow-x-auto">
         <nav className="flex space-x-1 min-w-max" aria-label="Tabs">
           {tabs.map((tab) => {
             if (!isTabVisible(tab.id)) return null;
@@ -599,14 +601,14 @@ Ajustá cómo funciona el sistema para tu agencia.
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all
+                  flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-[10px] transition-all
                   ${isActive
-                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300 shadow-sm"
+                    ? "bg-primary/10 text-primary shadow-sm"
                     : "text-slate-500 hover:text-slate-700 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800"
                   }
                 `}
               >
-                <Icon className={`h-4 w-4 ${isActive ? "text-indigo-600 dark:text-indigo-400" : ""}`} />
+                <Icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
                 {tab.label}
               </button>
             );
@@ -629,9 +631,9 @@ Ajustá cómo funciona el sistema para tu agencia.
               <form onSubmit={saveAgencySettings} className="space-y-6">
                 {/* Identity Section */}
                 {/* Agency Settings Card */}
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                <div className="bg-white dark:bg-slate-900 rounded-[10px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
-                    <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+                    <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-[10px] text-blue-600 dark:text-blue-400">
                       <Building2 className="h-5 w-5" />
                     </div>
                     <div>
@@ -647,25 +649,25 @@ Ajustá cómo funciona el sistema para tu agencia.
                       <div className="grid gap-5 md:grid-cols-2">
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nombre de Fantasía (Visible al cliente)</label>
-                          <input type="text" required className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" required className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             placeholder="Ej: Magna Travel"
                             value={agencyForm.agencyName} onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })} />
                         </div>
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Razón Social</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             placeholder="Ej: Magna Travel S.A."
                             value={agencyForm.legalName} onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CUIT</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             placeholder="XX-XXXXXXXX-X"
                             value={agencyForm.taxId} onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Condición IVA</label>
-                          <select className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <select className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             value={agencyForm.taxCondition} onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}>
                             <option value="Responsable Inscripto">Responsable Inscripto</option>
                             <option value="Monotributo">Monotributo</option>
@@ -681,17 +683,17 @@ Ajustá cómo funciona el sistema para tu agencia.
                       <div className="grid gap-5 md:grid-cols-2">
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Dirección</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             value={agencyForm.address} onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Teléfono</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             value={agencyForm.phone} onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-                          <input type="email" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="email" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
                             value={agencyForm.email} onChange={e => setAgencyForm({ ...agencyForm, email: e.target.value })} />
                         </div>
                       </div>
@@ -702,7 +704,7 @@ Ajustá cómo funciona el sistema para tu agencia.
                     <Button
                       type="submit"
                       disabled={savingAgency}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-6"
+                      className="px-6"
                     >
                       {savingAgency ? "Guardando..." : "Guardar Cambios"}
                     </Button>
@@ -724,12 +726,12 @@ Ajustá cómo funciona el sistema para tu agencia.
 
             {/* Side Panel for Configs */}
             <div className="space-y-6">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6">
+              <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm p-6">
                 <h3 className="font-semibold text-slate-900 dark:text-white mb-4">Configuración Regional</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Moneda Base</label>
-                    <select className="form-select w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800"
+                    <select className="form-select w-full rounded-[10px] border-slate-200 dark:border-slate-700 dark:bg-slate-800"
                       value={agencyForm.currency} onChange={e => setAgencyForm({ ...agencyForm, currency: e.target.value })}>
                       <option value="ARS">ARS - Peso Argentino</option>
                       <option value="USD">USD - Dólar Estadounidense</option>
@@ -777,27 +779,27 @@ Ajustá cómo funciona el sistema para tu agencia.
         <form onSubmit={modalType === 'create' ? handleCreateUser : handleEditUser} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre Completo</label>
-            <input type="text" required className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
+            <input type="text" required className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
               value={modalType === 'create' ? createForm.fullName : editForm.fullName}
               onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, fullName: e.target.value }) : setEditForm({ ...editForm, fullName: e.target.value })} />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
-            <input type="email" required className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
+            <input type="email" required className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
               value={modalType === 'create' ? createForm.email : editForm.email}
               onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, email: e.target.value }) : setEditForm({ ...editForm, email: e.target.value })} />
           </div>
           {modalType === 'create' && (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Contraseña</label>
-              <input type="password" required className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
+              <input type="password" required className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
                 value={createForm.password}
                 onChange={e => setCreateForm({ ...createForm, password: e.target.value })} />
             </div>
           )}
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Rol</label>
-            <select className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
+            <select className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
               value={modalType === 'create' ? createForm.role : editForm.role}
               onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, role: e.target.value }) : setEditForm({ ...editForm, role: e.target.value })}>
               {roleOptions.map(role => <option key={role} value={role}>{role}</option>)}
@@ -805,14 +807,14 @@ Ajustá cómo funciona el sistema para tu agencia.
           </div>
           {modalType === 'edit' && (
             <div className="flex items-center gap-2">
-              <input type="checkbox" id="isActive" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+              <input type="checkbox" id="isActive" className="rounded border-slate-300 text-primary focus:ring-ring"
                 checked={editForm.isActive}
                 onChange={e => setEditForm({ ...editForm, isActive: e.target.checked })} />
               <label htmlFor="isActive" className="text-sm font-medium text-slate-700 dark:text-slate-300">Usuario Activo</label>
             </div>
           )}
           <div className="pt-2">
-            <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl">
+            <Button type="submit" className="w-full">
               {modalType === 'create' ? "Crear Usuario" : "Guardar Cambios"}
             </Button>
           </div>
@@ -822,17 +824,17 @@ Ajustá cómo funciona el sistema para tu agencia.
       {/* Password Modal */}
       <Modal isOpen={modalType === 'password'} onClose={closeModal} title="Cambiar Contraseña">
         <form onSubmit={handlePasswordReset} className="space-y-4">
-          <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-sm mb-4">
+          <div className="p-3 bg-amber-50 text-amber-800 rounded-[10px] text-sm mb-4">
             Cambiando contraseña para <strong>{selectedUser?.fullName}</strong>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nueva Contraseña</label>
-            <input type="password" required minLength={6} className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
+            <input type="password" required minLength={6} className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
               value={passwordForm.newPassword}
               onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} />
           </div>
           <div className="pt-2">
-            <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl">
+            <Button type="submit" className="w-full">
               Actualizar Contraseña
             </Button>
           </div>
@@ -845,7 +847,7 @@ Ajustá cómo funciona el sistema para tu agencia.
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor (opcional)</label>
             <select
-              className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+              className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
               value={commissionForm.supplierId}
               onChange={e => setCommissionForm({ ...commissionForm, supplierId: e.target.value })}
             >
@@ -857,7 +859,7 @@ Ajustá cómo funciona el sistema para tu agencia.
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo de Servicio (opcional)</label>
             <select
-              className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+              className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
               value={commissionForm.serviceType}
               onChange={e => setCommissionForm({ ...commissionForm, serviceType: e.target.value })}
             >
@@ -871,7 +873,7 @@ Ajustá cómo funciona el sistema para tu agencia.
               <div className="relative mt-1">
                 <input
                   type="number" step="0.01" required
-                  className="block w-full rounded-xl border border-slate-200 bg-slate-50 pl-3 pr-8 py-2 text-sm focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800"
+                  className="block w-full rounded-[10px] border border-slate-200 bg-slate-50 pl-3 pr-8 py-2 text-sm focus:border-primary focus:bg-white dark:border-slate-700 dark:bg-slate-800"
                   value={commissionForm.commissionPercent}
                   onChange={e => setCommissionForm({ ...commissionForm, commissionPercent: e.target.value })}
                 />
@@ -883,7 +885,7 @@ Ajustá cómo funciona el sistema para tu agencia.
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Prioridad</label>
               <select
-                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800"
+                className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white dark:border-slate-700 dark:bg-slate-800"
                 value={commissionForm.priority}
                 onChange={e => setCommissionForm({ ...commissionForm, priority: e.target.value })}
               >
@@ -894,7 +896,7 @@ Ajustá cómo funciona el sistema para tu agencia.
             </div>
           </div>
           <div className="pt-2">
-            <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl">
+            <Button type="submit" className="w-full">
               Guardar Regla
             </Button>
           </div>

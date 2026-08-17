@@ -6,6 +6,7 @@ import { useAuthState } from "../auth";
 import { DolarBnaTira } from "../components/DolarBnaTira";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { CurrencyBadge } from "../components/ui/CurrencyBadge";
+import { Button } from "../components/ui/button";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
 import { construirLineasKpiConCompatibilidad } from "../lib/dashboardKpiCurrency";
@@ -52,14 +53,14 @@ export default function AgentDashboard() {
                     <p className="mt-1 text-muted-foreground">Este es tu resumen operativo del dia.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => navigate("/reservas?create=1")} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition-colors hover:bg-indigo-700">
+                    <Button type="button" onClick={() => navigate("/reservas?create=1")}>
                         <FileText className="h-4 w-4" />
                         Nuevo presupuesto
-                    </button>
-                    <button type="button" onClick={() => navigate("/crm")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => navigate("/crm")}>
                         <Briefcase className="h-4 w-4" />
                         Posibles clientes
-                    </button>
+                    </Button>
                 </div>
             </div>
 
@@ -75,7 +76,7 @@ export default function AgentDashboard() {
                     Ítem 4 del re-review: se usa construirLineasKpiConCompatibilidad en vez del
                     ternario a mano, que caía al escalar viejo también cuando la lista puntual
                     venía VACÍA (mes sin ventas = dato real, no dato faltante). */}
-                <KpiCard title="Ventas personales" lineasPorMoneda={construirLineasKpiConCompatibilidad(dashboard.porMoneda?.ventasDelMes, dashboard.ventasDelMes)} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-50 dark:bg-indigo-900/10" />
+                <KpiCard title="Ventas personales" lineasPorMoneda={construirLineasKpiConCompatibilidad(dashboard.porMoneda?.ventasDelMes, dashboard.ventasDelMes)} icon={TrendingUp} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-900/10" />
                 <KpiCard title="Proximas salidas" value={dashboard.proximosViajes?.length || 0} icon={Calendar} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-900/10" isCurrency={false} />
                 <KpiCard title="Posibles clientes activos" value={dashboard.activePotentialCustomers || 0} icon={Briefcase} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-900/10" isCurrency={false} />
             </div>
@@ -92,7 +93,7 @@ export default function AgentDashboard() {
                     <CardContent>
                         <div className="space-y-4">
                             {dashboard.proximosViajes?.length > 0 ? dashboard.proximosViajes.map((trip) => (
-                                <div key={getPublicId(trip)} className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-100 bg-slate-50 p-3 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/50 dark:hover:bg-slate-800" onClick={() => navigate(`/reservas/${getPublicId(trip)}`)}>
+                                <div key={getPublicId(trip)} className="flex cursor-pointer items-center justify-between rounded-[10px] border border-slate-100 bg-slate-50 p-3 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/50 dark:hover:bg-slate-800" onClick={() => navigate(`/reservas/${getPublicId(trip)}`)}>
                                     <div>
                                         <div className="font-medium text-slate-800 dark:text-slate-200">{trip.name}</div>
                                         <div className="text-xs text-muted-foreground">{trip.numeroReserva}</div>
@@ -103,7 +104,7 @@ export default function AgentDashboard() {
                                             ("Confirmed", "InManagement") — jerga interna en inglés que un
                                             vendedor no tiene por qué entender. Mismo mapa que las pestañas
                                             de Reservas; fallback "—" si el status no se reconoce. */}
-                                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">{traducirEstadoReserva(trip.status)}</span>
+                                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-700">{traducirEstadoReserva(trip.status)}</span>
                                     </div>
                                 </div>
                             )) : <EmptyState message="No tienes salidas proximas" />}
@@ -113,7 +114,7 @@ export default function AgentDashboard() {
 
                 <Card className="shadow-sm">
                     <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                        <CardTitle className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
                             <Briefcase className="h-5 w-5" />
                             Accesos rapidos
                         </CardTitle>
@@ -170,10 +171,10 @@ function KpiCard({ title, value, lineasPorMoneda, icon: Icon, color, bg, isCurre
 
 function ActionButton({ label, onClick, icon: Icon }) {
     return (
-        <button type="button" onClick={onClick} className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+        <Button type="button" variant="outline" onClick={onClick} className="h-auto w-full justify-between rounded-[10px] px-4 py-3 text-left font-bold">
             <span>{label}</span>
-            <Icon className="h-4 w-4 text-indigo-500" />
-        </button>
+            <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
+        </Button>
     );
 }
 

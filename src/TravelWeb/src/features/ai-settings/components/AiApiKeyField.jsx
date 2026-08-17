@@ -52,7 +52,7 @@ export function AiApiKeyField({
           <button
             type="button"
             onClick={onCambiarClave}
-            className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+            className="text-sm font-semibold text-primary hover:text-primary/80"
           >
             Cambiar la clave
           </button>
@@ -76,7 +76,7 @@ export function AiApiKeyField({
           autoComplete="new-password"
           value={apiKeyInput}
           onChange={(event) => onChangeApiKeyInput(event.target.value)}
-          className="flex-1 min-w-[220px] h-10 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+          className="flex-1 min-w-[220px] h-10 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
         />
         {mostrarCancelar && (
           <button

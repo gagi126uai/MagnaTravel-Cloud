@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { Button } from "./ui/button";
 import { api } from "../api";
 import { deactivateMaintenance } from "../maintenanceState";
 import {
@@ -140,7 +141,7 @@ export function MaintenanceScreen({ awaitingLocalResult = false, fechaResguardo 
       className="fixed inset-0 z-[9999] flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-950 px-6 text-center text-white"
     >
       {!seAgotoElTiempoDeEspera && (
-        <Loader2 className="h-12 w-12 animate-spin text-indigo-400" aria-hidden="true" />
+        <Loader2 className="h-12 w-12 animate-spin text-blue-400" aria-hidden="true" />
       )}
       <h1
         // tabIndex={-1}: puede recibir foco por código (headingRef.focus() en el useEffect
@@ -162,14 +163,13 @@ export function MaintenanceScreen({ awaitingLocalResult = false, fechaResguardo 
             Esto está tardando mucho más de lo normal. Puede que ya haya terminado — recargá la
             pantalla para comprobarlo.
           </p>
-          <button
+          <Button
             type="button"
             onClick={() => window.location.reload()}
             data-testid="maintenance-screen-recargar"
-            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
           >
             Recargar la pantalla
-          </button>
+          </Button>
         </>
       ) : (
         <p className="text-sm font-semibold text-amber-300">No cierres esta ventana</p>

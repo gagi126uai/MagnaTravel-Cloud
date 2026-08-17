@@ -147,15 +147,15 @@ export default function ReportsPage() {
             <label class="block text-sm font-medium text-gray-700 mb-2">Incluir Información</label>
             <div class="space-y-2">
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" id="incSales" checked class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
+                <input type="checkbox" id="incSales" checked class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-ring">
                 <span class="text-sm text-gray-900">Ventas y Margen</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" id="incReceivables" checked class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
+                <input type="checkbox" id="incReceivables" checked class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-ring">
                 <span class="text-sm text-gray-900">Cuentas por Cobrar (Deudores)</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" id="incPayables" checked class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
+                <input type="checkbox" id="incPayables" checked class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-ring">
                 <span class="text-sm text-gray-900">Cuentas por Pagar (Acreedores)</span>
               </label>
             </div>
@@ -165,7 +165,7 @@ export default function ReportsPage() {
       showCancelButton: true,
       confirmButtonText: 'Descargar Excel',
       cancelButtonText: 'Cancelar',
-      confirmButtonColor: '#4f46e5',
+      confirmButtonColor: '#1D4ED8',
       preConfirm: () => {
         return {
           from: document.getElementById('exportFrom').value,
@@ -344,7 +344,7 @@ export default function ReportsPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-            <BarChart3 className="h-6 w-6 text-indigo-600" />
+            <BarChart3 className="h-6 w-6 text-blue-600" />
             Reportes
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
@@ -364,7 +364,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Date Filter Bar */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between bg-white dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between bg-white dark:bg-slate-900/50 p-4 rounded-[10px] border border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="flex flex-wrap gap-1.5">
           {[
             { key: "month", label: "Este Mes" },
@@ -376,8 +376,8 @@ export default function ReportsPage() {
             <button
               key={p.key}
               onClick={() => applyPreset(p.key)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${activePreset === p.key
-                ? "bg-indigo-600 text-white shadow-sm"
+              className={`px-3 py-1.5 text-xs font-medium rounded-[10px] transition-all ${activePreset === p.key
+                ? "bg-primary text-primary-foreground shadow-sm"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}
             >
@@ -391,25 +391,25 @@ export default function ReportsPage() {
             type="date"
             value={dateFrom}
             onChange={(e) => { setDateFrom(e.target.value); setActivePreset(""); }}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+            className="rounded-[10px] border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-800 dark:border-slate-700 dark:text-white"
           />
           <span className="text-slate-400 text-sm">a</span>
           <input
             type="date"
             value={dateTo}
             onChange={(e) => { setDateTo(e.target.value); setActivePreset(""); }}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+            className="rounded-[10px] border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring dark:bg-slate-800 dark:border-slate-700 dark:text-white"
           />
-          {loading && <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />}
+          {loading && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
         </div>
       </div>
 
       <Tabs defaultValue="sales" onValueChange={setActiveReportTab} className="space-y-6">
-        <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-          <TabsTrigger value="sales" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Ventas y Margen</TabsTrigger>
-          <TabsTrigger value="finance" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Finanzas y Deudas</TabsTrigger>
-          <TabsTrigger value="usd-invoices" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Facturas en dólares</TabsTrigger>
-          <TabsTrigger value="intelligence" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm">Inteligencia Analítica</TabsTrigger>
+        <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-[10px]">
+          <TabsTrigger value="sales" className="rounded-[10px] px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-primary data-[state=active]:shadow-sm">Ventas y Margen</TabsTrigger>
+          <TabsTrigger value="finance" className="rounded-[10px] px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-primary data-[state=active]:shadow-sm">Finanzas y Deudas</TabsTrigger>
+          <TabsTrigger value="usd-invoices" className="rounded-[10px] px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-primary data-[state=active]:shadow-sm">Facturas en dólares</TabsTrigger>
+          <TabsTrigger value="intelligence" className="rounded-[10px] px-4 py-2 text-sm font-medium data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:text-primary data-[state=active]:shadow-sm">Inteligencia Analítica</TabsTrigger>
         </TabsList>
 
         <TabsContent value="intelligence" className="space-y-6">
@@ -431,7 +431,11 @@ export default function ReportsPage() {
               value={formatCurrency(s.totalSales, "ARS")}
               subtitle={`${s.filesCount} expedientes`}
               icon={TrendingUp}
-              color="indigo"
+              // Antes "indigo" (color retirado del estandar). "Promedio Venta", en la misma
+              // fila, ya usa azul boleto — se elige "purple" (tono ya existente en este mismo
+              // colorMap, reusado de la solapa Finanzas) para que las 4 tarjetas de esta fila
+              // sigan siendo distinguibles a simple vista.
+              color="purple"
             />
             <KpiCard
               title="Margen Bruto"
@@ -496,7 +500,7 @@ export default function ReportsPage() {
           <div className="grid gap-6 md:grid-cols-2">
             <Card className="shadow-sm">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                <CardTitle className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
                   <Users className="h-5 w-5" />
                   Top Clientes
                 </CardTitle>
@@ -509,7 +513,7 @@ export default function ReportsPage() {
                       <div
                         key={i}
                         onClick={() => navigate(`/customers/${getPublicId(cust)}/account`)}
-                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-all"
+                        className="flex items-center justify-between p-3 rounded-[10px] bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-all"
                       >
                         <div className="flex items-center gap-3">
                           <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold shadow-sm ${i === 0 ? 'bg-amber-100 text-amber-700 border border-amber-200' :
@@ -525,7 +529,7 @@ export default function ReportsPage() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="font-bold text-sm text-indigo-600 dark:text-indigo-400">
+                          <div className="font-bold text-sm text-blue-600 dark:text-blue-400">
                             {formatCurrency(cust.totalSale, "ARS")}
                           </div>
                         </div>
@@ -607,11 +611,11 @@ export default function ReportsPage() {
                         <div
                           key={getPublicId(debtor)}
                           onClick={() => navigate(`/customers/${getPublicId(debtor)}/account`)}
-                          className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-purple-200 dark:hover:border-purple-800 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 cursor-pointer transition-all"
+                          className="flex items-center justify-between p-3 rounded-[10px] bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-purple-200 dark:hover:border-purple-800 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 cursor-pointer transition-all"
                         >
                           <div className="flex flex-col">
                             <span className="font-medium text-sm text-slate-700 dark:text-slate-300 hover:text-purple-700 dark:hover:text-purple-400 transition-colors">{debtor.fullName}</span>
-                            <span className="text-[10px] text-slate-500">Ult. mov: {debtor.lastMovementDate ? formatDate(debtor.lastMovementDate) : '-'}</span>
+                            <span className="text-[11px] text-slate-500">Ult. mov: {debtor.lastMovementDate ? formatDate(debtor.lastMovementDate) : '-'}</span>
                           </div>
                           {/* Cartelito de moneda pegado al monto — la moneda es una dimensión de la fila */}
                           <span className="font-mono font-bold text-purple-600 dark:text-purple-400 text-sm inline-flex items-center gap-1">
@@ -669,7 +673,7 @@ export default function ReportsPage() {
                         <div
                           key={getPublicId(sup)}
                           onClick={() => navigate(`/suppliers/${getPublicId(sup)}/account`)}
-                          className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-rose-200 dark:hover:border-rose-800 hover:bg-rose-50/50 dark:hover:bg-rose-900/10 cursor-pointer transition-all"
+                          className="flex items-center justify-between p-3 rounded-[10px] bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-rose-200 dark:hover:border-rose-800 hover:bg-rose-50/50 dark:hover:bg-rose-900/10 cursor-pointer transition-all"
                         >
                           <div className="flex items-center gap-3">
                             <div className="h-8 w-8 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
@@ -730,14 +734,13 @@ export default function ReportsPage() {
  */
 function KpiCard({ title, value, subtitle, icon: Icon, color }) {
   const colorMap = {
-    indigo: { bg: 'bg-indigo-50 dark:bg-indigo-900/10', text: 'text-indigo-600 dark:text-indigo-400' },
     emerald: { bg: 'bg-emerald-50 dark:bg-emerald-900/10', text: 'text-emerald-600 dark:text-emerald-400' },
     blue: { bg: 'bg-blue-50 dark:bg-blue-900/10', text: 'text-blue-600 dark:text-blue-400' },
     rose: { bg: 'bg-rose-50 dark:bg-rose-900/10', text: 'text-rose-600 dark:text-rose-400' },
     purple: { bg: 'bg-purple-50 dark:bg-purple-900/10', text: 'text-purple-600 dark:text-purple-400' },
     orange: { bg: 'bg-orange-50 dark:bg-orange-900/10', text: 'text-orange-600 dark:text-orange-400' },
   };
-  const c = colorMap[color] || colorMap.indigo;
+  const c = colorMap[color] || colorMap.blue;
 
   // Decidir si el value es multi-moneda (array) o mono-moneda (string/número)
   const esMultimoneda = Array.isArray(value);

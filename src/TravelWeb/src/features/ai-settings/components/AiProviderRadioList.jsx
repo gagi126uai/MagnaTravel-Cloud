@@ -19,9 +19,9 @@ export function AiProviderRadioList({ providers, selectedCode, onSelect }) {
             <label
               key={provider.code}
               htmlFor={inputId}
-              className={`flex items-start gap-3 rounded-xl border px-4 py-3 cursor-pointer transition-colors ${
+              className={`flex items-start gap-3 rounded-[10px] border px-4 py-3 cursor-pointer transition-colors ${
                 selectedCode === provider.code
-                  ? "border-indigo-400 bg-indigo-50/60 dark:border-indigo-700 dark:bg-indigo-900/10"
+                  ? "border-primary bg-primary/10"
                   : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
               }`}
             >
@@ -29,7 +29,7 @@ export function AiProviderRadioList({ providers, selectedCode, onSelect }) {
                 type="radio"
                 id={inputId}
                 name="ai-provider"
-                className="mt-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+                className="mt-1 h-4 w-4 text-primary focus:ring-ring"
                 checked={selectedCode === provider.code}
                 onChange={() => onSelect(provider)}
               />

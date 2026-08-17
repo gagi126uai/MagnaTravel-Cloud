@@ -4,6 +4,7 @@ import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { REQUEST_TYPE_LABELS } from "../features/approvals/api/approvalsApi";
 import { formatDateTime } from "../lib/utils";
+import { Button } from "./ui/button";
 
 // B1.15 Fase B'' (2026-05-11): editor de policies de workflow. Solo Admin.
 //
@@ -51,7 +52,7 @@ export default function ApprovalPoliciesTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-amber-100 p-2 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+          <div className="rounded-[10px] bg-amber-100 p-2 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
             <ShieldCheck className="h-5 w-5" />
           </div>
           <div>
@@ -61,14 +62,10 @@ export default function ApprovalPoliciesTab() {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={load}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
+        <Button type="button" variant="outline" size="sm" onClick={load} className="gap-1.5">
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
           Refrescar
-        </button>
+        </Button>
       </div>
 
       {loading ? (
@@ -76,11 +73,11 @@ export default function ApprovalPoliciesTab() {
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       ) : error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+        <div className="rounded-[10px] border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
           No se pudieron cargar las policies. ¿Sos Admin? El permiso requerido es <code>approvals.policies</code>.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
+        <div className="overflow-hidden rounded-[10px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
           {policies.map((policy) => (
             <PolicyRow key={policy.requestType} policy={policy} onSave={handleSave} />
           ))}
@@ -128,7 +125,7 @@ function PolicyRow({ policy, onSave }) {
         <div className="space-y-1 flex-1 min-w-0">
           <div className="flex items-center gap-3">
             <span className="font-semibold text-slate-900 dark:text-white">{label}</span>
-            <code className="text-[10px] font-mono text-slate-400">{policy.requestType}</code>
+            <code className="text-[11px] font-mono text-slate-400">{policy.requestType}</code>
           </div>
           <div className="text-xs text-slate-500 dark:text-slate-400">
             Actualizada {formatDateTime(policy.updatedAt)}
@@ -140,7 +137,7 @@ function PolicyRow({ policy, onSave }) {
             type="checkbox"
             checked={requiresApproval}
             onChange={(event) => setRequiresApproval(event.target.checked)}
-            className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            className="h-5 w-5 rounded border-slate-300 text-primary focus:ring-ring"
           />
           <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Requiere aprobación</span>
         </label>
@@ -148,7 +145,7 @@ function PolicyRow({ policy, onSave }) {
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+          <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
             Expiración (días)
           </label>
           <input
@@ -159,11 +156,11 @@ function PolicyRow({ policy, onSave }) {
             onChange={(event) => setExpirationDays(event.target.value)}
             placeholder="Default global"
             disabled={!requiresApproval}
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm disabled:opacity-50"
+            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm disabled:opacity-50"
           />
         </div>
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+          <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
             Cooldown post-rechazo (horas)
           </label>
           <input
@@ -174,11 +171,11 @@ function PolicyRow({ policy, onSave }) {
             onChange={(event) => setCooldownHours(event.target.value)}
             placeholder="Default global"
             disabled={!requiresApproval}
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm disabled:opacity-50"
+            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm disabled:opacity-50"
           />
         </div>
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+          <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
             Notas internas
           </label>
           <input
@@ -186,21 +183,16 @@ function PolicyRow({ policy, onSave }) {
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
             placeholder="Opcional"
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm"
+            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm"
           />
         </div>
       </div>
 
       <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!dirty || saving}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
-          <Save className="h-3.5 w-3.5" />
+        <Button type="button" size="sm" onClick={handleSave} disabled={!dirty || saving} className="gap-1.5">
+          <Save className="h-3.5 w-3.5" aria-hidden="true" />
           {saving ? "Guardando…" : "Guardar"}
-        </button>
+        </Button>
       </div>
     </div>
   );

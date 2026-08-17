@@ -3,6 +3,7 @@ import { Wrench, Play, ArrowUpRight, CheckCircle2, AlertCircle, Clock } from "lu
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
+import { Button } from "./ui/button";
 
 /**
  * Solapa de Mantenimiento del panel Admin: agrupa acciones manuales que el
@@ -55,10 +56,10 @@ export default function MaintenanceTab() {
 
     return (
         <div className="space-y-6">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-[14px] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex items-start gap-3">
-                    <div className="rounded-xl bg-indigo-50 p-2 dark:bg-indigo-950/40">
-                        <Wrench className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                    <div className="rounded-[10px] bg-blue-50 p-2 dark:bg-blue-950/40">
+                        <Wrench className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-slate-900 dark:text-white">Mantenimiento</h2>
@@ -69,7 +70,7 @@ export default function MaintenanceTab() {
                 </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-[14px] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="flex-1">
                         <div className="flex items-center gap-2">
@@ -81,25 +82,25 @@ export default function MaintenanceTab() {
                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                             Repara fechas faltantes computandolas desde los servicios cargados (vuelos, hoteles, transfers), promueve <span className="font-semibold">Reservado &rarr; Operativo</span> cuando arranca el viaje o se cobro toda la reserva, y cierra <span className="font-semibold">Operativo &rarr; Cerrado</span> para reservas cuyo viaje ya termino.
                         </p>
-                        <div className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        <div className="mt-3 inline-flex items-center gap-1.5 rounded-[10px] bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                             <Clock className="h-3 w-3" />
                             Programado diariamente a las 3:00 UTC
                         </div>
                     </div>
 
-                    <button
+                    <Button
                         type="button"
                         onClick={runLifecycle}
                         disabled={running}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition-all hover:bg-indigo-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 dark:shadow-none lg:min-w-[200px]"
+                        className="gap-2 lg:min-w-[200px]"
                     >
-                        <Play className={`h-4 w-4 ${running ? "animate-pulse" : ""}`} />
+                        <Play className={`h-4 w-4 ${running ? "animate-pulse" : ""}`} aria-hidden="true" />
                         {running ? "Ejecutando..." : "Ejecutar ahora"}
-                    </button>
+                    </Button>
                 </div>
 
                 {lastResult && (
-                    <div className={`mt-5 rounded-xl border p-4 ${lastResult.error
+                    <div className={`mt-5 rounded-[10px] border p-4 ${lastResult.error
                         ? "border-rose-200 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30"
                         : "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30"
                     }`}>
@@ -123,19 +124,19 @@ export default function MaintenanceTab() {
                                                 : "Lifecycle aplicado"}
                                         </p>
                                         <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
-                                            <div className="rounded-lg bg-white/70 px-3 py-2 dark:bg-slate-900/40">
+                                            <div className="rounded-[10px] bg-white/70 px-3 py-2 dark:bg-slate-900/40">
                                                 <div className="text-emerald-700 dark:text-emerald-300">Fechas reparadas</div>
                                                 <div className="mt-0.5 text-lg font-black text-emerald-900 dark:text-emerald-100">
                                                     {lastResult.repaired}
                                                 </div>
                                             </div>
-                                            <div className="rounded-lg bg-white/70 px-3 py-2 dark:bg-slate-900/40">
+                                            <div className="rounded-[10px] bg-white/70 px-3 py-2 dark:bg-slate-900/40">
                                                 <div className="text-emerald-700 dark:text-emerald-300">Promovidas a Operativo</div>
                                                 <div className="mt-0.5 text-lg font-black text-emerald-900 dark:text-emerald-100">
                                                     {lastResult.promoted}
                                                 </div>
                                             </div>
-                                            <div className="rounded-lg bg-white/70 px-3 py-2 dark:bg-slate-900/40">
+                                            <div className="rounded-[10px] bg-white/70 px-3 py-2 dark:bg-slate-900/40">
                                                 <div className="text-emerald-700 dark:text-emerald-300">Cerradas</div>
                                                 <div className="mt-0.5 text-lg font-black text-emerald-900 dark:text-emerald-100">
                                                     {lastResult.closed}
@@ -155,7 +156,7 @@ export default function MaintenanceTab() {
                 )}
             </div>
 
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+            <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
                 <strong className="font-bold">Nota:</strong> el cierre automatico solo aplica a reservas que tengan <span className="font-semibold">fecha de regreso</span> cargada. Si una reserva quedo en Operativo de un viaje viejo, revisa primero que la fecha de regreso este completa desde el detalle de la reserva.
             </div>
         </div>

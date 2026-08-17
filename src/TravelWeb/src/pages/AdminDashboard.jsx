@@ -40,6 +40,7 @@ import {
 
 import { DolarBnaTira } from "../components/DolarBnaTira";
 import { CurrencyBadge } from "../components/ui/CurrencyBadge";
+import { Button } from "../components/ui/button";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
 import { construirLineasKpiConCompatibilidad } from "../lib/dashboardKpiCurrency";
@@ -110,22 +111,14 @@ export default function DashboardPage() {
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        onClick={() => navigate("/reservas?create=1")}
-                        className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition-colors hover:bg-indigo-700"
-                    >
+                    <Button type="button" onClick={() => navigate("/reservas?create=1")}>
                         <FileText className="h-4 w-4" />
                         Nuevo presupuesto
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => navigate("/crm")}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => navigate("/crm")}>
                         <Briefcase className="h-4 w-4" />
                         Posibles clientes
-                    </button>
+                    </Button>
                 </div>
             </div>
 
@@ -144,8 +137,8 @@ export default function DashboardPage() {
                     title="Ventas del Mes"
                     lineasPorMoneda={construirLineasKpiConCompatibilidad(porMoneda?.ventasDelMes, dashboard.ventasDelMes)}
                     icon={TrendingUp}
-                    color="text-indigo-600 dark:text-indigo-400"
-                    bg="bg-indigo-50 dark:bg-indigo-900/10"
+                    color="text-blue-600 dark:text-blue-400"
+                    bg="bg-blue-50 dark:bg-blue-900/10"
                     trend="Ingresos brutos"
                 />
                 <KpiCard
@@ -298,7 +291,7 @@ export default function DashboardPage() {
                                 dashboard.reservasPendientes.map((reserva) => (
                                     <div
                                         key={getPublicId(reserva)}
-                                        className="flex items-center justify-between p-3 rounded-lg bg-rose-50/50 hover:bg-rose-100/50 dark:bg-rose-900/10 dark:hover:bg-rose-900/20 cursor-pointer transition-colors border border-rose-100 dark:border-rose-900/20"
+                                        className="flex items-center justify-between p-3 rounded-[10px] bg-rose-50/50 hover:bg-rose-100/50 dark:bg-rose-900/10 dark:hover:bg-rose-900/20 cursor-pointer transition-colors border border-rose-100 dark:border-rose-900/20"
                                         onClick={() => navigate(`/reservas/${getPublicId(reserva)}`)}
                                     >
                                         <div className="flex gap-3 items-center">
@@ -318,7 +311,7 @@ export default function DashboardPage() {
                                                     real de esa reserva puntual (puede no ser ARS). */}
                                                 {formatCurrency(reserva.balance, reserva.currency || "ARS")}
                                             </div>
-                                            <div className="text-[10px] text-muted-foreground uppercase">Pendiente</div>
+                                            <div className="text-[11px] text-muted-foreground uppercase">Pendiente</div>
                                         </div>
                                     </div>
                                 ))
@@ -344,7 +337,7 @@ export default function DashboardPage() {
                                 dashboard.proximosViajes.map((trip) => (
                                     <div
                                         key={getPublicId(trip)}
-                                        className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 cursor-pointer transition-colors border border-slate-100 dark:border-slate-800"
+                                        className="flex items-center justify-between p-3 rounded-[10px] bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 cursor-pointer transition-colors border border-slate-100 dark:border-slate-800"
                                         onClick={() => navigate(`/reservas/${getPublicId(trip)}`)}
                                     >
                                         <div className="flex gap-3 items-center">
@@ -464,7 +457,7 @@ function BadgeStatus({ status }) {
         : "bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700";
 
     return (
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${className}`}>
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${className}`}>
             {label}
         </span>
     );

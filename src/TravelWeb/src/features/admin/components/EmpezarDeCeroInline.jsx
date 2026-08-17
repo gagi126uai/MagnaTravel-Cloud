@@ -5,6 +5,7 @@ import { showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatDateTime } from "../../../lib/utils";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
+import { Button } from "../../../components/ui/button";
 import {
     FRASE_CONFIRMACION_WIPE,
     WIPE_GRUPO_CONFIGURACION,
@@ -146,10 +147,10 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
         : null;
 
     return (
-        <div className="rounded-2xl border-2 border-rose-200 bg-rose-50/40 p-6 shadow-sm dark:border-rose-900/50 dark:bg-rose-950/10">
+        <div className="rounded-[14px] border-2 border-rose-200 bg-rose-50/40 p-6 shadow-sm dark:border-rose-900/50 dark:bg-rose-950/10">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="flex items-start gap-3">
-                    <div className="rounded-xl bg-rose-100 p-2 dark:bg-rose-900/40">
+                    <div className="rounded-[10px] bg-rose-100 p-2 dark:bg-rose-900/40">
                         <AlertOctagon className="h-5 w-5 text-rose-600 dark:text-rose-400" />
                     </div>
                     <div>
@@ -174,14 +175,17 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                     </div>
                 </div>
 
-                <button
+                {/* "Empezar de cero" esta LITERALMENTE en la lista de acciones destructivas del
+                    estandar (P-14) — molde compartido, nunca dibujado a mano. */}
+                <Button
                     type="button"
+                    variant="destructive"
                     onClick={() => setDesplegado((actual) => !actual)}
                     disabled={ejecutando}
                     aria-expanded={desplegado}
                     aria-controls="danger-wipe-formulario"
                     data-testid="danger-wipe-toggle"
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border-2 border-rose-200 bg-white px-5 py-2.5 text-sm font-bold text-rose-700 transition-all hover:bg-rose-50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-900/50 dark:bg-transparent dark:text-rose-300 dark:hover:bg-rose-950/30"
+                    className="shrink-0 gap-2"
                 >
                     {desplegado ? (
                         <>
@@ -190,11 +194,11 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                         </>
                     ) : (
                         <>
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
                             Empezar de cero…
                         </>
                     )}
-                </button>
+                </Button>
             </div>
 
             {desplegado && (
@@ -205,7 +209,7 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                             <CheckCircle2 className="h-4 w-4" />
                             Se empezó de cero
                         </div>
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                        <div className="rounded-[10px] border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
                             <p className="font-semibold">Se borró: {resumenWipeExitoso.resumenConteos}</p>
                             {resumenWipeExitoso.mensajeBackup && (
                                 <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">{resumenWipeExitoso.mensajeBackup}</p>
@@ -215,7 +219,7 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                             si la configuración (AFIP, reglas de multas/comisiones) también voló o se
                             conservó — se había perdido en la migración a inline. */}
                         <p className="text-sm text-slate-600 dark:text-slate-300">{resumenWipeExitoso.mensajeConfiguracion}</p>
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+                        <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
                             Los demás usuarios van a tener que volver a entrar al sistema.
                         </div>
                         <button
@@ -233,17 +237,19 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                 ) : previewError ? (
                     <div
                         role="alert"
-                        className="flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
+                        className="flex items-center justify-between gap-3 rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
                     >
                         <span>{previewError}</span>
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={cargarPreview}
                             data-testid="wipe-preview-retry"
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                            className="shrink-0 border-rose-300 text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
                         >
                             Probar de nuevo
-                        </button>
+                        </Button>
                     </div>
                 ) : (
                     <>
@@ -268,7 +274,7 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                                 const estaBloqueado = Boolean(responsables);
 
                                 return (
-                                    <div key={grupo.clave} className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                                    <div key={grupo.clave} className="rounded-[10px] border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
                                         <label className={`flex items-start gap-2 select-none ${estaBloqueado ? "cursor-not-allowed" : "cursor-pointer"}`}>
                                             <input
                                                 type="checkbox"
@@ -302,7 +308,7 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                         </div>
 
                         {gruposSeleccionados.length > 0 && (
-                            <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/40 dark:bg-rose-950/20">
+                            <div className="rounded-[10px] border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/40 dark:bg-rose-950/20">
                                 <p className="mb-1.5 text-xs font-bold uppercase text-rose-700 dark:text-rose-400">Esto vuela para siempre</p>
                                 <ul className="space-y-1 text-sm text-rose-900 dark:text-rose-200">
                                     {resumenCompleto.map((fila) => (
@@ -316,7 +322,7 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                         )}
 
                         {bloqueado && (
-                            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200">
+                            <div className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200">
                                 <div className="flex items-start gap-2">
                                     <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                                     <div><strong className="font-bold">Bloqueado:</strong> {preview.motivoBloqueo}</div>
@@ -357,22 +363,26 @@ export function EmpezarDeCeroInline({ onBorradoExitoso }) {
                             />
                         </div>
 
-                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                        <div className="rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                             <ShieldAlert className="mr-1 inline-block h-3.5 w-3.5 text-slate-400" />
                             Los usuarios y la auditoría <span className="font-semibold">siempre quedan</span>.
                         </div>
 
                         <div className="flex flex-col items-start gap-2">
-                            <button
+                            {/* Antes relleno solido de rojo — P-14 lo prohibe explicitamente incluso
+                                para esta accion (la confirmacion real es la frase + contraseña +
+                                el dialogo de showConfirm, no el color del boton). */}
+                            <Button
                                 type="button"
+                                variant="destructive"
                                 onClick={handleSubmit}
                                 disabled={!canSubmit}
                                 data-testid="danger-wipe-submit"
-                                className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
+                                className="gap-2"
                             >
-                                {ejecutando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                {ejecutando ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
                                 {ejecutando ? "Borrando..." : "Empezar de cero..."}
-                            </button>
+                            </Button>
                             {motivoSubmitDeshabilitado && (
                                 <p className="text-xs font-medium text-amber-600 dark:text-amber-400" data-testid="danger-wipe-submit-hint">
                                     {motivoSubmitDeshabilitado}

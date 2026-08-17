@@ -125,6 +125,9 @@ export default function Layout({ children, onLogout, isAdmin }) {
                             </Button>
 
                             <div className="md:hidden flex items-center gap-2">
+                                {/* Version mobile del mismo isotipo "MT" del header desktop mas abajo —
+                                    misma decision pendiente de Gaston (guia de rollout 2026-08-16), no
+                                    se toca. */}
                                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
                                     <span className="text-sm font-bold">MT</span>
                                 </div>
@@ -150,11 +153,11 @@ export default function Layout({ children, onLogout, isAdmin }) {
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={() => setSearchOpen(true)}
-                                className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700"
+                                className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400 rounded-[10px] hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700"
                             >
                                 <Search className="h-3.5 w-3.5" />
                                 <span className="text-xs">Buscar...</span>
-                                <kbd className="ml-2 text-[10px] font-mono px-1.5 py-0.5 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-600">Ctrl+K</kbd>
+                                <kbd className="ml-2 text-[11px] font-mono px-1.5 py-0.5 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-600">Ctrl+K</kbd>
                             </button>
                             <Button
                                 variant="ghost"

@@ -5,6 +5,7 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { formatDateTime } from "../../../lib/utils";
 import { BackupRow } from "./BackupRow";
 import { EmpezarDeCeroInline } from "./EmpezarDeCeroInline";
+import { Button } from "../../../components/ui/button";
 
 /**
  * Solapa "Copias de seguridad" de Administración (rediseño 2026-07-30, reemplaza el viejo
@@ -61,8 +62,8 @@ export default function CopiasDeSeguridadTab() {
     return (
         <div className="space-y-6">
             <div className="flex items-start gap-3">
-                <div className="rounded-xl bg-indigo-50 p-2 dark:bg-indigo-950/40">
-                    <ShieldCheck className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                <div className="rounded-[10px] bg-blue-50 p-2 dark:bg-blue-950/40">
+                    <ShieldCheck className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                 </div>
                 <div>
                     <h2 className="text-lg font-bold text-slate-900 dark:text-white">Copias de seguridad</h2>
@@ -79,7 +80,7 @@ export default function CopiasDeSeguridadTab() {
                 <div
                     role="status"
                     data-testid="restore-total-banner-exito"
-                    className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                    className="flex items-start gap-3 rounded-[10px] border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
                 >
                     <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
                     <div className="flex-1">
@@ -108,7 +109,7 @@ export default function CopiasDeSeguridadTab() {
                 </div>
             )}
 
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
                 {loadingBackups ? (
                     <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
                         <Loader2 className="h-5 w-5 animate-spin" />
@@ -120,15 +121,17 @@ export default function CopiasDeSeguridadTab() {
                         className="flex items-center justify-between gap-3 px-6 py-6 text-sm text-rose-800 dark:text-rose-200"
                     >
                         <span>{backupsError}</span>
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={cargarBackups}
                             data-testid="backups-retry"
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                            className="shrink-0 gap-1.5 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
                         >
-                            <RotateCcw className="h-3.5 w-3.5" />
+                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
                             Probar de nuevo
-                        </button>
+                        </Button>
                     </div>
                 ) : backups.length === 0 ? (
                     <div className="flex flex-col items-center gap-2 px-6 py-10 text-center text-slate-500 dark:text-slate-400">

@@ -171,9 +171,9 @@ export default function OperationalFinanceSettingsTab() {
   return (
     <>
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
-          <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+          <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-[10px] text-blue-600 dark:text-blue-400">
             <Settings2 className="h-5 w-5" />
           </div>
           <div>
@@ -184,7 +184,7 @@ export default function OperationalFinanceSettingsTab() {
 
         <div className="p-6 space-y-8">
           <div className="grid gap-6 md:grid-cols-2">
-            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
+            <label className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
               <input
                 type="checkbox"
                 checked={form.requireFullPaymentForOperativeStatus}
@@ -200,7 +200,7 @@ export default function OperationalFinanceSettingsTab() {
               </div>
             </label>
 
-            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
+            <label className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
               <input
                 type="checkbox"
                 checked={form.requireFullPaymentForVoucher}
@@ -233,7 +233,7 @@ export default function OperationalFinanceSettingsTab() {
                 Solo afecta el modal CreateInvoice (muestra/oculta el selector ARS/USD).
                 Antes de prender esto en producción hay que tener homologación ARCA aprobada
                 y confirmación del contador. El backend también valida con su propio flag. */}
-            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
+            <label className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
               <input
                 type="checkbox"
                 checked={form.enableMultiCurrencyInvoicing}
@@ -276,7 +276,7 @@ export default function OperationalFinanceSettingsTab() {
                 Con ON, la campanita avisa unos días antes de que arranque cada reserva.
                 El backend calcula desde la primera fecha de inicio de los servicios (firstStartDate). */}
             <div
-              className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4"
+              className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 space-y-4"
               aria-label="Avisos de próximos inicios"
             >
               <label className="flex items-start gap-3">
@@ -315,7 +315,7 @@ export default function OperationalFinanceSettingsTab() {
                   max="60"
                   value={form.serviceDeadlineAlertDays}
                   onChange={(event) => updateField("serviceDeadlineAlertDays", event.target.value)}
-                  className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
+                  className="w-full rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
                   disabled={loading}
                   data-testid="input-deadline-alert-days"
                 />
@@ -325,7 +325,7 @@ export default function OperationalFinanceSettingsTab() {
             {/* Semáforo de DNI vencido para cabotaje (2026-08-03, spec firmada D).
                 Con ON, la solapa Pasajeros de la reserva marca en rojo al pasajero cuyo DNI
                 se vence antes de un viaje Nacional. Solo avisa; nunca frena nada (P-11). */}
-            <label className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
+            <label className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 flex items-start gap-3">
               <input
                 type="checkbox"
                 checked={form.enableDomesticDniExpiryAlert}
@@ -354,7 +354,7 @@ export default function OperationalFinanceSettingsTab() {
                 acredita al vendedor que la cargó, cuando se cobra. El % se configura acá.
                 La pantalla de consulta (solo admin) está en el menú lateral → "Comisiones". */}
             <div
-              className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4"
+              className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 space-y-4"
               aria-label="Comisiones a vendedores"
             >
               <label className="flex items-start gap-3">
@@ -369,7 +369,7 @@ export default function OperationalFinanceSettingsTab() {
                 />
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
-                    <TrendingUp className="w-4 h-4 text-indigo-500" aria-hidden="true" />
+                    <TrendingUp className="w-4 h-4 text-blue-500" aria-hidden="true" />
                     Comisiones a vendedores
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -397,7 +397,7 @@ export default function OperationalFinanceSettingsTab() {
                     step="0.1"
                     value={form.sellerCommissionPercent}
                     onChange={(event) => updateField("sellerCommissionPercent", event.target.value)}
-                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 pr-8 text-sm"
+                    className="w-full rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 pr-8 text-sm"
                     disabled={loading}
                     data-testid="input-seller-commission-percent"
                     aria-describedby="seller-commission-percent-hint"
@@ -428,7 +428,7 @@ export default function OperationalFinanceSettingsTab() {
               Spec: guia-ux-gaston.md sección "TEMA B: Configuración de caducidad" (2026-06-24).
               ================================================================ */}
           <div
-            className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4"
+            className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 space-y-4"
             aria-label="Caducidad de presupuestos y cotizaciones"
           >
             <div>
@@ -455,7 +455,7 @@ export default function OperationalFinanceSettingsTab() {
                 max="3650"
                 value={form.quotationExpirationDays}
                 onChange={(event) => updateField("quotationExpirationDays", event.target.value)}
-                className="w-24 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
+                className="w-24 rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
                 disabled={loading}
                 data-testid="input-quotation-expiration-days"
               />
@@ -478,7 +478,7 @@ export default function OperationalFinanceSettingsTab() {
                 max="3650"
                 value={form.budgetExpirationDays}
                 onChange={(event) => updateField("budgetExpirationDays", event.target.value)}
-                className="w-24 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
+                className="w-24 rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
                 disabled={loading}
                 data-testid="input-budget-expiration-days"
               />
@@ -496,7 +496,7 @@ export default function OperationalFinanceSettingsTab() {
               (campo opcional, ver la solapa "Datos" de cada operador).
               ================================================================ */}
           <div
-            className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3"
+            className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 space-y-3"
             aria-label="Ajuste por el dólar en las multas"
           >
             <div>
@@ -530,7 +530,7 @@ export default function OperationalFinanceSettingsTab() {
               Se muestra separado del resto con estilo de advertencia para que
               sea imposible activarlo "de casualidad".
               ================================================================ */}
-          <div className="rounded-2xl border border-red-200 dark:border-red-900/40 overflow-hidden">
+          <div className="rounded-[14px] border border-red-200 dark:border-red-900/40 overflow-hidden">
             <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 flex items-center gap-2 border-b border-red-200 dark:border-red-900/40">
               <FileWarning className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0" aria-hidden="true" />
               <span className="text-sm font-semibold text-red-800 dark:text-red-300">
@@ -574,7 +574,7 @@ export default function OperationalFinanceSettingsTab() {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
                 <ShieldAlert className="w-4 h-4 text-amber-500" />
                 Facturar con deuda pendiente
@@ -585,7 +585,7 @@ export default function OperationalFinanceSettingsTab() {
               <select
                 value={form.afipInvoiceControlMode}
                 onChange={(event) => updateField("afipInvoiceControlMode", event.target.value)}
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
+                className="w-full rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
                 disabled={loading}
               >
                 <option value="FullPaymentRequired">Exigir pago total para facturar</option>
@@ -599,7 +599,7 @@ export default function OperationalFinanceSettingsTab() {
                 abajo (días para el aviso de "Debe — no viaja", ya firmado el 2026-06-21 y que
                 no se toca): quedan separados a propósito, con etiquetas bien distintas, para
                 que no se lean como la misma cosa (detalle abierto D1 de la spec). */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-800 p-4 space-y-4">
               <div>
                 <p className="text-sm font-semibold text-slate-900 dark:text-white">Cobranzas</p>
               </div>
@@ -615,7 +615,7 @@ export default function OperationalFinanceSettingsTab() {
                   max="365"
                   value={form.fullPaymentDueDaysBeforeDeparture}
                   onChange={(event) => updateField("fullPaymentDueDaysBeforeDeparture", event.target.value)}
-                  className="w-20 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
+                  className="w-20 rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
                   disabled={loading}
                   data-testid="input-full-payment-due-days"
                 />
@@ -649,7 +649,7 @@ export default function OperationalFinanceSettingsTab() {
                     max="60"
                     value={form.upcomingUnpaidReservationAlertDays}
                     onChange={(event) => updateField("upcomingUnpaidReservationAlertDays", event.target.value)}
-                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
+                    className="w-full rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm"
                     disabled={loading}
                   />
                 </div>
@@ -657,7 +657,7 @@ export default function OperationalFinanceSettingsTab() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 p-4 text-sm text-amber-900 dark:text-amber-200">
+          <div className="rounded-[14px] border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 p-4 text-sm text-amber-900 dark:text-amber-200">
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" />
               <div className="space-y-1">
@@ -671,7 +671,7 @@ export default function OperationalFinanceSettingsTab() {
         </div>
 
         <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-          <Button type="submit" disabled={saving || loading || loadError} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-6">
+          <Button type="submit" disabled={saving || loading || loadError} className="px-6">
             {saving ? "Guardando..." : "Guardar configuración"}
           </Button>
         </div>
@@ -687,8 +687,6 @@ export default function OperationalFinanceSettingsTab() {
         (el más seguro) — así si el admin apretó Enter por error, la
         acción predeterminada es NO activar.
 
-        No usamos el componente Button para el botón rojo porque queremos
-        type="button" explícito y no heredar estilos del form padre.
         ================================================================ */}
     {showDebitNoteConfirmDialog && (
       <div
@@ -698,7 +696,7 @@ export default function OperationalFinanceSettingsTab() {
         aria-labelledby="debit-note-dialog-title"
         aria-describedby="debit-note-dialog-desc"
       >
-        <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+        <div className="relative bg-white dark:bg-slate-900 rounded-[14px] shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
           {/* Botón de cierre en la esquina — alternativa de escape sin teclado */}
           <button
             type="button"
@@ -710,7 +708,7 @@ export default function OperationalFinanceSettingsTab() {
           </button>
 
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg">
+            <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-[10px]">
               <FileWarning className="w-6 h-6 text-red-600 dark:text-red-400" aria-hidden="true" />
             </div>
             <h2
@@ -730,7 +728,7 @@ export default function OperationalFinanceSettingsTab() {
               Son comprobantes fiscales de verdad: una vez emitidos, <strong>no se pueden borrar</strong>{" "}
               y quedan en el historial de tu agencia.
             </p>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-4 py-3 text-amber-800 dark:text-amber-200 text-xs">
+            <div className="rounded-[10px] border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-4 py-3 text-amber-800 dark:text-amber-200 text-xs">
               <p>
                 Activalo solo cuando tengas todo verificado con tu contador. Si todavía falta algún
                 paso, el sistema no te va a dejar guardar y te lo va a avisar — sin emitir nada.
@@ -740,22 +738,26 @@ export default function OperationalFinanceSettingsTab() {
 
           <div className="flex gap-3 pt-2">
             {/* Botón cancelar primero: es la acción más segura y recibe el foco inicial */}
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={handleDebitNoteDialogCancelled}
               autoFocus
-              className="flex-1 rounded-xl border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              className="flex-1"
             >
               Cancelar, no activar
-            </button>
-            <button
+            </Button>
+            {/* P-14: destructiva discreta, JAMAS relleno solido de rojo — esta ventana
+                YA ES la confirmacion, no hace falta gritar mas fuerte que el aviso. */}
+            <Button
               type="button"
+              variant="destructive"
               onClick={handleDebitNoteConfirmed}
-              className="flex-1 rounded-xl bg-red-600 hover:bg-red-700 px-4 py-2 text-sm font-medium text-white"
+              className="flex-1"
               data-testid="confirm-debit-note-activation"
             >
               Sí, activar
-            </button>
+            </Button>
           </div>
         </div>
       </div>

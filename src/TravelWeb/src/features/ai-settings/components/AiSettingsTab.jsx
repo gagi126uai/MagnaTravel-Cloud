@@ -18,6 +18,7 @@ import { AiProviderRadioList } from "./AiProviderRadioList";
 import { AiApiKeyField } from "./AiApiKeyField";
 import { AiAdvancedSettings } from "./AiAdvancedSettings";
 import { AiTestConnectionRow } from "./AiTestConnectionRow";
+import { Button } from "../../../components/ui/button";
 
 const MENSAJE_ERROR_CARGA = "No se pudo cargar la configuración de inteligencia artificial.";
 const MENSAJE_ERROR_PRUEBA_GENERICO = "No se pudo probar la conexión. Intentá de nuevo.";
@@ -272,9 +273,9 @@ export default function AiSettingsTab() {
   if (modoPantalla === AI_SCREEN_MODE.LOADING) {
     return (
       <div className="max-w-3xl mx-auto space-y-4 animate-pulse" data-testid="ai-settings-loading">
-        <div className="h-10 rounded-xl bg-slate-100 dark:bg-slate-800" />
-        <div className="h-16 rounded-2xl bg-slate-100 dark:bg-slate-800" />
-        <div className="h-64 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+        <div className="h-10 rounded-[10px] bg-slate-100 dark:bg-slate-800" />
+        <div className="h-16 rounded-[14px] bg-slate-100 dark:bg-slate-800" />
+        <div className="h-64 rounded-[14px] bg-slate-100 dark:bg-slate-800" />
       </div>
     );
   }
@@ -282,17 +283,19 @@ export default function AiSettingsTab() {
   if (modoPantalla === AI_SCREEN_MODE.LOAD_ERROR) {
     return (
       <div className="max-w-3xl mx-auto" data-testid="ai-settings-load-error">
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-10 text-center">
+        <div className="flex flex-col items-center gap-3 rounded-[14px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-10 text-center">
           <p className="text-sm text-rose-600 dark:text-rose-400">{loadError}</p>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={cargarConfiguracion}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="gap-1.5"
             data-testid="ai-settings-load-retry"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
             Reintentar
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -300,9 +303,12 @@ export default function AiSettingsTab() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-6">
+      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-6">
         <div>
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
+            {/* E.7 (IA discreta, firmado): el icono de la IA queda tal cual, sin sumarse al
+                barrido de indigo->azul boleto — no se "empuja" la IA con el color de accion
+                de toda la app. */}
             <Sparkles className="h-6 w-6 text-indigo-600" />
             Inteligencia artificial
           </h2>
@@ -363,30 +369,25 @@ export default function AiSettingsTab() {
         {saveError && (
           <div
             role="alert"
-            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/10 dark:text-rose-300"
+            className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/10 dark:text-rose-300"
           >
             {saveError}
           </div>
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={handleCancelar}
-            disabled={saving}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 px-5 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-          >
+          <Button type="button" variant="outline" onClick={handleCancelar} disabled={saving}>
             Cancelar
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={handleGuardar}
             disabled={debeDeshabilitarBotonGuardar({ hasApiKey: Boolean(settings?.hasApiKey), claveTipeada: apiKeyInput, guardando: saving })}
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-6 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
+            className="gap-2"
           >
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {saving && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {saving ? "Guardando…" : "Guardar"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -114,7 +114,7 @@ export default function SearchPalette({ isOpen, onClose }) {
 
             {/* Modal */}
             <div className="relative flex items-start justify-center pt-4 sm:pt-[15vh] h-full sm:h-auto">
-                <div className="w-full max-w-lg mx-2 sm:mx-4 bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[80vh] sm:max-h-auto">
+                <div className="w-full max-w-lg mx-2 sm:mx-4 bg-white dark:bg-slate-900 rounded-[14px] shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[80vh] sm:max-h-auto">
                     {/* Search Input */}
                     <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
                         <Search className="h-5 w-5 text-slate-400 shrink-0" />
@@ -127,12 +127,12 @@ export default function SearchPalette({ isOpen, onClose }) {
                             className="flex-1 bg-transparent text-base sm:text-sm outline-none placeholder:text-slate-400 text-slate-900 dark:text-white"
                             autoFocus
                         />
-                        {loading && <Loader2 className="h-4 w-4 animate-spin text-indigo-500 shrink-0" />}
+                        {loading && <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />}
                         {/* Close button for mobile */}
                         <button onClick={onClose} className="sm:hidden text-slate-400">
                             <X className="h-5 w-5" />
                         </button>
-                        <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">
+                        <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[11px] font-mono font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">
                             ESC
                         </kbd>
                     </div>
@@ -142,17 +142,21 @@ export default function SearchPalette({ isOpen, onClose }) {
                         {/* Reservas */}
                         {(results?.reservas?.length > 0 || results?.files?.length > 0) && (
                             <div className="p-2">
-                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                                     Reservas
                                 </div>
                                 {(results.reservas || results.files).map((reserva) => (
                                     <button
                                         key={`reserva-${getPublicId(reserva)}`}
                                         onClick={() => handleSelect("reserva", getPublicId(reserva))}
-                                        className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors text-left group"
+                                        // Categoria "Reservas" en sky (no azul boleto ni el blue-100 que ya
+                                        // usa la categoria "Clientes" mas abajo, mismo dropdown a la vista):
+                                        // cada tipo de resultado necesita su propio tono para distinguirse
+                                        // de un vistazo (mismo criterio que AuditPage con "Login").
+                                        className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-[10px] hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-colors text-left group"
                                     >
-                                        <div className="h-8 w-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center shrink-0">
-                                            <FolderOpen className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                                        <div className="h-8 w-8 rounded-full bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center shrink-0">
+                                            <FolderOpen className="h-4 w-4 text-sky-600 dark:text-sky-400" />
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <div className="text-sm font-medium text-slate-900 dark:text-white truncate">{reserva.name}</div>
@@ -161,7 +165,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                                 {reserva.payerName && <span className="truncate">· {reserva.payerName}</span>}
                                             </div>
                                         </div>
-                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${reserva.status === 'Traveling' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${reserva.status === 'Traveling' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
                                             reserva.status === 'Confirmed' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
                                                 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                                             }`}>
@@ -172,7 +176,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                 {/* Fix #39: aviso suave cuando el backend recortó a "lo del usuario"
                                     (sin reservas.view_all) — señal estructurada, nunca deducida. */}
                                 {debeMostrarAvisoAlcancePropio(results?.scope, "reservas") && (
-                                    <p className="px-3 pt-1 text-[10px] text-slate-400">{AVISO_ALCANCE_PROPIO}</p>
+                                    <p className="px-3 pt-1 text-[11px] text-slate-400">{AVISO_ALCANCE_PROPIO}</p>
                                 )}
                             </div>
                         )}
@@ -180,14 +184,14 @@ export default function SearchPalette({ isOpen, onClose }) {
                         {/* Customers */}
                         {results?.customers?.length > 0 && (
                             <div className="p-2 border-t border-slate-100 dark:border-slate-800">
-                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                                     Clientes
                                 </div>
                                 {results.customers.map((cust) => (
                                     <button
                                         key={`cust-${getPublicId(cust)}`}
                                         onClick={() => handleSelect("customer", getPublicId(cust))}
-                                        className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-left"
+                                        className="w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-[10px] hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-left"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
                                             <User className="h-4 w-4 text-blue-600 dark:text-blue-400" />
@@ -206,13 +210,13 @@ export default function SearchPalette({ isOpen, onClose }) {
                         {/* Payments */}
                         {results?.payments?.length > 0 && (
                             <div className="p-2 border-t border-slate-100 dark:border-slate-800">
-                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                                     Pagos
                                 </div>
                                 {results.payments.map((pay) => (
                                     <div
                                         key={`pay-${getPublicId(pay)}`}
-                                        className="flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                                        className="flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-[10px] hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                                     >
                                         <div className="h-8 w-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
                                             <CreditCard className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
@@ -234,7 +238,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                                     </div>
                                 ))}
                                 {debeMostrarAvisoAlcancePropio(results?.scope, "payments") && (
-                                    <p className="px-3 pt-1 text-[10px] text-slate-400">{AVISO_ALCANCE_PROPIO}</p>
+                                    <p className="px-3 pt-1 text-[11px] text-slate-400">{AVISO_ALCANCE_PROPIO}</p>
                                 )}
                             </div>
                         )}
@@ -266,7 +270,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                     </div>
 
                     {/* Footer - Hidden on Mobile */}
-                    <div className="hidden sm:flex px-4 py-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 items-center gap-4 text-[10px] text-slate-400 shrink-0">
+                    <div className="hidden sm:flex px-4 py-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 items-center gap-4 text-[11px] text-slate-400 shrink-0">
                         <span className="flex items-center gap-1">
                             <kbd className="px-1 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 font-mono">↑↓</kbd>
                             navegar

@@ -251,11 +251,11 @@ function SidebarModule({ title, isOpen, onToggle, hasVisibleItems, children }) {
         className={cn(
           "flex w-full items-center justify-between",
           "mt-3 px-3 py-1",
-          "text-[10px] font-bold tracking-widest uppercase",
+          "text-[11px] font-bold tracking-widest uppercase",
           "text-slate-400 dark:text-slate-500",
           "hover:text-slate-600 dark:hover:text-slate-300",
           "rounded-md transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         )}
       >
         <span>{title}</span>
@@ -356,11 +356,11 @@ export default function Sidebar({ onLogout, className, collapsed, onCloseMobile 
         data-testid={`sidebar-link-${link.to.replace(/\//g, "-").replace(/^-/, "")}`}
         className={({ isActive }) =>
           cn(
-            "group flex items-center rounded-lg text-sm font-medium transition-all",
+            "group flex items-center rounded-[10px] text-sm font-medium transition-all",
             isCollapsed ? "justify-center p-3" : "gap-3 px-3 py-2.5",
             "hover:bg-slate-100 dark:hover:bg-slate-800",
             isActive
-              ? "bg-indigo-50 text-indigo-700 shadow-sm dark:bg-indigo-900/20 dark:text-indigo-300"
+              ? "bg-primary/10 text-primary shadow-sm"
               : "text-slate-600 dark:text-slate-400"
           )
         }
@@ -371,7 +371,7 @@ export default function Sidebar({ onLogout, className, collapsed, onCloseMobile 
 
         {/* Badge numérico en modo expandido */}
         {!isCollapsed && badge > 0 && (
-          <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+          <span className="bg-red-500 text-white text-[11px] font-bold px-1.5 py-0.5 rounded-full">
             {badge > 99 ? "99+" : badge}
           </span>
         )}
@@ -395,6 +395,8 @@ export default function Sidebar({ onLogout, className, collapsed, onCloseMobile 
         )}
       >
         <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+          {/* Isotipo "MT": tercera instancia de la misma marca (ver Layout.jsx topbar
+              desktop/mobile) — misma decision pendiente de Gaston, no se toca. */}
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-md shadow-indigo-500/20 flex-shrink-0">
             <span className="text-xl font-bold">MT</span>
           </div>
@@ -410,7 +412,7 @@ export default function Sidebar({ onLogout, className, collapsed, onCloseMobile 
         {onCloseMobile && !collapsed && (
           <button
             onClick={onCloseMobile}
-            className="md:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="md:hidden p-2 rounded-[10px] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             type="button"
             aria-label="Cerrar menú"
           >
@@ -474,7 +476,7 @@ export default function Sidebar({ onLogout, className, collapsed, onCloseMobile 
           onClick={onLogout}
           title={collapsed ? "Cerrar sesión" : undefined}
           className={cn(
-            "flex w-full items-center rounded-lg text-sm font-medium text-slate-500 transition-all",
+            "flex w-full items-center rounded-[10px] text-sm font-medium text-slate-500 transition-all",
             "hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20",
             collapsed ? "justify-center p-3" : "gap-3 px-3 py-2.5"
           )}

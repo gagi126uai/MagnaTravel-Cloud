@@ -3,6 +3,7 @@ import { api } from "../api";
 import { showSuccess, showError } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
 import { Upload, CheckCircle2, AlertCircle, Key, FileKey, ShieldCheck, RefreshCw } from "lucide-react";
+import { Button } from "./ui/button";
 
 export default function AfipSettingsTab() {
     const [loading, setLoading] = useState(false);
@@ -122,36 +123,39 @@ export default function AfipSettingsTab() {
     return (
         <div className="space-y-6 max-w-5xl">
             {/* Header / Status */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-[14px] border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
                 <div>
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                        <ShieldCheck className="h-5 w-5 text-indigo-600" />
+                        <ShieldCheck className="h-5 w-5 text-blue-600" />
                         Estado de Conexión
                     </h3>
                     <p className="text-sm text-slate-500 mt-1">Verifica la conexión con los servidores de AFIP en el entorno actual ({form.isProduction ? "Producción" : "Homologación"})</p>
                 </div>
                 <div className="flex items-center gap-4">
-                    <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium ${status?.includes("Online")
+                    <div className={`flex items-center gap-2 px-4 py-2 rounded-[10px] text-sm font-medium ${status?.includes("Online")
                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                         : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
                         }`}>
                         {status?.includes("Online") ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
                         {status}
                     </div>
-                    <button
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
                         onClick={checkStatus}
                         disabled={checkingStatus}
-                        className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                         title="Verificar Estado"
+                        aria-label="Verificar estado de conexión"
                     >
-                        <RefreshCw className={`h-5 w-5 ${checkingStatus ? "animate-spin" : ""}`} />
-                    </button>
+                        <RefreshCw className={`h-5 w-5 ${checkingStatus ? "animate-spin" : ""}`} aria-hidden="true" />
+                    </Button>
                 </div>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Configuración General */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
+                <div className="rounded-[14px] border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/50">
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Datos Fiscales Generales</h3>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                         <div>
@@ -159,7 +163,7 @@ export default function AfipSettingsTab() {
                             <input
                                 type="number"
                                 required
-                                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                                 value={form.cuit}
                                 onChange={e => setForm({ ...form, cuit: e.target.value })}
                                 placeholder="20123456789"
@@ -170,7 +174,7 @@ export default function AfipSettingsTab() {
                             <input
                                 type="number"
                                 required
-                                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                                 value={form.puntoDeVenta}
                                 onChange={e => setForm({ ...form, puntoDeVenta: e.target.value })}
                             />
@@ -178,7 +182,7 @@ export default function AfipSettingsTab() {
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Condición Fiscal</label>
                             <select
-                                className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                                 value={form.taxCondition}
                                 onChange={e => setForm({ ...form, taxCondition: e.target.value })}
                             >
@@ -187,10 +191,14 @@ export default function AfipSettingsTab() {
                                 <option value="Exento">Exento</option>
                             </select>
                         </div>
-                        <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50">
+                        <div className="flex items-center justify-between p-3 rounded-[10px] border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50">
                             <div>
                                 <span className="block text-xs font-semibold uppercase text-slate-500">Entorno Activo</span>
-                                <span className={`text-sm font-bold ${form.isProduction ? "text-amber-600" : "text-indigo-600"}`}>
+                                {/* "Homologación" en sky (no azul boleto): necesita distinguirse de un
+                                    vistazo de "Producción" (ambar = plata real, factura legal — regla
+                                    "pruebas SOLO homologación"). El indigo se retira, pero la señal de
+                                    seguridad entre los dos entornos no puede perderse. */}
+                                <span className={`text-sm font-bold ${form.isProduction ? "text-amber-600" : "text-sky-600"}`}>
                                     {form.isProduction ? "PRODUCCIÓN" : "HOMOLOGACIÓN"}
                                 </span>
                             </div>
@@ -201,7 +209,7 @@ export default function AfipSettingsTab() {
                                     checked={form.isProduction}
                                     onChange={e => setForm({ ...form, isProduction: e.target.checked })}
                                 />
-                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-ring rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
                             </label>
                         </div>
                     </div>
@@ -209,11 +217,14 @@ export default function AfipSettingsTab() {
 
                 {/* Certificados */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Homologación */}
-                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-6 dark:border-indigo-900/30 dark:bg-indigo-900/10">
+                    {/* Homologación — theme sky (no azul boleto): mismo criterio que el label de
+                        "Entorno Activo" de arriba, para que se distinga de un vistazo del panel
+                        de Producción (ambar) de al lado. Es una señal de seguridad real (subir el
+                        PFX de pruebas al lugar equivocado no es un detalle estetico), no decorativa. */}
+                    <div className="rounded-[14px] border border-sky-100 bg-sky-50/30 p-6 dark:border-sky-900/30 dark:bg-sky-900/10">
                         <div className="flex items-center gap-3 mb-4">
-                            <div className="p-2 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg">
-                                <FileKey className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                            <div className="p-2 bg-sky-100 dark:bg-sky-900/50 rounded-[10px]">
+                                <FileKey className="h-5 w-5 text-sky-600 dark:text-sky-400" />
                             </div>
                             <div>
                                 <h4 className="font-bold text-slate-900 dark:text-white">Certificado Homologación</h4>
@@ -222,11 +233,11 @@ export default function AfipSettingsTab() {
                         </div>
 
                         <div className="space-y-4">
-                            <div className="border-2 border-dashed border-indigo-200 dark:border-indigo-800 rounded-xl p-4 flex flex-col items-center justify-center bg-white dark:bg-slate-900/50 hover:bg-slate-50 transition-colors">
+                            <div className="border-2 border-dashed border-sky-200 dark:border-sky-800 rounded-[10px] p-4 flex flex-col items-center justify-center bg-white dark:bg-slate-900/50 hover:bg-slate-50 transition-colors">
                                 <p className="text-xs text-slate-600 dark:text-slate-300 mb-3 text-center line-clamp-1">
                                     {certificateName || "Sin certificado de pruebas"}
                                 </p>
-                                <label className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500 shadow-sm transition-all active:scale-95">
+                                <label className="cursor-pointer rounded-[10px] bg-sky-600 px-4 py-2 text-xs font-medium text-white hover:bg-sky-500 shadow-sm transition-all active:scale-95">
                                     Cargar PFX Pruebas
                                     <input type="file" accept=".pfx" className="hidden" onChange={(e) => handleFileChange(e, false)} />
                                 </label>
@@ -240,7 +251,7 @@ export default function AfipSettingsTab() {
                                     </div>
                                     <input
                                         type="password"
-                                        className="block w-full rounded-xl border border-slate-200 bg-white pl-9 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                        className="block w-full rounded-[10px] border border-slate-200 bg-white pl-9 px-3 py-2 text-sm focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                                         value={form.certificatePassword}
                                         onChange={e => setForm({ ...form, certificatePassword: e.target.value })}
                                         placeholder="Solo para cambiar"
@@ -251,9 +262,9 @@ export default function AfipSettingsTab() {
                     </div>
 
                     {/* Producción */}
-                    <div className="rounded-2xl border border-amber-100 bg-amber-50/30 p-6 dark:border-amber-900/30 dark:bg-amber-900/10">
+                    <div className="rounded-[14px] border border-amber-100 bg-amber-50/30 p-6 dark:border-amber-900/30 dark:bg-amber-900/10">
                         <div className="flex items-center gap-3 mb-4">
-                            <div className="p-2 bg-amber-100 dark:bg-amber-900/50 rounded-lg">
+                            <div className="p-2 bg-amber-100 dark:bg-amber-900/50 rounded-[10px]">
                                 <ShieldCheck className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                             </div>
                             <div>
@@ -263,11 +274,11 @@ export default function AfipSettingsTab() {
                         </div>
 
                         <div className="space-y-4">
-                            <div className="border-2 border-dashed border-amber-200 dark:border-amber-800 rounded-xl p-4 flex flex-col items-center justify-center bg-white dark:bg-slate-900/50 hover:bg-slate-100/50 transition-colors">
+                            <div className="border-2 border-dashed border-amber-200 dark:border-amber-800 rounded-[10px] p-4 flex flex-col items-center justify-center bg-white dark:bg-slate-900/50 hover:bg-slate-100/50 transition-colors">
                                 <p className="text-xs text-slate-600 dark:text-slate-300 mb-3 text-center line-clamp-1">
                                     {prodCertificateName || "Sin certificado real"}
                                 </p>
-                                <label className="cursor-pointer rounded-lg bg-amber-600 px-4 py-2 text-xs font-medium text-white hover:bg-amber-500 shadow-sm transition-all active:scale-95">
+                                <label className="cursor-pointer rounded-[10px] bg-amber-600 px-4 py-2 text-xs font-medium text-white hover:bg-amber-500 shadow-sm transition-all active:scale-95">
                                     Cargar PFX Real
                                     <input type="file" accept=".pfx" className="hidden" onChange={(e) => handleFileChange(e, true)} />
                                 </label>
@@ -281,7 +292,7 @@ export default function AfipSettingsTab() {
                                     </div>
                                     <input
                                         type="password"
-                                        className="block w-full rounded-xl border border-slate-200 bg-white pl-9 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                                        className="block w-full rounded-[10px] border border-slate-200 bg-white pl-9 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                                         value={form.prodCertificatePassword}
                                         onChange={e => setForm({ ...form, prodCertificatePassword: e.target.value })}
                                         placeholder="Solo para cambiar"
@@ -293,20 +304,19 @@ export default function AfipSettingsTab() {
                 </div>
 
                 <div className="flex justify-end pt-2">
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="flex items-center gap-2 rounded-2xl bg-slate-900 px-10 py-3 text-sm font-bold text-white shadow-xl hover:bg-slate-800 disabled:opacity-50 transition-all active:scale-95 dark:bg-indigo-600 dark:hover:bg-indigo-500"
-                    >
+                    {/* Antes mezclaba slate-900 en claro con indigo-600 en oscuro (dos colores
+                        de accion distintos segun el tema) — pasa al molde compartido, que ya
+                        resuelve claro/oscuro con el mismo azul boleto (B.1). */}
+                    <Button type="submit" disabled={loading} className="gap-2 px-10 py-3">
                         {loading ? (
-                            <><RefreshCw className="h-4 w-4 animate-spin" /> Guardando...</>
+                            <><RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Guardando...</>
                         ) : (
                             <>
-                                <Upload className="h-4 w-4" />
+                                <Upload className="h-4 w-4" aria-hidden="true" />
                                 Guardar Toda la Configuración
                             </>
                         )}
-                    </button>
+                    </Button>
                 </div>
             </form>
         </div>

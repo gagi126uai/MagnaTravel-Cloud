@@ -40,7 +40,7 @@ const BLOQUES_CONDICIONES = [
 ];
 
 const INPUT_CLASSNAME =
-  "flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50";
+  "flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50";
 
 export default function BudgetPdfSettingsTab() {
   // ─── Card 1: Identidad del PDF ────────────────────────────────────────────
@@ -271,9 +271,9 @@ export default function BudgetPdfSettingsTab() {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       {/* Card 1 — Identidad del PDF */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden h-fit">
+      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden h-fit">
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
-          <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+          <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-[10px] text-blue-600 dark:text-blue-400">
             <ImageIcon className="h-5 w-5" />
           </div>
           <div>
@@ -288,13 +288,13 @@ export default function BudgetPdfSettingsTab() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Logo</label>
             <div className="flex items-center gap-4">
               <div
-                className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 overflow-hidden"
+                className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[10px] border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 overflow-hidden"
                 data-testid="miniatura-logo-agencia"
               >
                 {logoEstado === "con-logo" && logoUrl ? (
                   <img src={logoUrl} alt="Logo de la agencia" className="h-full w-full object-contain" />
                 ) : (
-                  <span className="text-[10px] text-slate-400 text-center px-1">
+                  <span className="text-[11px] text-slate-400 text-center px-1">
                     {logoEstado === "cargando" ? "Cargando…" : "Sin logo cargado"}
                   </span>
                 )}
@@ -379,9 +379,9 @@ export default function BudgetPdfSettingsTab() {
       </div>
 
       {/* Card 2 — Condiciones que van en el PDF */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden h-fit">
+      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden h-fit">
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
-          <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+          <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-[10px] text-blue-600 dark:text-blue-400">
             <FileText className="h-5 w-5" />
           </div>
           <div>
@@ -394,7 +394,7 @@ export default function BudgetPdfSettingsTab() {
           {bloques.map((bloque) => {
             const estaAbierto = bloqueAbiertoKind === bloque.kind;
             return (
-              <div key={bloque.kind} className="rounded-lg border border-slate-200 dark:border-slate-800">
+              <div key={bloque.kind} className="rounded-[10px] border border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setBloqueAbiertoKind(estaAbierto ? null : bloque.kind)}
@@ -408,7 +408,7 @@ export default function BudgetPdfSettingsTab() {
                 {estaAbierto && (
                   <div className="px-4 pb-4 space-y-2">
                     <textarea
-                      className="w-full rounded-lg border border-slate-300 dark:border-slate-700 dark:bg-slate-950 text-sm p-3 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      className="w-full rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 text-sm p-3 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
                       value={bloque.text || ""}
                       onChange={(event) => actualizarTextoBloque(bloque.kind, event.target.value)}
                       disabled={cargandoBloques}
@@ -420,7 +420,7 @@ export default function BudgetPdfSettingsTab() {
                       type="button"
                       onClick={() => handleAyudaIa(bloque.kind)}
                       disabled={redactandoKind === bloque.kind}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-primary disabled:opacity-60 disabled:cursor-not-allowed"
                       data-testid={`btn-ayuda-ia-${bloque.kind}`}
                     >
                       <Sparkles className="h-3 w-3" aria-hidden="true" />
@@ -449,9 +449,9 @@ export default function BudgetPdfSettingsTab() {
           §2): ancho completo, DEBAJO de las otras dos — es una sola card, no tiene sentido
           angostarla a la mitad y dejar un hueco vacío al lado (§2.2). Un solo textarea (no
           acordeón: acá hay UN dato, no seis por rubro como en Card 2). */}
-      <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden h-fit">
+      <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden h-fit">
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
-          <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+          <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-[10px] text-blue-600 dark:text-blue-400">
             <CreditCard className="h-5 w-5" />
           </div>
           <div>
@@ -468,7 +468,7 @@ export default function BudgetPdfSettingsTab() {
           </label>
           <textarea
             id="formas-de-pago-plantilla"
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 dark:bg-slate-950 text-sm p-3 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-700 dark:bg-slate-950 text-sm p-3 min-h-[100px] focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             value={textoFormasDePago}
             onChange={(event) => setTextoFormasDePago(event.target.value)}
             placeholder="Ej: Seña del 30% al reservar. Saldo 21 días antes de la salida. Transferencia bancaria o efectivo en la agencia."
@@ -480,7 +480,7 @@ export default function BudgetPdfSettingsTab() {
             type="button"
             onClick={handleAyudaIaFormasDePago}
             disabled={redactandoFormasDePago}
-            className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-primary disabled:opacity-60 disabled:cursor-not-allowed"
             data-testid="btn-ayuda-ia-formas-de-pago"
           >
             <Sparkles className="h-3 w-3" aria-hidden="true" />

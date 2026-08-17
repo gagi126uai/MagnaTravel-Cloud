@@ -25,7 +25,7 @@ export function RestoreResultadoInline({ resultadoInline, onCerrar }) {
 
     return (
         <div
-            className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/60"
+            className="space-y-3 rounded-[14px] border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/60"
             data-testid="restore-resultado-inline"
         >
             <div className="flex items-center justify-between gap-2">
@@ -45,7 +45,7 @@ export function RestoreResultadoInline({ resultadoInline, onCerrar }) {
 
             {esPrueba ? (
                 <>
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                    <div className="rounded-[14px] border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
                         {/* El título de esta caja lo arma el helper (resumen.encabezado), no un texto
                             hardcodeado acá que diría casi lo mismo que la línea de arriba. */}
                         <p className="mb-1.5 font-semibold">{resumen.encabezado}</p>
@@ -64,13 +64,13 @@ export function RestoreResultadoInline({ resultadoInline, onCerrar }) {
                     </div>
                     {/* Hallazgo del dueño ("no deja en claro cómo lo hace"): explica el proceso en
                         criollo, separado del resultado. */}
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                    <div className="rounded-[10px] border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                         {resumen.comoSeHizo}
                     </div>
                 </>
             ) : (
                 <div
-                    className={`rounded-xl border p-4 text-sm whitespace-pre-line ${
+                    className={`rounded-[14px] border p-4 text-sm whitespace-pre-line ${
                         resumen.incluyeAfip
                             ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100"
                             : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
@@ -89,7 +89,7 @@ export function RestoreResultadoInline({ resultadoInline, onCerrar }) {
             {/* La advertencia del motor (ej. "backup de una versión anterior, no se pudieron
                 calcular todos los conteos") aplica a las DOS acciones. */}
             {resumen.advertencia && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+                <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
                     {resumen.advertencia}
                 </div>
             )}

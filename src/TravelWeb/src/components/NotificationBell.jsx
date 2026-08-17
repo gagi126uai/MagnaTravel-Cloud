@@ -255,7 +255,7 @@ function SeccionCostosAConfirmar({ costos, onClose }) {
     if (!costos || costos.length === 0) return null;
 
     // Clases de la pill "A confirmar" — mismo estilo que CostConfirmCell.jsx (CLASES_PILL_AMBAR)
-    const clasesPillAmbar = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+    const clasesPillAmbar = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
 
     return (
         <div data-testid="bell-costs-section">
@@ -425,7 +425,7 @@ export default function NotificationBell() {
         if (notification.type === "Error") return "bg-red-500";
         if (notification.type === "Success") return "bg-emerald-500";
         if (notification.type === "Warning") return "bg-amber-500";
-        return "bg-indigo-500";
+        return "bg-blue-500";
     };
 
     const getRowHighlight = (notification) => {
@@ -447,21 +447,21 @@ export default function NotificationBell() {
                 <Bell className="h-5 w-5" />
                 {/* Badge: suma próximos inicios visibles + costos + notificaciones sin leer */}
                 {totalBadge > 0 && (
-                    <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900 animate-pulse">
+                    <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[11px] font-bold text-white ring-2 ring-white dark:ring-slate-900 animate-pulse">
                         {totalBadge > 9 ? "9+" : totalBadge}
                     </span>
                 )}
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 mt-2 w-80 md:w-96 rounded-lg bg-white dark:bg-slate-900 shadow-xl ring-1 ring-slate-200 dark:ring-slate-800 z-50 animate-in fade-in slide-in-from-top-2">
+                <div className="absolute right-0 mt-2 w-80 md:w-96 rounded-[14px] bg-white dark:bg-slate-900 shadow-xl ring-1 ring-slate-200 dark:ring-slate-800 z-50 animate-in fade-in slide-in-from-top-2">
                     {/* Cabecera del panel */}
                     <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-4 py-3">
                         <h3 className="font-semibold text-slate-800 dark:text-slate-200">Notificaciones</h3>
                         {unreadCount > 0 && (
                             <button
                                 onClick={handleMarkAllAsRead}
-                                className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                                className="text-xs font-medium text-primary hover:underline"
                             >
                                 Marcar todas leídas
                             </button>
@@ -509,7 +509,7 @@ export default function NotificationBell() {
                                         </div>
                                         <div className="flex-1 space-y-1">
                                             {notification.priority === "Urgent" && (
-                                                <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
+                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
                                                     ⚡ Urgente
                                                 </span>
                                             )}
@@ -522,7 +522,7 @@ export default function NotificationBell() {
                                         </div>
                                         <button
                                             onClick={(e) => handleMarkAsRead(notification.id, e)}
-                                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 transition-opacity"
+                                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-primary transition-opacity"
                                             title="Marcar como leída"
                                         >
                                             <CheckCircle2 className="h-4 w-4" />

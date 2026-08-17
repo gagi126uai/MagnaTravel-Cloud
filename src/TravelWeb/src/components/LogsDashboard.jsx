@@ -115,7 +115,7 @@ export default function LogsDashboard() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-xl w-fit">
+      <div className="flex flex-wrap gap-2 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-[10px] w-fit">
         {subTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeSubTab === tab.id;
@@ -124,9 +124,9 @@ export default function LogsDashboard() {
               key={tab.id}
               onClick={() => setActiveSubTab(tab.id)}
               className={`
-                flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all
+                flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-[10px] transition-all
                 ${isActive
-                  ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                  ? "bg-white dark:bg-slate-700 text-primary shadow-sm"
                   : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 }
               `}
@@ -140,7 +140,7 @@ export default function LogsDashboard() {
 
       <div className="animate-in fade-in duration-300">
         {activeSubTab === "programming" ? (
-          <div className="h-[600px] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden relative">
+          <div className="h-[600px] bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden relative">
             {hangfireLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">
                 Preparando acceso seguro a Hangfire...
@@ -163,13 +163,13 @@ export default function LogsDashboard() {
       </div>
 
       {activeSubTab === "db" && logs.filter((log) => log.startsWith("[DB]")).length === 0 && (
-        <p className="text-[10px] text-slate-500 italic px-2">
+        <p className="text-[11px] text-slate-500 italic px-2">
           Nota: Los logs de la base de datos se capturan solo durante operaciones criticas de migracion o errores fatales.
         </p>
       )}
 
       {activeSubTab === "web" && logs.filter((log) => log.startsWith("[WEB]")).length === 0 && (
-        <p className="text-[10px] text-slate-500 italic px-2">
+        <p className="text-[11px] text-slate-500 italic px-2">
           Tip: Los logs de la web corresponden a los eventos del servidor Nginx y el bundle de Vite en produccion.
         </p>
       )}

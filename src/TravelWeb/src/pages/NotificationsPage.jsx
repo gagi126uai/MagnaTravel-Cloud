@@ -4,6 +4,8 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { CheckCircle, AlertCircle, Info, Bell, Check } from "lucide-react";
 import { aHoraArgentina } from "../lib/utils";
+import { StatusChip } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 
 export default function NotificationsPage() {
     const { notifications, markAsRead, refreshAlerts } = useAlerts();
@@ -28,20 +30,18 @@ export default function NotificationsPage() {
                     <Bell className="h-6 w-6" />
                     Notificaciones
                 </h1>
-                <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
-                    {notifications.length} sin leer
-                </span>
+                <StatusChip tone="azul">{notifications.length} sin leer</StatusChip>
             </div>
 
             {notifications.length === 0 ? (
-                <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-slate-200">
+                <div className="text-center py-12 bg-white rounded-[14px] shadow-sm border border-slate-200">
                     <Inbox className="h-12 w-12 text-slate-300 mx-auto mb-3" />
                     <p className="text-slate-500">No tienes notificaciones nuevas</p>
                 </div>
             ) : (
                 <div className="space-y-4">
                     {notifications.map((notif) => (
-                        <div key={notif.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex gap-4 transition-all hover:shadow-md">
+                        <div key={notif.id} className="bg-white p-4 rounded-[14px] shadow-sm border border-slate-200 flex gap-4 transition-all hover:shadow-md">
                             <div className="mt-1 flex-shrink-0">
                                 {getIcon(notif.type)}
                             </div>
@@ -51,13 +51,17 @@ export default function NotificationsPage() {
                                     {format(aHoraArgentina(notif.createdAt), "dd 'de' MMMM, HH:mm", { locale: es })}
                                 </p>
                             </div>
-                            <button
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
                                 onClick={() => markAsRead(notif.id)}
-                                className="self-start p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                className="self-start"
                                 title="Marcar como leída"
+                                aria-label="Marcar como leída"
                             >
-                                <Check className="h-5 w-5" />
-                            </button>
+                                <Check className="h-5 w-5" aria-hidden="true" />
+                            </Button>
                         </div>
                     ))}
                 </div>

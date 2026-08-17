@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Compass } from "lucide-react";
+import { buttonVariants } from "../components/ui/button";
 
 /**
  * Pantalla que se muestra cuando la URL no corresponde a ninguna pantalla del sistema
@@ -28,10 +29,10 @@ export default function NotFoundPage() {
           Revisá el link o volvé al inicio.
         </p>
       </div>
-      <Link
-        to="/dashboard"
-        className="mt-2 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-700"
-      >
+      {/* Es un link de navegacion (vuelve al dashboard), no una accion — se mantiene como
+          <Link>, pero pintado con el molde compartido de Button (buttonVariants) para no
+          dibujar un boton a mano (mismo patron ya usado en CustomerAccountPage). */}
+      <Link to="/dashboard" className={`mt-2 ${buttonVariants("default", "default")}`}>
         Volver al inicio
       </Link>
     </div>

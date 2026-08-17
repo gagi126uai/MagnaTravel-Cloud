@@ -55,9 +55,9 @@ function ConversationListItem({ item, selected, onSelect }) {
     <button
       type="button"
       onClick={() => onSelect(item)}
-      className={`w-full text-left rounded-2xl border px-4 py-4 transition-all ${
+      className={`w-full text-left rounded-[14px] border px-4 py-4 transition-all ${
         selected
-          ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 dark:border-indigo-700"
+          ? "border-primary bg-primary/10"
           : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700"
       }`}
     >
@@ -66,10 +66,10 @@ function ConversationListItem({ item, selected, onSelect }) {
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">{item.title}</span>
             <span
-              className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
                 item.conversationType === "lead"
                   ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300"
-                  : "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-300"
+                  : "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300"
               }`}
             >
               {item.conversationType === "lead" ? "Posible cliente" : "Operativa"}
@@ -96,7 +96,7 @@ function MessageBubble({ message }) {
   const isAgent = message.sender === "agent";
   const alignClass = isClient || isAgent ? "justify-end" : "justify-start";
   const bubbleClass = isAgent
-    ? "bg-indigo-600 text-white rounded-br-none"
+    ? "bg-blue-600 text-white rounded-br-none"
     : isClient
       ? "bg-emerald-600 text-white rounded-br-none"
       : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none";
@@ -107,7 +107,7 @@ function MessageBubble({ message }) {
         <div className={`px-4 py-3 rounded-[1.5rem] text-sm leading-relaxed shadow-sm ${bubbleClass}`}>
           {message.text}
         </div>
-        <div className={`text-[10px] font-semibold text-slate-400 ${isClient || isAgent ? "text-right mr-1" : "ml-1"}`}>
+        <div className={`text-[11px] font-semibold text-slate-400 ${isClient || isAgent ? "text-right mr-1" : "ml-1"}`}>
           {message.senderLabel} · {formatDateTime(message.createdAt)}
         </div>
       </div>
@@ -244,11 +244,11 @@ export default function WhatsAppBotTab() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="grid gap-6 lg:grid-cols-[1.1fr,0.9fr]">
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-4">
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
             <div>
               <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
-                <Smartphone className="h-6 w-6 text-indigo-600" />
+                <Smartphone className="h-6 w-6 text-blue-600" />
                 WhatsApp Bot
               </h2>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -257,12 +257,12 @@ export default function WhatsAppBotTab() {
             </div>
 
             <div className="flex gap-2">
-              <Button variant="outline" className="rounded-xl" onClick={handleReload} disabled={loadingStatus}>
+              <Button variant="outline" onClick={handleReload} disabled={loadingStatus}>
                 <RefreshCcw className="h-4 w-4 mr-2" />
                 Refrescar
               </Button>
               {botStatus === "READY" && (
-                <Button variant="outline" className="rounded-xl text-rose-600 border-rose-100 hover:bg-rose-50" onClick={handleLogoutBot}>
+                <Button variant="outline" className="text-rose-600 border-rose-100 hover:bg-rose-50" onClick={handleLogoutBot}>
                   <LogOut className="h-4 w-4 mr-2" />
                   Cerrar sesion
                 </Button>
@@ -271,8 +271,8 @@ export default function WhatsAppBotTab() {
           </div>
 
           {botStatus === "READY" ? (
-            <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50 dark:bg-emerald-900/10 px-5 py-4 flex items-center gap-3">
-              <div className="h-12 w-12 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300 flex items-center justify-center">
+            <div className="rounded-[14px] border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50 dark:bg-emerald-900/10 px-5 py-4 flex items-center gap-3">
+              <div className="h-12 w-12 rounded-[14px] bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300 flex items-center justify-center">
                 <Check className="h-6 w-6" />
               </div>
               <div>
@@ -283,7 +283,7 @@ export default function WhatsAppBotTab() {
               </div>
             </div>
           ) : (
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/10 p-6">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/10 p-6">
               {(botStatus === "SCAN_QR" || qrCode) ? (
                 <div className="text-center space-y-4">
                   <div className="inline-block rounded-[28px] bg-white p-5 shadow-lg">
@@ -303,23 +303,23 @@ export default function WhatsAppBotTab() {
           )}
         </div>
 
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-3">
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-3">
           <div className="text-sm font-semibold text-slate-900 dark:text-white">Bandeja de conversaciones</div>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Todas las conversaciones que el bot deja registradas en la gestion comercial y en la operativa.
           </p>
           <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-800 px-4 py-3">
               <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-400">Conversaciones</div>
               <div className="text-2xl font-semibold text-slate-900 dark:text-white">{conversations.length}</div>
             </div>
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-800 px-4 py-3">
               <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-400">Posibles clientes</div>
               <div className="text-2xl font-semibold text-slate-900 dark:text-white">
                 {conversations.filter((item) => item.conversationType === "lead").length}
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-800 px-4 py-3">
               <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-400">Operativas</div>
               <div className="text-2xl font-semibold text-slate-900 dark:text-white">
                 {conversations.filter((item) => item.conversationType === "operational").length}
@@ -330,7 +330,7 @@ export default function WhatsAppBotTab() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[360px,1fr]">
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-100 dark:border-slate-800">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -339,7 +339,7 @@ export default function WhatsAppBotTab() {
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 placeholder="Buscar por nombre, telefono o mensaje..."
-                className="w-full pl-9 pr-4 py-2.5 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 dark:text-white"
+                className="w-full pl-9 pr-4 py-2.5 text-sm rounded-[10px] border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 dark:text-white"
               />
             </div>
           </div>
@@ -372,7 +372,7 @@ export default function WhatsAppBotTab() {
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
           {!conversationDetail ? (
             <div className="h-full min-h-[500px] flex items-center justify-center text-center p-8">
               <div className="space-y-3">
@@ -391,10 +391,10 @@ export default function WhatsAppBotTab() {
                     <div className="flex items-center gap-2">
                       <h3 className="text-xl font-semibold text-slate-900 dark:text-white">{conversationDetail.title}</h3>
                       <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
                           conversationDetail.conversationType === "lead"
                             ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300"
-                            : "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-300"
+                            : "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300"
                         }`}
                       >
                         {conversationDetail.conversationType === "lead" ? "Posible cliente" : "Operativa"}
@@ -433,7 +433,6 @@ export default function WhatsAppBotTab() {
                     {conversationDetail.leadPublicId && (
                       <Button
                         variant="outline"
-                        className="rounded-xl"
                         onClick={() => navigate("/crm", { state: { openLeadId: conversationDetail.leadPublicId } })}
                       >
                         <ExternalLink className="h-4 w-4 mr-2" />
@@ -443,7 +442,6 @@ export default function WhatsAppBotTab() {
                     {conversationDetail.reservaPublicId && (
                       <Button
                         variant="outline"
-                        className="rounded-xl"
                         onClick={() => navigate(`/reservas/${conversationDetail.reservaPublicId}`)}
                       >
                         <ExternalLink className="h-4 w-4 mr-2" />

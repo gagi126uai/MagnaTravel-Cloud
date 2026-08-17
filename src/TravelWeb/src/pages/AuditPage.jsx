@@ -70,7 +70,9 @@ const actionTranslations = {
 const actionColors = {
   Create: "bg-emerald-500", Update: "bg-blue-500",
   Delete: "bg-red-500", SoftDelete: "bg-amber-500",
-  Login: "bg-indigo-500", LoginFailed: "bg-red-500",
+  // "Login" usa sky (no azul boleto/primary) para no confundirse con "Update", que
+  // ya es azul boleto en este mismo mapa de colores por tipo de evento.
+  Login: "bg-sky-500", LoginFailed: "bg-red-500",
   Logout: "bg-slate-500", ChangePassword: "bg-violet-500",
   InvoiceIssued: "bg-emerald-500", InvoiceForced: "bg-amber-500",
   ReportExported: "bg-cyan-500", UserCreated: "bg-emerald-500",
@@ -83,7 +85,7 @@ const actionBadgeColors = {
   Update: "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
   Delete: "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",
   SoftDelete: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  Login: "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300",
+  Login: "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
   LoginFailed: "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",
   Logout: "bg-slate-50 text-slate-700 dark:bg-slate-800/50 dark:text-slate-300",
   ChangePassword: "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",
@@ -539,7 +541,7 @@ export default function AuditPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Shield className="h-6 w-6 text-indigo-500" />
+            <Shield className="h-6 w-6 text-blue-500" />
             Administración
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -549,26 +551,26 @@ export default function AuditPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors
+            className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-[10px] border transition-colors
               ${hasActiveFilters
-                ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300"
+                ? "border-primary/30 bg-primary/10 text-primary"
                 : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
               }`}
           >
             <Filter className="h-4 w-4" />
             Filtros
-            {hasActiveFilters && <span className="bg-indigo-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">!</span>}
+            {hasActiveFilters && <span className="bg-primary text-primary-foreground text-[11px] font-bold px-1.5 py-0.5 rounded-full">!</span>}
           </button>
           <button
             onClick={handleExportCsv}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-[10px] border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition-colors"
           >
             <Download className="h-4 w-4" />
             Exportar
           </button>
           <button
             onClick={fetchLogs}
-            className="inline-flex items-center gap-2 p-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition-colors"
+            className="inline-flex items-center gap-2 p-2 text-sm rounded-[10px] border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition-colors"
             title="Refrescar"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -577,12 +579,12 @@ export default function AuditPage() {
       </div>
 
       {/* Tabs: Operativa / Sistema */}
-      <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-xl w-fit">
+      <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-[10px] w-fit">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
-            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-[10px] transition-all
               ${activeTab === tab.id
                 ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
                 : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
@@ -596,7 +598,7 @@ export default function AuditPage() {
 
       {/* Filtros */}
       {showFilters && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 shadow-sm">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[10px] p-4 space-y-4 shadow-sm">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
             <div className="xl:col-span-2">
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Buscar</label>
@@ -606,14 +608,14 @@ export default function AuditPage() {
                   type="text" value={searchTerm}
                   onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
                   placeholder="Nombre, entidad, ID..."
-                  className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-ring focus:border-primary"
                 />
               </div>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Entidad</label>
               <select value={entityName} onChange={(e) => { setEntityName(e.target.value); setPage(1); }}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500">
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-ring">
                 <option value="">Todas</option>
                 {uiEntities.map((e) => <option key={e} value={e}>{translateEntity(e)}</option>)}
               </select>
@@ -621,7 +623,7 @@ export default function AuditPage() {
             <div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Acción</label>
               <select value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500">
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-ring">
                 <option value="">Todas</option>
                 <option value="Create">Creación</option>
                 <option value="Update">Modificación</option>
@@ -638,7 +640,7 @@ export default function AuditPage() {
             <div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Usuario</label>
               <select value={userId} onChange={(e) => { setUserId(e.target.value); setPage(1); }}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500">
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-ring">
                 <option value="">Todos</option>
                 {users.map((u) => <option key={u.id} value={u.id}>{u.fullName || u.userName}</option>)}
               </select>
@@ -646,12 +648,12 @@ export default function AuditPage() {
             <div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Desde</label>
               <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500" />
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-ring" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Hasta</label>
               <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500" />
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-ring" />
             </div>
           </div>
           {hasActiveFilters && (
@@ -671,10 +673,10 @@ export default function AuditPage() {
       </div>
 
       {/* Lista */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[10px] shadow-sm overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <RefreshCw className="h-6 w-6 text-indigo-500 animate-spin" />
+            <RefreshCw className="h-6 w-6 text-blue-500 animate-spin" />
             <span className="ml-3 text-sm text-slate-500">Cargando historial...</span>
           </div>
         ) : logs.length === 0 ? (
@@ -703,7 +705,7 @@ export default function AuditPage() {
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
                           <NarrativeSummary log={log} />
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${actionBadgeColors[log.action] || "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}`}>
+                            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${actionBadgeColors[log.action] || "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}`}>
                               {translateAction(log.action)}
                             </span>
                             <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap" title={formatTimestamp(log.timestamp)}>
@@ -720,7 +722,7 @@ export default function AuditPage() {
                     </div>
 
                     {isExpanded && hasChanges && (
-                      <div className="mt-2 ml-10 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700/50">
+                      <div className="mt-2 ml-10 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-[10px] border border-slate-100 dark:border-slate-700/50">
                         <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Cambios detallados</p>
                         <ChangeDetail changes={log.changes} />
                       </div>
@@ -741,7 +743,7 @@ export default function AuditPage() {
           </p>
           <div className="flex items-center gap-1">
             <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-              className="p-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              className="p-2 rounded-[10px] border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <ChevronLeft className="h-4 w-4" />
             </button>
             {(() => {
@@ -751,7 +753,7 @@ export default function AuditPage() {
               for (let i = start; i <= end; i++) {
                 pages.push(
                   <button key={i} onClick={() => setPage(i)}
-                    className={`min-w-[36px] h-9 rounded-lg text-sm font-medium transition-colors ${i === page ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"}`}>
+                    className={`min-w-[36px] h-9 rounded-[10px] text-sm font-medium transition-colors ${i === page ? "bg-primary text-primary-foreground shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"}`}>
                     {i}
                   </button>
                 );
@@ -759,7 +761,7 @@ export default function AuditPage() {
               return pages;
             })()}
             <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
-              className="p-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              className="p-2 rounded-[10px] border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>

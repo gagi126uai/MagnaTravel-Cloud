@@ -155,7 +155,7 @@ export default function RolesPermissionsTab() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
@@ -164,9 +164,9 @@ export default function RolesPermissionsTab() {
     <div className="grid gap-6 lg:grid-cols-3">
       {/* Left: Role List */}
       <div className="space-y-4">
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
-            <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
+            <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-[10px] text-purple-600 dark:text-purple-400">
               <Shield className="h-5 w-5" />
             </div>
             <div>
@@ -182,15 +182,15 @@ export default function RolesPermissionsTab() {
                 onClick={() => selectRole(role)}
                 className={`w-full flex items-center justify-between px-5 py-3 text-sm transition-colors text-left ${
                   selectedRole === role
-                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300"
+                    ? "bg-primary/10 text-primary"
                     : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <Shield className={`h-4 w-4 ${selectedRole === role ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400"}`} />
+                  <Shield className={`h-4 w-4 ${selectedRole === role ? "text-primary" : "text-slate-400"}`} />
                   <span className="font-medium">{role}</span>
                   {systemRoles.includes(role) && (
-                    <span className="text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
+                    <span className="text-[11px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
                       sistema
                     </span>
                   )}
@@ -217,7 +217,7 @@ export default function RolesPermissionsTab() {
               <input
                 type="text"
                 placeholder="Nombre del nuevo rol..."
-                className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="flex-1 rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
                 value={newRoleName}
                 onChange={(e) => setNewRoleName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && createRole()}
@@ -225,7 +225,7 @@ export default function RolesPermissionsTab() {
               <Button
                 onClick={createRole}
                 disabled={!newRoleName.trim()}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3"
+                className="px-3"
                 size="sm"
               >
                 <Plus className="h-4 w-4" />
@@ -238,17 +238,17 @@ export default function RolesPermissionsTab() {
       {/* Right: Permission Checkboxes */}
       <div className="lg:col-span-2">
         {!selectedRole ? (
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-12 text-center">
+          <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm p-12 text-center">
             <Shield className="mx-auto h-12 w-12 text-slate-200 dark:text-slate-700 mb-4" />
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Selecciona un rol</h3>
             <p className="text-sm text-slate-500">Haz clic en un rol de la lista para ver y editar sus permisos</p>
           </div>
         ) : (
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/20">
               <div>
                 <h3 className="font-semibold text-slate-900 dark:text-white">
-                  Permisos de <span className="text-indigo-600 dark:text-indigo-400">{selectedRole}</span>
+                  Permisos de <span className="text-primary">{selectedRole}</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {rolePermissions.length} permiso{rolePermissions.length !== 1 ? "s" : ""} asignado{rolePermissions.length !== 1 ? "s" : ""}
@@ -257,7 +257,6 @@ export default function RolesPermissionsTab() {
               <Button
                 onClick={savePermissions}
                 disabled={saving}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
                 size="sm"
               >
                 {saving ? "Guardando..." : "Guardar Cambios"}
@@ -284,7 +283,7 @@ export default function RolesPermissionsTab() {
                           <ChevronRight className="h-4 w-4 text-slate-400" />
                         )}
                         <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{moduleName}</span>
-                        <span className="text-[10px] text-slate-400 font-medium">
+                        <span className="text-[11px] text-slate-400 font-medium">
                           {moduleSelected.length}/{perms.length}
                         </span>
                       </div>
@@ -295,9 +294,9 @@ export default function RolesPermissionsTab() {
                         }}
                         className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
                           allSelected
-                            ? "bg-indigo-600 border-indigo-600 text-white"
+                            ? "bg-primary border-primary text-primary-foreground"
                             : someSelected
-                            ? "bg-indigo-100 border-indigo-400 dark:bg-indigo-900/30 dark:border-indigo-600"
+                            ? "bg-primary/10 border-primary/40"
                             : "border-slate-300 dark:border-slate-600"
                         }`}
                       >
@@ -312,9 +311,9 @@ export default function RolesPermissionsTab() {
                           return (
                             <label
                               key={perm}
-                              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors text-sm ${
+                              className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] cursor-pointer transition-colors text-sm ${
                                 isChecked
-                                  ? "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300"
+                                  ? "bg-primary/10 text-primary"
                                   : "hover:bg-slate-50 dark:hover:bg-slate-800/30 text-slate-600 dark:text-slate-400"
                               }`}
                             >
@@ -322,7 +321,7 @@ export default function RolesPermissionsTab() {
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={() => togglePermission(perm)}
-                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600"
+                                className="rounded border-slate-300 text-primary focus:ring-ring dark:border-slate-600"
                               />
                               <span className="font-medium">{formatPermission(perm)}</span>
                             </label>
