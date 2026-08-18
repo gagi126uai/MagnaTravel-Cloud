@@ -1,40 +1,18 @@
-﻿import { useEffect, useMemo, useState, useRef } from "react";
-import { apiRequest, api } from "../api";
-import { showError, showInfo, showSuccess, showConfirm } from "../alerts";
+﻿import { useEffect, useState } from "react";
+import { api } from "../api";
+import { showError, showSuccess } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
 import { isAdmin, hasPermission } from "../auth";
 import {
-  Pencil,
-  Trash2,
-  Key,
-  Plus,
-  Search,
-  X,
-  Shield,
-  User,
-  MoreHorizontal,
   Building2,
-  MapPin,
-  Mail,
   FileText,
-  Calendar,
-  CreditCard,
-  PhoneCall,
-  Menu,
-  Check,
-  ChevronRight,
-  ChevronDown,
-  Briefcase,
-  Clock,
   Smartphone,
   TerminalSquare,
   Settings2,
-  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Palette
 } from "lucide-react";
-import Swal from "sweetalert2";
 import { Button } from "../components/ui/button";
 import AfipSettingsTab from "../components/AfipSettingsTab";
 import BudgetPdfSettingsTab from "../components/BudgetPdfSettingsTab";
@@ -42,118 +20,11 @@ import ApprovalPoliciesTab from "../components/ApprovalPoliciesTab";
 import LogsDashboard from "../components/LogsDashboard";
 import OperationalFinanceSettingsTab from "../components/OperationalFinanceSettingsTab";
 import WhatsAppBotTab from "../components/WhatsAppBotTab";
-import RolesPermissionsTab from "../components/RolesPermissionsTab";
-import AuditPage from "./AuditPage";
-import { getPublicId } from "../lib/publicIds";
 import { ListaCuentasBancarias } from "../features/bank-accounts/components/ListaCuentasBancarias";
 import AiSettingsTab from "../features/ai-settings/components/AiSettingsTab";
 import { puedeVerConfiguracionIa } from "../features/ai-settings/lib/aiSettingsPresentation.js";
 
-const serviceTypes = [
-  { value: "", label: "Todos los servicios" },
-  { value: "Aereo", label: "Aéreo" },
-  { value: "Hotel", label: "Hotel" },
-  { value: "Traslado", label: "Traslado" },
-  { value: "Asistencia", label: "Asistencia" },
-  { value: "Excursion", label: "Excursión" },
-  { value: "Paquete", label: "Paquete" },
-  { value: "Otro", label: "Otro" },
-];
-
-// --- Components ---
-
-const Modal = ({ isOpen, onClose, title, children }) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-opacity animate-in fade-in">
-      <div className="w-full max-w-lg overflow-hidden rounded-[14px] bg-white shadow-2xl dark:bg-slate-900 animate-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h3>
-          <button
-            onClick={onClose}
-            className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-300"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="p-6 max-h-[80vh] overflow-y-auto">
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const MsgInput = ({ label, sub, value, onChange }) => (
-  <div className="space-y-1.5">
-    <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</label>
-    <p className="text-[11px] text-slate-500 font-medium">{sub}</p>
-    <textarea
-      className="w-full rounded-[10px] border-slate-200 dark:border-slate-800 dark:bg-slate-950 text-sm focus:ring-emerald-500 focus:border-emerald-500 min-h-[80px] p-3 shadow-sm"
-      value={value}
-      onChange={e => onChange(e.target.value)}
-    />
-  </div>
-);
-
-const Terminal = ({ logs }) => {
-  const scrollRef = useRef(null);
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [logs]);
-
-  return (
-    <div className="bg-slate-950 rounded-[10px] border border-slate-800 p-3 font-mono text-[11px] space-y-1 h-60 overflow-y-auto mt-4 custom-scrollbar" ref={scrollRef}>
-      {logs.map((log, i) => (
-        <div key={i} className="flex gap-2">
-          <span className={log.includes("âœ…") ? "text-emerald-400" : log.includes("âŒ") || log.includes("âš ï¸") ? "text-rose-400" : log.includes("ðŸ“±") ? "text-amber-400" : "text-slate-300"}>
-            {log}
-          </span>
-        </div>
-      ))}
-      {logs.length === 0 && <div className="text-slate-700 italic">Esperando actividad del bot...</div>}
-    </div>
-  );
-};
-
-const RoleBadge = ({ role }) => {
-  const colors = {
-    Admin: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-800",
-    Colaborador: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800",
-    Default: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700"
-  };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border ${colors[role] || colors.Default}`}>
-      {role}
-    </span>
-  );
-};
-
-const Avatar = ({ name, size = "md" }) => {
-  const initials = name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .substring(0, 2)
-    .toUpperCase();
-
-  const sizeClasses = {
-    sm: "h-8 w-8 text-xs",
-    md: "h-10 w-10 text-sm",
-    lg: "h-12 w-12 text-base"
-  };
-
-  // Avatar decorativo (no es boton ni link): mismo criterio que AdminHubPage/D6 — sigue en
-  // azul indigo numerico, no en el azul de accion --primary.
-  return (
-    <div className={`flex shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm ring-2 ring-white dark:ring-slate-900 ${sizeClasses[size]}`}>
-      {initials}
-    </div>
-  );
-};
-
 // --- Page ---
-
 
 const tabs = [
   { id: "agency", label: "Agencia", icon: Building2 },
@@ -173,20 +44,7 @@ const tabs = [
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("agency");
-  const [users, setUsers] = useState([]);
-  const [roles, setRoles] = useState([]);
-  const [loading, setLoading] = useState(false);
   const adminUser = isAdmin();
-
-  // Modal State
-  const [modalType, setModalType] = useState(null); // 'create', 'edit', 'password', 'roles'
-  const [selectedUser, setSelectedUser] = useState(null);
-
-  // Forms
-  const [createForm, setCreateForm] = useState({ fullName: "", email: "", password: "", role: "Colaborador" });
-  const [editForm, setEditForm] = useState({ id: "", fullName: "", email: "", role: "Colaborador", isActive: true });
-  const [passwordForm, setPasswordForm] = useState({ id: "", newPassword: "" });
-  const [newRoleName, setNewRoleName] = useState("");
 
   // Agency Settings State
   const [agencySettings, setAgencySettings] = useState(null);
@@ -204,41 +62,11 @@ export default function SettingsPage() {
   });
   const [savingAgency, setSavingAgency] = useState(false);
 
-  // Commission Rules State
-  const [commissionRules, setCommissionRules] = useState([]);
-  const [suppliers, setSuppliers] = useState([]);
-  const [showCommissionModal, setShowCommissionModal] = useState(false);
-  const [commissionForm, setCommissionForm] = useState({
-    id: null,
-    supplierId: "",
-    serviceType: "",
-    commissionPercent: 10,
-    priority: 1,
-    description: ""
-  });
-
-  // WhatsApp Bot State
-  const [botStatus, setBotStatus] = useState("STARTING");
-  const [qrCode, setQrCode] = useState(null);
-  const [botConfig, setBotConfig] = useState({
-    welcomeMessage: "",
-    askInterestMessage: "",
-    askDatesMessage: "",
-    askTravelersMessage: "",
-    thanksMessage: "",
-    agentRequestMessage: "",
-    duplicateMessage: ""
-  });
-  const [savingBot, setSavingBot] = useState(false);
-  const [loadingStatus, setLoadingStatus] = useState(false);
-  const [botLogs, setBotLogs] = useState([]);
-
-  // Mobile Nav State
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [showAdvancedBot, setShowAdvancedBot] = useState(false);
-
   const isTabVisible = (tabId) => {
-    if (["users", "roles", "logs", "programming"].includes(tabId)) {
+    // "Logs y Programación" queda oculta para quien no es Admin. Antes esta lista tambien
+    // incluia "users"/"roles"/"programming", pero esos ids nunca tuvieron una solapa real en
+    // este archivo (codigo muerto) y se limpiaron junto con el resto del CRUD inalcanzable.
+    if (tabId === "logs") {
       return adminUser;
     }
     const tab = tabs.find((t) => t.id === tabId);
@@ -256,109 +84,11 @@ export default function SettingsPage() {
     return true;
   };
 
-  const loadBotStatus = async () => {
-    try {
-      const data = await api.get("/webhooks/status");
-      setBotStatus(data.status);
-      setQrCode(data.qr);
-      console.log("Bot Status:", data.status, "QR exists:", !!data.qr);
-      
-      const logs = await api.get("/webhooks/logs");
-      if (Array.isArray(logs)) setBotLogs(logs);
-    } catch (err) {
-      setBotStatus("OFFLINE");
-    }
-  };
-
-  const handleLogoutBot = async () => {
-    const confirmed = await showConfirm(
-      "¿Cerrar sesión de WhatsApp?",
-      "El bot dejará de funcionar hasta que vuelvas a escanear el QR.",
-      "Sí, cerrar sesión",
-      "red"
-    );
-
-    if (confirmed) {
-      try {
-        await api.post("/webhooks/logout");
-        showSuccess("Sesión cerrada");
-        loadBotStatus();
-      } catch {
-        showError("No se pudo cerrar la sesión");
-      }
-    }
-  };
-
-  useEffect(() => {
-    return undefined;
-  }, [activeTab]);
-
   useEffect(() => {
     if (!isTabVisible(activeTab)) {
       setActiveTab("agency");
     }
   }, [activeTab, adminUser]);
-
-  const loadBotConfig = async () => {
-    try {
-      const data = await api.get("/whatsapp/config");
-      setBotConfig(data);
-    } catch { }
-  };
-
-  const saveBotConfig = async (e) => {
-    e.preventDefault();
-    setSavingBot(true);
-    try {
-      await api.put("/whatsapp/config", botConfig);
-      showSuccess("Configuración del bot guardada");
-      // Optional: Trigger reload on bot
-      try { await api.post("/whatsapp/webhook/reload"); } catch { }
-    } catch {
-      showError("No se pudo guardar la configuración");
-    } finally {
-      setSavingBot(false);
-    }
-  };
-
-  const reloadBot = async () => {
-    setLoadingStatus(true);
-    try {
-      await api.post("/webhooks/reload");
-      showSuccess("Bot sincronizado");
-      loadBotStatus();
-    } catch (error) {
-      showError("Error al sincronizar");
-    } finally {
-      setLoadingStatus(false);
-    }
-  };
-
-  const closeModal = () => {
-    setModalType(null);
-    setSelectedUser(null);
-  };
-
-  const roleOptions = useMemo(() => {
-    return roles.length > 0 ? roles : ["Admin", "Colaborador"];
-  }, [roles]);
-
-  const loadUsers = async () => {
-    if (!adminUser) return;
-    setLoading(true);
-    try {
-      const [usersResponse, rolesResponse] = await Promise.all([
-        apiRequest("/api/users"),
-        apiRequest("/api/users/roles"),
-      ]);
-      setUsers(usersResponse);
-      setRoles(rolesResponse);
-    } catch (error) {
-      showError(error.message || "Error cargando datos.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const loadAgencySettings = async () => {
     try {
@@ -397,186 +127,9 @@ export default function SettingsPage() {
     }
   };
 
-  const loadCommissionRules = async () => {
-    try {
-      const data = await api.get("/commissions");
-      setCommissionRules(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("Error loading commission rules:", error);
-      setCommissionRules([]);
-    }
-  };
-
-  const loadSuppliers = async () => {
-    try {
-      const data = await api.get("/suppliers?page=1&pageSize=100&includeInactive=true");
-      const sorted = Array.isArray(data?.items) ? data.items.sort((a, b) => {
-        if (a.isActive === b.isActive) return a.name.localeCompare(b.name);
-        return a.isActive ? -1 : 1;
-      }) : [];
-      setSuppliers(sorted);
-    } catch { }
-  };
-
-  const saveCommissionRule = async (e) => {
-    e.preventDefault();
-    try {
-      if (commissionForm.id) {
-        await api.put(`/commissions/${commissionForm.id}`, {
-          commissionPercent: parseFloat(commissionForm.commissionPercent),
-          priority: parseInt(commissionForm.priority),
-          description: commissionForm.description || null,
-          isActive: true
-        });
-        showSuccess("Regla actualizada");
-      } else {
-        await api.post("/commissions", {
-          supplierId: commissionForm.supplierId || null,
-          serviceType: commissionForm.serviceType || null,
-          commissionPercent: parseFloat(commissionForm.commissionPercent),
-          priority: parseInt(commissionForm.priority),
-          description: commissionForm.description || null
-        });
-        showSuccess("Regla creada");
-      }
-      setShowCommissionModal(false);
-      setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, priority: 1, description: "" });
-      loadCommissionRules();
-    } catch (error) {
-      console.error("Error saving commission rule:", error);
-      // El motor puede rechazar con un motivo puntual (ej. porcentaje fuera de 0 a 100): se muestra
-      // ese texto. getApiErrorMessage mira primero el cuerpo de la respuesta, que es donde viaja el
-      // mensaje real; el genérico queda solo de respaldo.
-      showError(getApiErrorMessage(error, "No se pudo guardar la regla"));
-    }
-  };
-
-  const editCommissionRule = (rule) => {
-    setCommissionForm({
-      id: rule.id,
-      supplierId: rule.supplierPublicId || rule.supplierId || "",
-      serviceType: rule.serviceType || "",
-      commissionPercent: rule.commissionPercent,
-      priority: rule.priority || 1,
-      description: rule.description || ""
-    });
-    setShowCommissionModal(true);
-  };
-
-  const openNewCommissionModal = () => {
-    setCommissionForm({ id: null, supplierId: "", serviceType: "", commissionPercent: 10, priority: 1, description: "" });
-    setShowCommissionModal(true);
-  };
-
-  const deleteCommissionRule = async (id) => {
-    const confirmed = await showConfirm(
-      "¿Eliminar regla?",
-      "Esta acción no se puede deshacer y afectará el cálculo de comisiones futuro.",
-      "Sí, eliminar",
-      "red"
-    );
-
-    if (confirmed) {
-      try {
-        await api.delete(`/commissions/${id}`);
-        showSuccess("Regla eliminada");
-        loadCommissionRules();
-      } catch (error) {
-        showError(error.message || "No se pudo eliminar la regla");
-      }
-    }
-  };
-
   useEffect(() => {
-    if (activeTab === "users") loadUsers();
     if (activeTab === "agency") loadAgencySettings();
-    if (activeTab === "commissions") {
-      loadCommissionRules();
-      loadSuppliers();
-    }
   }, [activeTab, adminUser]);
-
-  // Handlers
-  const handleCreateUser = async (e) => {
-    e.preventDefault();
-    try {
-      await apiRequest("/api/users", { method: "POST", body: JSON.stringify(createForm) });
-      showSuccess("Usuario creado exitosamente.");
-      loadUsers();
-      closeModal();
-      setCreateForm({ fullName: "", email: "", password: "", role: "Colaborador" });
-    } catch (error) {
-      showError(error.message);
-    }
-  };
-
-  const handleEditUser = async (e) => {
-    e.preventDefault();
-    try {
-      await apiRequest(`/api/users/${editForm.id}`, { method: "PUT", body: JSON.stringify(editForm) });
-      showSuccess("Usuario actualizado.");
-      loadUsers();
-      closeModal();
-    } catch (error) {
-      showError(error.message);
-    }
-  };
-
-  const handlePasswordReset = async (e) => {
-    e.preventDefault();
-    try {
-      await apiRequest(`/api/users/${passwordForm.id}/password`, {
-        method: "PUT",
-        body: JSON.stringify({ newPassword: passwordForm.newPassword })
-      });
-      showSuccess("Contraseña actualizada.");
-      closeModal();
-    } catch (error) {
-      showError(error.message);
-    }
-  };
-
-  const handleDeleteUser = async (user) => {
-    const confirmed = await showConfirm(
-      "Eliminar Usuario",
-      `¿Estás seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acción no se puede deshacer.`,
-      "Sí, eliminar",
-      "red"
-    );
-
-    if (!confirmed) return;
-
-    try {
-      await apiRequest(`/api/users/${user.id}`, { method: "DELETE" });
-      showInfo("Usuario eliminado.");
-      loadUsers();
-    } catch (error) {
-      showError(error.message);
-    }
-  };
-
-  // Open Modals
-  const openCreateModal = () => {
-    setCreateForm({ fullName: "", email: "", password: "", role: "Colaborador" });
-    setModalType('create');
-  };
-
-  const openEditModal = (user) => {
-    setEditForm({
-      id: user.id,
-      fullName: user.fullName,
-      email: user.email,
-      role: user.roles?.[0] || "Colaborador",
-      isActive: user.isActive,
-    });
-    setModalType('edit');
-  };
-
-  const openPasswordModal = (user) => {
-    setPasswordForm({ id: user.id, newPassword: "" });
-    setSelectedUser(user);
-    setModalType('password');
-  };
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-20 md:pb-0">
@@ -618,11 +171,6 @@ Ajustá cómo funciona el sistema para tu agencia.
 
       {/* Content Area */}
       <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-
-        {/* --- AUDIT TAB --- */}
-        {activeTab === "audit" && (
-            <AuditPage />
-        )}
 
         {/* --- AGENCY TAB --- */}
         {activeTab === "agency" && (
@@ -745,7 +293,7 @@ Ajustá cómo funciona el sistema para tu agencia.
           </div>
         )}
 
-        {/* --- USERS TAB --- */}
+        {/* --- OPERATIONS TAB --- */}
         {activeTab === "operations" && <OperationalFinanceSettingsTab />}
 
         {/* --- AFIP TAB --- */}
@@ -768,146 +316,6 @@ Ajustá cómo funciona el sistema para tu agencia.
 
       </div>
 
-      {/* --- MODALS --- */}
-
-      {/* Create/Edit User Modal */}
-      <Modal
-        isOpen={modalType === 'create' || modalType === 'edit'}
-        onClose={closeModal}
-        title={modalType === 'create' ? "Nuevo Usuario" : "Editar Usuario"}
-      >
-        <form onSubmit={modalType === 'create' ? handleCreateUser : handleEditUser} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre Completo</label>
-            <input type="text" required className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={modalType === 'create' ? createForm.fullName : editForm.fullName}
-              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, fullName: e.target.value }) : setEditForm({ ...editForm, fullName: e.target.value })} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
-            <input type="email" required className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={modalType === 'create' ? createForm.email : editForm.email}
-              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, email: e.target.value }) : setEditForm({ ...editForm, email: e.target.value })} />
-          </div>
-          {modalType === 'create' && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Contraseña</label>
-              <input type="password" required className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-                value={createForm.password}
-                onChange={e => setCreateForm({ ...createForm, password: e.target.value })} />
-            </div>
-          )}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Rol</label>
-            <select className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={modalType === 'create' ? createForm.role : editForm.role}
-              onChange={e => modalType === 'create' ? setCreateForm({ ...createForm, role: e.target.value }) : setEditForm({ ...editForm, role: e.target.value })}>
-              {roleOptions.map(role => <option key={role} value={role}>{role}</option>)}
-            </select>
-          </div>
-          {modalType === 'edit' && (
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="isActive" className="rounded border-slate-300 text-primary focus:ring-ring"
-                checked={editForm.isActive}
-                onChange={e => setEditForm({ ...editForm, isActive: e.target.checked })} />
-              <label htmlFor="isActive" className="text-sm font-medium text-slate-700 dark:text-slate-300">Usuario Activo</label>
-            </div>
-          )}
-          <div className="pt-2">
-            <Button type="submit" className="w-full">
-              {modalType === 'create' ? "Crear Usuario" : "Guardar Cambios"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Password Modal */}
-      <Modal isOpen={modalType === 'password'} onClose={closeModal} title="Cambiar Contraseña">
-        <form onSubmit={handlePasswordReset} className="space-y-4">
-          <div className="p-3 bg-amber-50 text-amber-800 rounded-[10px] text-sm mb-4">
-            Cambiando contraseña para <strong>{selectedUser?.fullName}</strong>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nueva Contraseña</label>
-            <input type="password" required minLength={6} className="mt-1 block w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm dark:bg-slate-800 dark:border-slate-700"
-              value={passwordForm.newPassword}
-              onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} />
-          </div>
-          <div className="pt-2">
-            <Button type="submit" className="w-full">
-              Actualizar Contraseña
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Commission Modal */}
-      <Modal isOpen={showCommissionModal} onClose={() => setShowCommissionModal(false)} title={commissionForm.id ? "Editar Regla" : "Nueva Regla de Comisión"}>
-        <form onSubmit={saveCommissionRule} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Proveedor (opcional)</label>
-            <select
-              className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-              value={commissionForm.supplierId}
-              onChange={e => setCommissionForm({ ...commissionForm, supplierId: e.target.value })}
-            >
-              <option value="">Todos los proveedores</option>
-              {suppliers.map(s => <option key={getPublicId(s)} value={getPublicId(s)}>{s.name}</option>)}
-            </select>
-            <p className="text-xs text-slate-500 mt-1">Si se deja vacío, aplica a todos.</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Tipo de Servicio (opcional)</label>
-            <select
-              className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-              value={commissionForm.serviceType}
-              onChange={e => setCommissionForm({ ...commissionForm, serviceType: e.target.value })}
-            >
-              <option value="">Todos los servicios</option>
-              {serviceTypes.map(st => st.value && <option key={st.value} value={st.value}>{st.label}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Comisión (%)</label>
-              <div className="relative mt-1">
-                <input
-                  type="number" step="0.01" required
-                  className="block w-full rounded-[10px] border border-slate-200 bg-slate-50 pl-3 pr-8 py-2 text-sm focus:border-primary focus:bg-white dark:border-slate-700 dark:bg-slate-800"
-                  value={commissionForm.commissionPercent}
-                  onChange={e => setCommissionForm({ ...commissionForm, commissionPercent: e.target.value })}
-                />
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                  <span className="text-slate-500">%</span>
-                </div>
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Prioridad</label>
-              <select
-                className="mt-1 block w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white dark:border-slate-700 dark:bg-slate-800"
-                value={commissionForm.priority}
-                onChange={e => setCommissionForm({ ...commissionForm, priority: e.target.value })}
-              >
-                <option value="1">Baja (1)</option>
-                <option value="2">Media (2)</option>
-                <option value="3">Alta (3)</option>
-              </select>
-            </div>
-          </div>
-          <div className="pt-2">
-            <Button type="submit" className="w-full">
-              Guardar Regla
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-
     </div>
   );
 }
-
-
-
-
