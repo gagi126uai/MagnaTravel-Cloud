@@ -646,7 +646,9 @@ function DetailModal({ detailLead, detailJourney, detailLoading, chatMessage, cr
                                 <div className="border-t border-slate-100 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
                                     <div className="flex items-center gap-2 rounded-[14px] border border-slate-100 bg-slate-50 p-2 transition-all focus-within:ring-2 focus-within:ring-emerald-500/20 dark:border-slate-800 dark:bg-slate-950">
                                         <input type="text" value={chatMessage} onChange={(event) => onSetChatMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSendChat(); } }} placeholder="Escribir respuesta oficial..." className="flex-1 border-none bg-transparent px-4 py-3 text-sm text-slate-700 focus:ring-0 dark:text-slate-200" disabled={sendingChat} />
-                                        <Button onClick={onSendChat} disabled={sendingChat || !chatMessage.trim()} size="icon" className="h-12 w-12 rounded-[14px]">{sendingChat ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}</Button>
+                                        {/* Excepción firmada por Gastón (17/08): el enviar del chat va VERDE WhatsApp,
+                                            haciendo juego con las burbujas — no el azul del molde. */}
+                                        <Button onClick={onSendChat} disabled={sendingChat || !chatMessage.trim()} size="icon" className="h-12 w-12 rounded-[14px] bg-emerald-600 text-white hover:bg-emerald-700">{sendingChat ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}</Button>
                                     </div>
                                     <div className="mt-3 flex items-center justify-center"><div className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-emerald-600 dark:border-emerald-800/30 dark:bg-emerald-900/20">Envio via MagnaBot</div></div>
                                 </div>

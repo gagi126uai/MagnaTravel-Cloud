@@ -57,15 +57,14 @@ corrigieron antes de cada commit.
   sky de Homologación-vs-Producción en Ajustes AFIP (señal de seguridad),
   badge violeta "Bypass 4 ojos" en conciliación (no hay tono equivalente).
 
-## Preguntas juntadas para Gastón (multiple choice, ninguna urgente)
+## Decisiones de Gastón (firmadas 17/08, multiple choice, ya aplicadas)
 
-1. **Isotipo "MT"** (5 instancias: topbar desktop/mobile, sidebar, login x2):
-   ¿pasa a azul boleto o queda índigo como acento de marca aparte?
-2. **Botón "Enviar" del chat WhatsApp en CRM**: quedó azul boleto (el molde).
-   Antes era verde WhatsApp. ¿Lo dejamos azul (consistencia) o vuelve a verde
-   (marca WhatsApp)? Es una línea.
-3. **Avatares de iniciales en Proveedores**: siguen multicolor aleatorio;
-   Clientes usa 2 tonos grises. ¿Unificar como Clientes?
+1. **Isotipo "MT": queda índigo** como acento de marca, separado del azul de
+   acción (sin cambio de código — ya estaba así).
+2. **Botón "Enviar" del chat WhatsApp en CRM: verde WhatsApp**, haciendo juego
+   con las burbujas (excepción firmada al molde, comentada en el código).
+3. **Avatares de Proveedores: unificados en grises** como Clientes (círculo
+   neutro; los colores quedan para significados, no decoración).
 
 ## Deuda anotada (no de esta obra)
 

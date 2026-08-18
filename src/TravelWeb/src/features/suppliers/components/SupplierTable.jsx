@@ -22,14 +22,12 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
     return name?.split(" ").map((part) => part[0]).join("").toUpperCase().slice(0, 2) || "PV";
   };
 
-  const getRandomColor = (name) => {
-    const colors = ["bg-blue-500", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-indigo-500"];
-    let hash = 0;
-    for (let index = 0; index < name.length; index += 1) {
-      hash = name.charCodeAt(index) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
-  };
+  // Iniciales en círculo neutro (firmado por Gastón 17/08, mismo criterio que
+  // Clientes): los colores quedan reservados para significados, no decoración.
+  const avatarTone = (isActive) =>
+    isActive
+      ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+      : "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
 
   return (
     <DataGrid minWidth="860px" tableClassName="table-fixed">
@@ -65,9 +63,7 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
               <DataGridCell className="font-medium text-slate-900 dark:text-white">
                 <div className="flex items-center gap-3">
                   <div
-                    className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ${getRandomColor(
-                      supplier.name || "PV"
-                    )}`}
+                    className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold shadow-sm ${avatarTone(supplier.isActive)}`}
                   >
                     {getInitials(supplier.name)}
                   </div>
