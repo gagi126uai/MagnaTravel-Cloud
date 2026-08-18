@@ -53,9 +53,9 @@ const SERVICE_TYPES = [
     { value: "Asistencia", label: "Asistencia", icon: ShieldCheck, color: "blue" },
 ];
 
-const inputClass = "w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white dark:focus:border-indigo-400";
+const inputClass = "w-full rounded-[10px] border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-900 focus:border-primary focus:bg-white focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white";
 const labelClass = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300";
-const panelClass = "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/50";
+const panelClass = "rounded-[14px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/50";
 
 const calculateNights = (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return 0;
@@ -174,7 +174,7 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input
                     type="text"
-                    className={`${inputClass} border-indigo-200 bg-indigo-50/20 pl-10 dark:border-indigo-900/50`}
+                    className={`${inputClass} border-blue-200 bg-blue-50/20 pl-10 dark:border-blue-900/50`}
                     placeholder={`Escribi el ${serviceType.toLowerCase()} (busca en cualquier proveedor)...`}
                     value={search}
                     onChange={(event) => {
@@ -187,14 +187,14 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
                 />
                 {loading ? (
                     <div className="absolute right-3 top-2.5">
-                        <RefreshCw className="h-4 w-4 animate-spin text-indigo-500" />
+                        <RefreshCw className="h-4 w-4 animate-spin text-blue-500" />
                     </div>
                 ) : null}
             </div>
 
             {showDropdown && search.trim().length >= 2 ? (
                 <div
-                    className="absolute left-0 right-0 top-full z-50 mt-1 max-h-68 overflow-y-auto overflow-x-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800"
+                    className="absolute left-0 right-0 top-full z-50 mt-1 max-h-68 overflow-y-auto overflow-x-hidden rounded-[10px] border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800"
                     onMouseDown={(e) => e.preventDefault()}
                 >
                     {rates.length === 0 ? (
@@ -216,7 +216,7 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
                                     className={`w-full border-b border-slate-100 px-4 py-3 text-left transition-colors dark:border-slate-700 last:border-0 ${
                                         isExpired
                                             ? "cursor-not-allowed bg-slate-50 opacity-60 dark:bg-slate-900/50"
-                                            : "cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                                            : "cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30"
                                     }`}
                                     disabled={isExpired}
                                 >
@@ -225,20 +225,20 @@ function RateSelector({ serviceType, supplierId, onSelect, disabled }) {
                                             {rate.serviceType === "Hotel" ? rate.hotelName : rate.productName}
                                         </div>
                                         {isExpired ? (
-                                            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                                            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-700">
                                                 VENCIDO
                                             </span>
                                         ) : null}
                                     </div>
                                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
                                         {/* proveedor de la tarifa, bien visible: al elegir queda vinculado */}
-                                        {rate.supplierName ? <span className="font-semibold text-indigo-500">{rate.supplierName}</span> : null}
+                                        {rate.supplierName ? <span className="font-semibold text-blue-500">{rate.supplierName}</span> : null}
                                         {rate.city ? <span>{rate.city}</span> : null}
                                         {rate.roomType ? <span>{rate.roomType}</span> : null}
                                         {rate.airline ? <span>{rate.airline}</span> : null}
                                         <div className="flex items-center gap-2 font-mono">
                                             <span className="font-bold text-emerald-600">NET: {formatMoney(rate.netCost)}</span>
-                                            <span className="font-bold text-indigo-600">VTA: {formatMoney(rate.salePrice)}</span>
+                                            <span className="font-bold text-blue-600">VTA: {formatMoney(rate.salePrice)}</span>
                                         </div>
                                     </div>
                                 </button>
@@ -300,7 +300,7 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
                 <button
                     type="button"
                     onClick={() => setShowManualFields(true)}
-                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    className="w-full rounded-[10px] border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-blue-500 dark:hover:text-blue-400"
                     data-testid="flight-load-manual"
                 >
                     No está en mi tarifario — cargar a mano
@@ -312,9 +312,9 @@ function FlightForm({ form, setForm, suppliers, onRateSelect, disabled, isBudget
             <>
             {/* Banner cuando se eligio una tarifa del tarifario */}
             {form.rateId && (
-                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                <div className="flex items-center gap-2 rounded-[10px] bg-blue-100 px-3 py-2 dark:bg-blue-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
                         Datos traidos del tarifario. Podes editar cualquier campo.
                     </p>
                 </div>
@@ -726,14 +726,14 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                             required
                             autoComplete="off"
                         />
-                        {loading && <RefreshCw className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-indigo-500" />}
+                        {loading && <RefreshCw className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-blue-500" />}
                     </div>
 
                     {/* Banner cuando se eligio una tarifa del tarifario */}
                     {form.rateId && (
-                        <div className="mt-2 flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
-                            <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                            <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                        <div className="mt-2 flex items-center gap-2 rounded-[10px] bg-blue-100 px-3 py-2 dark:bg-blue-900/30">
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                            <p className="text-xs text-blue-700 dark:text-blue-300">
                                 Datos traidos del tarifario. Podes editar cualquier campo.
                             </p>
                         </div>
@@ -744,20 +744,20 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                         adentro (expandir / elegir), asi no se cierra solo. */}
                     {showResults && hotelGroups.length > 0 && (
                         <div
-                            className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[280px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-800"
+                            className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[280px] overflow-y-auto rounded-[14px] border border-slate-200 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-800"
                             onMouseDown={(e) => e.preventDefault()}
                         >
-                            <div className="mb-2 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">En tu tarifario</div>
+                            <div className="mb-2 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-slate-400">En tu tarifario</div>
                             {hotelGroups.map((group) => (
-                                <div key={group.key} className="mb-2 overflow-hidden rounded-xl border border-slate-100 dark:border-slate-700">
+                                <div key={group.key} className="mb-2 overflow-hidden rounded-[10px] border border-slate-100 dark:border-slate-700">
                                     <button
                                         type="button"
                                         onClick={() => setExpandedHotel(expandedHotel === group.key ? null : group.key)}
-                                        className="flex w-full items-center justify-between bg-slate-50/50 p-3 text-left hover:bg-indigo-50/50 dark:bg-slate-900/30 dark:hover:bg-indigo-900/20"
+                                        className="flex w-full items-center justify-between bg-slate-50/50 p-3 text-left hover:bg-blue-50/50 dark:bg-slate-900/30 dark:hover:bg-blue-900/20"
                                     >
                                         <div className="flex items-center gap-3">
-                                            <div className="rounded-lg bg-white p-2 shadow-sm dark:bg-slate-800">
-                                                <Building2 className="h-4 w-4 text-indigo-500" />
+                                            <div className="rounded-[10px] bg-white p-2 shadow-sm dark:bg-slate-800">
+                                                <Building2 className="h-4 w-4 text-blue-500" />
                                             </div>
                                             <div>
                                                 <div className="text-sm font-bold text-slate-900 dark:text-white">{group.hotelName}</div>
@@ -788,11 +788,11 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                                                     <div className="flex-1">
                                                         <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{rate.roomType || "Habitación estándar"}</div>
                                                         {/* el proveedor de la tarifa, bien visible: al elegir queda vinculado */}
-                                                        <div className="text-[10px] text-slate-500">{rate.mealPlan || "Solo Alojamiento"} • <span className="font-semibold text-indigo-500">{rate.supplierName}</span></div>
+                                                        <div className="text-[11px] text-slate-500">{rate.mealPlan || "Solo Alojamiento"} • <span className="font-semibold text-blue-500">{rate.supplierName}</span></div>
                                                     </div>
                                                     <div className="text-right">
                                                         <div className="text-xs font-bold text-emerald-600">{formatMoney(rate.salePrice)}</div>
-                                                        <div className="text-[9px] text-slate-400">por noche/unidad</div>
+                                                        <div className="text-[11px] text-slate-400">por noche/unidad</div>
                                                     </div>
                                                 </button>
                                             ))}
@@ -806,7 +806,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                     {/* Hint "hotel nuevo": hay texto pero no aparecio en el tarifario */}
                     {showResults && !loading && hotelGroups.length === 0 && (form.hotelName || "").trim().length >= 3 && (
                         <div
-                            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 shadow-lg dark:border-amber-900/40 dark:bg-amber-950 dark:text-amber-300"
+                            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-[10px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 shadow-lg dark:border-amber-900/40 dark:bg-amber-950 dark:text-amber-300"
                             onMouseDown={(e) => e.preventDefault()}
                         >
                             No está en tu tarifario. Seguí cargando los datos (ciudad, fechas, precio) y se da de alta como hotel nuevo.
@@ -852,16 +852,16 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
 
             {/* Resumen de noches/dias calculados automaticamente — feedback en vivo de las fechas */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Noches</div>
+                <div className="rounded-[10px] border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Noches</div>
                     <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{nights}</div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Días</div>
+                <div className="rounded-[10px] border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Días</div>
                     <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{days}</div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pasajeros</div>
+                <div className="rounded-[10px] border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Pasajeros</div>
                     <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{(reservaPax || []).length}</div>
                 </div>
             </div>
@@ -870,7 +870,7 @@ function HotelForm({ form, setForm, suppliers, onRateSelect, disabled, reservaPa
                 Todo lo accesorio que NO afecta el total: pais/direccion (voucher), categoria,
                 tipo de habitacion, regimen, ocupacion y rooming. Plegado por defecto para que
                 el alta tipica quede corta; se abre solo si ya hay datos cargados. */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700">
+            <div className="rounded-[10px] border border-slate-200 dark:border-slate-700">
                 <button
                     type="button"
                     onClick={() => setShowDetails((v) => !v)}
@@ -1030,7 +1030,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
                 <button
                     type="button"
                     onClick={() => setShowManualFields(true)}
-                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    className="w-full rounded-[10px] border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-blue-500 dark:hover:text-blue-400"
                     data-testid="transfer-load-manual"
                 >
                     No está en mi tarifario — cargar a mano
@@ -1041,9 +1041,9 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
             <>
             {/* Banner de tarifa elegida del tarifario */}
             {form.rateId && (
-                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                <div className="flex items-center gap-2 rounded-[10px] bg-blue-100 px-3 py-2 dark:bg-blue-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
                         Datos traidos del tarifario. Podes editar cualquier campo.
                     </p>
                 </div>
@@ -1156,7 +1156,7 @@ function TransferForm({ form, setForm, suppliers, onRateSelect, disabled, isBudg
                 <input
                     type="checkbox"
                     id="transfer-round-trip"
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                    className="h-4 w-4 rounded border-slate-300 text-primary"
                     checked={!!form.isRoundTrip}
                     onChange={(event) => setForm({ ...form, isRoundTrip: event.target.checked })}
                     disabled={disabled}
@@ -1252,7 +1252,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
                 <button
                     type="button"
                     onClick={() => setShowManualFields(true)}
-                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    className="w-full rounded-[10px] border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-blue-500 dark:hover:text-blue-400"
                     data-testid="package-load-manual"
                 >
                     No está en mi tarifario — cargar a mano
@@ -1263,9 +1263,9 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
             <>
             {/* Banner de tarifa elegida del tarifario */}
             {form.rateId && (
-                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                <div className="flex items-center gap-2 rounded-[10px] bg-blue-100 px-3 py-2 dark:bg-blue-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
                         Datos traidos del tarifario. Podes editar cualquier campo.
                     </p>
                 </div>
@@ -1384,7 +1384,7 @@ function PackageForm({ form, setForm, suppliers, onRateSelect, disabled, isBudge
                         <label key={field} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
                             <input
                                 type="checkbox"
-                                className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                                className="h-4 w-4 rounded border-slate-300 text-primary"
                                 checked={!!form[field]}
                                 onChange={(event) => setForm({ ...form, [field]: event.target.checked })}
                                 disabled={disabled}
@@ -1468,7 +1468,7 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
                 <button
                     type="button"
                     onClick={() => setShowManualFields(true)}
-                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    className="w-full rounded-[10px] border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-blue-500 dark:hover:text-blue-400"
                     data-testid="assistance-load-manual"
                 >
                     No está en mi tarifario — cargar a mano
@@ -1479,9 +1479,9 @@ function AssistanceForm({ form, setForm, suppliers, onRateSelect, disabled, isBu
             <>
             {/* Banner de tarifa elegida del tarifario */}
             {form.rateId && (
-                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                <div className="flex items-center gap-2 rounded-[10px] bg-blue-100 px-3 py-2 dark:bg-blue-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
                         Datos traidos del tarifario. Podes editar cualquier campo.
                     </p>
                 </div>
@@ -1722,7 +1722,7 @@ function GenericServiceForm({ form, setForm, suppliers, onRateSelect, disabled, 
                 <button
                     type="button"
                     onClick={() => setShowManualFields(true)}
-                    className="w-full rounded-xl border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
+                    className="w-full rounded-[10px] border border-dashed border-slate-300 py-2.5 text-sm text-slate-500 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-blue-500 dark:hover:text-blue-400"
                     data-testid="generic-load-manual"
                 >
                     No está en mi tarifario — cargar a mano
@@ -1733,9 +1733,9 @@ function GenericServiceForm({ form, setForm, suppliers, onRateSelect, disabled, 
             <>
             {/* Banner de tarifa elegida del tarifario */}
             {form.rateId && (
-                <div className="flex items-center gap-2 rounded-lg bg-indigo-100 px-3 py-2 dark:bg-indigo-900/30">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                <div className="flex items-center gap-2 rounded-[10px] bg-blue-100 px-3 py-2 dark:bg-blue-900/30">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
                         Datos traidos del tarifario. Podes editar cualquier campo.
                     </p>
                 </div>
@@ -1885,7 +1885,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
     };
 
     return (
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100 p-4 dark:border-slate-700 dark:from-slate-800 dark:to-slate-800/50">
+        <div className="space-y-4 rounded-[10px] border border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100 p-4 dark:border-slate-700 dark:from-slate-800 dark:to-slate-800/50">
             <div className="flex items-center justify-between">
                 <h4 className="flex items-center gap-2 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">
                     <DollarSign className="h-4 w-4" /> Valores Economicos
@@ -1894,7 +1894,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                     <button
                         type="button"
                         onClick={onRecalculate}
-                        className="flex items-center gap-1 rounded-lg bg-indigo-100 px-3 py-1.5 text-xs text-indigo-700 transition-colors hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-900"
+                        className="flex items-center gap-1 rounded-[10px] bg-blue-100 px-3 py-1.5 text-xs text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:hover:bg-blue-900"
                     >
                         <Calculator className="h-3 w-3" /> Aplicar {commissionPercent}%
                     </button>
@@ -1937,7 +1937,7 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
                 {canSeeCost ? (
                     <div>
                         <label className={labelClass}>Ganancia</label>
-                        <div className={`rounded-xl p-2.5 text-center font-bold ${margin >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
+                        <div className={`rounded-[10px] p-2.5 text-center font-bold ${margin >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
                             {formatMoney(margin)}
                         </div>
                     </div>
@@ -1985,13 +1985,13 @@ function PricingForm({ form, setForm, commissionPercent, onRecalculate, disabled
 
             {/* HOTEL: total derivado del por-noche, bien visible (es lo que paga el cliente). */}
             {isHotel && hotelQuantity > 0 ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-indigo-100 bg-white/70 px-3 py-2 text-sm dark:border-indigo-900/30 dark:bg-slate-900/40">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-blue-100 bg-white/70 px-3 py-2 text-sm dark:border-blue-900/30 dark:bg-slate-900/40">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                         Total ({hotelQuantity} noche{hotelQuantity === 1 ? "" : "s"}/unid.)
                     </span>
                     <span className="flex items-center gap-3">
                         {canSeeCost ? <span className="text-xs text-slate-500">Costo {formatMoney(form.netCost)}</span> : null}
-                        <span className="font-black text-indigo-600 dark:text-indigo-400">Venta {formatMoney(form.salePrice)}</span>
+                        <span className="font-black text-blue-600 dark:text-blue-400">Venta {formatMoney(form.salePrice)}</span>
                     </span>
                 </div>
             ) : null}
@@ -2523,13 +2523,13 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
         {/* El guard isOpen aplica SOLO al modal de servicio, no al de duplicados */}
         {isOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
-                <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-indigo-500 to-sky-600 p-4 text-white dark:border-slate-700">
+            <div className="w-full max-w-2xl overflow-hidden rounded-[14px] bg-white shadow-2xl dark:bg-slate-900">
+                <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-blue-500 to-sky-600 p-4 text-white dark:border-slate-700">
                     <h2 className="flex items-center gap-2 text-lg font-semibold">
                         {currentType ? <currentType.icon className="h-5 w-5" /> : null}
                         {serviceToEdit ? "Editar servicio" : "Agregar servicio"}
                     </h2>
-                    <button onClick={onClose} className="rounded-lg p-2 text-white/80 transition-colors hover:bg-white/20 hover:text-white">
+                    <button onClick={onClose} className="rounded-[10px] p-2 text-white/80 transition-colors hover:bg-white/20 hover:text-white">
                         <X className="h-5 w-5" />
                     </button>
                 </div>
@@ -2577,7 +2577,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                                 disabled={isLocked || !!serviceToEdit}
                                 className={`flex flex-1 items-center justify-center gap-2 py-3.5 text-sm font-medium transition-all ${
                                     serviceType === value
-                                        ? `border-b-2 ${serviceTabClassMap[color] || "border-indigo-500 text-indigo-600 bg-white dark:bg-slate-900"}`
+                                        ? `border-b-2 ${serviceTabClassMap[color] || "border-primary text-primary bg-white dark:bg-slate-900"}`
                                         : "text-slate-500"
                                 }`}
                             >
@@ -2590,7 +2590,7 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
 
                 <form onSubmit={handleSubmit} className="max-h-[78vh] space-y-4 overflow-y-auto p-4">
                     {isLocked ? (
-                        <div className="mb-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-100 p-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                        <div className="mb-4 flex items-center gap-3 rounded-[10px] border border-slate-200 bg-slate-100 p-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
                             <AlertCircle className="h-5 w-5" />
                             <p>Reserva <b>{traducirEstadoReserva(reservaStatus)}</b>: los precios y costos no se pueden cambiar.</p>
                         </div>
@@ -2642,11 +2642,11 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                                     type="checkbox"
                                     id="save-as-rate-checkbox"
                                     data-testid="save-as-rate"
-                                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
                                     checked={saveAsRate}
                                     onChange={(event) => setSaveAsRate(event.target.checked)}
                                 />
-                                <BookmarkPlus className="h-4 w-4 text-indigo-400" />
+                                <BookmarkPlus className="h-4 w-4 text-blue-400" />
                                 Guardar esta tarifa para reusar
                             </label>
                         )}
@@ -2658,15 +2658,15 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
                                 type="button"
                                 onClick={() => handleSubmit(null, false)}
                                 disabled={loading}
-                                className="rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400"
+                                className="rounded-[10px] border border-primary/30 bg-primary/10 px-5 py-2.5 text-sm font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
                             >
                                 Guardar y agregar otra habitación
                             </button>
                         )}
-                        <button type="button" onClick={onClose} className="rounded-xl px-5 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+                        <button type="button" onClick={onClose} className="rounded-[10px] px-5 py-2.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
                             Cancelar
                         </button>
-                        <button type="submit" disabled={loading} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm text-white disabled:opacity-50 shadow-lg shadow-indigo-200 dark:shadow-none">
+                        <button type="submit" disabled={loading} className="rounded-[10px] bg-primary hover:bg-primary/90 px-5 py-2.5 text-sm text-white disabled:opacity-50 shadow-lg shadow-primary/20 dark:shadow-none">
                             {loading ? "Guardando..." : (serviceToEdit ? "Actualizar" : "Guardar servicio")}
                         </button>
                     </div>

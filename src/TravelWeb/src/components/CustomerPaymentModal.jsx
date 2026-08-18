@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlignLeft, Calendar, CheckCircle2, CreditCard, DollarSign, FileText, X } from "lucide-react";
+import { Button } from "./ui/button";
 import { api } from "../api";
 import { showError, showSuccess, showConfirm } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
@@ -197,7 +198,7 @@ export default function CustomerPaymentModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-md overflow-hidden rounded-xl border bg-card shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-md overflow-hidden rounded-[10px] border bg-card shadow-2xl animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between border-b bg-slate-50/50 px-6 py-4 dark:bg-slate-900/50">
           <div>
             <h3 className="text-lg font-bold text-slate-900 dark:text-white">{paymentToEdit ? "Editar cobranza" : "Nueva cobranza"}</h3>
@@ -215,7 +216,7 @@ export default function CustomerPaymentModal({
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Reserva a imputar</label>
             <div className="relative">
               <FileText className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <select disabled={Boolean(paymentToEdit)} value={formData.reservaPublicId} onChange={(event) => selectReserva(event.target.value)} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+              <select disabled={Boolean(paymentToEdit)} value={formData.reservaPublicId} onChange={(event) => selectReserva(event.target.value)} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary disabled:opacity-50">
                 <option value="">Seleccionar reserva...</option>
                 {availableReservas.map((reserva) => <option key={reservaPublicId(reserva)} value={reservaPublicId(reserva)}>{reserva.numeroReserva} - {reserva.name || reserva.fileName}</option>)}
               </select>
@@ -223,7 +224,7 @@ export default function CustomerPaymentModal({
           </div>
 
           {currencyLines.length > 0 && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300">
+            <div className="rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300">
               Cobrás en {formData.imputedCurrency === "USD" ? "US$" : "$"} — saldo {formatCurrency(imputedBalance, formData.imputedCurrency)}
               {!showOtherCurrency && !paymentToEdit && <button type="button" onClick={() => setShowOtherCurrency(true)} className="ml-2 text-xs font-medium underline underline-offset-2">cobrar en otra moneda</button>}
             </div>
@@ -232,12 +233,12 @@ export default function CustomerPaymentModal({
           {showOtherCurrency && (
             <div className="grid grid-cols-2 gap-4">
               <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Moneda del cobro
-                <select value={formData.currency} disabled={Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))} onChange={(event) => setFormData((current) => ({ ...current, currency: event.target.value }))} className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+                <select value={formData.currency} disabled={Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))} onChange={(event) => setFormData((current) => ({ ...current, currency: event.target.value }))} className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary disabled:opacity-50">
                   {PAYMENT_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency === "USD" ? "Dólares (US$)" : "Pesos ($)"}</option>)}
                 </select>
               </label>
               <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Imputar a
-                <select value={formData.imputedCurrency} disabled={Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))} onChange={(event) => setFormData((current) => ({ ...current, imputedCurrency: event.target.value }))} className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+                <select value={formData.imputedCurrency} disabled={Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))} onChange={(event) => setFormData((current) => ({ ...current, imputedCurrency: event.target.value }))} className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary disabled:opacity-50">
                   {currencyLines.map((line) => <option key={line.currency} value={line.currency}>{line.currency === "USD" ? "Saldo en US$" : "Saldo en pesos"}</option>)}
                 </select>
               </label>
@@ -245,7 +246,7 @@ export default function CustomerPaymentModal({
           )}
 
           {crossCurrency && (
-            <div className="grid grid-cols-3 gap-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/10">
+            <div className="grid grid-cols-3 gap-3 rounded-[10px] border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/10">
               <label className="space-y-1 text-xs font-medium">Tipo de cambio<input type="number" min="0.01" step="0.01" value={exchangeRate} disabled={Boolean(paymentToEdit)} onChange={(event) => setExchangeRate(event.target.value)} className="block w-full rounded-md border border-input bg-background px-2 py-2 text-sm disabled:opacity-50" /></label>
               <label className="space-y-1 text-xs font-medium">Fuente<select value={exchangeRateSource} disabled={Boolean(paymentToEdit)} onChange={(event) => setExchangeRateSource(Number(event.target.value))} className="block w-full rounded-md border border-input bg-background px-2 py-2 text-sm disabled:opacity-50">{FX_SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}</select></label>
               <label className="space-y-1 text-xs font-medium">Fecha<input type="date" value={exchangeRateAt} disabled={Boolean(paymentToEdit)} onChange={(event) => setExchangeRateAt(event.target.value)} className="block w-full rounded-md border border-input bg-background px-2 py-2 text-sm disabled:opacity-50" /></label>
@@ -254,14 +255,14 @@ export default function CustomerPaymentModal({
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Monto<div className="relative"><DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input type="number" required min="0.01" step="0.01" value={formData.amount} disabled={Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))} onChange={(event) => setFormData((current) => ({ ...current, amount: event.target.value }))} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" /></div></label>
-            <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Fecha<div className="relative"><Calendar className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input type="date" required value={formData.paidAt} disabled={Boolean(paymentToEdit)} onChange={(event) => setFormData((current) => ({ ...current, paidAt: event.target.value }))} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" /></div></label>
+            <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Monto<div className="relative"><DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input type="number" required min="0.01" step="0.01" value={formData.amount} disabled={Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))} onChange={(event) => setFormData((current) => ({ ...current, amount: event.target.value }))} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary disabled:opacity-50" /></div></label>
+            <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Fecha<div className="relative"><Calendar className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input type="date" required value={formData.paidAt} disabled={Boolean(paymentToEdit)} onChange={(event) => setFormData((current) => ({ ...current, paidAt: event.target.value }))} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary disabled:opacity-50" /></div></label>
           </div>
 
-          <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Método de pago<div className="relative"><CreditCard className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><select value={formData.method} onChange={(event) => setFormData((current) => ({ ...current, method: event.target.value }))} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"><option value="Transferencia">Transferencia</option><option value="Efectivo">Efectivo</option><option value="Tarjeta Crédito">Tarjeta crédito</option><option value="Tarjeta Débito">Tarjeta débito</option><option value="Cheque">Cheque</option><option value="Deposito">Depósito</option></select></div></label>
-          <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Notas (opcional)<div className="relative"><AlignLeft className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><textarea rows={2} value={formData.notes} onChange={(event) => setFormData((current) => ({ ...current, notes: event.target.value }))} className="w-full resize-none rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Referencia o número de comprobante..." /></div></label>
+          <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Método de pago<div className="relative"><CreditCard className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><select value={formData.method} onChange={(event) => setFormData((current) => ({ ...current, method: event.target.value }))} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary"><option value="Transferencia">Transferencia</option><option value="Efectivo">Efectivo</option><option value="Tarjeta Crédito">Tarjeta crédito</option><option value="Tarjeta Débito">Tarjeta débito</option><option value="Cheque">Cheque</option><option value="Deposito">Depósito</option></select></div></label>
+          <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Notas (opcional)<div className="relative"><AlignLeft className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><textarea rows={2} value={formData.notes} onChange={(event) => setFormData((current) => ({ ...current, notes: event.target.value }))} className="w-full resize-none rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary" placeholder="Referencia o número de comprobante..." /></div></label>
 
-          <div className="flex gap-3 pt-2"><button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">Cancelar</button><button type="submit" disabled={loading} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:opacity-50">{loading ? "Guardando..." : <><CheckCircle2 className="h-4 w-4" />{paymentToEdit ? "Guardar cambios" : "Registrar cobro"}</>}</button></div>
+          <div className="flex gap-3 pt-2"><Button type="button" variant="outline" onClick={onClose} className="flex-1">Cancelar</Button><Button type="submit" disabled={loading} className="flex-1 gap-2">{loading ? "Guardando..." : <><CheckCircle2 className="h-4 w-4" />{paymentToEdit ? "Guardar cambios" : "Registrar cobro"}</>}</Button></div>
         </form>
       </div>
     </div>

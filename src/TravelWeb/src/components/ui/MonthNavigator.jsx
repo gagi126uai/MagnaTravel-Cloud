@@ -104,7 +104,7 @@ export function MonthNavigator({ month, onChange, disabled = false, disableNext 
   const btnDisabled = "opacity-50 cursor-not-allowed";
 
   return (
-    <div className="flex w-full items-center justify-between gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto sm:justify-center shadow-sm">
+    <div className="flex w-full items-center justify-between gap-1 rounded-[10px] border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800/50 sm:w-auto sm:justify-center shadow-sm">
       <button
         type="button"
         onClick={handlePrev}
@@ -117,7 +117,7 @@ export function MonthNavigator({ month, onChange, disabled = false, disableNext 
         <ChevronLeft className="w-4 h-4" />
       </button>
       <div className="flex items-center gap-1.5 px-1 sm:px-2">
-        <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+        <Calendar className="w-3.5 h-3.5 text-blue-500" />
         <span
           className="min-w-[110px] text-center text-sm font-medium text-slate-700 dark:text-slate-200"
           data-testid="month-nav-label"
@@ -129,7 +129,7 @@ export function MonthNavigator({ month, onChange, disabled = false, disableNext 
             type="button"
             onClick={handleToday}
             disabled={disabled}
-            className={`text-xs text-indigo-600 dark:text-indigo-400 hover:underline ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+            className={`text-xs text-primary hover:underline ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
             aria-label="Volver al mes actual"
             data-testid="month-nav-today"
           >

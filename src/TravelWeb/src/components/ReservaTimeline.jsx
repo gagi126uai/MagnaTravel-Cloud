@@ -60,7 +60,7 @@ export default function ReservaTimeline({ reservaId }) {
 
     if (events.length === 0) {
         return (
-            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center dark:border-slate-700 dark:bg-slate-800">
+            <div className="rounded-[10px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center dark:border-slate-700 dark:bg-slate-800">
                 <Activity className="mx-auto mb-2 h-8 w-8 text-slate-400" />
                 <p className="text-slate-500 dark:text-slate-400">Todavía no pasó nada en esta reserva.</p>
             </div>
@@ -111,7 +111,7 @@ function SeparadorDeDia({ etiqueta }) {
 const COLOR_PUNTO = {
     rojo: "bg-rose-500",
     verde: "bg-emerald-500",
-    indigo: "bg-indigo-500",
+    indigo: "bg-blue-500",
     neutro: "bg-slate-400 dark:bg-slate-600",
 };
 

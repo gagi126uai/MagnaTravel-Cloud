@@ -146,7 +146,7 @@ export function CartelEmergente({
                 aria-modal="true"
                 aria-labelledby={titleTestId}
                 aria-describedby={messageTestId}
-                className="relative w-full max-w-md rounded-2xl border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800 animate-in zoom-in-95 duration-200"
+                className="relative w-full max-w-md rounded-[14px] border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800 animate-in zoom-in-95 duration-200"
             >
                 <button
                     type="button"
@@ -160,7 +160,7 @@ export function CartelEmergente({
 
                 <div className="p-6 space-y-4">
                     <div className="flex items-center gap-3">
-                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${fondoIcono}`}>
+                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] ${fondoIcono}`}>
                             {esBloqueo
                                 ? <OctagonAlert className={`h-6 w-6 ${colorIcono}`} aria-hidden="true" />
                                 : <AlertTriangle className={`h-6 w-6 ${colorIcono}`} aria-hidden="true" />}
@@ -188,7 +188,7 @@ export function CartelEmergente({
                         onClick={onClose}
                         disabled={isConfirming}
                         data-testid={closeTestId}
-                        className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors dark:text-slate-300 dark:hover:bg-slate-800"
+                        className="rounded-[10px] px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors dark:text-slate-300 dark:hover:bg-slate-800"
                     >
                         {textoBotonSecundario}
                     </button>
@@ -201,7 +201,7 @@ export function CartelEmergente({
                                 state={action.state}
                                 data-testid={actionTestId}
                                 onClick={action.onClick}
-                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors ${colorBotonPrimario}`}
+                                className={`inline-flex items-center gap-2 rounded-[10px] px-4 py-2 text-sm font-bold text-white transition-colors ${colorBotonPrimario}`}
                             >
                                 {action.label}
                             </Link>
@@ -210,7 +210,7 @@ export function CartelEmergente({
                                 type="button"
                                 onClick={action.onClick}
                                 data-testid={actionTestId}
-                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors ${colorBotonPrimario}`}
+                                className={`inline-flex items-center gap-2 rounded-[10px] px-4 py-2 text-sm font-bold text-white transition-colors ${colorBotonPrimario}`}
                             >
                                 {action.label}
                             </button>
@@ -224,7 +224,7 @@ export function CartelEmergente({
                             onClick={onConfirm}
                             disabled={isConfirming}
                             data-testid={actionTestId}
-                            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50 transition-colors ${colorBotonPrimario}`}
+                            className={`inline-flex items-center gap-2 rounded-[10px] px-4 py-2 text-sm font-bold text-white disabled:opacity-50 transition-colors ${colorBotonPrimario}`}
                         >
                             {isConfirming && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                             {confirmLabel ?? (isConfirming ? "Guardando…" : "Sí, confirmar")}

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Ban, CheckCircle2, Download, Eye, FilePlus2, FileText, Loader2, Pencil, Send, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "./ui/button";
+import { StatusChip } from "./ui/badge";
 import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
@@ -42,6 +44,16 @@ function formatScope(scope) {
   if (scope === "TodosLosPasajeros") return "Todos los pasajeros";
   if (scope === "PasajerosSeleccionados") return "Pasajeros específicos";
   return scope || "Toda la reserva";
+}
+
+// Tono del chip de estado del voucher (molde StatusChip, estandar visual B.5):
+// ambar = "te pide algo" (pendiente de autorizar), rojo = anulado, neutro = borrador
+// sin emitir todavia, azul = ya circula (Emitido o subido a mano).
+function voucherStatusTone(status) {
+  if (status === "PendingAuthorization") return "ambar";
+  if (status === "Revoked") return "rojo";
+  if (status === "Draft") return "neutro";
+  return "azul";
 }
 
 function normalizeVoucher(item) {
@@ -119,7 +131,7 @@ function ScopeSelector({ label, value, selectedPassengerIds, passengers, onScope
       <select
         value={value}
         onChange={(event) => onScopeChange(event.target.value)}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
       >
         <option value="ReservaCompleta">Toda la reserva</option>
         <option value="TodosLosPasajeros">Todos los pasajeros</option>
@@ -129,7 +141,7 @@ function ScopeSelector({ label, value, selectedPassengerIds, passengers, onScope
       {value === "PasajerosSeleccionados" ? (
         <div className="grid gap-2 sm:grid-cols-2 mt-2">
           {passengers.length === 0 ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+            <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
               Aún no has agregado pasajeros a esta reserva.
             </div>
           ) : (
@@ -138,13 +150,13 @@ function ScopeSelector({ label, value, selectedPassengerIds, passengers, onScope
               return (
                 <label
                   key={passengerId}
-                  className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200"
+                  className="flex items-center gap-2 rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200"
                 >
                   <input
                     type="checkbox"
                     checked={selectedPassengerIds.includes(passengerId)}
                     onChange={() => togglePassenger(passengerId)}
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
                   />
                   <span className="truncate">{getPassengerName(passenger)}</span>
                 </label>
@@ -162,7 +174,7 @@ function Modal({ isOpen, onClose, title, children }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
-      <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-900/5 dark:bg-slate-900 dark:ring-slate-50/10">
+      <div className="relative w-full max-w-lg rounded-[14px] bg-white p-6 shadow-2xl ring-1 ring-slate-900/5 dark:bg-slate-900 dark:ring-slate-50/10">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-black text-slate-900 dark:text-white">{title}</h2>
           <button
@@ -689,17 +701,17 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
         </div>
         {/* "Agregar documento" es escritura: se oculta en solo lectura (estado congelado) */}
         {!soloLectura && (
-          <button
+          <Button
             type="button"
             onClick={() => {
               resetAddModal();
               setIsAddModalOpen(true);
             }}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-indigo-700"
+            className="gap-2 font-black"
           >
             <Plus className="h-4 w-4" />
             Agregar documento
-          </button>
+          </Button>
         )}
       </div>
 
@@ -709,7 +721,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
           <button
             type="button"
             onClick={() => setDocumentView("active")}
-            className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-widest transition ${
+            className={`rounded-[10px] px-4 py-2 text-xs font-black uppercase tracking-widest transition ${
               documentView === "active"
                 ? "bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900"
                 : "bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
@@ -720,7 +732,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
           <button
             type="button"
             onClick={() => setDocumentView("revoked")}
-            className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-widest transition ${
+            className={`rounded-[10px] px-4 py-2 text-xs font-black uppercase tracking-widest transition ${
               documentView === "revoked"
                 ? "bg-rose-600 text-white shadow-sm"
                 : "bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300 dark:hover:bg-rose-900/30"
@@ -732,15 +744,15 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
       ) : null}
 
       {documentView === "revoked" ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
+        <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
           Estos documentos están anulados y quedan solo como registro. No se pueden emitir, aprobar, rechazar ni enviar.
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-[10px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         {loading ? (
           <div className="flex justify-center p-12">
-            <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
           </div>
         ) : visibleVouchers.length === 0 ? (
           <div className="py-16 text-center text-sm text-slate-500">
@@ -765,30 +777,22 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0 space-y-2.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${
-                        voucher.status === "PendingAuthorization" 
-                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                        : voucher.status === "Revoked"
-                        ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300"
-                        : voucher.status === "Draft"
-                        ? "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                        : "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
-                      }`}>
+                      <StatusChip tone={voucherStatusTone(voucher.status)}>
                         {formatStatus(voucher.status)}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      </StatusChip>
+                      <StatusChip tone="neutro">
                         {formatScope(voucher.scope)}
-                      </span>
+                      </StatusChip>
                       {voucher.canSend ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                          <CheckCircle2 className="h-3 w-3" />
+                        <StatusChip tone="verde">
+                          <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
                           Enviable
-                        </span>
+                        </StatusChip>
                       ) : null}
                     </div>
                     
                     <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400">
                         {voucher.source === "Generated" ? <FilePlus2 className="h-5 w-5" /> : <UploadCloud className="h-5 w-5" />}
                       </div>
                       <div className="truncate text-base font-black text-slate-900 dark:text-white">
@@ -809,17 +813,17 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                     ) : null}
                     
                     {voucher.exceptionalReason ? (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+                      <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
                         Autorización solicitada a {voucher.authorizedBySuperiorUserName || "Supervisor"} por: {voucher.exceptionalReason}
                       </div>
                     ) : null}
                     {voucher.rejectReason ? (
-                      <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-900 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
+                      <div className="rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-900 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
                         Rechazado: {voucher.rejectReason}
                       </div>
                     ) : null}
                     {voucher.revocationReason ? (
-                      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
+                      <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
                         Anulado{voucher.revokedAt ? `: ${formatDateTime(voucher.revokedAt)}` : ""}{voucher.revokedByUserName ? ` por ${voucher.revokedByUserName}` : ""}. Motivo: {voucher.revocationReason}
                       </div>
                     ) : null}
@@ -830,7 +834,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                       type="button"
                       onClick={() => handlePreview(voucher)}
                       disabled={previewingId === voucher.publicId}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                      className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                     >
                       {previewingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
                       Ver
@@ -839,7 +843,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                       type="button"
                       onClick={() => handleDownload(voucher)}
                       disabled={downloadingId === voucher.publicId}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                      className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                     >
                       {downloadingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                       Descargar
@@ -854,7 +858,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                         data-testid="voucher-send-whatsapp-button"
                         onClick={() => handleEnviarVoucher(voucher)}
                         disabled={sendingVoucherId === voucher.publicId}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 px-4 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-900/20"
+                        className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-emerald-200 px-4 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-900/20"
                       >
                         {sendingVoucherId === voucher.publicId ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -876,7 +880,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                         type="button"
                         data-testid="voucher-edit-external-button"
                         onClick={() => openEditExternalModal(voucher)}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 px-4 py-2.5 text-sm font-bold text-amber-700 transition hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900/20"
+                        className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-amber-200 px-4 py-2.5 text-sm font-bold text-amber-700 transition hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900/20"
                       >
                         <Pencil className="h-4 w-4" />
                         Editar
@@ -892,7 +896,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                         type="button"
                         onClick={() => promptIssue(voucher)}
                         disabled={issuingId === voucher.publicId}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+                        className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-slate-900 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
                       >
                         {issuingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                         Emitir
@@ -901,28 +905,32 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
 
                     {!soloLectura && voucher.status === "PendingAuthorization" && (isAdmin() || user?.id === voucher.authorizedBySuperiorUserId) ? (
                       <>
-                        <button
+                        {/* E.3/B.3: acción principal del bloque en azul boleto del molde —
+                            el verde relleno a mano está prohibido explícito en la guía. */}
+                        <Button
                           type="button"
                           onClick={() => handleApprove(voucher)}
                           disabled={processingAuthId === voucher.publicId}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
+                          className="gap-2"
                         >
                           {processingAuthId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />}
                           Aprobar
-                        </button>
-                        <button
+                        </Button>
+                        {/* P-14: destructiva discreta del molde, nunca relleno rojo. */}
+                        <Button
                           type="button"
+                          variant="destructive"
                           onClick={() => {
                             setVoucherToReject(voucher);
                             setRejectReason("");
                             setIsRejectModalOpen(true);
                           }}
                           disabled={processingAuthId === voucher.publicId}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-60"
+                          className="gap-2"
                         >
                           {processingAuthId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsDown className="h-4 w-4" />}
                           Rechazar
-                        </button>
+                        </Button>
                       </>
                     ) : null}
 
@@ -935,7 +943,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                           setIsRevokeModalOpen(true);
                         }}
                         disabled={revokingId === voucher.publicId}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 px-4 py-2.5 text-sm font-bold text-rose-700 transition hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-900/20"
+                        className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-rose-200 px-4 py-2.5 text-sm font-bold text-rose-700 transition hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-900/20"
                       >
                         {revokingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
                         Anular
@@ -959,9 +967,9 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
           <div className="grid gap-4 sm:grid-cols-2">
             <button
               onClick={() => setAddMode("generate")}
-              className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-indigo-700 dark:hover:bg-slate-800"
+              className="flex flex-col items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white p-6 transition hover:border-blue-300 hover:bg-blue-50 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-blue-700 dark:hover:bg-slate-800"
             >
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
                 <FilePlus2 className="h-6 w-6" />
               </div>
               <div className="text-center">
@@ -971,7 +979,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             </button>
             <button
               onClick={() => setAddMode("upload")}
-              className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-emerald-700 dark:hover:bg-slate-800"
+              className="flex flex-col items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white p-6 transition hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-emerald-700 dark:hover:bg-slate-800"
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
                 <UploadCloud className="h-6 w-6" />
@@ -1000,7 +1008,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                   <input
                     value={externalOrigin}
                     onChange={(event) => setExternalOrigin(event.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                     placeholder="Ej. Despegar, Aerolíneas..."
                   />
                 </div>
@@ -1010,40 +1018,40 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                     type="file"
                     onChange={(event) => setExternalFile(event.target.files?.[0] || null)}
                     accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:file:bg-slate-800 dark:file:text-slate-200"
+                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 file:mr-3 file:rounded-[10px] file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:file:bg-slate-800 dark:file:text-slate-200"
                   />
                 </div>
               </div>
             )}
 
             <div className="flex justify-end gap-3 pt-2">
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setAddMode("select")}
-                className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 Volver
-              </button>
+              </Button>
               {addMode === "generate" ? (
-                <button
+                <Button
                   type="button"
                   onClick={handleGenerate}
                   disabled={generating}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                  className="gap-2 font-black"
                 >
                   {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   Generar
-                </button>
+                </Button>
               ) : (
-                <button
+                <Button
                   type="button"
                   onClick={handleUploadExternal}
                   disabled={uploading}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                  className="gap-2 font-black"
                 >
                   {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   Cargar
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -1057,7 +1065,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
         title="Necesitás autorización"
       >
         <div className="space-y-4">
-          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+          <div className="flex items-start gap-3 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
               <div className="text-sm font-black">Cobro pendiente: {formatMoney(reserva?.balance)}</div>
@@ -1073,7 +1081,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               value={exceptionalReason}
               onChange={(event) => setExceptionalReason(event.target.value)}
               rows={3}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
               placeholder="¿Por qué se deben entregar los documentos sin haber cobrado?"
             />
           </div>
@@ -1083,7 +1091,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             <select
               value={authorizedBySuperiorUserId}
               onChange={(event) => setAuthorizedBySuperiorUserId(event.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
             >
               <option value="">Elegí un supervisor...</option>
               {supervisors.map(sup => (
@@ -1096,7 +1104,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             <button
               type="button"
               onClick={() => setIsAuthModalOpen(false)}
-              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="rounded-[10px] px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancelar
             </button>
@@ -1104,7 +1112,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               type="button"
               onClick={handleAuthSubmit}
               disabled={issuingId === voucherToIssue?.publicId}
-              className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-amber-700 disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-[10px] bg-amber-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-amber-700 disabled:opacity-60"
             >
               {issuingId === voucherToIssue?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Pedir autorización
@@ -1126,7 +1134,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               value={rejectReason}
               onChange={(event) => setRejectReason(event.target.value)}
               rows={3}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
               placeholder="Contale al vendedor por qué no lo autorizás..."
             />
           </div>
@@ -1134,19 +1142,21 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             <button
               type="button"
               onClick={() => setIsRejectModalOpen(false)}
-              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="rounded-[10px] px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancelar
             </button>
-            <button
+            {/* P-14: destructiva discreta del molde — el propio modal ya es la confirmación. */}
+            <Button
               type="button"
+              variant="destructive"
               onClick={handleRejectSubmit}
               disabled={processingAuthId === voucherToReject?.publicId}
-              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-red-700 disabled:opacity-60"
+              className="gap-2"
             >
               {processingAuthId === voucherToReject?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Rechazar
-            </button>
+            </Button>
           </div>
         </div>
       </Modal>
@@ -1158,7 +1168,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
         title="Anular documento"
       >
         <div className="space-y-4">
-          <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
+          <div className="flex items-start gap-3 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-rose-900 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200">
             <Ban className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
               <div className="text-sm font-black">El documento queda anulado, con registro de quién y cuándo.</div>
@@ -1179,7 +1189,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               value={revokeReason}
               onChange={(event) => setRevokeReason(event.target.value)}
               rows={3}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
               placeholder={isAdmin() ? "Motivo de la anulación..." : "Ej.: se generó con datos incorrectos, se subió el archivo equivocado..."}
             />
           </div>
@@ -1187,7 +1197,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
             <button
               type="button"
               onClick={() => setIsRevokeModalOpen(false)}
-              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="rounded-[10px] px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancelar
             </button>
@@ -1195,7 +1205,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               type="button"
               onClick={handleRevokeSubmit}
               disabled={revokingId === voucherToRevoke?.publicId}
-              className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-rose-700 disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-[10px] bg-rose-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-rose-700 disabled:opacity-60"
             >
               {revokingId === voucherToRevoke?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Anular documento
@@ -1230,7 +1240,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                   setRecipientCandidates([]);
                   ejecutarEnvioVoucher(voucherAEnviar, candidato);
                 }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-emerald-700 dark:hover:bg-emerald-900/20"
+                className="w-full rounded-[10px] border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-emerald-700 dark:hover:bg-emerald-900/20"
               >
                 {candidato.displayName}
               </button>
@@ -1243,7 +1253,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                 setIsSelectingRecipientForVoucher(null);
                 setRecipientCandidates([]);
               }}
-              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="rounded-[10px] px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancelar
             </button>
@@ -1273,7 +1283,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               onChange={(event) => setEditExternalOrigin(event.target.value)}
               disabled={isSavingExternal}
               placeholder="Ej. Despegar, Aerolíneas..."
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
             />
           </div>
 
@@ -1292,7 +1302,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               onChange={(event) => setEditExternalFile(event.target.files?.[0] || null)}
               accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
               disabled={isSavingExternal}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-slate-700 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:file:bg-slate-800 dark:file:text-slate-200"
+              className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 file:mr-3 file:rounded-[10px] file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-slate-700 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:file:bg-slate-800 dark:file:text-slate-200"
             />
             <p className="mt-1.5 text-xs font-medium text-slate-400">
               Dejá vacío para conservar el archivo actual.
@@ -1304,7 +1314,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               type="button"
               onClick={closeEditExternalModal}
               disabled={isSavingExternal}
-              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 disabled:opacity-60 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="rounded-[10px] px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 disabled:opacity-60 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancelar
             </button>
@@ -1312,7 +1322,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
               type="button"
               onClick={handleEditExternalSubmit}
               disabled={isSavingExternal}
-              className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-amber-700 disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-[10px] bg-amber-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-amber-700 disabled:opacity-60"
             >
               {isSavingExternal ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Guardar cambios
@@ -1324,7 +1334,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
       {previewDocument ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5">
           <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm" />
-          <div className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900 dark:ring-slate-50/10">
+          <div className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[14px] bg-white shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900 dark:ring-slate-50/10">
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
               <div className="min-w-0">
                 <h2 className="truncate text-base font-black text-slate-900 dark:text-white">
@@ -1339,7 +1349,7 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                   type="button"
                   onClick={() => handleDownload(previewDocument.voucher)}
                   disabled={downloadingId === previewDocument.voucher.publicId}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                  className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   {downloadingId === previewDocument.voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                   Descargar
@@ -1368,14 +1378,14 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, can
                   <img
                     src={previewDocument.url}
                     alt={previewDocument.voucher.fileName}
-                    className="max-h-full max-w-full rounded-lg bg-white object-contain shadow-xl"
+                    className="max-h-full max-w-full rounded-[10px] bg-white object-contain shadow-xl"
                   />
                 </div>
               ) : null}
 
               {previewDocument.kind === "unsupported" ? (
                 <div className="flex h-full items-center justify-center p-6 text-center">
-                  <div className="max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <div className="max-w-md rounded-[14px] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <FileText className="mx-auto mb-3 h-10 w-10 text-slate-400" />
                     <h3 className="text-base font-black text-slate-900 dark:text-white">Vista previa no disponible</h3>
                     <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400">

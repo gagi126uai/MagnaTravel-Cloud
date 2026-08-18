@@ -1,4 +1,5 @@
 import { Component, createRef } from "react";
+import { Button } from "./ui/button";
 
 /**
  * Barrera de errores de la aplicacion.
@@ -103,11 +104,11 @@ export class ErrorBoundary extends Component {
                 data-testid="error-boundary"
                 className={contenedorClases}
             >
-                <div className="w-full max-w-sm space-y-6 rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-slate-800 dark:bg-slate-900">
+                <div className="w-full max-w-sm space-y-6 rounded-[14px] border border-slate-200 bg-white p-8 shadow-lg dark:border-slate-800 dark:bg-slate-900">
 
                     {/* Icono de alerta — decorativo, oculto a lectores de pantalla */}
                     <div className="flex justify-center">
-                        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-50 dark:bg-rose-950/30">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-[14px] bg-rose-50 dark:bg-rose-950/30">
                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
                                 className="h-8 w-8 text-rose-500"
@@ -148,22 +149,23 @@ export class ErrorBoundary extends Component {
 
                     {/* Acciones de recuperacion */}
                     <div className="flex flex-col gap-3">
-                        <button
+                        <Button
                             type="button"
                             onClick={this.handleRecargar}
                             data-testid="error-boundary-reload"
-                            className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                            className="w-full py-3 font-bold"
                         >
                             Recargar página
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                             type="button"
+                            variant="outline"
                             onClick={this.handleVolver}
                             data-testid="error-boundary-home"
-                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+                            className="w-full py-3 font-bold"
                         >
                             Volver al inicio
-                        </button>
+                        </Button>
                     </div>
                 </div>
             </div>

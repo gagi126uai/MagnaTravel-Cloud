@@ -84,7 +84,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
 
     if (!reservaPax || reservaPax.length === 0) {
         return (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-900/20">
+            <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-900/20">
                 <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
                     <Info className="h-5 w-5" />
                     <span className="text-sm font-medium">No hay pasajeros cargados.</span>
@@ -99,14 +99,14 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
     return (
         <div className="space-y-4">
             <h4 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-200">
-                <Users className="h-4 w-4 text-indigo-500" />
+                <Users className="h-4 w-4 text-blue-500" />
                 Distribución de Habitaciones (Rooming)
             </h4>
 
             {/* Habitaciones */}
             <div className="grid gap-3 sm:grid-cols-2">
                 {assignments.map((room) => (
-                    <div key={room.roomIndex} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div key={room.roomIndex} className="rounded-[10px] border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                         <h5 className="mb-2 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">
                             Habitación {room.roomIndex}
                         </h5>
@@ -115,7 +115,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                                 const pax = reservaPax.find(p => toPaxId(p) === toPaxId(paxId));
                                 if (!pax) return null;
                                 return (
-                                    <div key={paxId} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-2 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                                    <div key={paxId} className="flex items-center justify-between rounded-[10px] border border-slate-200 bg-white p-2 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-900">
                                         <div className="flex items-center gap-2">
                                             <User className="h-4 w-4 text-slate-400" />
                                             <span className="font-medium text-slate-700 dark:text-slate-200">{pax.fullName || pax.FullName || "Pasajero"}</span>
@@ -134,7 +134,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
                             {/* Opciones para agregar */}
                             {unassignedPax.length > 0 && (
                                 <select 
-                                    className="w-full rounded-lg border border-slate-200 bg-white p-2 text-sm text-slate-600 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white p-2 text-sm text-slate-600 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
                                     value=""
                                     onChange={(e) => {
                                         if (e.target.value) handleAssign(room.roomIndex, e.target.value);
@@ -153,7 +153,7 @@ export default function RoomingPlanner({ rooms, reservaPax, value, onChange }) {
 
             {/* Pasajeros sin asignar */}
             {unassignedPax.length > 0 && (
-                <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="rounded-[10px] border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
                     <h5 className="mb-2 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">Pasajeros sin asignar</h5>
                     <div className="flex flex-wrap gap-2">
                         {unassignedPax.map(p => (

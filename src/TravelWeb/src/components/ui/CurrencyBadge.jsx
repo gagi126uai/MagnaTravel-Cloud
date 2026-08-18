@@ -24,7 +24,11 @@
 export function CurrencyBadge({ currency, size = "xs" }) {
     const isUsd = currency === "USD";
 
-    const textSize = size === "sm" ? "text-[11px]" : "text-[9px]";
+    // Antes "sm" y "xs" tenian tamanos distintos (11px/9px). El estandar visual
+    // (docs/ux/2026-08-16-guia-rollout-estandar-visual.md, B.2) prohibe el texto
+    // de 9px — ahora las dos variantes de tamano quedan iguales en 11px, el piso
+    // tipografico minimo permitido en toda la app.
+    const textSize = "text-[11px]";
 
     return (
         <span

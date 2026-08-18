@@ -30,10 +30,10 @@ function RateMatchCard({ match, isSelected, onSelect }) {
         <button
             type="button"
             onClick={() => onSelect(match)}
-            className={`w-full rounded-xl border p-3 text-left transition-all ${
+            className={`w-full rounded-[10px] border p-3 text-left transition-all ${
                 isSelected
-                    ? "border-indigo-400 bg-indigo-50 dark:border-indigo-600 dark:bg-indigo-900/30"
-                    : "border-slate-200 hover:border-indigo-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-indigo-700 dark:hover:bg-slate-800"
+                    ? "border-primary bg-primary/10"
+                    : "border-slate-200 hover:border-primary/40 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
             }`}
         >
             <div className="flex items-start justify-between gap-2">
@@ -63,7 +63,7 @@ function RateMatchCard({ match, isSelected, onSelect }) {
 
             {/* Score de similitud fuzzy — solo aparece en coincidencias aproximadas, no en exactMatch */}
             {match.score != null && (
-                <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                     Similitud: {Math.round(match.score * 100)}%
                 </p>
             )}
@@ -114,7 +114,7 @@ export default function RateDuplicateModal({
     return (
         // z-[110] para quedar POR ENCIMA del ServiceFormModal que ya usa z-50
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+            <div className="w-full max-w-md overflow-hidden rounded-[14px] bg-white shadow-2xl dark:bg-slate-900">
 
                 {/* Header */}
                 <div className="flex items-center justify-between border-b border-slate-200 bg-amber-50 px-5 py-4 dark:border-slate-700 dark:bg-amber-950/20">
@@ -131,7 +131,7 @@ export default function RateDuplicateModal({
                         <button
                             type="button"
                             onClick={onClose}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-white/80 hover:text-slate-600"
+                            className="rounded-[10px] p-1.5 text-slate-400 hover:bg-white/80 hover:text-slate-600"
                             aria-label="Cerrar"
                         >
                             <X className="h-5 w-5" />
@@ -141,8 +141,8 @@ export default function RateDuplicateModal({
 
                 <div className="space-y-4 p-5">
                     {/* Resumen del servicio que se acaba de guardar, para comparar contra el tarifario */}
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
-                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <div className="rounded-[10px] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                        <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
                             Servicio recien cargado
                         </p>
                         <div className="flex gap-4 text-sm font-semibold">
@@ -185,7 +185,7 @@ export default function RateDuplicateModal({
                             data-testid="rate-dup-use"
                             onClick={onClose}
                             disabled={isLoading}
-                            className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                            className="flex w-full items-center gap-3 rounded-[10px] border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                         >
                             <CheckCircle2 className="h-4 w-4 shrink-0 text-slate-400" />
                             <div>
@@ -202,7 +202,7 @@ export default function RateDuplicateModal({
                             data-testid="rate-dup-update"
                             onClick={() => onUpdate(selectedMatch)}
                             disabled={isLoading || !selectedMatch}
-                            className="flex w-full items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-left text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/40"
+                            className="flex w-full items-center gap-3 rounded-[10px] border border-primary/30 bg-primary/10 px-4 py-3 text-left text-sm font-semibold text-primary transition hover:bg-primary/20 disabled:opacity-50"
                         >
                             {isLoading ? (
                                 <RefreshCw className="h-4 w-4 shrink-0 animate-spin" />
@@ -211,7 +211,7 @@ export default function RateDuplicateModal({
                             )}
                             <div>
                                 <div>Actualizar precio</div>
-                                <div className="text-xs font-normal text-indigo-400">
+                                <div className="text-xs font-normal text-primary/70">
                                     Pisa NET/VTA de la tarifa seleccionada
                                 </div>
                             </div>
@@ -223,7 +223,7 @@ export default function RateDuplicateModal({
                             data-testid="rate-dup-create"
                             onClick={onCreate}
                             disabled={isLoading}
-                            className="flex w-full items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+                            className="flex w-full items-center gap-3 rounded-[10px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
                         >
                             <PlusCircle className="h-4 w-4 shrink-0" />
                             <div>

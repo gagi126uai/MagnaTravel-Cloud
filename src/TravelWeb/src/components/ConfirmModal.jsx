@@ -17,21 +17,21 @@ export default function ConfirmModal({
         warning: <AlertTriangle className="h-7 w-7 text-amber-500" />,
         danger: <Trash2 className="h-7 w-7 text-rose-500" />,
         info: <Info className="h-7 w-7 text-sky-500" />,
-        question: <HelpCircle className="h-7 w-7 text-indigo-500" />
+        question: <HelpCircle className="h-7 w-7 text-blue-500" />
     };
 
     const confirmColors = {
         warning: "bg-gradient-to-br from-amber-400 to-orange-600 text-white shadow-amber-200/50 hover:shadow-amber-300/50",
         danger: "bg-gradient-to-br from-rose-500 to-red-700 text-white shadow-rose-200/50 hover:shadow-rose-300/50",
         info: "bg-gradient-to-br from-sky-400 to-blue-600 text-white shadow-sky-200/50 hover:shadow-sky-300/50",
-        question: "bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-indigo-200/50 hover:shadow-indigo-300/50"
+        question: "bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-blue-200/50 hover:shadow-blue-300/50"
     };
 
     const iconBg = {
         warning: "bg-amber-50 dark:bg-amber-900/20 ring-4 ring-amber-100 dark:ring-amber-900/30",
         danger: "bg-rose-50 dark:bg-rose-900/20 ring-4 ring-rose-100 dark:ring-rose-900/30",
         info: "bg-sky-50 dark:bg-sky-900/20 ring-4 ring-sky-100 dark:ring-sky-900/30",
-        question: "bg-indigo-50 dark:bg-indigo-900/20 ring-4 ring-indigo-100 dark:ring-indigo-900/30"
+        question: "bg-blue-50 dark:bg-blue-900/20 ring-4 ring-blue-100 dark:ring-blue-900/30"
     };
 
     return (
@@ -70,7 +70,7 @@ export default function ConfirmModal({
                         onClick={onConfirm}
                         disabled={isLoading}
                         data-testid="confirm-modal-confirm"
-                        className={`w-full rounded-2xl px-6 py-4 text-sm font-extrabold shadow-xl transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-3 ${confirmColors[type]}`}
+                        className={`w-full rounded-[14px] px-6 py-4 text-sm font-extrabold shadow-xl transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-3 ${confirmColors[type]}`}
                     >
                         {isLoading ? (
                             <div className="h-5 w-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -80,7 +80,7 @@ export default function ConfirmModal({
                     <button
                         onClick={onClose}
                         disabled={isLoading}
-                        className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-4 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-all disabled:opacity-50"
+                        className="w-full rounded-[14px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-4 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-all disabled:opacity-50"
                     >
                         {cancelText}
                     </button>
