@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using MassTransit;
 using Minio.AspNetCore;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -237,6 +238,37 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<AppDbContext>()
     .AddDefaultTokenProviders();
+
+// DataProtection: ASP.NET Identity la usa por adentro para firmar los tokens de un solo uso
+// (hoy el unico consumidor real es el reset de password que hace un admin, same-request, ver
+// UserService.ResetPasswordAsync). Sin esto, ASP.NET genera un keyring EFIMERO en
+// /root/.aspnet/DataProtection-Keys DENTRO del contenedor: si el contenedor se recicla (deploy,
+// restart) las keys viejas se pierden y cualquier token emitido antes de ese momento queda
+// invalido. Como api y worker corren la MISMA imagen pero son contenedores distintos, cada uno
+// tendria ademas su propio keyring separado (un token generado por uno no lo podria validar el
+// otro). Persistir las keys en un volumen compartido (dataprotection_keys en
+// docker-compose.yml, montado en /app/dpkeys en ambos servicios) resuelve las dos cosas.
+//
+// DATAPROTECTION_KEYS_PATH es la unica variable de entorno que gobierna esto. En produccion
+// (docker-compose.yml) apunta a /app/dpkeys, el volumen compartido. Si no esta seteada -caso de
+// `dotnet test` y del arranque local en Windows, donde /app no existe- cae a una carpeta relativa
+// al binario (bin/.../dpkeys). PersistKeysToFileSystem no necesita que la carpeta exista de
+// antemano: la crea sola recien cuando escribe la primera key, asi que este fallback nunca rompe
+// el arranque ni los tests.
+//
+// Decision aceptada (no encriptar las keys en disco): en Windows, DataProtection encripta el
+// keyring automaticamente con DPAPI; en Linux sin ese mecanismo (nuestro caso, VPS Ubuntu) quedan
+// en texto plano dentro del volumen. Se acepta a proposito: el volumen vive en el mismo VPS y con
+// el mismo nivel de confianza que el resto de los secretos de este compose (connection string,
+// JWT key, etc.), que tampoco estan encriptados en reposo. Meter Azure Key Vault o un mecanismo
+// de cifrado propio para esto seria una dependencia nueva sin justificacion para el riesgo real
+// que cubre (tokens de un solo uso, no sesiones ni contraseñas).
+var dataProtectionKeysPath = builder.Configuration["DATAPROTECTION_KEYS_PATH"]
+    ?? Path.Combine(AppContext.BaseDirectory, "dpkeys");
+
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath))
+    .SetApplicationName("MagnaTravel");
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 

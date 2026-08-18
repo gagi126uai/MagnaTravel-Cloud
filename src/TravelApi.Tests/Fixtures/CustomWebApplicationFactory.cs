@@ -1,5 +1,6 @@
 using Hangfire;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly string _databaseName = "TravelApiTests-" + Guid.NewGuid();
 
+    // Keyring de DataProtection UNICO por instancia (mismo patron Guid que la
+    // base InMemory de arriba): sin esto, los 4 hosts paralelos de la suite
+    // compartirian el fallback de Program.cs (bin/dpkeys) y se traban entre si
+    // escribiendo el mismo keyring (bloqueante detectado en review 18/08).
+    private readonly string _dataProtectionKeysPath =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "TravelApiTests-dpkeys-" + Guid.NewGuid());
+
     static CustomWebApplicationFactory()
     {
         // .NET configuration usa "__" como separador de seccion en env vars.
@@ -64,9 +72,17 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        builder.UseSetting("DATAPROTECTION_KEYS_PATH", _dataProtectionKeysPath);
 
         builder.ConfigureServices(services =>
         {
+            // DataProtection EFIMERO en memoria para los tests: el Program.cs real
+            // persiste el keyring a disco (volumen en PROD), pero acá 4 hosts corren
+            // en paralelo en el mismo proceso y cualquier keyring en disco compartido
+            // los hace pelearse por los mismos archivos (bloqueante review 18/08).
+            // Ephemeral = cada host su keyring en RAM, cero I/O, cero contención.
+            services.AddDataProtection().UseEphemeralDataProtectionProvider();
+
             // Reemplazar el DbContext registrado con Npgsql por InMemory.
             var descriptor = services.SingleOrDefault(s =>
                 s.ServiceType == typeof(DbContextOptions<AppDbContext>));

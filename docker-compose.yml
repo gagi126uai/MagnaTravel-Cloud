@@ -106,8 +106,15 @@ services:
       # borrado masivo (SystemDataWipeService). Mismo host-path que postgres-backup usa para sus dumps
       # automaticos (./backups/postgres), en un subdirectorio propio para no mezclar con los diarios/semanales.
       - ./backups/postgres/wipe:/backups/wipe
+      # Keyring de DataProtection (ver Program.cs). Volumen NOMBRADO (no bind mount a ./) a proposito:
+      # es contenido binario que no hace falta inspeccionar ni versionar desde el host, a diferencia de
+      # uploads/logs/backups de arriba.
+      - dataprotection_keys:/app/dpkeys
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      # ASPNETCORE_URLS gana por encima del HTTP_PORTS=8080 que ya trae la imagen base de .NET 8;
+      # apunta al MISMO puerto, asi que el warning "Overriding HTTP_PORTS '8080'..." que aparece en
+      # el log de arranque es ruido inofensivo (no hay dos bindings compitiendo). No tocar.
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: Host=db;Database=${POSTGRES_DB:-travel};Username=${POSTGRES_USER:-traveluser};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY:?SECURITY_ENCRYPTION_KEY is required}
@@ -129,6 +136,10 @@ services:
       Hangfire__SchedulerEnabled: "false"
       HostedServices__RealtimeEnabled: "true"
       Metrics__Token: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+      # Keyring de DataProtection compartido con el worker (ver comentario largo en Program.cs junto
+      # a AddDataProtection). Sin esto, ASP.NET usa /root/.aspnet/DataProtection-Keys DENTRO del
+      # contenedor: se pierde en cada deploy/restart y api y worker terminan con keyrings distintos.
+      DATAPROTECTION_KEYS_PATH: /app/dpkeys
       # Obra "Empezar de cero": directorio DENTRO del contenedor donde queda el dump antes de un borrado
       # masivo. Coincide con el volumen montado arriba (./backups/postgres/wipe:/backups/wipe).
       Wipe__BackupDirectory: /backups/wipe
@@ -194,6 +205,11 @@ services:
       db:
         condition: service_healthy
     command: ["dotnet", "TravelApi.dll", "--migrate-only"]
+    # Sin DATAPROTECTION_KEYS_PATH ni el volumen dataprotection_keys a proposito: este servicio
+    # corre la migracion y se apaga (restart: "no"), nunca emite tokens de reset de password ni
+    # queda vivo para necesitar el keyring compartido. El warning de DataProtection puede aparecer
+    # en su log una sola vez por corrida; ahi no molesta (a diferencia de api/worker, que quedan
+    # arriba dias).
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
@@ -230,6 +246,9 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./logs:/app/logs
+      # Mismo volumen que monta "api" arriba: api y worker tienen que compartir el keyring de
+      # DataProtection (ver comentario en Program.cs) para poder validar tokens generados por el otro.
+      - dataprotection_keys:/app/dpkeys
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
@@ -254,6 +273,7 @@ services:
       HostedServices__RealtimeEnabled: "false"
       MassTransit__Enabled: "true"
       Metrics__Token: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+      DATAPROTECTION_KEYS_PATH: /app/dpkeys
       # Obra "Restaurar TOTAL" hardening (2026-07-28, hallazgo B-10/B-N2): el worker corre su PROPIA instancia
       # de FileMaintenanceModeService y de MaintenanceModeHangfireFilter, leyendo el MISMO archivo compartido
       # (./logs:/app/logs, montado abajo) que escribe el proceso api — Maintenance__MaxDurationMinutes y
@@ -384,6 +404,7 @@ volumes:
   whatsapp_auth:
   rabbitmq_data:
   minio_data:
+  dataprotection_keys:
 
 networks:
   backend:
