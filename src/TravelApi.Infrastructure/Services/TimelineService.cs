@@ -11,13 +11,29 @@ public class TimelineService : ITimelineService
 {
     private readonly AppDbContext _context;
 
-    private static readonly string[] IgnoredFields = { 
-        "Id", "PublicId", "UpdatedAt", "CreatedAt", "TotalSale", "TotalCost", "Balance", "TotalPaid", 
-        "IsEconomicallySettled", "CanMoveToOperativo", "CanEmitVoucher", 
-        "CanEmitAfipInvoice", "EconomicBlockReason", "ReservaId", "RateId", "SupplierId", 
+    // Campos tecnicos que NUNCA importan en el timeline de NINGUNA entidad (ids internos, columnas
+    // derivadas/calculadas, timestamps de auditoria). OJO: "Status" NO va aca — FlightSegment, HotelBooking,
+    // PackageBooking, TransferBooking, AssistanceBooking, ServicioReserva y Payment tienen su PROPIO campo
+    // Status (confirmacion de vuelo, cancelacion de un pago, etc.) y esos cambios SI tienen que seguir
+    // apareciendo en el timeline. Ver IsIgnoredField mas abajo para el filtro puntual de Reserva.Status.
+    private static readonly string[] IgnoredFields = {
+        "Id", "PublicId", "UpdatedAt", "CreatedAt", "TotalSale", "TotalCost", "Balance", "TotalPaid",
+        "IsEconomicallySettled", "CanMoveToOperativo", "CanEmitVoucher",
+        "CanEmitAfipInvoice", "EconomicBlockReason", "ReservaId", "RateId", "SupplierId",
         "CustomerId", "SourceLeadId", "SourceQuoteId", "ServicioReservaId", "ResponsibleUserId",
         "TravelFileId", "ReservationId"
     };
+
+    /// <summary>
+    /// Tanda 3 (2026-08-18): el diff generico de AuditLogs ya NO arma el evento de cambio de estado DE LA
+    /// RESERVA (era pobre: solo "de X a Y" sin motivo ni quien autorizo). Ahora el UNICO evento de cambio
+    /// de estado de la Reserva sale de ReservaStatusChangeLogs, mas rico (Reason + autorizante) — ver
+    /// BuildStatusChangeEventsAsync mas abajo. El filtro es PUNTUAL a "Reserva"+"Status" (no un
+    /// IgnoredField global): las demas entidades con su propio campo Status (Payment, FlightSegment, etc.)
+    /// siguen mostrando esos cambios normalmente, no tienen una fuente mas rica que los reemplace.
+    /// </summary>
+    private static bool IsIgnoredField(string entityName, string fieldName)
+        => IgnoredFields.Contains(fieldName) || (entityName == "Reserva" && fieldName == "Status");
 
     public TimelineService(AppDbContext context)
     {
@@ -106,7 +122,7 @@ public class TimelineService : ITimelineService
                     var changesObj = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, JsonElement>>>(log.Changes);
                     if (changesObj != null)
                     {
-                        var meaningfulChanges = changesObj.Where(kvp => !IgnoredFields.Contains(kvp.Key)).ToList();
+                        var meaningfulChanges = changesObj.Where(kvp => !IsIgnoredField(log.EntityName, kvp.Key)).ToList();
                         
                         if (log.Action == "Update" && meaningfulChanges.Count == 0)
                         {
@@ -188,7 +204,73 @@ public class TimelineService : ITimelineService
             });
         }
 
+        // Tanda 3 (2026-08-18): segunda fuente del timeline, ademas de AuditLogs. ReservaStatusChangeLogs
+        // es el rastro auditable oficial de cada cambio de Reserva.Status (escrito por el punto UNICO de
+        // transicion, ReservaStatusTransitioner.ApplyAsync) y trae datos que el diff generico de
+        // AuditLogs no tenia: el motivo tipeado por el usuario y, en reversiones sin ser Admin, quien
+        // autorizo. Por eso reemplaza al evento generico de "Status" (ver IgnoredFields arriba).
+        var statusChangeEvents = await BuildStatusChangeEventsAsync(reservaId, cancellationToken);
+
+        // Fusion de las dos fuentes, ordenada por fecha de mas nuevo a mas viejo. OrderByDescending de
+        // LINQ es ESTABLE (misma clave => se respeta el orden de entrada), asi que concatenar AuditLogs
+        // ANTES de ReservaStatusChangeLogs alcanza para que, ante un empate exacto de Timestamp, el
+        // evento de AuditLogs quede primero (desempate pedido: "AuditLogs primero").
+        return events
+            .Concat(statusChangeEvents)
+            .OrderByDescending(e => e.Timestamp)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Arma un TimelineEventDto por cada fila de ReservaStatusChangeLogs de la reserva: el rastro
+    /// auditable de cambios de estado, con motivo y (si aplica) quien autorizo la reversion.
+    /// </summary>
+    private async Task<List<TimelineEventDto>> BuildStatusChangeEventsAsync(int reservaId, CancellationToken cancellationToken)
+    {
+        var logs = await _context.ReservaStatusChangeLogs
+            .AsNoTracking()
+            .Where(log => log.ReservaId == reservaId)
+            .ToListAsync(cancellationToken);
+
+        var events = new List<TimelineEventDto>();
+        foreach (var log in logs)
+        {
+            events.Add(new TimelineEventDto
+            {
+                Timestamp = log.OccurredAt,
+                // "Sistema" cuando el cambio lo disparo un proceso automatico (job de lifecycle) sin
+                // usuario logueado detras — mismo criterio que el resto del timeline (ver actor mas arriba).
+                Actor = !string.IsNullOrWhiteSpace(log.ByUserName) ? log.ByUserName : "Sistema",
+                EventType = "StatusChange",
+                // Los codigos de estado ("Budget"/"Reserved"/etc.) viajan CRUDOS: no existe todavia un
+                // traductor a español en el backend (solo en el frontend, traducirEstadoReserva) y el
+                // proyecto ya tiene la convencion de dejar estos enums-string sin traducir en la API
+                // (ver el comentario de PaymentMethod en TimelineEventDto). NO se inventa un mapa nuevo
+                // aca: el frontend arma la frase legible con FromStatus/ToStatus.
+                Title = $"Cambio de estado: {log.FromStatus} → {log.ToStatus}",
+                Details = BuildStatusChangeDetails(log),
+                RelatedEntityType = "Reserva",
+                FromStatus = log.FromStatus,
+                ToStatus = log.ToStatus
+            });
+        }
+
         return events;
+    }
+
+    /// <summary>
+    /// Detalle del cambio de estado: el motivo tipeado por el usuario (si lo hubo) y, en reversiones
+    /// autorizadas por un supervisor (revert de no-admin), quien la autorizo. Null si no hay nada de eso
+    /// (la mayoria de las transiciones forward triviales no llevan motivo).
+    /// </summary>
+    private static string? BuildStatusChangeDetails(ReservaStatusChangeLog log)
+    {
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(log.Reason))
+            lines.Add(log.Reason.Trim());
+        if (!string.IsNullOrWhiteSpace(log.AuthorizedBySuperiorUserName))
+            lines.Add($"Autorizó: {log.AuthorizedBySuperiorUserName}");
+        return lines.Count > 0 ? string.Join("\n", lines) : null;
     }
 
     private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)

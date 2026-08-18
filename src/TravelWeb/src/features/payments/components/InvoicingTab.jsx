@@ -164,6 +164,13 @@ export function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDown
                 <div className="text-sm text-slate-500 dark:text-slate-400">{invoice.numeroReserva || "Sin reserva"} · {invoice.customerName || "Consumidor Final"}</div>
                 <div className="text-xs text-slate-400">{formatDate(invoice.createdAt)} · #{invoice.numeroComprobante?.toString().padStart(8, "0") || "--------"}</div>
                 {invoice.forceReason && <div className="text-xs text-slate-400">Motivo: {invoice.forceReason}</div>}
+                {/* Esta pantalla todavia no tiene un chip "Anulada" propio (solo distingue
+                    Pending de "en curso"): mostramos el motivo igual, como renglon chico
+                    informativo, para no perder el dato aunque falte ese chip — ver reporte
+                    de la Tanda 3 (2026-08-18). */}
+                {invoice.annulmentStatus === "Succeeded" && invoice.annulmentReason && (
+                  <div className="text-xs text-slate-400">Anulada — Motivo: {invoice.annulmentReason}</div>
+                )}
               </div>
 
               <div className="text-right text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(invoice.importeTotal)}</div>

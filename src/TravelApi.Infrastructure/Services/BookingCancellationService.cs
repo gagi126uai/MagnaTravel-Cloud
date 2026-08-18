@@ -14414,6 +14414,18 @@ public class BookingCancellationService
     private async Task<PartialCreditNoteEmissionSummaryDto?> BuildPartialCreditNoteEmissionSummaryAsync(
         BookingCancellation bc, CancellationToken ct)
     {
+        // Decision 18/08 (tanda 3, gate backend del panel de devolucion en Presupuesto): una reserva en
+        // Presupuesto todavia no tiene factura de venta (no se puede facturar sin que el cliente haya
+        // aceptado), asi que NUNCA puede tener una devolucion de NC parcial pendiente de emitir — esa
+        // devolucion nace de una factura anulada, que requiere haber facturado primero. Si por datos
+        // raros (reserva revertida a Presupuesto con un BC viejo colgado) el calculo de mas abajo daria
+        // igual un resultado, lo cortamos aca ANTES: el panel no debe mostrarse en Presupuesto. El
+        // frontend ya tiene su propio cinturon (no dibuja el panel si el estado no corresponde); este
+        // gate es la fuente de verdad server-side para que la API nunca preste ese dato en el estado
+        // equivocado, aunque el cinturon del front falle o lo salteen.
+        if (bc.Reserva.Status == EstadoReserva.Budget)
+            return null;
+
         var partialLines = bc.Lines.Where(l => l.Scope == BookingCancellationLineScope.Partial).ToList();
         bool hasFullLine = bc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full);
         if (partialLines.Count == 0 || hasFullLine)

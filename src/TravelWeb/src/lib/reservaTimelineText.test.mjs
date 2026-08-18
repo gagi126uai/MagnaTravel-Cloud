@@ -347,6 +347,81 @@ test("describirEventoHistorial: diff con N° de confirmación (Modificación) �
   assert.equal(d.detalle, "N° de confirmación: CONF-123");
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * describirEventoHistorial: eventType "StatusChange" — Tanda 3 (2026-08-18)
+ * Contrato nuevo del backend: fromStatus/toStatus crudos + details con motivo
+ * y/o "Autorizó: {nombre}" (ver TimelineService.BuildStatusChangeDetails).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+test("describirEventoHistorial: StatusChange sin motivo ni autorizante, con actor humano → frase traducida + 'La hizo X.'", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Maite",
+    fromStatus: "InManagement",
+    toStatus: "Confirmed",
+    details: null,
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de En gestión a Confirmada.");
+  assert.equal(d.actor, null, "el actor no va al principio de esta frase especial");
+  assert.equal(d.detalle, "La hizo Maite.");
+});
+
+test("describirEventoHistorial: StatusChange con motivo → detalle 'Motivo: …' además de quién lo hizo", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Maite",
+    fromStatus: "Confirmed",
+    toStatus: "Cancelled",
+    details: "El cliente pidió cancelar el viaje.",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de Confirmada a Anulada.");
+  assert.equal(d.detalle, "La hizo Maite. · Motivo: El cliente pidió cancelar el viaje.");
+});
+
+test("describirEventoHistorial: StatusChange con motivo y autorizante (reversión) → los tres datos encadenados", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Maite",
+    fromStatus: "Cancelled",
+    toStatus: "Confirmed",
+    details: "Se canceló por error de carga.\nAutorizó: Gastón",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de Anulada a Confirmada.");
+  assert.equal(
+    d.detalle,
+    "La hizo Maite. · Motivo: Se canceló por error de carga. · Autorizó: Gastón"
+  );
+});
+
+test("describirEventoHistorial: StatusChange sin actor humano (job automático) ni motivo → detalle null", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Sistema",
+    fromStatus: "Confirmed",
+    toStatus: "Traveling",
+    details: null,
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de Confirmada a En viaje.");
+  assert.equal(d.detalle, null);
+});
+
+test("describirEventoHistorial: StatusChange con status crudo no mapeado → NUNCA el código técnico en la frase", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Sistema",
+    fromStatus: "Confirmed",
+    toStatus: "AlgoNuevoDelBackend",
+    details: null,
+  };
+  const d = describirEventoHistorial(event);
+  assert.ok(!d.frase.includes("AlgoNuevoDelBackend"), "nunca el código crudo en la frase");
+  assert.equal(d.frase, "La reserva pasó de Confirmada a —.");
+});
+
 test("describirEventoHistorial: entidad desconocida (DTO nuevo que el front no mapeó) → 'un registro de la reserva', nunca el nombre técnico", () => {
   const event = { eventType: "Update", relatedEntityType: "AlgoNuevoDelBackend", actor: "Maite" };
   const d = describirEventoHistorial(event);

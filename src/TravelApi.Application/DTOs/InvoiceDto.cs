@@ -49,6 +49,13 @@ public class InvoiceDto
     // OriginalInvoice* != null cuando este comprobante es NC/ND emitida sobre
     // una factura previa.
     public string AnnulmentStatus { get; set; } = "None";
+
+    /// <summary>
+    /// Tanda 3 (2026-08-18): el motivo que el usuario tipeo al pedir la anulacion (texto libre de
+    /// negocio, ya se guardaba en <c>Invoice.AnnulmentReason</c> pero nunca viajaba al frontend).
+    /// Solo tiene valor cuando <see cref="AnnulmentStatus"/> es distinto de "None".
+    /// </summary>
+    public string? AnnulmentReason { get; set; }
     public Guid? OriginalInvoicePublicId { get; set; }
     public long? OriginalInvoiceNumeroComprobante { get; set; }
     public int? OriginalInvoiceTipoComprobante { get; set; }

@@ -34,6 +34,13 @@ public sealed class SupplierInvoiceDto
     public decimal Pending { get; set; }
     public bool IsDocumentaryOnly { get; set; } = true;
     public bool AmountsVisible { get; set; }
+
+    /// <summary>
+    /// Tanda 3 (2026-08-18): motivo que el usuario tipeo al anular la factura (ya se guardaba en
+    /// <c>SupplierInvoice.VoidReason</c> pero nunca viajaba al frontend). Solo tiene valor cuando
+    /// <see cref="Status"/> es "anulada".
+    /// </summary>
+    public string? VoidReason { get; set; }
     public IReadOnlyList<SupplierInvoiceLineDto> Lines { get; set; } = Array.Empty<SupplierInvoiceLineDto>();
     public IReadOnlyList<SupplierInvoicePaymentApplicationDto> Applications { get; set; } = Array.Empty<SupplierInvoicePaymentApplicationDto>();
 }

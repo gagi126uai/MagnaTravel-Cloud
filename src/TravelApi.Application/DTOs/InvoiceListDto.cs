@@ -33,6 +33,10 @@ public class InvoiceListDto
 
     // B1.15 (2026-05-11): para UI consistente con InvoiceDto.
     public string AnnulmentStatus { get; set; } = "None";
+
+    // Tanda 3 (2026-08-18): mismo motivo que InvoiceDto.AnnulmentReason, para que el listado
+    // tambien lo muestre (antes solo InvoiceDto lo tenia en el modelo, pero ni siquiera se mapeaba).
+    public string? AnnulmentReason { get; set; }
     public Guid? OriginalInvoicePublicId { get; set; }
     public long? OriginalInvoiceNumeroComprobante { get; set; }
     public int? OriginalInvoiceTipoComprobante { get; set; }

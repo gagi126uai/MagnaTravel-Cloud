@@ -163,6 +163,22 @@ function ChipEstadoFiscal({ invoice }) {
   return <StatusChip tone="azul">En proceso</StatusChip>;
 }
 
+/**
+ * Renglón chico con el motivo de anulación, debajo del chip "Anulada".
+ * Solo se muestra cuando el comprobante está anulado de verdad
+ * (AnnulmentStatus.Succeeded) Y el backend mandó un motivo — si no vino
+ * (comprobantes anulados antes de que el backend empezara a exponerlo), no
+ * se inventa nada, se deja el chip solo.
+ */
+function MotivoAnulacion({ invoice }) {
+  if (invoice.annulmentStatus !== "Succeeded" || !invoice.annulmentReason) return null;
+  return (
+    <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+      Motivo: {invoice.annulmentReason}
+    </p>
+  );
+}
+
 // ─── Helper de formato ─────────────────────────────────────────────────────────
 
 /** Formatea número de comprobante en estilo "00001-00012345". */
@@ -540,6 +556,7 @@ export default function FacturacionPage() {
                         </DataGridCell>
                         <DataGridCell align="center">
                           <ChipEstadoFiscal invoice={invoice} />
+                          <MotivoAnulacion invoice={invoice} />
                         </DataGridCell>
                         <DataGridActionCell>
                           <Button
@@ -593,6 +610,7 @@ export default function FacturacionPage() {
                           <div className="text-xs text-slate-500 dark:text-slate-400">
                             Importe {formatCurrency(invoice.importeTotal, moneda)}
                           </div>
+                          <MotivoAnulacion invoice={invoice} />
                         </>
                       }
                       footerActions={

@@ -50,6 +50,13 @@ public class MappingProfile : Profile
             // B1.15 (2026-05-11): expose anulación al frontend para que distinga
             // Factura (None/Pending/Succeeded/Failed) y muestre relación factura↔NC.
             .ForMember(dest => dest.AnnulmentStatus, opt => opt.MapFrom(src => src.AnnulmentStatus.ToString()))
+            // Data-exposure (2026-08-18): AnnulmentReason a veces lo arma un flujo INTERNO (cancelacion de
+            // reserva, revision manual FC1.3) con un prefijo tecnico pegado ("BC override {GUID}: ...",
+            // "FC1.3 manual review approved: ..."). AnnulmentReasonUiSanitizer.ForDisplay saca ese prefijo
+            // y deja solo el texto de negocio (o null si no quedo texto de usuario) — la fila real en la
+            // entidad sigue guardando el motivo completo, esto SOLO cambia lo que ve el frontend.
+            .ForMember(dest => dest.AnnulmentReason, opt => opt.MapFrom(src =>
+                TravelApi.Domain.Helpers.AnnulmentReasonUiSanitizer.ForDisplay(src.AnnulmentReason)))
             .ForMember(dest => dest.OriginalInvoicePublicId, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (Guid?)src.OriginalInvoice.PublicId : null))
             .ForMember(dest => dest.OriginalInvoiceNumeroComprobante, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (long?)src.OriginalInvoice.NumeroComprobante : null))
             .ForMember(dest => dest.OriginalInvoiceTipoComprobante, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (int?)src.OriginalInvoice.TipoComprobante : null))

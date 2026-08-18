@@ -209,13 +209,21 @@ function esActorHumano(actor) {
 
 /**
  * Caso especial: Update sobre la RESERVA en sí, con un cambio de Estado en el
- * diff. Es el ÚNICO caso donde el mapeo enum→label es total y confiable
+ * diff VIEJO de AuditLogs (formato previo a la Tanda 3, 2026-08-18). Es el
+ * ÚNICO caso donde el mapeo enum→label es total y confiable
  * (`traducirEstadoReserva`, mismo módulo que usan las pestañas y el badge de
  * estado) — para los demás tipos de entidad el "estado operativo" tiene su
  * propio vocabulario (Solicitado/Confirmado/Emitido/...) y no se traduce acá
  * para no arriesgar una traducción cruzada incorrecta.
  *
  * El formato del diff lo arma TimelineService.cs: "• Estado: de *X* a **Y**".
+ *
+ * FALLBACK LEGACY (Tanda 3, 2026-08-18): el backend ya NO manda este formato
+ * para reservas nuevas — el cambio de estado ahora llega como su propio
+ * evento `eventType: "StatusChange"` (ver `fraseYDetalleCambioDeEstado` más
+ * abajo), con motivo y autorizante. Esta función queda como red de contención
+ * por si algún historial viejo (AuditLogs de antes de que existiera la tabla
+ * ReservaStatusChangeLogs) todavía trae el diff en este formato de texto.
  *
  * @returns {string|null}
  */
@@ -227,6 +235,72 @@ function fraseCambioDeEstadoReserva(event) {
   if (!match) return null;
   const [, estadoViejo, estadoNuevo] = match;
   return `La reserva pasó de ${traducirEstadoReserva(estadoViejo)} a ${traducirEstadoReserva(estadoNuevo)}.`;
+}
+
+// Prefijo con el que el backend arma la línea del autorizante dentro de
+// `details` (ver TimelineService.BuildStatusChangeDetails: "Autorizó: {nombre}").
+// Se matchea EXACTO (no una regex laxa) porque es texto armado por el propio
+// backend, no un dato libre que pueda variar de forma.
+const PREFIJO_AUTORIZO = "Autorizó: ";
+
+/**
+ * Separa `details` de un evento `StatusChange` en sus dos posibles líneas:
+ * el motivo tipeado por el usuario (texto libre) y la línea de quién
+ * autorizó la reversión (si la hubo). El backend las manda unidas con "\n"
+ * (ver TimelineService.BuildStatusChangeDetails) — acá solo se separan para
+ * poder mostrar cada una con su propia etiqueta ("Motivo: …" / "Autorizó: …").
+ *
+ * @param {string|null|undefined} details
+ * @returns {{motivo: string|null, autorizoTexto: string|null}}
+ */
+function extraerMotivoYAutorizacion(details) {
+  if (!details) return { motivo: null, autorizoTexto: null };
+
+  const lineas = details
+    .split("\n")
+    .map((linea) => linea.trim())
+    .filter(Boolean);
+
+  const lineaAutorizo = lineas.find((linea) => linea.startsWith(PREFIJO_AUTORIZO)) || null;
+  // Cualquier otra línea que no sea la del autorizante es el motivo (en la
+  // práctica el backend nunca manda más de una línea de motivo).
+  const lineaMotivo = lineas.find((linea) => linea !== lineaAutorizo) || null;
+
+  return { motivo: lineaMotivo, autorizoTexto: lineaAutorizo };
+}
+
+/**
+ * Caso nuevo (Tanda 3, 2026-08-18): evento propio de cambio de estado de la
+ * reserva, `eventType: "StatusChange"`, con los códigos crudos en
+ * `fromStatus`/`toStatus` (p.ej. "InManagement"/"Confirmed") — el backend ya
+ * NO los traduce, así que acá se usa el mismo traductor de siempre
+ * (`traducirEstadoReserva`) para que NUNCA se vea un código técnico en
+ * pantalla, ni aunque el backend mande un estado que el frontend todavía no
+ * mapeó (en ese caso `traducirEstadoReserva` cae a "—", nunca al string crudo).
+ *
+ * El detalle secundario combina, si están, quién hizo el cambio, el motivo
+ * tipeado y quién autorizó — mismo patrón " · " que ya usan otras pantallas
+ * de la app para encadenar datos secundarios cortos en una sola línea chica.
+ *
+ * @returns {{frase: string, detalle: string|null}|null}
+ */
+function fraseYDetalleCambioDeEstado(event) {
+  if (event.eventType !== "StatusChange") return null;
+
+  const frase = `La reserva pasó de ${traducirEstadoReserva(event.fromStatus)} a ${traducirEstadoReserva(event.toStatus)}.`;
+
+  const humano = esActorHumano(event.actor);
+  const { motivo, autorizoTexto } = extraerMotivoYAutorizacion(event.details);
+
+  const partesDetalle = [];
+  if (humano) partesDetalle.push(`La hizo ${event.actor}.`);
+  if (motivo) partesDetalle.push(`Motivo: ${motivo}`);
+  if (autorizoTexto) partesDetalle.push(autorizoTexto);
+
+  return {
+    frase,
+    detalle: partesDetalle.length > 0 ? partesDetalle.join(" · ") : null,
+  };
 }
 
 /**
@@ -299,7 +373,23 @@ export function describirEventoHistorial(event) {
     };
   }
 
-  // Caso 2: cambio de estado de la reserva — frase natural con los dos labels traducidos.
+  // Caso 2: cambio de estado de la reserva (evento propio del backend, Tanda 3
+  // 2026-08-18) — frase natural con los dos labels traducidos, más motivo y
+  // autorizante si vinieron. Es el camino que usan las reservas nuevas.
+  const cambioDeEstado = fraseYDetalleCambioDeEstado(event);
+  if (cambioDeEstado) {
+    return {
+      colorPunto: "neutro",
+      actor: null, // la frase ya está armada completa, sin sujeto al principio
+      esCobro: false,
+      montoTexto: null,
+      frase: cambioDeEstado.frase,
+      detalle: cambioDeEstado.detalle,
+    };
+  }
+
+  // Caso 2b (fallback legacy): mismo cambio de estado, pero leído del diff
+  // viejo de AuditLogs — ver el comentario largo en fraseCambioDeEstadoReserva.
   const fraseEstado = fraseCambioDeEstadoReserva(event);
   if (fraseEstado) {
     return {

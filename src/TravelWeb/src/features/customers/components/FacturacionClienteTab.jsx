@@ -76,6 +76,25 @@ function ChipEstadoFiscal({ invoice }) {
   );
 }
 
+/**
+ * Renglón chico con el motivo de anulación (Tanda 3, 2026-08-18).
+ *
+ * OJO — gap ya existente en esta pantalla (no lo introduce esta tanda): a diferencia
+ * de la Facturación GLOBAL (FacturacionPage.jsx), acá `ChipEstadoFiscal` NUNCA
+ * distingue el estado "Anulada" con su propio chip — un comprobante ya anulado sigue
+ * mostrando "Aprobado"/"Rechazado" según el resultado ARCA. Arreglar ESE chip es un
+ * cambio visual que necesita pasar por el gate de UX; acá solo se agrega el motivo
+ * como dato informativo, sin inventar un chip nuevo.
+ */
+function MotivoAnulacion({ invoice }) {
+  if (invoice.annulmentStatus !== "Succeeded" || !invoice.annulmentReason) return null;
+  return (
+    <div className="text-xs text-slate-400 dark:text-slate-500">
+      Anulada — Motivo: {invoice.annulmentReason}
+    </div>
+  );
+}
+
 /** Formatea número de comprobante en estilo "00001-00012345". */
 function formatNumeroComprobante(invoice) {
   const pdv = String(invoice.puntoDeVenta ?? 0).padStart(5, "0");
@@ -233,6 +252,7 @@ export function FacturacionClienteTab({ customerPublicId, onVerFactura }) {
                   </DataGridCell>
                   <DataGridCell align="center">
                     <ChipEstadoFiscal invoice={invoice} />
+                    <MotivoAnulacion invoice={invoice} />
                   </DataGridCell>
                   <DataGridActionCell>
                     <Button
@@ -283,6 +303,7 @@ export function FacturacionClienteTab({ customerPublicId, onVerFactura }) {
                     <div className="text-xs text-slate-500 dark:text-slate-400">
                       Importe {formatCurrency(invoice.importeTotal, moneda)}
                     </div>
+                    <MotivoAnulacion invoice={invoice} />
                   </>
                 }
                 footerActions={

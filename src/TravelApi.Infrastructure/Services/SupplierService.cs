@@ -2241,6 +2241,7 @@ public class SupplierService : ISupplierService
             Applied = amountsVisible ? applied : 0m,
             Pending = amountsVisible ? Math.Max(0m, total - applied) : 0m,
             AmountsVisible = amountsVisible,
+            VoidReason = invoice.VoidReason,
             Lines = invoice.Lines.Select(x => new SupplierInvoiceLineDto(
                 x.PublicId, x.Reserva.PublicId, x.Reserva.NumeroReserva, ServiceKindLabel(x.ServiceRecordKind),
                 x.ServicePublicId, x.Description, amountsVisible ? x.Amount : 0m)).ToList(),

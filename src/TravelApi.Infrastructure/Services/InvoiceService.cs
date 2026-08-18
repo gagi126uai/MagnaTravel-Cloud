@@ -230,12 +230,24 @@ public class InvoiceService : IInvoiceService
                     invoice.MonId == "DOL" ? "USD" :
                     "ARS",
                 AnnulmentStatus = invoice.AnnulmentStatus.ToString(),
+                AnnulmentReason = invoice.AnnulmentReason,
                 OriginalInvoicePublicId = invoice.OriginalInvoice != null ? (Guid?)invoice.OriginalInvoice.PublicId : null,
                 OriginalInvoiceNumeroComprobante = invoice.OriginalInvoice != null ? (long?)invoice.OriginalInvoice.NumeroComprobante : null,
                 OriginalInvoiceTipoComprobante = invoice.OriginalInvoice != null ? (int?)invoice.OriginalInvoice.TipoComprobante : null,
                 OriginalInvoicePuntoDeVenta = invoice.OriginalInvoice != null ? (int?)invoice.OriginalInvoice.PuntoDeVenta : null
             })
             .ToPagedResponseAsync(query, ct);
+
+        // Data-exposure (2026-08-18): el sanitizador de AnnulmentReason usa Regex — EF Core NO puede
+        // traducir eso a SQL (mismo motivo por el que Currency de arriba se arma con un ternario inline
+        // en vez de llamar a ArcaCurrencyMapper.ToIso dentro del Select). Se aplica ACA, en memoria, sobre
+        // la pagina YA materializada: barato (una pagina son pocas filas) y no rompe la traduccion de la
+        // query principal.
+        foreach (var item in result.Items)
+        {
+            item.AnnulmentReason = AnnulmentReasonUiSanitizer.ForDisplay(item.AnnulmentReason);
+        }
+
         return result;
     }
 
@@ -1184,7 +1196,7 @@ public class InvoiceService : IInvoiceService
 
     public async Task<IEnumerable<InvoiceListDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct)
     {
-        return await _context.Invoices
+        var items = await _context.Invoices
             .AsNoTracking()
             .Where(i => i.ReservaId == reservaId)
             .OrderByDescending(i => i.CreatedAt)
@@ -1220,12 +1232,22 @@ public class InvoiceService : IInvoiceService
                     invoice.MonId == "DOL" ? "USD" :
                     "ARS",
                 AnnulmentStatus = invoice.AnnulmentStatus.ToString(),
+                AnnulmentReason = invoice.AnnulmentReason,
                 OriginalInvoicePublicId = invoice.OriginalInvoice != null ? (Guid?)invoice.OriginalInvoice.PublicId : null,
                 OriginalInvoiceNumeroComprobante = invoice.OriginalInvoice != null ? (long?)invoice.OriginalInvoice.NumeroComprobante : null,
                 OriginalInvoiceTipoComprobante = invoice.OriginalInvoice != null ? (int?)invoice.OriginalInvoice.TipoComprobante : null,
                 OriginalInvoicePuntoDeVenta = invoice.OriginalInvoice != null ? (int?)invoice.OriginalInvoice.PuntoDeVenta : null
             })
             .ToListAsync(ct);
+
+        // Data-exposure (2026-08-18): mismo motivo que en GetAllAsync — el sanitizador usa Regex y EF Core
+        // no lo puede traducir a SQL, asi que se aplica en memoria sobre la lista ya materializada.
+        foreach (var item in items)
+        {
+            item.AnnulmentReason = AnnulmentReasonUiSanitizer.ForDisplay(item.AnnulmentReason);
+        }
+
+        return items;
     }
 
     /// <summary>

@@ -215,7 +215,7 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
     <div className="space-y-3">
       {invoices.map((invoice) => <div key={invoice.publicId} className="rounded-[14px] border bg-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex gap-3"><FileText className="h-5 w-5 text-slate-500 dark:text-slate-400" aria-hidden="true" /><div><div className="font-semibold">Factura {invoice.number}</div><div className="text-xs text-muted-foreground">Emitida {formatDate(invoice.issuedAt)} · vence {formatDate(invoice.dueDate)} · {statusLabel[invoice.status] || invoice.status}</div></div></div>
+          <div className="flex gap-3"><FileText className="h-5 w-5 text-slate-500 dark:text-slate-400" aria-hidden="true" /><div><div className="font-semibold">Factura {invoice.number}</div><div className="text-xs text-muted-foreground">Emitida {formatDate(invoice.issuedAt)} · vence {formatDate(invoice.dueDate)} · {statusLabel[invoice.status] || invoice.status}{invoice.status === "anulada" && invoice.voidReason ? ` · Anulada: ${invoice.voidReason}` : ""}</div></div></div>
           <div className="text-right"><div className="font-bold">{invoice.amountsVisible ? formatCurrency(invoice.pending, invoice.currency) : "—"}</div><div className="text-xs text-muted-foreground">pendiente de {invoice.amountsVisible ? formatCurrency(invoice.total, invoice.currency) : "—"}</div></div>
         </div>
         <div className="mt-3 text-xs text-muted-foreground">{invoice.lines.map((x) => `${x.description} · Reserva ${x.reservaNumber || "—"}`).join(" · ")}</div>

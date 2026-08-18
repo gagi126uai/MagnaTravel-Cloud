@@ -24,4 +24,14 @@ public class TimelineEventDto
     public decimal? Amount { get; set; }
     public string? Currency { get; set; }
     public string? PaymentMethod { get; set; }
+
+    // Tanda 3 (2026-08-18): campos aditivos SOLO para eventos de cambio de estado de la reserva
+    // (EventType == "StatusChange"), leidos de ReservaStatusChangeLogs en vez del diff generico de
+    // auditoria (que se dejo de usar para esto, ver TimelineService.IgnoredFields). FromStatus/ToStatus
+    // viajan TAL CUAL estan en la base ("Budget"/"Reserved"/etc, ver Reserva.cs) — el mismo criterio que
+    // PaymentMethod arriba: la traduccion a español ("Presupuesto"/"Reservado") la hace el frontend, que
+    // ya tiene el mapper (traducirEstadoReserva). Asi el frontend arma su propia frase con campos
+    // estructurados, sin tener que parsear el Title con una regex fragil.
+    public string? FromStatus { get; set; }
+    public string? ToStatus { get; set; }
 }
