@@ -135,7 +135,7 @@ export default function SettingsPage() {
     <div className="space-y-6 max-w-7xl mx-auto pb-20 md:pb-0">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Configuración</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Configuración</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
 Ajustá cómo funciona el sistema para tu agencia.
           </p>
@@ -179,7 +179,7 @@ Ajustá cómo funciona el sistema para tu agencia.
               <form onSubmit={saveAgencySettings} className="space-y-6">
                 {/* Identity Section */}
                 {/* Agency Settings Card */}
-                <div className="bg-white dark:bg-slate-900 rounded-[10px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3 bg-slate-50/50 dark:bg-slate-800/20">
                     <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-[10px] text-blue-600 dark:text-blue-400">
                       <Building2 className="h-5 w-5" />
@@ -197,25 +197,25 @@ Ajustá cómo funciona el sistema para tu agencia.
                       <div className="grid gap-5 md:grid-cols-2">
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Nombre de Fantasía (Visible al cliente)</label>
-                          <input type="text" required className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" required className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             placeholder="Ej: Magna Travel"
                             value={agencyForm.agencyName} onChange={e => setAgencyForm({ ...agencyForm, agencyName: e.target.value })} />
                         </div>
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Razón Social</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             placeholder="Ej: Magna Travel S.A."
                             value={agencyForm.legalName} onChange={e => setAgencyForm({ ...agencyForm, legalName: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CUIT</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             placeholder="XX-XXXXXXXX-X"
                             value={agencyForm.taxId} onChange={e => setAgencyForm({ ...agencyForm, taxId: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Condición IVA</label>
-                          <select className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <select className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             value={agencyForm.taxCondition} onChange={e => setAgencyForm({ ...agencyForm, taxCondition: e.target.value })}>
                             <option value="Responsable Inscripto">Responsable Inscripto</option>
                             <option value="Monotributo">Monotributo</option>
@@ -231,17 +231,17 @@ Ajustá cómo funciona el sistema para tu agencia.
                       <div className="grid gap-5 md:grid-cols-2">
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Dirección</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             value={agencyForm.address} onChange={e => setAgencyForm({ ...agencyForm, address: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Teléfono</label>
-                          <input type="text" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="text" className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             value={agencyForm.phone} onChange={e => setAgencyForm({ ...agencyForm, phone: e.target.value })} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-                          <input type="email" className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent dark:bg-slate-950 dark:border-slate-800 dark:text-slate-50"
+                          <input type="email" className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             value={agencyForm.email} onChange={e => setAgencyForm({ ...agencyForm, email: e.target.value })} />
                         </div>
                       </div>
@@ -279,7 +279,7 @@ Ajustá cómo funciona el sistema para tu agencia.
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Moneda Base</label>
-                    <select className="form-select w-full rounded-[10px] border-slate-200 dark:border-slate-700 dark:bg-slate-800"
+                    <select className="w-full rounded-[10px] border-slate-200 dark:border-slate-700 dark:bg-slate-800"
                       value={agencyForm.currency} onChange={e => setAgencyForm({ ...agencyForm, currency: e.target.value })}>
                       <option value="ARS">ARS - Peso Argentino</option>
                       <option value="USD">USD - Dólar Estadounidense</option>
