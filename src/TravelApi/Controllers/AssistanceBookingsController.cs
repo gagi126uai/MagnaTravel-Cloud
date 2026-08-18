@@ -7,6 +7,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Filters;
 
 namespace TravelApi.Controllers;
 
@@ -151,6 +152,8 @@ public class AssistanceBookingsController : ControllerBase
     [RequirePermission(Permissions.ReservasEdit)]
     // ADR-020: ownership fino por el id de la asistencia (la ruta no trae reservaId). Antes faltaba.
     [RequireOwnership(OwnedEntity.AssistanceBooking, bypassPermission: Permissions.ReservasViewAll)]
+    // Decision firmada 2026-08-18: si esto rechaza, el error tambien queda en la campanita.
+    [NotificarFalloDeResolucionAlUsuario(ServiceResolutionKind.AssistanceBooking, "publicIdOrLegacyId")]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try

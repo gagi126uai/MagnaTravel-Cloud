@@ -28,6 +28,7 @@ using TravelApi.Application.Contracts.Auth;
 using TravelApi.Application.Ai;
 using TravelApi.Infrastructure.Ai;
 using TravelApi.Infrastructure.Reservations;
+using TravelApi.Infrastructure.Notifications;
 using Microsoft.Extensions.Logging;
 
 using TravelApi.Authorization;
@@ -786,6 +787,9 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<INotificationRealtimeDispatcher, SignalRNotificationDispatcher>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+// Decision firmada 2026-08-18: aviso de error en la campanita cuando falla "Marcar confirmado/emitido/No
+// requiere confirmacion" sobre un servicio. Lo usa NotificarFalloDeResolucionAlUsuarioAttribute.
+builder.Services.AddScoped<IServiceResolutionFailureNotifier, ServiceResolutionFailureNotifier>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IEntityReferenceResolver, EntityReferenceResolver>();
 builder.Services.AddScoped<ISensitiveDataProtector, SensitiveDataProtector>();

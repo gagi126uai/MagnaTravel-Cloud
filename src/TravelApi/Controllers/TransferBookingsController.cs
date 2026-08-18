@@ -7,6 +7,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Filters;
 
 namespace TravelApi.Controllers;
 
@@ -145,6 +146,8 @@ public class TransferBookingsController : ControllerBase
     [RequirePermission(Permissions.ReservasEdit)]
     // ADR-020: ownership fino por el id del traslado (la ruta no trae reservaId). Antes faltaba.
     [RequireOwnership(OwnedEntity.TransferBooking, bypassPermission: Permissions.ReservasViewAll)]
+    // Decision firmada 2026-08-18: si esto rechaza, el error tambien queda en la campanita.
+    [NotificarFalloDeResolucionAlUsuario(ServiceResolutionKind.TransferBooking, "publicIdOrLegacyId")]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try
@@ -167,6 +170,8 @@ public class TransferBookingsController : ControllerBase
     [HttpPost("{id}/no-confirmation")]
     [RequirePermission(Permissions.ReservasEdit)]
     [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
+    // Decision firmada 2026-08-18: si esto rechaza, el error tambien queda en la campanita.
+    [NotificarFalloDeResolucionAlUsuario(ServiceResolutionKind.TransferBooking, "id")]
     public async Task<IActionResult> MarkNoConfirmation(string reservaId, string id, CancellationToken ct)
     {
         try

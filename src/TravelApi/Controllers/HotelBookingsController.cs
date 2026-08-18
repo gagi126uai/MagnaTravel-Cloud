@@ -7,6 +7,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Filters;
 
 namespace TravelApi.Controllers;
 
@@ -174,6 +175,8 @@ public class HotelBookingsController : ControllerBase
     // ADR-020: ownership fino por el id del hotel (la ruta no trae reservaId). Antes faltaba y un
     // vendedor podia mover el status (= mover plata / disparar auto-confirm) sobre reservas ajenas.
     [RequireOwnership(OwnedEntity.HotelBooking, bypassPermission: Permissions.ReservasViewAll)]
+    // Decision firmada 2026-08-18: si esto rechaza, el error tambien queda en la campanita.
+    [NotificarFalloDeResolucionAlUsuario(ServiceResolutionKind.HotelBooking, "publicIdOrLegacyId")]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try

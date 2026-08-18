@@ -7,6 +7,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Filters;
 
 namespace TravelApi.Controllers;
 
@@ -150,6 +151,8 @@ public class FlightSegmentsController : ControllerBase
     [RequirePermission(Permissions.ReservasEdit)]
     // ADR-020: ownership fino por el id del vuelo (la ruta no trae reservaId). Antes faltaba.
     [RequireOwnership(OwnedEntity.FlightSegment, bypassPermission: Permissions.ReservasViewAll)]
+    // Decision firmada 2026-08-18: si esto rechaza, el error tambien queda en la campanita.
+    [NotificarFalloDeResolucionAlUsuario(ServiceResolutionKind.FlightSegment, "publicIdOrLegacyId")]
     public async Task<IActionResult> UpdateStatus(string publicIdOrLegacyId, [FromBody] ServiceStatusUpdateRequest req, CancellationToken ct)
     {
         try
@@ -172,6 +175,8 @@ public class FlightSegmentsController : ControllerBase
     [HttpPost("{id}/mark-issued")]
     [RequirePermission(Permissions.ReservasEdit)]
     [RequireOwnership(OwnedEntity.Reserva, "reservaId", bypassPermission: Permissions.ReservasViewAll)]
+    // Decision firmada 2026-08-18: si esto rechaza, el error tambien queda en la campanita.
+    [NotificarFalloDeResolucionAlUsuario(ServiceResolutionKind.FlightSegment, "id")]
     public async Task<IActionResult> MarkIssued(string reservaId, string id, [FromBody] MarkTicketIssuedRequest? req, CancellationToken ct)
     {
         try

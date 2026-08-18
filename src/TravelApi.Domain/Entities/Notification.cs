@@ -82,6 +82,23 @@ public static class NotificationResolutionKeys
     /// </summary>
     public static string ForTyped(string typePrefix, int relatedEntityId)
         => $"{typePrefix}:{relatedEntityId}";
+
+    /// <summary>
+    /// Prefijo del aviso "no se pudo confirmar un servicio con el operador" (decision firmada 2026-08-18:
+    /// los errores al intentar "Marcar confirmado/emitido/No requiere confirmacion" tambien quedan en la
+    /// campanita; los EXITOS nunca generan aviso).
+    /// </summary>
+    public const string ServiceResolutionErrorPrefix = "ServicioResolucionError";
+
+    /// <summary>
+    /// Clave de resolucion para el aviso de "no se pudo confirmar un servicio con el operador" (decision
+    /// firmada 2026-08-18). La clave identifica el SERVICIO puntual (no la reserva entera): si dos
+    /// servicios distintos de la MISMA reserva fallan, cada uno tiene su propio aviso independiente.
+    /// Formato: <c>"ServicioResolucionError:{tipoServicio}:{idInternoDelServicio}"</c> (ej.
+    /// <c>"ServicioResolucionError:FlightSegment:501"</c>).
+    /// </summary>
+    public static string ForServiceResolutionError(string tipoServicio, int idInternoDelServicio)
+        => $"{ServiceResolutionErrorPrefix}:{tipoServicio}:{idInternoDelServicio}";
 }
 
 public class Notification
