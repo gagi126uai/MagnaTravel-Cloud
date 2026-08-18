@@ -83,7 +83,14 @@ export function getAdvertenciaCapacidad(paxCount, capacity) {
 export function construirAvisosInformativos({ reserva, paxCount, capacity }) {
   const avisos = [];
   if (getServiciosSinConfirmar(reserva).length > 0) avisos.push("serviciosSinConfirmar");
-  if (getAdvertenciaCapacidad(paxCount, capacity)) avisos.push("capacidad");
+
+  // Decisión 2026-08-18 (spec T5): en Presupuesto todavía se está armando el viaje,
+  // así que la cantidad de pasajeros contra la capacidad contratada puede no cuadrar
+  // todavía sin que eso sea un problema real — recién importa desde En gestión en
+  // adelante, cuando la reserva ya está "viva" y avanzando hacia el viaje.
+  if (reserva?.status !== "Budget" && getAdvertenciaCapacidad(paxCount, capacity)) {
+    avisos.push("capacidad");
+  }
   return avisos;
 }
 

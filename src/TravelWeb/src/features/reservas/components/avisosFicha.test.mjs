@@ -116,6 +116,12 @@ test("construirAvisosInformativos: solo capacidad excedida → un solo aviso", (
   assert.deepEqual(claves, ["capacidad"]);
 });
 
+test("construirAvisosInformativos: capacidad excedida en Presupuesto → sin avisos (decisión 18/08: en Budget no molesta)", () => {
+  const reserva = { status: "Budget" };
+  const claves = construirAvisosInformativos({ reserva, paxCount: 6, capacity: { hotel: 4, transfer: 0, package: 0, total: 4 } });
+  assert.deepEqual(claves, []);
+});
+
 test("construirAvisosInformativos: los dos avisos a la vez → array con ambas claves, en orden", () => {
   const reserva = {
     status: "Confirmed",

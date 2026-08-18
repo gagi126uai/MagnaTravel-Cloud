@@ -2205,15 +2205,11 @@ export default function ReservaDetailPage() {
         </div>
       ) : null}
 
-      {/* Maqueta sección 6 (aviso GUÍA, índigo — no ámbar: no te pide nada, te orienta).
-          La frase "Los nombres de los pasajeros se cargan después" se BORRÓ: era texto
-          muerto y ahora además MENTÍA — desde la Tanda 3 la solapa Pasajeros existe acá. */}
-      {reserva.status === "Budget" ? (
-        <div className="rounded-[10px] border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
-          <strong className="font-bold">Presupuesto.</strong>{" "}
-          Cuando el cliente confirme, usá "El cliente aceptó" para pasar a En gestión.
-        </div>
-      ) : null}
+      {/* (2026-08-18, spec T5, decisión firmada): el cartel azul "Presupuesto. Cuando
+          el cliente confirme, usá 'El cliente aceptó'..." se ELIMINA. En la etapa
+          Presupuesto no va ningún aviso permanente — el botón de transición ya alcanza
+          para saber qué hacer, y si falta el titular ahora avisa el propio botón
+          (ver ReservaHeader) en vez de un cartel aparte que quedaba siempre prendido. */}
 
       {/* Franja B (ADR-031, 2026-06-15): recordatorio de pasajeros en estado En gestión.
           Aparece solo cuando la reserva está en InManagement Y hay pasajeros declarados

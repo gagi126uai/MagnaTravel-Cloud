@@ -740,9 +740,9 @@ export function ReservaHeader({
                         return (
                             <>
                                 {/* Lavado de cara (2026-08-11): el `title` con el motivo del apagado se
-                                    saca de acá — ya está ESCRITO abajo, en el cartelito ámbar "Falta
-                                    cargar el titular" (P-9: el motivo va a la vista, no en un tooltip).
-                                    Sin motivo, el título repetía el mismo texto que dice el botón (P-16). */}
+                                    saca de acá — ya está ESCRITO abajo, en el texto gris chico de abajo
+                                    (P-9: el motivo va a la vista, no en un tooltip). Sin motivo, el
+                                    título repetía el mismo texto que dice el botón (P-16). */}
                                 <Button
                                     type="button"
                                     variant="default"
@@ -754,25 +754,21 @@ export function ReservaHeader({
                                 >
                                     El cliente aceptó
                                 </Button>
-                                {/* P8 (Tanda 3 del rediseño, 2026-08-03, maqueta sección 6 — "el callejón sin
-                                    salida, resuelto"): antes este texto explicaba el motivo pero no llevaba a
-                                    ningún lado — la solapa Pasajeros todavía no existía en Presupuesto, así
-                                    que el vendedor se quedaba sin saber DÓNDE cargar el titular. Ahora es un
-                                    enlace que abre esa solapa directo (mismo botón primario "abajo", este
-                                    cartelito sigue permitido por el feedback 2026-06-19: explica un requisito
-                                    previo, no un bloqueo del estado). */}
+                                {/* (2026-08-18, spec T5): el cartel ámbar permanente "Falta cargar el
+                                    titular" se elimina — en Presupuesto ya no va ningún aviso fijo. El
+                                    motivo del botón apagado pasa a vivir ACÁ, en el molde estándar P-9
+                                    (11 px, gris, siempre a la vista, nunca en `title`). Sigue siendo
+                                    clickeable para no perder el atajo a la solapa Pasajeros — el texto
+                                    es el motivo firmado, el gesto de click es el mismo de siempre. */}
                                 {faltaTitular && (
-                                    <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
-                                        Falta cargar el titular.{" "}
-                                        <button
-                                            type="button"
-                                            onClick={onIrAPasajeros}
-                                            data-testid="reserva-action-client-accepted-hint"
-                                            className="font-bold underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-300"
-                                        >
-                                            Cargar el titular →
-                                        </button>
-                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={onIrAPasajeros}
+                                        data-testid="reserva-action-client-accepted-hint"
+                                        className="text-left text-[11px] font-medium text-slate-500 underline underline-offset-2 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300"
+                                    >
+                                        Cargá al menos el nombre del titular para pasar a En gestión
+                                    </button>
                                 )}
                             </>
                         );
