@@ -49,8 +49,17 @@ public class PartialCreditNoteReconciliationService : IPartialCreditNoteReconcil
         // (Receipts) + el PaymentReceipt real de cada una (para el estado VIGENTE) +
         // las facturas (para el numero) + la reserva (para el contexto). Un solo viaje a
         // la BD por pagina: NO hay N+1 porque todo se proyecta desde este grafo cargado.
+        //
+        // IgnoreQueryFilters (Tanda 7.2, 2026-08-18): esta bandeja es una herramienta de
+        // AUDITORIA/reconciliacion fiscal — necesita mostrar el estado VIGENTE del recibo
+        // aunque el pago que lo respalda haya sido deshecho (soft-delete) despues de abrirse
+        // el caso. Sin esto, PaymentReceipt (y transitivamente Payment) quedarian ocultos por
+        // sus query filters nuevos y MapReceiptToDto caeria al fallback StatusAtOpen — mostrando
+        // "Issued" (viejo) en vez del estado real (Voided), lo que confundiria al que cierra el
+        // caso sobre si esa plata sigue viva o no.
         var baseQuery = _db.PartialCreditNoteReconciliations
             .AsNoTracking()
+            .IgnoreQueryFilters()
             .Include(r => r.CreditNoteInvoice)
             .Include(r => r.OriginalInvoice)
             .Include(r => r.Reserva)
@@ -88,7 +97,11 @@ public class PartialCreditNoteReconciliationService : IPartialCreditNoteReconcil
         CancellationToken ct)
     {
         // Cargamos CON tracking (vamos a mutar) + el grafo necesario para el DTO de salida.
+        // IgnoreQueryFilters: mismo motivo que ListAsync — hasLiveReceipts necesita ver el
+        // PaymentReceipt real aunque el Payment que lo respalda este deshecho, para no
+        // confundir "recibo oculto por el filtro" con "recibo que nunca existio".
         var reconciliation = await _db.PartialCreditNoteReconciliations
+            .IgnoreQueryFilters()
             .Include(r => r.CreditNoteInvoice)
             .Include(r => r.OriginalInvoice)
             .Include(r => r.Reserva)

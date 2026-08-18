@@ -292,6 +292,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<SupplierInvoice> SupplierInvoices => Set<SupplierInvoice>();
     public DbSet<SupplierInvoiceLine> SupplierInvoiceLines => Set<SupplierInvoiceLine>();
     public DbSet<SupplierInvoicePaymentApplication> SupplierInvoicePaymentApplications => Set<SupplierInvoicePaymentApplication>();
+    // OJO (tanda 7.2, 2026-08-18): SupplierInvoicePaymentApplication tiene HasQueryFilter espejo
+    // (!SupplierPayment.IsDeleted). Si consultas Reversals DIRECTO desde este DbSet, el INNER JOIN
+    // por la FK requerida hacia la aplicacion filtrada hace desaparecer la fila entera cuando el
+    // pago padre esta deshecho. Para vistas de auditoria usa IgnoreQueryFilters() en la raiz.
     public DbSet<SupplierInvoicePaymentApplicationReversal> SupplierInvoicePaymentApplicationReversals => Set<SupplierInvoicePaymentApplicationReversal>();
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
     // Obra "PDF de presupuesto" (2026-08-11/12), TANDA 1: bloques de condiciones del presupuesto
@@ -404,6 +408,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // AfipService.ApplyPartialCreditNoteReversalAsync; las hijas son el snapshot de
     // recibos vivos. Configuracion (FKs, indice unico, CHECK, xmin) en OnModelCreating.
     public DbSet<PartialCreditNoteReconciliation> PartialCreditNoteReconciliations => Set<PartialCreditNoteReconciliation>();
+    // OJO (tanda 7.2, 2026-08-18): PaymentReceipt tiene HasQueryFilter espejo (!Payment.IsDeleted).
+    // Consultar este DbSet nieto DIRECTO sin IgnoreQueryFilters() hace desaparecer la fila entera
+    // (INNER JOIN por FK requerida al recibo filtrado) cuando el pago padre esta deshecho — la
+    // bandeja de reconciliacion ya lo maneja con IgnoreQueryFilters() en la raiz.
     public DbSet<PartialCreditNoteReconciliationReceipt> PartialCreditNoteReconciliationReceipts => Set<PartialCreditNoteReconciliationReceipt>();
 
     // ADR-019 (2026-06-06): descartes manuales ("Listo") del aviso "Proximos inicios" de la
@@ -1408,6 +1416,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .IsUnique().HasFilter("\"IsReversed\" = FALSE");
             entity.HasIndex(x => x.SupplierPaymentId);
             // El pago tiene soft-delete. Una aplicación viva exige pago vivo; SupplierService bloquea su baja.
+
+            // Tanda 7.2 post-rollout (2026-08-18): espejo del filtro de soft-delete de SupplierPayment.
+            // Antes esta hija NO heredaba el filtro: una consulta que arranca DIRECTO desde
+            // SupplierInvoicePaymentApplications (sin pasar por la navegacion del pago) podia devolver la
+            // aplicacion de un pago YA deshecho. Regla de negocio: nada importante se borra, pero un pago
+            // deshecho no puede seguir "existiendo" para consultas nuevas que no pidan verlo a proposito
+            // con IgnoreQueryFilters() (igual que se hace en SupplierService al chequear pagos aplicados
+            // antes de anular un proveedor).
+            entity.HasQueryFilter(x => !x.SupplierPayment.IsDeleted);
         });
 
         modelBuilder.Entity<SupplierInvoicePaymentApplicationReversal>(entity =>
@@ -1636,6 +1653,24 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .WithMany()
                   .HasForeignKey(r => r.ReservaId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            // Tanda 7.2 post-rollout (2026-08-18): espejo del filtro de soft-delete de Payment.
+            // Antes esta hija NO heredaba el filtro: una consulta que arranca DIRECTO desde
+            // PaymentReceipts (sin pasar por la navegacion Payment.Receipt) podia devolver el recibo de
+            // un pago YA deshecho. Regla de negocio: nada importante se borra, pero un pago deshecho no
+            // puede seguir "existiendo" para consultas nuevas que no pidan verlo a proposito con
+            // IgnoreQueryFilters().
+            //
+            // OJO — EXCEPCION DELIBERADA: PaymentService.GenerateReceiptNumberAsync (la secuencia
+            // correlativa de recibos) NO puede usar este filtro para su conteo. Esa secuencia es GLOBAL y
+            // nunca se reinicia ni salta numeros (ver comentario de esa funcion); el indice UNIQUE de
+            // ReceiptNumber es una restriccion FISICA de la tabla que este filtro NO oculta. Si el conteo
+            // excluyera los recibos de pagos deshechos, calcularia un numero YA ocupado fisicamente por uno
+            // de esos recibos "ocultos" -> el INSERT chocaria siempre contra el UNIQUE y el reintento
+            // recalcularia el MISMO numero de nuevo (loop de colision hasta agotar los reintentos). Por eso
+            // ese conteo puntual sigue usando IgnoreQueryFilters() a proposito — ver
+            // PaymentServiceReceiptNumberConcurrencyTests para el candado de regresion.
+            entity.HasQueryFilter(r => !r.Payment.IsDeleted);
         });
 
         modelBuilder.Entity<ManualCashMovement>(entity =>

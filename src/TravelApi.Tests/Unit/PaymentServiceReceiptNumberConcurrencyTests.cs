@@ -142,6 +142,58 @@ public class PaymentServiceReceiptNumberConcurrencyTests
         Assert.Equal($"RCP-{DateTime.UtcNow:yyyy}-000002", second.ReceiptNumber);
     }
 
+    // ===== 1.b. Candado de regresion: la secuencia GLOBAL no se pisa con un pago deshecho en el medio =====
+
+    /// <summary>
+    /// Tanda 7.2 post-rollout (2026-08-18): PaymentReceipt gana un HasQueryFilter que espeja el soft-delete
+    /// de su Payment padre (mismo espiritu que Payment/SupplierPayment). Pero OJO — GenerateReceiptNumberAsync
+    /// NO puede usar ese filtro para su CountAsync: la secuencia es GLOBAL y NUNCA se reinicia ni salta numeros
+    /// (ver el comentario de esa funcion), y el indice UNIQUE de ReceiptNumber es una restriccion FISICA de la
+    /// tabla que el filtro no oculta. Si el conteo excluyera los recibos de pagos deshechos, calcularia un
+    /// numero mas chico que el fisicamente ya usado por esos recibos "ocultos" -> el INSERT chocaria SIEMPRE
+    /// contra el UNIQUE, el reintento recalcularia el MISMO numero chico de nuevo, y tras 5 intentos la emision
+    /// de recibos quedaria rota para SIEMPRE en cuanto exista un solo pago deshecho con recibo Voided (que es
+    /// un escenario real y permitido, ver PaymentServiceDeleteTests.DeletePaymentAsync_WithVoidedReceipt_...).
+    ///
+    /// Por eso GenerateReceiptNumberAsync sigue contando con IgnoreQueryFilters(): este test es el candado de
+    /// regresion que prueba que la numeracion NO se rompe con un pago deshecho de por medio.
+    /// </summary>
+    [Fact]
+    public async Task IssueReceipt_AfterPriorPaymentWasDeletedWithVoidedReceipt_SequenceKeepsIncrementing_NoCollision()
+    {
+        await using var context = new AppDbContext(BuildOptions());
+        await SeedPaidPaymentAsync(context, paymentId: 601);
+        var service = BuildPaymentService(context);
+
+        // 1) Se emite el primer recibo (numero 000001)...
+        var firstReceipt = await service.IssueReceiptAsync(paymentId: 601, CancellationToken.None);
+        Assert.Equal($"RCP-{DateTime.UtcNow:yyyy}-000001", firstReceipt.ReceiptNumber);
+
+        // 2) ...se anula (Voided, la unica forma de poder deshacer el pago despues)...
+        await service.VoidReceiptAsync(
+            paymentPublicIdOrLegacyId: "601", reason: "Error de carga", userId: "u1", userName: "Vendedor 1",
+            requesterIsAdmin: true, cancellationToken: CancellationToken.None);
+
+        // 3) ...y se deshace el pago (soft-delete). La fila del recibo Voided se PRESERVA en la tabla
+        // (DeleteBehavior.Restrict), pero el pago que la respalda queda IsDeleted = true.
+        await service.DeletePaymentAsync("601", CancellationToken.None);
+
+        // 4) Un pago NUEVO, sin relacion con el anterior, emite su propio recibo.
+        context.Payments.Add(new Payment
+        {
+            Id = 602, ReservaId = 1, Amount = 300m, IsDeleted = false, Status = "Paid",
+            Method = "Transfer", PaidAt = DateTime.UtcNow,
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true
+        });
+        await context.SaveChangesAsync();
+
+        var secondReceipt = await service.IssueReceiptAsync(paymentId: 602, CancellationToken.None);
+
+        // La secuencia GLOBAL sigue: numero 000002, NO se reusa el 000001 (que sigue fisicamente ocupado
+        // por el recibo Voided del pago deshecho, aunque ese recibo ya no aparezca en consultas por defecto).
+        Assert.Equal($"RCP-{DateTime.UtcNow:yyyy}-000002", secondReceipt.ReceiptNumber);
+    }
+
     // ===== 2. Logica de reintento (recompute) sin depender del UNIQUE =====
 
     [Fact]

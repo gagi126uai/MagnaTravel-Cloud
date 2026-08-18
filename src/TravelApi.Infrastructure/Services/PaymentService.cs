@@ -1473,12 +1473,19 @@ public partial class PaymentService : IPaymentService
     /// el numero nunca se repite aunque cambie el anio). Este calculo NO es atomico por si solo — la unicidad
     /// la garantiza el indice UNIQUE de ReceiptNumber + el reintento en CreateReceiptWithCorrelativeNumberAsync.
     ///
+    /// IgnoreQueryFilters() a proposito (Tanda 7.2, 2026-08-18): PaymentReceipt ahora tiene un query filter
+    /// que oculta los recibos de pagos deshechos (soft-delete), pero ESTE conteo puntual necesita ver TODOS
+    /// los recibos que existen fisicamente, deshechos o no. El indice UNIQUE de ReceiptNumber es una
+    /// restriccion fisica que el filtro no puede ocultar: si el conteo excluyera recibos "ocultos", calcularia
+    /// un numero que ya esta fisicamente ocupado y el INSERT chocaria siempre contra el UNIQUE (loop de
+    /// colision sin salida, ver PaymentServiceReceiptNumberConcurrencyTests para el detalle del escenario).
+    ///
     /// virtual: los unit tests lo overridean para simular una colision en el primer intento (InMemory no
     /// aplica el UNIQUE, asi que no hay otra forma de ejercitar el camino de reintento sin Postgres).
     /// </summary>
     protected virtual async Task<string> GenerateReceiptNumberAsync(CancellationToken cancellationToken)
     {
-        var next = await _dbContext.PaymentReceipts.CountAsync(cancellationToken) + 1;
+        var next = await _dbContext.PaymentReceipts.IgnoreQueryFilters().CountAsync(cancellationToken) + 1;
         return $"RCP-{DateTime.UtcNow:yyyy}-{next:D6}";
     }
 
