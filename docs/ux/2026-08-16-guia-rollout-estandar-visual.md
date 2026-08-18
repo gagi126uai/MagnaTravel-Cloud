@@ -22,7 +22,10 @@
 
 ## Tipografía (B.2) — tres roles, una sola familia (Inter)
 
-- **Título**: 24px / 20px, peso 800.
+- **Título**: 24px / 20px, peso 700. *(Enmienda firmada 2026-08-18: la guía decía 800,
+  pero todas las páginas migradas se construyeron en 700 y Gastón eligió dejar 700 como
+  estándar y corregir acá — la letra ahora refleja lo construido. Patrón de referencia:
+  `text-2xl font-bold tracking-tight`.)*
 - **Cuerpo**: 14px, peso 400/600. Etiquetas de columna: 11px mayúsculas, gris dato.
 - **Datos (plata y fechas)**: 14px peso 600 (22px para el número grande de la ficha), cifras
   monoespaciadas para que las comas queden alineadas en columna.
