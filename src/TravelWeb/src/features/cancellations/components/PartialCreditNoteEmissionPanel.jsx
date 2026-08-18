@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, Eye, Loader2, RefreshCw, Send } from "lucide-react";
 import ConfirmModal from "../../../components/ConfirmModal";
+import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors.js";
@@ -151,7 +152,7 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
       : "border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20";
 
   return (
-    <section className={`rounded-2xl border p-5 ${panelClass}`} data-testid={`t5-panel-${state}`} aria-label="Devolución por servicio anulado">
+    <section className={`rounded-[14px] border p-5 ${panelClass}`} data-testid={`t5-panel-${state}`} aria-label="Devolución por servicio anulado">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-2">
           <div className="flex items-center gap-2">
@@ -210,13 +211,13 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
         <div className="flex shrink-0 flex-wrap gap-2">
           {state === T5_STATE.SUCCEEDED ? (
             <>
-              <button type="button" onClick={pdf} disabled={pdfLoading || !creditNote?.publicId} className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-3 py-2 text-sm font-bold text-emerald-800 disabled:opacity-50"><Eye className="h-4 w-4" />Ver PDF</button>
-              <button type="button" onClick={send} disabled={sending || !creditNote?.publicId} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4" />{sending ? "Enviando..." : "Enviar al cliente"}</button>
+              <Button type="button" variant="outline" onClick={pdf} disabled={pdfLoading || !creditNote?.publicId} className="gap-2"><Eye className="h-4 w-4" />Ver PDF</Button>
+              <Button type="button" onClick={send} disabled={sending || !creditNote?.publicId} className="gap-2"><Send className="h-4 w-4" />{sending ? "Enviando..." : "Enviar al cliente"}</Button>
             </>
           ) : (state === T5_STATE.READY || state === T5_STATE.FAILED) && canEmit ? (
             <>
-              <button type="button" onClick={() => setDismissed(true)} className="rounded-lg px-3 py-2 text-sm font-bold text-slate-600">Volver</button>
-              <button type="button" onClick={() => setConfirmOpen(true)} data-testid={state === T5_STATE.FAILED ? "t5-retry" : "t5-emit"} className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700"><RefreshCw className="h-4 w-4" />{state === T5_STATE.FAILED ? "Reintentar" : "Confirmar y emitir"}</button>
+              <Button type="button" variant="ghost" onClick={() => setDismissed(true)}>Volver</Button>
+              <Button type="button" onClick={() => setConfirmOpen(true)} data-testid={state === T5_STATE.FAILED ? "t5-retry" : "t5-emit"} className="gap-2"><RefreshCw className="h-4 w-4" />{state === T5_STATE.FAILED ? "Reintentar" : "Confirmar y emitir"}</Button>
             </>
           ) : state === T5_STATE.READY || state === T5_STATE.FAILED ? (
             <p className="max-w-xs text-sm text-slate-600 dark:text-slate-300">No tenés permiso para emitir; un responsable de facturación debe completar este paso.</p>

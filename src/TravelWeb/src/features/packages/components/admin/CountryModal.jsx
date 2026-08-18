@@ -1,7 +1,7 @@
 import { Button } from "../../../../components/ui/button";
 
 const inputClass =
-  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 
 export function CountryModal({ open, form, saving, onChange, onClose, onSubmit }) {
   if (!open) {
@@ -12,7 +12,7 @@ export function CountryModal({ open, form, saving, onChange, onClose, onSubmit }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+      <div className="w-full max-w-md rounded-[14px] border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
             {isEditing ? "Editar pais" : "Nuevo pais"}

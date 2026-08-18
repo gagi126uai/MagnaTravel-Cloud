@@ -3,6 +3,8 @@ import { ArrowDown, ArrowUp, FileText, FilePlus, Loader2, Receipt, RotateCcw } f
 import { KIND_COLORS, KIND_LABELS, STATUS_LABELS } from "../api/movementsApi";
 import { getMovementActions } from "../lib/movementActions";
 import { formatDate } from "../../../lib/utils";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 
 // B1.15 Fase D' (2026-05-11): timeline cronologico de movimientos.
 // Reutilizable en pantalla principal, CustomerAccountPage y ReservaDetailPage.
@@ -71,7 +73,7 @@ export default function MovementsTimeline({
 // bg-${color}-100 no es safe sin safelist).
 const KIND_BUBBLE_CLASS = {
   payment: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-  invoice: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300",
+  invoice: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
   credit_note: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
   // debit_note: naranja para distinguirla de NC (amber) y de factura (indigo).
   debit_note: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
@@ -122,12 +124,12 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
     >
       {/* Seccion izquierda: icono + info */}
       <div className="flex items-start gap-3 flex-1 min-w-0">
-        <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg ${bubbleClass}`}>
+        <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px] ${bubbleClass}`}>
           <Icon className="h-4 w-4" />
         </div>
         <div className="space-y-0.5 min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
               {KIND_LABELS[item.kind] || item.kind}
             </span>
             <StatusPill status={status} />
@@ -143,7 +145,7 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
             <div className="text-xs text-slate-500 dark:text-slate-400">
               <Link
                 to={`/reservas/${item.reservaPublicId}`}
-                className="hover:text-indigo-600 dark:hover:text-indigo-300"
+                className="hover:text-primary"
                 onClick={(event) => event.stopPropagation()}
               >
                 Reserva {item.numeroReserva}
@@ -163,7 +165,7 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
           <div className={`text-sm font-bold ${amountClass}`}>
             {item.amount.toLocaleString("es-AR", { style: "currency", currency: "ARS", minimumFractionDigits: 2 })}
           </div>
-          <div className="text-[10px] text-slate-400">{dateFmt} · {timeFmt}</div>
+          <div className="text-[11px] text-slate-400">{dateFmt} · {timeFmt}</div>
         </div>
 
         {/* Acciones contextuales por row — solo se renderizan si el padre paso handlers */}
@@ -184,9 +186,9 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
   );
 }
 
-// Botones de accion contextuales. Replica el estilo de InvoicingTab (InvoiceSection)
-// para mantener consistencia visual: border-button para secundarias, bg-slate-900
-// para Anular, bg-indigo-600 para Reintentar.
+// Botones de accion contextuales. Mismo molde que InvoicingTab (InvoiceSection):
+// outline para las secundarias, destructive para Anular, default (azul boleto)
+// para Reintentar (Button, componentes/ui/button.jsx).
 function MovementActions({ actions, item, busy, onViewPdf, onDownloadPdf, onAnnulInvoice, onRetryInvoice, onVoidReceipt }) {
   if (busy) {
     return (
@@ -203,81 +205,84 @@ function MovementActions({ actions, item, busy, onViewPdf, onDownloadPdf, onAnnu
       onClick={(event) => event.stopPropagation()}
     >
       {actions.includes("view_pdf") && onViewPdf ? (
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => onViewPdf(item)}
           data-testid="movement-action-view-pdf"
           aria-label={`Ver PDF de ${item.reference}`}
-          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           Ver PDF
-        </button>
+        </Button>
       ) : null}
 
       {actions.includes("download_pdf") && onDownloadPdf ? (
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => onDownloadPdf(item)}
           data-testid="movement-action-download"
           aria-label={`Descargar PDF de ${item.reference}`}
-          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           Descargar
-        </button>
+        </Button>
       ) : null}
 
       {actions.includes("annul") && onAnnulInvoice ? (
-        <button
+        <Button
           type="button"
+          variant="destructive"
+          size="sm"
           onClick={() => onAnnulInvoice(item)}
           data-testid="movement-action-annul"
           aria-label={`Anular ${item.reference}`}
-          className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600"
         >
           Anular
-        </button>
+        </Button>
       ) : null}
 
       {actions.includes("retry") && onRetryInvoice ? (
-        <button
+        <Button
           type="button"
+          size="sm"
           onClick={() => onRetryInvoice(item)}
           data-testid="movement-action-retry"
           aria-label={`Reintentar emision de ${item.reference}`}
-          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
         >
           Reintentar
-        </button>
+        </Button>
       ) : null}
 
       {actions.includes("void_receipt") && onVoidReceipt ? (
-        <button
+        <Button
           type="button"
+          variant="destructive"
+          size="sm"
           onClick={() => onVoidReceipt(item)}
           data-testid="movement-action-void-receipt"
           aria-label={`Anular comprobante de ${item.reference}`}
-          className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
         >
           Anular comprobante
-        </button>
+        </Button>
       ) : null}
     </div>
   );
 }
 
+// status.color viene de STATUS_LABELS (movementsApi.js) con los mismos nombres viejos
+// (emerald/rose/amber/slate) — se traducen al tono equivalente de StatusChip.
+const STATUS_TONE_BY_COLOR = {
+  emerald: "verde",
+  rose: "rojo",
+  amber: "ambar",
+  slate: "neutro",
+};
+
 function StatusPill({ status }) {
-  const colorMap = {
-    emerald: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-    rose: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
-    amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-    slate: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
-  };
-  const cls = colorMap[status.color] || colorMap.slate;
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${cls}`}>
-      {status.label}
-    </span>
-  );
+  const tone = STATUS_TONE_BY_COLOR[status.color] || "neutro";
+  return <StatusChip tone={tone}>{status.label}</StatusChip>;
 }
 
 function iconFor(kind) {

@@ -39,6 +39,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Banknote, Copy, Check, ChevronDown, AlertCircle } from "lucide-react";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { Button } from "../../../components/ui/button";
 import {
     ACCOUNT_TYPE,
     resolverCuentaPrincipalPorMoneda,
@@ -199,7 +200,7 @@ export function RecuadroCuentaBancaria({
     if (!cargandoCuentas && errorRecuperable) {
         return (
             <div
-                className="rounded-xl border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/10 p-4 space-y-2"
+                className="rounded-[14px] border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/10 p-4 space-y-2"
                 data-testid="recuadro-cuenta-bancaria-error"
                 role="alert"
             >
@@ -208,13 +209,15 @@ export function RecuadroCuentaBancaria({
                     No se pudieron cargar los datos bancarios.
                 </div>
                 {/* Reintentar: ver nota N1 en el finally de cargarCuentas sobre React 18 */}
-                <button
+                <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={cargarCuentas}
-                    className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:bg-slate-900 dark:text-rose-400 transition-colors"
+                    className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-400"
                 >
                     Reintentar
-                </button>
+                </Button>
             </div>
         );
     }
@@ -226,7 +229,7 @@ export function RecuadroCuentaBancaria({
         if (!mensajeSinCuenta) return null;
         return (
             <div
-                className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/10 p-3"
+                className="rounded-[14px] border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/10 p-3"
                 data-testid="recuadro-cuenta-bancaria-sin-cuenta"
             >
                 <p className="text-xs text-amber-700 dark:text-amber-400">{mensajeSinCuenta}</p>
@@ -245,7 +248,7 @@ export function RecuadroCuentaBancaria({
 
     return (
         <div
-            className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/30 p-4 space-y-3"
+            className="rounded-[14px] border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/30 p-4 space-y-3"
             data-testid="recuadro-cuenta-bancaria"
         >
             {/* Encabezado del recuadro */}
@@ -294,7 +297,7 @@ export function RecuadroCuentaBancaria({
                                 <select
                                     value={cuentaSeleccionada.publicId}
                                     onChange={(e) => handleCambiarCuenta(e.target.value)}
-                                    className="appearance-none rounded-lg border border-slate-200 bg-white pr-7 pl-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 outline-none focus:ring-2 focus:ring-indigo-400"
+                                    className="appearance-none rounded-[10px] border border-slate-200 bg-white pr-7 pl-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 outline-none focus:ring-2 focus:ring-ring"
                                     aria-label="Cambiar cuenta bancaria"
                                     data-testid="recuadro-selector-cuenta"
                                 >
@@ -335,12 +338,12 @@ export function RecuadroCuentaBancaria({
                                 estadoCopia === "copiando" ||
                                 (!cuentaSeleccionada?.cbuMasked && !cuentaSeleccionada?.aliasMasked)
                             }
-                            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                            className={`inline-flex items-center gap-1.5 rounded-[10px] border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
                                 estadoCopia === "copiado"
                                     ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-400"
                                     : estadoCopia === "error"
                                     ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:text-rose-400"
-                                    : "border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                    : "border-slate-200 bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                             }`}
                             data-testid="btn-copiar-cuenta-bancaria"
                         >

@@ -18,6 +18,7 @@ import { Link } from "react-router-dom";
 import { RefreshCw, ReceiptText, ChevronRight } from "lucide-react";
 import { textoQueFalta, textoTiempoRelativo } from "../debitNoteInboxLogic";
 import { useDebitNotePendingList } from "../hooks/useDebitNotePendingList";
+import { Button } from "../../../components/ui/button";
 
 export default function CancellationDebitNoteInboxPage() {
   const { items, loading, error, reload } = useDebitNotePendingList();
@@ -26,7 +27,7 @@ export default function CancellationDebitNoteInboxPage() {
     <div className="space-y-6">
       {/* ─ Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3">
-        <div className="rounded-lg bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+        <div className="rounded-[10px] bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
           <ReceiptText className="h-5 w-5" />
         </div>
         <div>
@@ -40,23 +41,25 @@ export default function CancellationDebitNoteInboxPage() {
       </div>
 
       {/* ─ Panel principal ─────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         {/* Toolbar */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
             {items.length > 0 ? `${items.length} caso(s)` : ""}
           </span>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={reload}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            className="gap-1.5"
             aria-label="Refrescar bandeja"
             data-testid="refresh-debit-note-inbox"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             Actualizar
-          </button>
+          </Button>
         </div>
 
         {/* Estados: loading / error / vacio / lista */}
@@ -70,7 +73,7 @@ export default function CancellationDebitNoteInboxPage() {
             <button
               type="button"
               onClick={reload}
-              className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+              className="text-xs text-primary hover:underline"
             >
               Reintentar
             </button>
@@ -142,7 +145,7 @@ function DebitNotePendingRow({ row }) {
     <Link
       to={`/reservas/${row.reservaPublicId}`}
       data-testid={`debit-note-row-${row.bookingCancellationPublicId}`}
-      className="flex items-center justify-between gap-3 px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-inset"
+      className="flex items-center justify-between gap-3 px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
     >
       {contenidoFila}
     </Link>

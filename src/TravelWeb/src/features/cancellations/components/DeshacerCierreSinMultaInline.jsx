@@ -40,6 +40,7 @@ import { useState } from "react";
 import { RotateCcw, Loader2, AlertTriangle, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { Button } from "../../../components/ui/button";
 // Configuracion de multas de cancelacion (2026-07-14, spec Pieza 3): textos compartidos
 // con el enlace del cartel rosa en ReservaDetailPage.jsx — ver reabrirPasoMultaTextos.js
 // para el porqué de tenerlos en un módulo aparte.
@@ -168,7 +169,7 @@ export function DeshacerCierreSinMultaInline({
 
     return (
         <div
-            className="rounded-xl border-2 border-slate-200 bg-slate-50/60 dark:border-slate-700/60 dark:bg-slate-900/20 p-5 space-y-4"
+            className="rounded-[14px] border-2 border-slate-200 bg-slate-50/60 dark:border-slate-700/60 dark:bg-slate-900/20 p-5 space-y-4"
             data-testid="deshacer-cierre-sin-multa-inline"
         >
             {/* ── Cabecera del panel ── */}
@@ -200,7 +201,7 @@ export function DeshacerCierreSinMultaInline({
                         o cambiar algo que el cliente ya daba por cerrado) — un solo click
                         en "Deshacer" no alcanza. */}
                     <div
-                        className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
+                        className="rounded-[10px] border border-amber-200 bg-amber-50 p-3.5 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
                         data-testid="deshacer-confirmacion-explicita"
                         role="alert"
                     >
@@ -208,32 +209,33 @@ export function DeshacerCierreSinMultaInline({
                     </div>
 
                     <div className="flex justify-end gap-3 pt-1">
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
                             onClick={() => setMostrarConfirmacion(false)}
                             disabled={submitting}
                             data-testid="deshacer-confirmacion-volver-btn"
-                            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                         >
                             Volver
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                             type="button"
+                            variant="destructive"
                             onClick={handleDeshacer}
                             disabled={submitting}
                             data-testid="deshacer-confirmar-btn"
-                            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2 dark:bg-slate-600 dark:hover:bg-slate-500"
+                            className="gap-2"
                         >
                             {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                             {submitting ? "Reabriendo..." : "Sí, reabrir"}
-                        </button>
+                        </Button>
                     </div>
                 </>
             ) : (
                 <>
                     {/* ── Explicación de la consecuencia — el usuario entiende qué va a pasar ── */}
                     <div
-                        className="rounded-lg border border-slate-200 bg-white p-3.5 text-xs text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                        className="rounded-[10px] border border-slate-200 bg-white p-3.5 text-xs text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
                         data-testid="deshacer-explicacion"
                     >
                         {EXPLICACION_REABRIR_PASO_MULTA}
@@ -246,7 +248,7 @@ export function DeshacerCierreSinMultaInline({
                     {errorMensaje && (
                         <div
                             role="alert"
-                            className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
+                            className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
                             data-testid="deshacer-error"
                         >
                             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
@@ -273,7 +275,7 @@ export function DeshacerCierreSinMultaInline({
                             disabled={submitting || bloqueadoPorSaldoUsado}
                             placeholder="El operador finalmente informó una penalidad de US$ 80..."
                             data-testid="deshacer-motivo-input"
-                            className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
+                            className={`w-full rounded-[10px] border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
                                 motivoTocado && motivoError
                                     ? "border-rose-400"
                                     : "border-slate-300 dark:border-slate-600"
@@ -296,23 +298,18 @@ export function DeshacerCierreSinMultaInline({
 
                     {/* ── Acciones ── */}
                     <div className="flex justify-end gap-3 pt-1">
-                        <button
-                            type="button"
-                            onClick={onCerrar}
-                            disabled={submitting}
-                            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                        >
+                        <Button type="button" variant="outline" onClick={onCerrar} disabled={submitting}>
                             Volver
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                             type="button"
+                            variant="destructive"
                             onClick={handlePedirConfirmacion}
                             disabled={!canSubmit}
                             data-testid="deshacer-siguiente-btn"
-                            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2 dark:bg-slate-600 dark:hover:bg-slate-500"
                         >
                             Deshacer
-                        </button>
+                        </Button>
                     </div>
                 </>
             )}

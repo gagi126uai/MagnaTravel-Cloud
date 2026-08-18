@@ -30,6 +30,7 @@
 import { useState, useEffect } from "react";
 import { X, AlertTriangle, AlertCircle, Loader2, FileCheck2 } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
+import { Button } from "../../../components/ui/button";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { hoyArgentina } from "../../../lib/utils";
@@ -172,12 +173,12 @@ export default function ConfirmPenaltyModal({
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-        <div className="w-full max-w-md rounded-2xl border bg-white dark:bg-slate-900 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="w-full max-w-md rounded-[14px] border bg-white dark:bg-slate-900 shadow-2xl max-h-[90vh] overflow-y-auto">
 
           {/* ── Header ── */}
           <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+              <div className="rounded-[10px] bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
                 <FileCheck2 className="h-5 w-5" />
               </div>
               <div>
@@ -200,14 +201,14 @@ export default function ConfirmPenaltyModal({
 
             {/* Error de conflicto 409 */}
             {conflictMessage && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2">
+              <div className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                 <span>{conflictMessage}</span>
               </div>
             )}
 
             {/* Advertencia de accion irreversible */}
-            <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 text-sm text-orange-800 dark:bg-orange-950/30 dark:border-orange-800 dark:text-orange-200 flex items-start gap-2">
+            <div className="rounded-[10px] border border-orange-200 bg-orange-50 p-4 text-sm text-orange-800 dark:bg-orange-950/30 dark:border-orange-800 dark:text-orange-200 flex items-start gap-2">
               <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
               <div>
                 Al confirmar se emite la <strong>nota de debito (cargo de la agencia)</strong> en ARCA.
@@ -251,7 +252,7 @@ export default function ConfirmPenaltyModal({
                 onChange={(e) => setConfirmedAmount(e.target.value)}
                 placeholder="0.00"
                 disabled={submitting}
-                className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
+                className={`w-full rounded-[10px] border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
                   confirmedAmount && !amountOk ? "border-rose-400" : "border-slate-300 dark:border-slate-600"
                 }`}
               />
@@ -272,7 +273,7 @@ export default function ConfirmPenaltyModal({
                 onChange={(e) => setOperatorConfirmationDate(e.target.value)}
                 max={getTodayDateString()}
                 disabled={submitting}
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
+                className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
               />
               <div className="mt-1 text-xs text-slate-400">
                 Ingresa la fecha en que el operador te informo el monto (puede ser anterior a hoy).
@@ -292,7 +293,7 @@ export default function ConfirmPenaltyModal({
                 maxLength={500}
                 disabled={submitting}
                 placeholder="Link al mail, numero de nota, referencia del PDF..."
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
+                className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
               />
               {/* Aviso: sin referencia documental el backend puede requerir 4-eyes. */}
               {!supportingDocumentReference.trim() && (
@@ -308,24 +309,19 @@ export default function ConfirmPenaltyModal({
 
           {/* ── Footer ── */}
           <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="px-4 py-2.5 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
-            >
+            <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
               Volver
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={handleSubmit}
               disabled={!canSubmit}
               data-testid="confirm-penalty-submit-btn"
-              className="px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-orange-600 hover:bg-orange-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+              className="gap-2"
             >
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Confirmar y emitir cargo
-            </button>
+            </Button>
           </div>
         </div>
       </div>

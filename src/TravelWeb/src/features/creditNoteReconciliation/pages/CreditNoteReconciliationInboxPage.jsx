@@ -5,6 +5,7 @@ import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { useCreditNoteReconciliation } from "../hooks/useCreditNoteReconciliation";
 import ReconciliationRow from "../components/ReconciliationRow";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
+import { Button } from "../../../components/ui/button";
 
 /**
  * FC1.3 Fase 3 (ADR-010, 2026-05-29): bandeja de reconciliacion de NC parciales con recibos vivos.
@@ -92,7 +93,7 @@ export default function CreditNoteReconciliationInboxPage() {
     <div className="space-y-6">
       {/* ─ Header de la pantalla ─────────────────────────────────────────────── */}
       <div className="flex items-center gap-3">
-        <div className="rounded-lg bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+        <div className="rounded-[10px] bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
           <FileWarning className="h-5 w-5" />
         </div>
         <div>
@@ -108,7 +109,7 @@ export default function CreditNoteReconciliationInboxPage() {
       </div>
 
       {/* ─ Panel de filtros + lista ───────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         {/* Toolbar de filtros */}
         <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-3">
@@ -120,7 +121,7 @@ export default function CreditNoteReconciliationInboxPage() {
               <select
                 value={statusFilter}
                 onChange={handleStatusChange}
-                className="rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm"
+                className="rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm"
                 data-testid="status-filter"
               >
                 <option value="pending">Pendientes</option>
@@ -137,17 +138,19 @@ export default function CreditNoteReconciliationInboxPage() {
             />
           </div>
 
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={reload}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            className="gap-1.5"
             aria-label="Refrescar bandeja"
             data-testid="refresh-button"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             Refrescar
-          </button>
+          </Button>
         </div>
 
         {/* ─ Estados: loading / error / vacio / lista ────────────────────────── */}
@@ -161,7 +164,7 @@ export default function CreditNoteReconciliationInboxPage() {
             <button
               type="button"
               onClick={reload}
-              className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+              className="text-xs text-primary hover:underline"
             >
               Reintentar
             </button>

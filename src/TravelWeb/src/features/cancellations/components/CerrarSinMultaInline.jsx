@@ -32,6 +32,7 @@ import { useState } from "react";
 import { CheckCircle2, Loader2, AlertTriangle, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { Button } from "../../../components/ui/button";
 
 // Límites del campo motivo — espejamos el contrato del backend (5..500 caracteres).
 const MOTIVO_MIN = 5;
@@ -116,7 +117,7 @@ export function CerrarSinMultaInline({
 
     return (
         <div
-            className="rounded-xl border-2 border-teal-200 bg-teal-50/40 dark:border-teal-900/40 dark:bg-teal-950/10 p-5 space-y-4"
+            className="rounded-[14px] border-2 border-teal-200 bg-teal-50/40 dark:border-teal-900/40 dark:bg-teal-950/10 p-5 space-y-4"
             data-testid="cerrar-sin-multa-inline"
         >
             {/* ── Cabecera del panel ── */}
@@ -144,7 +145,7 @@ export function CerrarSinMultaInline({
 
             {/* ── Explicación del cierre ── */}
             <div
-                className="rounded-lg border border-teal-200 bg-teal-50 p-3.5 text-xs text-teal-800 dark:bg-teal-950/30 dark:border-teal-800 dark:text-teal-200"
+                className="rounded-[10px] border border-teal-200 bg-teal-50 p-3.5 text-xs text-teal-800 dark:bg-teal-950/30 dark:border-teal-800 dark:text-teal-200"
                 data-testid="sin-multa-explicacion"
             >
                 Estás registrando que el operador NO te cobró ninguna penalidad por la anulación
@@ -156,7 +157,7 @@ export function CerrarSinMultaInline({
             {errorMensaje && (
                 <div
                     role="alert"
-                    className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
+                    className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
                     data-testid="sin-multa-error"
                 >
                     <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
@@ -183,7 +184,7 @@ export function CerrarSinMultaInline({
                     disabled={submitting}
                     placeholder="El operador confirmó por mail que no aplica penalidad..."
                     data-testid="sin-multa-motivo-input"
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
+                    className={`w-full rounded-[10px] border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
                         motivoTocado && motivoError
                             ? "border-rose-400"
                             : "border-slate-300 dark:border-slate-600"
@@ -206,24 +207,19 @@ export function CerrarSinMultaInline({
 
             {/* ── Acciones ── */}
             <div className="flex justify-end gap-3 pt-1">
-                <button
-                    type="button"
-                    onClick={onCerrar}
-                    disabled={submitting}
-                    className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                >
+                <Button type="button" variant="outline" onClick={onCerrar} disabled={submitting}>
                     Volver
-                </button>
-                <button
+                </Button>
+                <Button
                     type="button"
                     onClick={handleConfirmar}
                     disabled={!canSubmit}
                     data-testid="sin-multa-confirmar-btn"
-                    className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                    className="gap-2"
                 >
                     {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                     {submitting ? "Confirmando..." : "Confirmar: sin multa"}
-                </button>
+                </Button>
             </div>
         </div>
     );

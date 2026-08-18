@@ -6,6 +6,8 @@ import { ReconciliationStatusPill, ReceiptStatusPill } from "./ReconciliationSta
 import { showError, showSuccess, showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatDateTime } from "../../../lib/utils";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 
 /**
  * FC1.3 Fase 3 (ADR-010): fila expandida de un caso de reconciliacion en la bandeja.
@@ -133,17 +135,17 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
             <ReconciliationStatusPill status={caso.status} />
             {/* Badge cuando se cerro con recibos vivos — avisa al equipo que fue un cierre manual sucio */}
             {caso.closedWithLiveReceipts && (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-orange-700 dark:bg-orange-900/30 dark:text-orange-300"
-                title="Se cerro este caso con recibos que todavia estaban activos"
-              >
+              <StatusChip tone="ambar" title="Se cerro este caso con recibos que todavia estaban activos">
                 <AlertTriangle className="h-2.5 w-2.5" />
                 Cerrado con recibos vivos
-              </span>
+              </StatusChip>
             )}
-            {/* Badge cuando se salteo la regla de cuatro ojos (admin con bypass) */}
+            {/* Badge cuando se salteo la regla de cuatro ojos (admin con bypass) — violeta
+                no tiene tono equivalente en el molde StatusChip (neutro/azul/ambar/verde/rojo),
+                es un aviso de auditoria propio. Se deja el color a mano, solo se pareja el
+                tamano de letra al estandar (11px, B.2). */}
             {caso.fourEyesBypassApplied && (
-              <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+              <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
                 Bypass 4 ojos
               </span>
             )}
@@ -156,7 +158,7 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
               {caso.reservaPublicId ? (
                 <Link
                   to={`/reservas/${caso.reservaPublicId}`}
-                  className="text-indigo-600 hover:underline dark:text-indigo-400"
+                  className="text-primary hover:underline"
                   data-testid="reserva-link"
                 >
                   {caso.reservaName}
@@ -187,7 +189,7 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
       </div>
 
       {/* ─ Sublista de recibos ─────────────────────────────────────────────── */}
-      <div className="rounded-lg border border-slate-100 dark:border-slate-800 overflow-hidden">
+      <div className="rounded-[10px] border border-slate-100 dark:border-slate-800 overflow-hidden">
         <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
           <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
             Comprobantes de pago
@@ -220,7 +222,7 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
 
       {/* ─ Info de cierre (solo en casos resueltos) ────────────────────────── */}
       {isClosed && (
-        <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 px-4 py-3 space-y-1">
+        <div className="rounded-[10px] bg-emerald-50 dark:bg-emerald-900/20 px-4 py-3 space-y-1">
           <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">
             Caso cerrado
           </div>
@@ -240,7 +242,7 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
         <div className="space-y-2">
           <label
             htmlFor={`notes-${caso.publicId}`}
-            className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400"
+            className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400"
           >
             {/* Si hay recibos vivos, las notas son obligatorias (regla R4 del backend) */}
             Notas del cierre
@@ -260,19 +262,21 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
                 ? "Explicá por qué cerrás el caso con recibos todavía activos…"
                 : "Nota opcional para auditoría…"
             }
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm"
+            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm"
             data-testid="resolve-notes-input"
           />
-          <button
+          {/* B.3: la fila se repite por cada caso pendiente de la bandeja —
+              outline, nunca N rellenos azules a la vez. */}
+          <Button
             type="button"
+            variant="outline"
             onClick={handleResolve}
             disabled={!canResolve}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label="Marcar caso como resuelto"
             data-testid="resolve-button"
           >
             {busyResolve ? "Cerrando…" : "Marcar resuelto"}
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -318,18 +322,20 @@ function ReceiptRow({ recibo, isVoiding, casoClosed, onVoid }) {
 
       {/* Boton de anular — solo si el recibo esta vivo Y el caso no esta cerrado */}
       {isLive && !casoClosed && (
-        <button
+        <Button
           type="button"
+          variant="destructive"
+          size="sm"
           onClick={onVoid}
           disabled={isVoiding}
-          className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed dark:border-rose-700 dark:text-rose-400 dark:hover:bg-rose-900/20"
+          className="gap-1"
           aria-label={`Anular comprobante ${recibo.receiptNumber || recibo.receiptId}`}
           title="Anular este comprobante de pago"
           data-testid="void-receipt-button"
         >
           <Trash2 className="h-3.5 w-3.5" />
           {isVoiding ? "Anulando…" : "Anular"}
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Eye, Loader2, RefreshCw, Send } from "lucide-react";
 import ConfirmModal from "../../../components/ConfirmModal";
+import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { formatCurrency } from "../../../lib/utils";
@@ -78,7 +79,7 @@ export function T5ResolverLegacyList({ cancellationPublicId, lines, activeSaleIn
       </div>
       <p className="text-xs text-slate-600 dark:text-slate-300">{TEXTO_EXPLICATIVO}</p>
 
-      <ul className="divide-y divide-amber-200 overflow-hidden rounded-xl border border-amber-200 bg-white/70 dark:divide-amber-900/40 dark:border-amber-800 dark:bg-slate-900/60">
+      <ul className="divide-y divide-amber-200 overflow-hidden rounded-[14px] border border-amber-200 bg-white/70 dark:divide-amber-900/40 dark:border-amber-800 dark:bg-slate-900/60">
         {lines.map((line, index) => (
           <T5ResolverLegacyRow
             key={line.linePublicId}
@@ -251,62 +252,49 @@ function T5ResolverLegacyRow({ index, line, invoicesForCurrency, cancellationPub
             <>
               <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{formatCurrency(line.suggestedAmount, line.currency)}</span>
               {canEmit && (
-                <button
+                <Button
                   type="button"
+                  size="sm"
                   onClick={() => (formOpen ? setFormOpen(false) : openForm())}
                   data-testid={`t5-resolver-row-${index}-toggle`}
-                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-700"
                 >
                   {formOpen ? "Cancelar" : "Resolver"}
-                </button>
+                </Button>
               )}
             </>
           )}
 
           {rowState === T5_ROW_STATE.RESOLVED && canEmit && (
-            <button
-              type="button"
-              onClick={openConfirmEmit}
-              data-testid={`t5-resolver-row-${index}-emit`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-700"
-            >
+            <Button type="button" size="sm" onClick={openConfirmEmit} data-testid={`t5-resolver-row-${index}-emit`} className="gap-1.5">
               <RefreshCw className="h-3.5 w-3.5" />
               Emitir la devolución
-            </button>
+            </Button>
           )}
 
           {rowState === T5_ROW_STATE.REJECTED && canEmit && (
-            <button
-              type="button"
-              onClick={openConfirmEmit}
-              data-testid={`t5-resolver-row-${index}-retry`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-700"
-            >
+            <Button type="button" size="sm" onClick={openConfirmEmit} data-testid={`t5-resolver-row-${index}-retry`} className="gap-1.5">
               <RefreshCw className="h-3.5 w-3.5" />
               Reintentar
-            </button>
+            </Button>
           )}
 
           {rowState === T5_ROW_STATE.ISSUED && (
             <>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={handleVerPdf}
                 disabled={!line.creditNoteInvoicePublicId}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-bold text-emerald-800 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-200"
+                className="gap-1.5"
               >
                 <Eye className="h-3.5 w-3.5" />
                 Ver PDF
-              </button>
-              <button
-                type="button"
-                onClick={handleEnviar}
-                disabled={sending}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
-              >
+              </Button>
+              <Button type="button" size="sm" onClick={handleEnviar} disabled={sending} className="gap-1.5">
                 <Send className="h-3.5 w-3.5" />
                 {sending ? "Enviando..." : "Enviar al cliente"}
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -318,13 +306,13 @@ function T5ResolverLegacyRow({ index, line, invoicesForCurrency, cancellationPub
             ref={emptyCurrencyHeadingRef}
             tabIndex={-1}
             data-testid="t5-resolver-empty-currency"
-            className="mt-3 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700 dark:bg-slate-800/60"
+            className="mt-3 space-y-2 rounded-[14px] border border-slate-200 bg-slate-50 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 dark:border-slate-700 dark:bg-slate-800/60"
           >
             <p className="font-bold text-slate-700 dark:text-slate-200">{buildResolverFormHeading(line)}</p>
             <p className="text-slate-600 dark:text-slate-300">{buildEmptyCurrencyMessage(line.currency)}</p>
           </div>
         ) : (
-          <div data-testid="t5-resolver-form" className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-white p-3 dark:border-amber-800 dark:bg-slate-900">
+          <div data-testid="t5-resolver-form" className="mt-3 space-y-3 rounded-[14px] border border-amber-200 bg-white p-3 dark:border-amber-800 dark:bg-slate-900">
             <p className="text-xs font-bold text-slate-700 dark:text-slate-200">{buildResolverFormHeading(line)}</p>
 
             {saveError && (
@@ -341,7 +329,7 @@ function T5ResolverLegacyRow({ index, line, invoicesForCurrency, cancellationPub
                 value={targetInvoicePublicId}
                 onChange={(e) => setTargetInvoicePublicId(e.target.value)}
                 disabled={saving}
-                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-800"
+                className="mt-1 w-full rounded-[10px] border px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-800"
               >
                 <option value="">{buildInvoicePlaceholder(line.currency)}</option>
                 {invoicesForCurrency.map((invoice) => (
@@ -370,7 +358,7 @@ function T5ResolverLegacyRow({ index, line, invoicesForCurrency, cancellationPub
                   // dos juntos — antes el fondo amarillo de "sugerido" (dark:bg-yellow-950/20)
                   // convivía en el mismo string con el dark:bg-slate-800 de base, y cuál ganaba
                   // dependía del orden de generación de clases de Tailwind (no garantizado).
-                  className={`w-full rounded-lg border px-3 py-2 text-sm font-normal ${amountIsSuggested ? "border-yellow-400 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950/20" : "border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-800"}`}
+                  className={`w-full rounded-[10px] border px-3 py-2 text-sm font-normal ${amountIsSuggested ? "border-yellow-400 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950/20" : "border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-800"}`}
                 />
               </div>
               <span className="mt-1 block font-normal text-slate-500 dark:text-slate-400">
@@ -387,29 +375,24 @@ function T5ResolverLegacyRow({ index, line, invoicesForCurrency, cancellationPub
                 disabled={saving}
                 rows={2}
                 maxLength={500}
-                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-800"
+                className="mt-1 w-full rounded-[10px] border px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-800"
               />
               <span className="mt-1 block font-normal text-slate-500 dark:text-slate-400">Queda registrado para explicar esta devolución.</span>
             </label>
 
             <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setFormOpen(false)}
-                disabled={saving}
-                className="rounded-lg px-3 py-2 text-xs font-bold text-slate-600 disabled:opacity-50 dark:text-slate-300"
-              >
+              <Button type="button" variant="ghost" size="sm" onClick={() => setFormOpen(false)} disabled={saving}>
                 Cancelar
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
                 onClick={handleGuardar}
                 disabled={saving || !canSaveResolverRow({ targetInvoicePublicId, amount, reason })}
                 data-testid={`t5-resolver-row-${index}-save`}
-                className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-black text-white disabled:opacity-50"
               >
                 {saving ? "Guardando..." : "Guardar esta devolución"}
-              </button>
+              </Button>
             </div>
           </div>
         )

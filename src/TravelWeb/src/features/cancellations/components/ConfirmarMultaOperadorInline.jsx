@@ -85,6 +85,7 @@
 import { useState, useEffect } from "react";
 import { AlertTriangle, Loader2, FileCheck2, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
+import { Button } from "../../../components/ui/button";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatCurrency, hoyArgentina } from "../../../lib/utils";
@@ -525,7 +526,7 @@ export function ConfirmarMultaOperadorInline({
     return (
         <>
             <div
-                className="rounded-xl border-2 border-orange-200 bg-orange-50/40 dark:border-orange-900/40 dark:bg-orange-950/10 p-5 space-y-4"
+                className="rounded-[14px] border-2 border-orange-200 bg-orange-50/40 dark:border-orange-900/40 dark:bg-orange-950/10 p-5 space-y-4"
                 data-testid="confirmar-multa-operador-inline"
             >
                 {/* ── Cabecera del panel ── */}
@@ -556,7 +557,7 @@ export function ConfirmarMultaOperadorInline({
                     lado del cliente. Reescrita para separar las dos plata en juego: lo que ya se
                     le devolvió al cliente (hecho) vs. lo que el operador retiene (a cargo ahora). */}
                 <div
-                    className="rounded-lg border border-orange-200 bg-orange-50 p-3.5 text-xs text-orange-800 dark:bg-orange-950/30 dark:border-orange-800 dark:text-orange-200 space-y-1"
+                    className="rounded-[10px] border border-orange-200 bg-orange-50 p-3.5 text-xs text-orange-800 dark:bg-orange-950/30 dark:border-orange-800 dark:text-orange-200 space-y-1"
                     data-testid="multa-explicacion-banner"
                 >
                     {esModoCorregir ? (
@@ -579,7 +580,7 @@ export function ConfirmarMultaOperadorInline({
                 {conflictMessage && (
                     <div
                         role="alert"
-                        className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
+                        className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
                         data-testid="multa-conflict-msg"
                     >
                         <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
@@ -607,7 +608,7 @@ export function ConfirmarMultaOperadorInline({
                             placeholder="0.00"
                             disabled={submitting}
                             data-testid="multa-monto-input"
-                            className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
+                            className={`w-full rounded-[10px] border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
                                 montoTocado && montoError ? "border-rose-400" : "border-slate-300 dark:border-slate-600"
                             }`}
                         />
@@ -633,7 +634,7 @@ export function ConfirmarMultaOperadorInline({
                             onChange={(e) => setMoneda(e.target.value)}
                             disabled={submitting}
                             data-testid="multa-moneda-select"
-                            className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
                         >
                             {MONEDAS_MULTA.map((opcion) => (
                                 <option key={opcion.value} value={opcion.value}>
@@ -667,7 +668,7 @@ export function ConfirmarMultaOperadorInline({
                     no se dibuja, el panel queda igual que antes de esta spec. */}
                 {hayCruce && (
                     <div
-                        className="rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/50 dark:border-indigo-900/50 dark:bg-indigo-950/20 p-4 space-y-3"
+                        className="rounded-[10px] border-2 border-dashed border-slate-300 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-800/20 p-4 space-y-3"
                         data-testid="multa-bloque-conversion"
                     >
                         {/* Línea 1 (spec 2026-07-14 "explicación por qué la multa va en la moneda
@@ -679,13 +680,13 @@ export function ConfirmarMultaOperadorInline({
                             a sabiendas a la regla anti-cartelitos (ver comentario del JSDoc de
                             explicacionMonedaFacturaCompleta). NO reemplaza el encabezado ni el
                             título de abajo: se suma arriba, tal como pide la spec. */}
-                        <p className="text-xs text-indigo-600 dark:text-indigo-400" data-testid="multa-explicacion-moneda-factura">
+                        <p className="text-xs text-slate-600 dark:text-slate-400" data-testid="multa-explicacion-moneda-factura">
                             {explicacionMonedaFacturaCompleta(invoiceCurrency)}
                         </p>
-                        <p className="text-xs font-bold text-indigo-800 dark:text-indigo-200">
+                        <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
                             {encabezadoBloqueConversion(invoiceCurrency)}
                         </p>
-                        <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                             {tituloBloqueConversion(moneda, invoiceCurrency)}
                         </p>
 
@@ -693,7 +694,7 @@ export function ConfirmarMultaOperadorInline({
                             {/* Fecha en que el operador cobró la multa — define qué dólar se usa. */}
                             <div>
                                 <label
-                                    className="block text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5"
+                                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
                                     htmlFor="multa-fecha-operador-cobro"
                                 >
                                     Fecha en que el operador cobró la multa <span className="text-rose-500" aria-hidden="true">*</span>
@@ -706,7 +707,7 @@ export function ConfirmarMultaOperadorInline({
                                     max={getTodayString()}
                                     disabled={submitting}
                                     data-testid="multa-fecha-operador-cobro-input"
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 />
                                 {/* erroresBloqueConversion.fecha (no un chequeo suelto en el JSX) es
                                     lo que también bloquea "Guardar corrección" — ver bloqueConversionValido. */}
@@ -723,7 +724,7 @@ export function ConfirmarMultaOperadorInline({
                                 "tocado" → la fuente pasa a Manual (P2=A, spec 2026-07-13). */}
                             <div>
                                 <label
-                                    className="block text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5"
+                                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
                                     htmlFor="multa-tipo-cambio"
                                 >
                                     Tipo de cambio del día que el operador cobró <span className="text-rose-500" aria-hidden="true">*</span>
@@ -741,7 +742,7 @@ export function ConfirmarMultaOperadorInline({
                                     placeholder="1.200,00"
                                     disabled={submitting}
                                     data-testid="multa-tipo-cambio-input"
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 />
                                 {/* Estado del dato del BNA para esa fecha — mientras se
                                     consulta, un texto neutro ("Buscando…"); una vez que
@@ -771,7 +772,7 @@ export function ConfirmarMultaOperadorInline({
                         {fuenteTC === EXCHANGE_RATE_SOURCE_MANUAL && tipoCambioTocado && (
                             <div>
                                 <label
-                                    className="block text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5"
+                                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
                                     htmlFor="multa-tc-justificacion"
                                 >
                                     ¿De dónde sacaste este tipo de cambio? <span className="text-rose-500" aria-hidden="true">*</span>
@@ -785,7 +786,7 @@ export function ConfirmarMultaOperadorInline({
                                     disabled={submitting}
                                     placeholder="Recibo del operador, cotización del día que me pasó..."
                                     data-testid="multa-tc-justificacion-input"
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 />
                             </div>
                         )}
@@ -793,7 +794,7 @@ export function ConfirmarMultaOperadorInline({
                         {/* Línea de resultado — recalcula en vivo a medida que cambian
                             monto / tipo de cambio (montoStr viene del campo de arriba). */}
                         {montoConvertido != null && (
-                            <p className="text-xs font-medium text-indigo-700 dark:text-indigo-300 mt-1" data-testid="multa-monto-convertido">
+                            <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1" data-testid="multa-monto-convertido">
                                 → Se le cobra al cliente <strong>{formatCurrency(montoConvertido, invoiceCurrency)}</strong>
                             </p>
                         )}
@@ -818,7 +819,7 @@ export function ConfirmarMultaOperadorInline({
                             max={getTodayString()}
                             disabled={submitting}
                             data-testid="multa-fecha-input"
-                            className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
                         />
                         {fechaError && (
                             <div className="mt-1 text-xs text-rose-600" role="alert" data-testid="multa-fecha-error">
@@ -855,7 +856,7 @@ export function ConfirmarMultaOperadorInline({
                             ? "El operador informó el monto en dólares, no en pesos..."
                             : "Número de nota, email, referencia del PDF del operador..."}
                         data-testid="multa-referencia-input"
-                        className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
+                        className={`w-full rounded-[10px] border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
                             esModoCorregir && referencia.length > 0 && motivoError
                                 ? "border-rose-400"
                                 : "border-slate-300 dark:border-slate-600"
@@ -892,26 +893,21 @@ export function ConfirmarMultaOperadorInline({
 
                 {/* ── Acciones ── */}
                 <div className="flex justify-end gap-3 pt-1">
-                    <button
-                        type="button"
-                        onClick={onCerrar}
-                        disabled={submitting}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                    >
+                    <Button type="button" variant="outline" onClick={onCerrar} disabled={submitting}>
                         Volver
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="button"
                         onClick={handleConfirmar}
                         disabled={!canSubmit}
                         data-testid="multa-confirmar-btn"
-                        className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                        className="gap-2"
                     >
                         {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                         {esModoCorregir
                             ? (submitting ? "Guardando..." : "Guardar corrección")
                             : (submitting ? "Confirmando..." : "Confirmar y cobrarle la multa al cliente")}
-                    </button>
+                    </Button>
                 </div>
             </div>
 

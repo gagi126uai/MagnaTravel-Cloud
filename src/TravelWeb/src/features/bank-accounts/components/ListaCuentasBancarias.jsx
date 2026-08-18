@@ -32,6 +32,7 @@ import { showSuccess, showError, showConfirm } from "../../../alerts";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { OWNER_TYPE, ACCOUNT_TYPE } from "../lib/bankAccountLogic";
 import { FichaCuentaBancariaInline } from "./FichaCuentaBancariaInline";
+import { Button } from "../../../components/ui/button";
 
 // Mapa de int (enum del backend) → etiqueta visible para el tipo de cuenta.
 // Se usa para mostrar "Caja de Ahorro" / "Cuenta Corriente" en lugar del número crudo.
@@ -201,9 +202,9 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
 
     return (
         <div
-            className={`flex flex-col gap-2 rounded-xl border px-4 py-3 ${
+            className={`flex flex-col gap-2 rounded-[14px] border px-4 py-3 ${
                 cuenta.isPrimary
-                    ? "border-indigo-200 bg-indigo-50/30 dark:border-indigo-900/40 dark:bg-indigo-950/10"
+                    ? "border-blue-200 bg-blue-50/30 dark:border-blue-900/40 dark:bg-blue-950/10"
                     : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/30"
             }`}
             data-testid={`cuenta-bancaria-${cuenta.publicId}`}
@@ -213,7 +214,7 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
                 <div className="space-y-0.5 min-w-0">
                     {/* Moneda + banco + tipo de cuenta */}
                     <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">
                             {cuenta.currency === "USD" ? "US$" : "$"}
                         </span>
                         {cuenta.isPrimary && (
@@ -258,11 +259,13 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
                 {/* Acciones */}
                 <div className="flex items-center gap-1.5 flex-wrap flex-shrink-0">
                     {/* Ver completo: revela CBU/alias completo (dispara auditoría de lectura) */}
-                    <button
+                    <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={handleVerCompleto}
                         disabled={cargandoDetalle || cargandoParaEditar}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                        className="gap-1.5"
                         data-testid={`btn-ver-completo-${cuenta.publicId}`}
                         aria-label={detalleCompleto ? "Ocultar datos completos" : "Ver CBU/alias completo"}
                     >
@@ -271,7 +274,7 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
                             : <Eye className="h-3.5 w-3.5" />
                         }
                         {detalleCompleto ? "Ocultar" : "Ver completo"}
-                    </button>
+                    </Button>
 
                     {/* Copiar: solo cuando el detalle está revelado */}
                     {detalleCompleto && (
@@ -279,7 +282,7 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
                             type="button"
                             onClick={handleCopiar}
                             disabled={estadoCopia === "copiando"}
-                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
+                            className={`inline-flex items-center gap-1.5 rounded-[10px] border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
                                 estadoCopia === "copiado"
                                     ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-400"
                                     : estadoCopia === "error"
@@ -299,11 +302,13 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
 
                     {/* Marcar como principal: solo si tiene permiso de edición y no es ya la principal */}
                     {canEdit && !cuenta.isPrimary && (
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={handleSetPrimary}
                             disabled={settingPrimary}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-amber-50 hover:text-amber-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 transition-colors disabled:opacity-50"
+                            className="gap-1.5 hover:bg-amber-50 hover:text-amber-700"
                             data-testid={`btn-set-primary-${cuenta.publicId}`}
                             aria-label="Marcar como cuenta principal"
                         >
@@ -312,16 +317,18 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
                                 : <Star className="h-3.5 w-3.5" />
                             }
                             Principal
-                        </button>
+                        </Button>
                     )}
 
                     {/* Editar: carga el detalle antes de abrir el form (B1) */}
                     {canEdit && (
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={handleEditarClick}
                             disabled={cargandoParaEditar || cargandoDetalle}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                            className="gap-1.5"
                             data-testid={`btn-editar-${cuenta.publicId}`}
                             aria-label="Editar cuenta bancaria"
                         >
@@ -330,21 +337,23 @@ function FilaCuentaBancaria({ cuenta, canEdit, onEditar, onEliminar, onSetPrimar
                                 : <Pencil className="h-3.5 w-3.5" />
                             }
                             Editar
-                        </button>
+                        </Button>
                     )}
 
                     {/* Eliminar */}
                     {canEdit && (
-                        <button
+                        <Button
                             type="button"
+                            variant="destructive"
+                            size="sm"
                             onClick={() => onEliminar(cuenta)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:bg-slate-800 dark:text-rose-400 dark:hover:bg-rose-950/20 transition-colors"
+                            className="gap-1.5"
                             data-testid={`btn-eliminar-${cuenta.publicId}`}
                             aria-label="Eliminar cuenta bancaria"
                         >
                             <Trash2 className="h-3.5 w-3.5" />
                             Eliminar
-                        </button>
+                        </Button>
                     )}
                 </div>
             </div>
@@ -444,22 +453,23 @@ export function ListaCuentasBancarias({ ownerType, ownerId, title = "Datos banca
 
     return (
         <div
-            className="overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-700"
+            className="overflow-hidden rounded-[14px] border border-slate-200 bg-card shadow-sm dark:border-slate-700"
             data-testid="lista-cuentas-bancarias"
         >
             {/* Cabecera de la sección */}
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4 bg-slate-50/50 dark:bg-slate-800/20">
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">{title}</h3>
                 {canEdit && (
-                    <button
+                    <Button
                         type="button"
+                        size="sm"
                         onClick={() => setEditandoDetalle((prev) => (prev === "nueva" ? null : "nueva"))}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm transition-colors"
+                        className="gap-1.5"
                         data-testid="btn-agregar-cuenta"
                     >
                         <Plus className="h-3.5 w-3.5" />
                         Agregar cuenta
-                    </button>
+                    </Button>
                 )}
             </div>
 
@@ -475,20 +485,22 @@ export function ListaCuentasBancarias({ ownerType, ownerId, title = "Datos banca
                 {/* Estado: error */}
                 {!loading && error && (
                     <div
-                        className="rounded-lg bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-sm text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3"
+                        className="rounded-[10px] bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-sm text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3"
                         role="alert"
                     >
                         <div className="flex items-center gap-2">
                             <AlertCircle className="h-4 w-4 flex-shrink-0" />
                             {error}
                         </div>
-                        <button
+                        <Button
                             type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={cargarCuentas}
-                            className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:bg-slate-900 dark:text-rose-400 transition-colors flex-shrink-0"
+                            className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-400 flex-shrink-0"
                         >
                             Reintentar
-                        </button>
+                        </Button>
                     </div>
                 )}
 

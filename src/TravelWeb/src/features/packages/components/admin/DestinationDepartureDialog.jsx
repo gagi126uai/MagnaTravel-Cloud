@@ -1,7 +1,7 @@
 import { Button } from "../../../../components/ui/button";
 
 const inputClass =
-  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 
 export function DestinationDepartureDialog({ open, draft, editing, onChange, onClose, onSubmit }) {
   if (!open) {
@@ -10,7 +10,7 @@ export function DestinationDepartureDialog({ open, draft, editing, onChange, onC
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-3xl rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+      <div className="w-full max-w-3xl rounded-[14px] border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-slate-200 px-6 py-4 dark:border-slate-800">
           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
             {editing ? "Editar salida" : "Nueva salida"}
@@ -105,7 +105,7 @@ export function DestinationDepartureDialog({ open, draft, editing, onChange, onC
                 type="checkbox"
                 checked={draft.isPrimary}
                 onChange={(event) => onChange("isPrimary", event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-ring"
               />
               <div>
                 <p className="text-sm font-medium text-slate-900 dark:text-white">Salida destacada</p>
@@ -118,7 +118,7 @@ export function DestinationDepartureDialog({ open, draft, editing, onChange, onC
                 type="checkbox"
                 checked={draft.isActive}
                 onChange={(event) => onChange("isActive", event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-ring"
               />
               <div>
                 <p className="text-sm font-medium text-slate-900 dark:text-white">Visible en el sitio</p>

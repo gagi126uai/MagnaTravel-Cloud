@@ -20,6 +20,8 @@ import { RefreshCw, FileX2, ExternalLink } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { usePendingCreditNoteReviewList } from "../hooks/usePendingCreditNoteReviewList";
 import { formatDate } from "../../../lib/utils";
+import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 
 export default function CancellationCreditNoteInboxPage() {
   const { items, loading, error, reload } = usePendingCreditNoteReviewList();
@@ -33,7 +35,7 @@ export default function CancellationCreditNoteInboxPage() {
     <div className="space-y-6">
       {/* ─ Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3">
-        <div className="rounded-lg bg-cyan-100 p-2 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+        <div className="rounded-[10px] bg-cyan-100 p-2 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
           <FileX2 className="h-5 w-5" />
         </div>
         <div>
@@ -48,23 +50,25 @@ export default function CancellationCreditNoteInboxPage() {
       </div>
 
       {/* ─ Panel principal ─────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         {/* Toolbar */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
             {items.length > 0 ? `${items.length} caso(s) pendiente(s)` : ""}
           </span>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={reload}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            className="gap-1.5"
             aria-label="Refrescar bandeja"
             data-testid="refresh-credit-note-review-inbox"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             Actualizar
-          </button>
+          </Button>
         </div>
 
         {/* Estados: loading / error / vacio / lista */}
@@ -78,7 +82,7 @@ export default function CancellationCreditNoteInboxPage() {
             <button
               type="button"
               onClick={reload}
-              className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+              className="text-xs text-primary hover:underline"
             >
               Reintentar
             </button>
@@ -154,9 +158,7 @@ function CreditNoteReviewRow({ row, onVerReserva }) {
             Reserva #{row.reservaNumero}
           </span>
           {/* Badge de estado: viene tal cual del backend como string */}
-          <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
-            {row.status || "Pendiente"}
-          </span>
+          <StatusChip tone="azul">{row.status || "Pendiente"}</StatusChip>
         </div>
         <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-4 gap-y-0.5">
           {row.clienteNombre && (
@@ -169,15 +171,17 @@ function CreditNoteReviewRow({ row, onVerReserva }) {
         </div>
       </div>
 
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         onClick={onVerReserva}
         data-testid={`btn-ver-reserva-${row.bookingCancellationPublicId}`}
-        className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300 dark:hover:bg-indigo-900/40 transition-colors"
+        className="flex-shrink-0 gap-1.5"
       >
         <ExternalLink className="h-3.5 w-3.5" />
         Ver reserva
-      </button>
+      </Button>
     </div>
   );
 }

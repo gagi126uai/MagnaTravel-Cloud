@@ -38,7 +38,7 @@ export default function PendientesAfipPage() {
   // cambió entremedio (ej: le sacaron el permiso en otra pestaña del navegador).
   if (!activeTab) {
     return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+      <div className="rounded-[14px] border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
         No tenés permiso para ver ninguna de estas bandejas.
       </div>
     );
@@ -50,7 +50,7 @@ export default function PendientesAfipPage() {
     <div className="space-y-6">
       {/* Encabezado */}
       <div className="flex items-center gap-3">
-        <div className="rounded-lg bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+        <div className="rounded-[10px] bg-orange-100 p-2 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
           <FileWarning className="h-5 w-5" />
         </div>
         <div>
@@ -62,7 +62,7 @@ export default function PendientesAfipPage() {
         </div>
       </div>
 
-      {/* Barra de solapas — mismo patrón visual que CustomerAccountPage (subrayado indigo activo) */}
+      {/* Barra de solapas — mismo patrón visual que CustomerAccountPage (subrayado azul boleto activo) */}
       <div className="flex flex-wrap gap-6 border-b border-slate-200 dark:border-slate-800">
         {allowedTabs.map((tab) => (
           <button
@@ -73,14 +73,14 @@ export default function PendientesAfipPage() {
             onClick={() => setSearchParams({ tab: tab.key }, { replace: true })}
             className={`relative pb-4 text-sm font-semibold transition-colors ${
               activeTab === tab.key
-                ? "text-indigo-600 dark:text-indigo-400"
+                ? "text-primary"
                 : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
             }`}
             data-testid={`tab-pendientes-${tab.key}`}
           >
             {tab.label}
             {activeTab === tab.key && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" />
             )}
           </button>
         ))}

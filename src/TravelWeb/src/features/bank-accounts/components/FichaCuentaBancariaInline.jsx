@@ -18,6 +18,7 @@ import { api } from "../../../api";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { validarFormularioCuenta, construirPayloadCuentaBancaria } from "../lib/bankAccountLogic";
+import { Button } from "../../../components/ui/button";
 
 // Tipos de cuenta bancaria: enum del backend (AccountType).
 // El backend espera enteros (0 = CajaAhorro, 1 = CuentaCorriente) o null si no se especifica.
@@ -112,12 +113,14 @@ export function FichaCuentaBancariaInline({ ownerType, ownerId, cuentaEditar, on
     };
 
     const inputClass =
-        "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50";
+        "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50";
     const labelClass = "block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1";
 
     return (
+        // Ficha NEUTRA (mismo criterio que NuevoOperadorInline/UsarSaldoAFavorInline): "hay una
+        // ficha abierta" es solo estado de UI, no un significado real (B.1) — nada de color de fondo.
         <div
-            className="rounded-xl border-2 border-indigo-200 bg-indigo-50/30 dark:border-indigo-900/40 dark:bg-indigo-950/10 p-5 space-y-4"
+            className="rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 p-5 space-y-4"
             data-testid="ficha-cuenta-bancaria-inline"
         >
             {/* Cabecera */}
@@ -275,7 +278,7 @@ export function FichaCuentaBancariaInline({ ownerType, ownerId, cuentaEditar, on
                             checked={form.isPrimary}
                             onChange={(e) => handleChange("isPrimary", e.target.checked)}
                             disabled={saving}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+                            className="rounded border-slate-300 text-primary focus:ring-ring"
                         />
                         <label
                             htmlFor="cuenta-is-primary"
@@ -289,7 +292,7 @@ export function FichaCuentaBancariaInline({ ownerType, ownerId, cuentaEditar, on
                 {/* Error */}
                 {errorGuardar && (
                     <div
-                        className="rounded-lg bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
+                        className="rounded-[10px] bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
                         role="alert"
                         data-testid="cuenta-error"
                     >
@@ -299,22 +302,12 @@ export function FichaCuentaBancariaInline({ ownerType, ownerId, cuentaEditar, on
 
                 {/* Botones */}
                 <div className="flex justify-end gap-3 pt-1">
-                    <button
-                        type="button"
-                        onClick={onCancelar}
-                        disabled={saving}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                    >
+                    <Button type="button" variant="outline" onClick={onCancelar} disabled={saving}>
                         Cancelar
-                    </button>
-                    <button
-                        type="submit"
-                        disabled={saving}
-                        className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-50"
-                        data-testid="cuenta-guardar"
-                    >
+                    </Button>
+                    <Button type="submit" disabled={saving} data-testid="cuenta-guardar">
                         {saving ? "Guardando…" : esEdicion ? "Guardar cambios" : "Agregar cuenta"}
-                    </button>
+                    </Button>
                 </div>
             </form>
         </div>

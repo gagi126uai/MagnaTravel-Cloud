@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AlertCircle, ShieldCheck, X } from "lucide-react";
 import { approvalsApi, REQUEST_TYPE_LABELS } from "../api/approvalsApi";
 import { showError, showSuccess } from "../../../alerts";
+import { Button } from "../../../components/ui/button";
 
 // B1.15 Fase B' Parte 2 (2026-05-11): modal reutilizable para solicitar
 // aprobacion. Cualquier accion bloqueada en UI puede dispararlo pasando:
@@ -70,10 +71,10 @@ export default function RequestApprovalModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+      <div className="bg-white dark:bg-slate-900 rounded-[14px] shadow-2xl w-full max-w-lg overflow-hidden border border-gray-200 dark:border-slate-700">
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 px-6 py-5">
           <div className="flex items-start gap-3">
-            <div className="rounded-lg bg-amber-100 p-2 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+            <div className="rounded-[10px] bg-amber-100 p-2 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div>
@@ -92,7 +93,7 @@ export default function RequestApprovalModal({
 
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
           {entityLabel ? (
-            <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm">
+            <div className="rounded-[10px] bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Sobre</span>
               <div className="font-medium text-slate-900 dark:text-white">{entityLabel}</div>
             </div>
@@ -107,7 +108,7 @@ export default function RequestApprovalModal({
               onChange={(event) => setReason(event.target.value)}
               rows={4}
               placeholder="Explicá por qué necesitás esta autorización."
-              className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm"
+              className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm"
             />
           </div>
 
@@ -117,21 +118,12 @@ export default function RequestApprovalModal({
           </div>
 
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-            >
+            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
               Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={submitting || reason.trim().length < 10}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-            >
+            </Button>
+            <Button type="submit" disabled={submitting || reason.trim().length < 10}>
               {submitting ? "Enviando…" : "Enviar solicitud"}
-            </button>
+            </Button>
           </div>
         </form>
       </div>

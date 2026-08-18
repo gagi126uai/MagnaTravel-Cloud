@@ -38,6 +38,7 @@ import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatCurrency } from "../../../lib/utils";
+import { Button } from "../../../components/ui/button";
 import {
   validarMotivoDeshacerMulta,
   puedeEnviarDeshacerMulta,
@@ -213,7 +214,7 @@ export function DeshacerMultaEmitidaInline({
 
   return (
     <div
-      className="rounded-xl border-2 border-slate-200 bg-slate-50/60 dark:border-slate-700/60 dark:bg-slate-900/20 p-5 space-y-4"
+      className="rounded-[14px] border-2 border-slate-200 bg-slate-50/60 dark:border-slate-700/60 dark:bg-slate-900/20 p-5 space-y-4"
       data-testid="deshacer-multa-emitida-inline"
     >
       <div className="flex items-center justify-between">
@@ -243,7 +244,7 @@ export function DeshacerMultaEmitidaInline({
       ) : errorCarga ? (
         <div
           role="alert"
-          className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
+          className="rounded-[10px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
         >
           {errorCarga}
         </div>
@@ -251,7 +252,7 @@ export function DeshacerMultaEmitidaInline({
         <>
           {/* ── Paso 2: confirmación explícita antes de tocar el backend ── */}
           <div
-            className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
+            className="rounded-[10px] border border-amber-200 bg-amber-50 p-3.5 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
             data-testid="deshacer-multa-confirmacion-explicita"
             role="alert"
           >
@@ -261,32 +262,33 @@ export function DeshacerMultaEmitidaInline({
           </div>
 
           <div className="flex justify-end gap-3 pt-1">
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => setMostrarConfirmacion(false)}
               disabled={submitting}
               data-testid="deshacer-multa-confirmacion-volver-btn"
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
             >
               Volver
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
               onClick={handleDeshacer}
               disabled={submitting}
               data-testid="deshacer-multa-confirmar-btn"
-              className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2 dark:bg-slate-600 dark:hover:bg-slate-500"
+              className="gap-2"
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
               {submitting ? "Deshaciendo..." : "Sí, deshacer"}
-            </button>
+            </Button>
           </div>
         </>
       ) : (
         <>
           {/* ── Paso 1: explicación + aviso de plazo + motivo ── */}
           <div
-            className="rounded-lg border border-slate-200 bg-white p-3.5 text-xs text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+            className="rounded-[10px] border border-slate-200 bg-white p-3.5 text-xs text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
             data-testid="deshacer-multa-explicacion"
           >
             {!puedeVerMontos ? (
@@ -329,8 +331,8 @@ export function DeshacerMultaEmitidaInline({
             <div
               className={
                 avisoPlazo.tono === "fuerte"
-                  ? "rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
-                  : "rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
+                  ? "rounded-[10px] border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
+                  : "rounded-[10px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
               }
               data-testid="deshacer-multa-aviso-plazo"
               role={avisoPlazo.tono === "fuerte" ? "alert" : "status"}
@@ -346,7 +348,7 @@ export function DeshacerMultaEmitidaInline({
           {errorMensaje && (
             <div
               role="alert"
-              className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex flex-col gap-2.5"
+              className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex flex-col gap-2.5"
               data-testid="deshacer-multa-error"
             >
               <div className="flex items-start gap-2">
@@ -356,7 +358,7 @@ export function DeshacerMultaEmitidaInline({
               {bloqueadoPorSaldoAplicado && customerPublicId && (
                 <Link
                   to={`/customers/${customerPublicId}/account`}
-                  className="inline-flex items-center gap-1.5 self-start rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-200 dark:border-rose-800 dark:hover:bg-slate-700 transition-colors"
+                  className="inline-flex items-center gap-1.5 self-start rounded-[10px] border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-200 dark:border-rose-800 dark:hover:bg-slate-700 transition-colors"
                   data-testid="deshacer-multa-ir-a-cuenta-cliente"
                 >
                   Ir a la cuenta del cliente
@@ -372,7 +374,7 @@ export function DeshacerMultaEmitidaInline({
               {bloqueadoPorRevisionManual && (
                 <Link
                   to="/facturacion?tab=comprobantes"
-                  className="inline-flex items-center gap-1.5 self-start rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-200 dark:border-rose-800 dark:hover:bg-slate-700 transition-colors"
+                  className="inline-flex items-center gap-1.5 self-start rounded-[10px] border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-200 dark:border-rose-800 dark:hover:bg-slate-700 transition-colors"
                   data-testid="deshacer-multa-ir-a-cobranzas"
                 >
                   Ir a Cobranzas y Facturación
@@ -400,7 +402,7 @@ export function DeshacerMultaEmitidaInline({
               disabled={submitting}
               placeholder="El operador cobró la multa en pesos, no en dólares..."
               data-testid="deshacer-multa-motivo-input"
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
+              className={`w-full rounded-[10px] border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
                 motivoTocado && motivoError ? "border-rose-400" : "border-slate-300 dark:border-slate-600"
               }`}
             />
@@ -415,23 +417,18 @@ export function DeshacerMultaEmitidaInline({
           </div>
 
           <div className="flex justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onCerrar}
-              disabled={submitting}
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-            >
+            <Button type="button" variant="outline" onClick={onCerrar} disabled={submitting}>
               Volver
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
               onClick={handlePedirConfirmacion}
               disabled={!canSubmit}
               data-testid="deshacer-multa-siguiente-btn"
-              className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2 dark:bg-slate-600 dark:hover:bg-slate-500"
             >
               Deshacer
-            </button>
+            </Button>
           </div>
         </>
       )}

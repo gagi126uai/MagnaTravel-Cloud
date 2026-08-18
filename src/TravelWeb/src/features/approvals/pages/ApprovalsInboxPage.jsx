@@ -5,6 +5,7 @@ import { useApprovalsList } from "../hooks/useApprovals";
 import { showError, showSuccess } from "../../../alerts";
 import ApprovalStatusPill from "../components/ApprovalStatusPill";
 import { formatDateTime } from "../../../lib/utils";
+import { Button } from "../../../components/ui/button";
 
 // B1.15 Fase B' Parte 2 (2026-05-11): bandeja del reviewer (Admin/Colaborador).
 // Lista todos los ApprovalRequest en estado Pending y permite aprobar o rechazar
@@ -26,7 +27,7 @@ export default function ApprovalsInboxPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <div className="rounded-lg bg-amber-100 p-2 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+        <div className="rounded-[10px] bg-amber-100 p-2 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
           <ShieldCheck className="h-5 w-5" />
         </div>
         <div>
@@ -37,14 +38,14 @@ export default function ApprovalsInboxPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Filtrar por tipo</span>
             <select
               value={typeFilter}
               onChange={(event) => setTypeFilter(event.target.value)}
-              className="rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm"
+              className="rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-1.5 text-sm"
             >
               <option value="all">Todos ({items.length})</option>
               {typeOptions.map((type) => (
@@ -54,14 +55,10 @@ export default function ApprovalsInboxPage() {
               ))}
             </select>
           </div>
-          <button
-            type="button"
-            onClick={reload}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={reload} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" />
             Refrescar
-          </button>
+          </Button>
         </div>
 
         {loading ? (
@@ -142,14 +139,14 @@ function ApprovalInboxRow({ request, onResolved }) {
       </div>
 
       {request.reason ? (
-        <div className="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-sm">
-          <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Motivo del solicitante</span>
+        <div className="rounded-[10px] bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-sm">
+          <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Motivo del solicitante</span>
           <span className="text-slate-800 dark:text-slate-200">{request.reason}</span>
         </div>
       ) : null}
 
       <div className="space-y-2">
-        <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+        <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
           Tus notas (opcional al aprobar, requerido al rechazar)
         </label>
         <textarea
@@ -157,29 +154,21 @@ function ApprovalInboxRow({ request, onResolved }) {
           onChange={(event) => setNotes(event.target.value)}
           rows={2}
           placeholder="Comentario para auditoría / aviso al solicitante."
-          className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm"
+          className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm"
         />
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={handleApprove}
-          disabled={busy !== null}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
+        {/* B.3: accion por fila repetida N veces en la bandeja — outline, nunca
+            N rellenos azules a la vez (precedente CustomerTable/DuplicatesTray). */}
+        <Button type="button" variant="outline" onClick={handleApprove} disabled={busy !== null} className="gap-1.5">
           <Check className="h-4 w-4" />
           {busy === "approve" ? "Aprobando…" : "Aprobar"}
-        </button>
-        <button
-          type="button"
-          onClick={handleReject}
-          disabled={busy !== null}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
-        >
+        </Button>
+        <Button type="button" variant="destructive" onClick={handleReject} disabled={busy !== null} className="gap-1.5">
           <X className="h-4 w-4" />
           {busy === "reject" ? "Rechazando…" : "Rechazar"}
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -83,6 +83,7 @@
 
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import {
   familiaDeEstadoMulta,
   copyAccionTrabada,
@@ -207,7 +208,7 @@ export function OperatorPenaltyStepPanel({
   if (familia === "procesando") {
     return (
       <div
-        className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200"
+        className="rounded-[14px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200"
         data-testid={testId}
         role="status"
       >
@@ -281,7 +282,7 @@ export function OperatorPenaltyStepPanel({
       return (
         <div className="space-y-3">
           <div
-            className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            className="rounded-[14px] border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
             data-testid={testId}
             role="status"
           >
@@ -371,7 +372,7 @@ export function OperatorPenaltyStepPanel({
       // hermano, nunca anidado adentro (spec sección 2: "se abre debajo del cartel").
       <div className="space-y-3">
         <div
-          className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/10 dark:text-emerald-200"
+          className="rounded-[14px] border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/10 dark:text-emerald-200"
           data-testid={testId}
           role="status"
         >
@@ -631,8 +632,8 @@ export function OperatorPenaltyStepPanel({
   // hacer salvo, opcionalmente, el link de waive). "accionTrabada" sigue siendo naranja,
   // con su botón puntual — sin cambios visuales respecto de antes de ADR-044.
   const clasesContenedor = esAccionTrabada
-    ? "rounded-xl border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
-    : "rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200";
+    ? "rounded-[14px] border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
+    : "rounded-[14px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200";
 
   return (
     <div
@@ -647,19 +648,20 @@ export function OperatorPenaltyStepPanel({
         {/* Sin permiso, copyAccionTrabada devuelve accion=null: cartel informativo, sin botón.
             "multiOperador" siempre tiene accion=null (ver arriba): nunca dibuja este botón. */}
         {accion && (
-          <button
+          <Button
             type="button"
+            size="sm"
             onClick={handleClickAccion}
             // También se bloquea mientras el waive está en vuelo: las dos acciones mutan la
             // misma cancelación y no deben poder dispararse a la vez (el backend igual
             // rebotaría la segunda, pero mejor no ofrecerla).
             disabled={buscando || procesandoWaive}
             data-testid={`btn-multa-${accion}`}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-orange-400 bg-orange-100 px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-200 dark:hover:bg-orange-900/60 transition-colors flex-shrink-0 disabled:opacity-50"
+            className="gap-1.5 flex-shrink-0"
           >
             {buscando && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
             {textoBoton}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -689,7 +691,7 @@ export function OperatorPenaltyStepPanel({
           "gratis", así que un solo click en el link de arriba no alcanza. */}
       {mostrarConfirmacionWaive && (
         <div
-          className="mt-3 rounded-lg border border-orange-300 bg-orange-100/60 p-3.5 text-xs text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200 space-y-2.5"
+          className="mt-3 rounded-[10px] border border-orange-300 bg-orange-100/60 p-3.5 text-xs text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200 space-y-2.5"
           data-testid="multa-waive-confirmacion"
           role="alert"
         >
@@ -697,25 +699,27 @@ export function OperatorPenaltyStepPanel({
             Se cierra el paso de la multa sin cobrarle nada al cliente. Vas a poder deshacerlo después.
           </p>
           <div className="flex justify-end gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => setMostrarConfirmacionWaive(false)}
               disabled={procesandoWaive}
               data-testid="multa-waive-cancelar-btn"
-              className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-medium text-orange-800 hover:bg-orange-50 dark:bg-slate-800 dark:text-orange-200 dark:border-orange-700 transition-colors disabled:opacity-50"
             >
               Cancelar
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              size="sm"
               onClick={handleConfirmarWaive}
               disabled={procesandoWaive}
               data-testid="multa-waive-confirmar-btn"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-orange-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-orange-800 transition-colors disabled:opacity-50"
+              className="gap-1.5"
             >
               {procesandoWaive && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
               Confirmar
-            </button>
+            </Button>
           </div>
         </div>
       )}

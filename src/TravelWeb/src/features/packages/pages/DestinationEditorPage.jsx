@@ -18,7 +18,7 @@ import {
 } from "../lib/publicationUtils";
 
 const inputClass =
-  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 const textareaClass = `${inputClass} min-h-[220px] resize-y`;
 
 export default function DestinationEditorPage() {
@@ -436,7 +436,7 @@ export default function DestinationEditorPage() {
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
+        <Loader2 className="h-7 w-7 animate-spin text-primary" />
       </div>
     );
   }
@@ -464,7 +464,7 @@ export default function DestinationEditorPage() {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
-          <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+          <section className="rounded-[10px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <SummaryMetric label="Pais" value={form.countryName || "-"} />
               <SummaryMetric label="Estado" value={publicationState.label} tone={publicationState.tone} />
@@ -477,7 +477,7 @@ export default function DestinationEditorPage() {
           </section>
 
           {!form.isCountryPublished ? (
-            <section className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-200">
+            <section className="rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-200">
               Este pais esta retirado del sitio. Puedes seguir editando, previsualizando y dejando destinos listos, pero la ficha publica y el iframe no responderan hasta volver a publicar el pais.
             </section>
           ) : null}
@@ -627,7 +627,7 @@ export default function DestinationEditorPage() {
 
 function SectionCard({ title, description, action, children }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+    <section className="rounded-[10px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-base font-semibold text-slate-900 dark:text-white">{title}</h2>
@@ -705,7 +705,7 @@ function ImageUploadSection({
           className={`block rounded-md border border-dashed px-4 py-6 text-center transition ${
             disabled || !canEdit
               ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40"
-              : "cursor-pointer border-indigo-300 bg-indigo-50/50 text-slate-700 hover:border-indigo-400 hover:bg-indigo-50 dark:border-indigo-900/50 dark:bg-indigo-900/10 dark:text-slate-200"
+              : "cursor-pointer border-blue-300 bg-blue-50/50 text-slate-700 hover:border-blue-400 hover:bg-blue-50 dark:border-blue-900/50 dark:bg-blue-900/10 dark:text-slate-200"
           }`}
         >
           <input
@@ -717,7 +717,7 @@ function ImageUploadSection({
             disabled={disabled || !canEdit || uploading}
           />
           <div className="flex flex-col items-center gap-3">
-            {uploading ? <Loader2 className="h-6 w-6 animate-spin text-indigo-500" /> : <ImagePlus className="h-6 w-6 text-indigo-500" />}
+            {uploading ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <ImagePlus className="h-6 w-6 text-primary" />}
             <div className="space-y-1">
               <p className="text-sm font-semibold">
                 {disabled ? "Pendiente de primer guardado" : "Seleccionar imagen principal"}

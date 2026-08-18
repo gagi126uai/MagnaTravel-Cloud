@@ -1,10 +1,11 @@
 import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, Rocket, Search } from "lucide-react";
 import { Button } from "../../../../components/ui/button";
 import { ListToolbar } from "../../../../components/ui/ListToolbar";
+import { StatusChip } from "../../../../components/ui/badge";
 import { formatLongDate, formatMoney, formatShortDate } from "../../lib/publicationUtils";
 
 const inputClass =
-  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 
 export function PackagesDestinationsPanel({
   selectedCountry,
@@ -36,7 +37,7 @@ export function PackagesDestinationsPanel({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+      <section className="rounded-[10px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
@@ -134,11 +135,11 @@ export function PackagesDestinationsPanel({
       />
 
       {loading ? (
-        <section className="flex min-h-[280px] items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-          <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+        <section className="flex min-h-[280px] items-center justify-center rounded-[10px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </section>
       ) : filteredDestinations.length === 0 ? (
-        <section className="rounded-lg border border-slate-200 bg-white px-4 py-12 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+        <section className="rounded-[10px] border border-slate-200 bg-white px-4 py-12 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
           <p className="text-sm font-medium text-slate-900 dark:text-white">
             {destinations.length === 0 ? "Todavia no hay destinos en este pais" : "No encontramos destinos con ese filtro"}
           </p>
@@ -150,7 +151,7 @@ export function PackagesDestinationsPanel({
         </section>
       ) : (
         <>
-          <section className="hidden overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50 md:block">
+          <section className="hidden overflow-hidden rounded-[10px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50 md:block">
             <div className="overflow-x-auto">
               <table className="min-w-full border-collapse text-left text-sm">
                 <thead>
@@ -180,7 +181,7 @@ export function PackagesDestinationsPanel({
                               <button
                                 type="button"
                                 onClick={() => onEditDestination(destination.publicId)}
-                                className="truncate text-left text-sm font-semibold text-slate-900 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-300"
+                                className="truncate text-left text-sm font-semibold text-slate-900 hover:text-primary dark:text-white"
                               >
                                 {destination.title || destination.name}
                               </button>
@@ -289,7 +290,7 @@ function DestinationMobileRow({
   const status = getDestinationStatus(destination);
 
   return (
-    <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+    <article className="rounded-[10px] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-base font-semibold text-slate-900 dark:text-white">{destination.title || destination.name}</p>
@@ -397,26 +398,20 @@ function MetricPill({ label, value, tone = "slate" }) {
 
 function StatusBadge({ status }) {
   const tones = {
-    visible: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-    blocked: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-    ready: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-    draft: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+    visible: "verde",
+    blocked: "ambar",
+    ready: "azul",
+    draft: "neutro",
   };
 
-  return <span className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${tones[status.key]}`}>{status.label}</span>;
+  return <StatusChip tone={tones[status.key] || "neutro"}>{status.label}</StatusChip>;
 }
 
 function CountryStatusBadge({ isPublished }) {
   return (
-    <span
-      className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${
-        isPublished
-          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-      }`}
-    >
+    <StatusChip tone={isPublished ? "verde" : "ambar"}>
       {isPublished ? "Sitio visible" : "Sitio oculto"}
-    </span>
+    </StatusChip>
   );
 }
 

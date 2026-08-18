@@ -16,6 +16,7 @@
 
 import { useState } from "react";
 import { ChevronRight, Loader2, Plus, X } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -205,7 +206,7 @@ export function AgregarOtroCargoOperadorInline({
 
   return (
     <div
-      className="mt-2 rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 p-4 space-y-3"
+      className="mt-2 rounded-[14px] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 p-4 space-y-3"
       data-testid="ficha-agregar-otro-cargo"
     >
       <div className="flex items-center justify-between">
@@ -229,7 +230,7 @@ export function AgregarOtroCargoOperadorInline({
           Cargando…
         </div>
       ) : errorCarga ? (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200" role="alert">
+        <div className="rounded-[10px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200" role="alert">
           {errorCarga}
         </div>
       ) : (
@@ -237,7 +238,7 @@ export function AgregarOtroCargoOperadorInline({
           {errorEnvio && (
             <div
               role="alert"
-              className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
+              className="rounded-[10px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200"
               data-testid="otro-cargo-error"
             >
               {errorEnvio}
@@ -255,7 +256,7 @@ export function AgregarOtroCargoOperadorInline({
               onChange={(e) => setKind(e.target.value)}
               disabled={submitting}
               data-testid="otro-cargo-tipo-select"
-              className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               {TIPOS_CARGO.map((opcion) => (
                 <option key={opcion.value} value={opcion.value}>{opcion.label}</option>
@@ -279,7 +280,7 @@ export function AgregarOtroCargoOperadorInline({
                 placeholder="0.00"
                 disabled={submitting}
                 data-testid="otro-cargo-monto-input"
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
             <div>
@@ -292,7 +293,7 @@ export function AgregarOtroCargoOperadorInline({
                 onChange={(e) => setMoneda(e.target.value)}
                 disabled={submitting}
                 data-testid="otro-cargo-moneda-select"
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 {MONEDAS.map((opcion) => (
                   <option key={opcion.value} value={opcion.value}>{opcion.label}</option>
@@ -319,7 +320,7 @@ export function AgregarOtroCargoOperadorInline({
               onClick={() => setMasDetallesAbierto((v) => !v)}
               disabled={submitting}
               data-testid="otro-cargo-mas-detalles-toggle"
-              className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary/80"
             >
               <ChevronRight
                 className={`h-3.5 w-3.5 transition-transform ${masDetallesAbierto ? "rotate-90" : ""}`}
@@ -373,7 +374,7 @@ export function AgregarOtroCargoOperadorInline({
                         disabled={submitting}
                         placeholder="Nº de nota / adjunto..."
                         data-testid="otro-cargo-documento-input"
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
                   )}
@@ -416,7 +417,7 @@ export function AgregarOtroCargoOperadorInline({
                         placeholder="Monto del cargo de gestión"
                         disabled={submitting}
                         data-testid="otro-cargo-management-fee-input"
-                        className="ml-6 w-40 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        className="ml-6 w-40 rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     )}
                     <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
@@ -440,15 +441,15 @@ export function AgregarOtroCargoOperadorInline({
               es el del día en que el operador cobró la multa (decisión de negocio). */}
           {mostrarRecuadroTipoCambio && (
             <div
-              className="rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/50 dark:border-indigo-900/50 dark:bg-indigo-950/20 p-3.5 space-y-3"
+              className="rounded-[10px] border-2 border-dashed border-slate-300 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-800/20 p-3.5 space-y-3"
               data-testid="otro-cargo-recuadro-tc"
             >
-              <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                 Tipo de cambio del día que el operador cobró
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">1 US$ = $ ___</label>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">1 US$ = $ ___</label>
                   <input
                     type="number"
                     step="0.01"
@@ -457,17 +458,17 @@ export function AgregarOtroCargoOperadorInline({
                     onChange={(e) => setTipoCambioStr(e.target.value)}
                     disabled={submitting}
                     data-testid="otro-cargo-tc-input"
-                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fuente</label>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Fuente</label>
                   <select
                     value={fuenteTipoCambio}
                     onChange={(e) => setFuenteTipoCambio(e.target.value)}
                     disabled={submitting}
                     data-testid="otro-cargo-tc-fuente-select"
-                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   >
                     {FUENTES_TC.map((f) => (
                       <option key={f.value} value={f.value}>{f.label}</option>
@@ -475,20 +476,20 @@ export function AgregarOtroCargoOperadorInline({
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fecha</label>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Fecha</label>
                   <input
                     type="date"
                     value={fechaTipoCambio}
                     onChange={(e) => setFechaTipoCambio(e.target.value)}
                     disabled={submitting}
                     data-testid="otro-cargo-tc-fecha-input"
-                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               </div>
               {fuenteTipoCambio === "Manual" && (
                 <div>
-                  <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                     ¿De dónde salió este tipo de cambio? <span className="text-rose-500" aria-hidden="true">*</span>
                   </label>
                   <input
@@ -499,7 +500,7 @@ export function AgregarOtroCargoOperadorInline({
                     disabled={submitting}
                     placeholder="Ej.: cotización informada por el operador en su liquidación..."
                     data-testid="otro-cargo-tc-justificacion-input"
-                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               )}
@@ -508,24 +509,19 @@ export function AgregarOtroCargoOperadorInline({
 
           {/* Acciones */}
           <div className="flex justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={handleCerrar}
-              disabled={submitting}
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 disabled:opacity-50"
-            >
+            <Button type="button" variant="outline" onClick={handleCerrar} disabled={submitting}>
               Volver
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={handleAgregar}
               disabled={!canSubmit}
               data-testid="otro-cargo-agregar-btn"
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+              className="gap-2"
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
               {submitting ? "Agregando…" : "Agregar el cargo"}
-            </button>
+            </Button>
           </div>
         </>
       )}

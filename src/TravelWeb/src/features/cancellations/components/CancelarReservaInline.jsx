@@ -54,6 +54,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, Ban, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
+import { Button } from "../../../components/ui/button";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { showSuccess, showError } from "../../../alerts";
 import { formatCurrency } from "../../../lib/utils";
@@ -542,7 +543,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
     return (
         <div
-            className="rounded-xl border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-4"
+            className="rounded-[14px] border-2 border-rose-200 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10 p-5 space-y-4"
             data-testid="cancelar-reserva-inline"
         >
             {/* ── Cabecera del panel ──
@@ -587,7 +588,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         solo cuando el vendedor corrige y el error se limpia. */}
                     {!conflictMessage && casoAnulacion === "DirectCancel" && (
                         <div
-                            className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 p-3.5 text-xs text-green-800 dark:bg-green-950/30 dark:border-green-800 dark:text-green-200"
+                            className="flex items-start gap-2 rounded-[10px] border border-green-200 bg-green-50 p-3.5 text-xs text-green-800 dark:bg-green-950/30 dark:border-green-800 dark:text-green-200"
                             data-testid="cancelar-banner-sin-factura"
                         >
                             <span>{TEXTO_BANNER_DIRECT_CANCEL}</span>
@@ -596,7 +597,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
                     {!conflictMessage && casoAnulacion === "PaymentsToCredit" && (
                         <div
-                            className="flex flex-col items-start gap-1.5 rounded-lg border border-sky-200 bg-sky-50 p-3.5 text-xs text-sky-800 dark:bg-sky-950/30 dark:border-sky-800 dark:text-sky-200"
+                            className="flex flex-col items-start gap-1.5 rounded-[10px] border border-sky-200 bg-sky-50 p-3.5 text-xs text-sky-800 dark:bg-sky-950/30 dark:border-sky-800 dark:text-sky-200"
                             data-testid="cancelar-banner-saldo-favor"
                         >
                             {/* Decisión UX (guia 2026-06-25): mostrar el monto cobrado por moneda
@@ -622,7 +623,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
                     {!conflictMessage && casoAnulacion !== "DirectCancel" && casoAnulacion !== "PaymentsToCredit" && (
                         <div
-                            className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
+                            className="flex items-start gap-2 rounded-[10px] border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
                             data-testid="cancelar-banner-con-factura"
                         >
                             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
@@ -669,7 +670,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                             placeholder="Por ejemplo: el cliente cambió de planes por motivos personales..."
                             data-testid="cancelar-inline-reason-textarea"
                             aria-describedby="cancelar-inline-reason-hint"
-                            className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400 disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400 disabled:opacity-50"
                         />
                         <div id="cancelar-inline-reason-hint" className="mt-1 flex justify-between text-xs text-slate-400">
                             {tooShort ? (
@@ -683,24 +684,20 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
                     {/* ── Acciones ── */}
                     <div className="flex justify-end gap-3 pt-1">
-                        <button
-                            type="button"
-                            onClick={onCerrar}
-                            disabled={processing}
-                            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                        >
+                        <Button type="button" variant="outline" onClick={onCerrar} disabled={processing}>
                             Volver
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                             type="button"
+                            variant="destructive"
                             onClick={handleCancelar}
                             disabled={!canSubmit}
                             data-testid="cancelar-inline-confirm-btn"
-                            className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                            className="gap-2"
                         >
                             {processing && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                             {processing ? "Anulando..." : "Anular reserva"}
-                        </button>
+                        </Button>
                     </div>
                 </>
             )}
@@ -718,9 +715,9 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                     aria-describedby="cancelar-multi-confirm-desc"
                     data-testid="cancelar-multi-confirm-dialog"
                 >
-                    <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+                    <div className="relative bg-white dark:bg-slate-900 rounded-[14px] shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
                         <div className="flex items-center gap-3">
-                            <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
+                            <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-[10px]">
                                 <AlertTriangle className="w-6 h-6 text-amber-600 dark:text-amber-400" aria-hidden="true" />
                             </div>
                             <h2 id="cancelar-multi-confirm-title" className="text-base font-semibold text-slate-900 dark:text-white">
@@ -755,25 +752,27 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         </div>
 
                         <div className="flex gap-3 pt-2">
-                            <button
+                            <Button
                                 type="button"
+                                variant="outline"
                                 onClick={handleVolverConfirmacionMulti}
                                 autoFocus
                                 disabled={accionMultiEnCurso}
                                 data-testid="cancelar-multi-btn-volver"
-                                className="flex-1 rounded-xl border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                                className="flex-1"
                             >
                                 Volver
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                                 type="button"
+                                variant="destructive"
                                 onClick={handleConfirmarMulti}
                                 disabled={accionMultiEnCurso}
                                 data-testid="cancelar-multi-btn-si-anular"
-                                className="flex-1 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+                                className="flex-1"
                             >
                                 Sí, anular
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 </div>
@@ -831,14 +830,9 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                             </p>
                         )}
                     </div>
-                    <button
-                        type="button"
-                        onClick={onCerrar}
-                        data-testid="cancelar-multi-btn-cerrar-exito"
-                        className="mt-2 px-5 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
-                    >
+                    <Button type="button" onClick={onCerrar} data-testid="cancelar-multi-btn-cerrar-exito" className="mt-2">
                         Cerrar
-                    </button>
+                    </Button>
                 </div>
             )}
 
@@ -859,15 +853,15 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         reintentar todavía, el usuario usa la [X] de la cabecera (no duplicamos un
                         segundo "Cerrar" acá — la reserva va a seguir mostrando la franja "en
                         revisión" la próxima vez que la abra, así que nada se pierde). */}
-                    <button
+                    <Button
                         type="button"
                         onClick={handleReintentarDesdeRevision}
                         disabled={accionMultiEnCurso}
                         data-testid="cancelar-multi-btn-reintentar"
-                        className="mt-2 px-5 py-2 text-sm font-bold text-white bg-orange-600 rounded-xl hover:bg-orange-700 transition-colors disabled:opacity-50"
+                        className="mt-2"
                     >
                         {TEXTO_BOTON_REINTENTAR_FALTANTE}
-                    </button>
+                    </Button>
                 </div>
             )}
 
@@ -884,14 +878,9 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                 >
                     <Loader2 className="h-8 w-8 text-slate-400" aria-hidden="true" />
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{TEXTO_TIMEOUT_MULTI}</p>
-                    <button
-                        type="button"
-                        onClick={onCerrar}
-                        data-testid="cancelar-multi-btn-cerrar-timeout"
-                        className="mt-2 px-5 py-2 text-sm font-semibold border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
-                    >
+                    <Button type="button" variant="outline" onClick={onCerrar} data-testid="cancelar-multi-btn-cerrar-timeout" className="mt-2">
                         Cerrar
-                    </button>
+                    </Button>
                 </div>
             )}
         </div>
