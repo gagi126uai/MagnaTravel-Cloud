@@ -21,7 +21,7 @@ export function CancellationPenaltyLabel({ cancellationPenaltyState }) {
     if (cancellationPenaltyState === "Pending") {
         return (
             <span
-                className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-400"
                 data-testid="label-servicio-con-multa"
                 title="Este servicio anulado dejó una multa del operador que todavía no se cobró del todo."
             >
@@ -34,7 +34,7 @@ export function CancellationPenaltyLabel({ cancellationPenaltyState }) {
     if (cancellationPenaltyState === "Collected") {
         return (
             <span
-                className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400"
                 data-testid="label-servicio-multa-cobrada"
                 title="La multa de este servicio anulado ya se cobró por completo."
             >

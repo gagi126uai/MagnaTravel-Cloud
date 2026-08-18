@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, AlertTriangle, Loader2, CornerUpLeft } from 'lucide-react';
 import { api } from '../../../api';
 import { getApiErrorMessage } from '../../../lib/errors';
+import { Button } from '../../../components/ui/button';
 
 /**
  * Modal de confirmación para la acción "Sacar de viaje".
@@ -86,7 +87,7 @@ export function CorregirEntradaViajeModal({ reservaPublicId, onClose, onCorregid
             // Cerrar con Escape: solo si no estamos enviando.
             onKeyDown={(e) => { if (e.key === 'Escape' && !enviando) onClose(); }}
         >
-            <div className="w-full max-w-lg rounded-2xl border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800">
+            <div className="w-full max-w-lg rounded-[14px] border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800">
 
                 {/* ── Header ─────────────────────────────────────────────────────────── */}
                 <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
@@ -110,7 +111,7 @@ export function CorregirEntradaViajeModal({ reservaPublicId, onClose, onCorregid
                     {/* ── Cartel ámbar de advertencia ────────────────────────────────── */}
                     {/* Texto exacto de la spec de UX. Explica la consecuencia y el recordatorio clave. */}
                     <div
-                        className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+                        className="rounded-[10px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
                         role="note"
                     >
                         <div className="flex items-start gap-2">
@@ -145,7 +146,7 @@ export function CorregirEntradaViajeModal({ reservaPublicId, onClose, onCorregid
                             onChange={(e) => setMotivo(e.target.value)}
                             placeholder="Describí brevemente por qué se saca de viaje..."
                             rows={3}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                             data-testid="motivo-correccion-input"
                             aria-describedby="motivo-correccion-hint"
                         />
@@ -167,7 +168,7 @@ export function CorregirEntradaViajeModal({ reservaPublicId, onClose, onCorregid
                     {/* No cerramos el modal cuando hay error: el motivo se preserva. */}
                     {errorMensaje && (
                         <div
-                            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
+                            className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
                             role="alert"
                             data-testid="error-correccion-viaje"
                         >
@@ -181,24 +182,20 @@ export function CorregirEntradaViajeModal({ reservaPublicId, onClose, onCorregid
 
                 {/* ── Botones ────────────────────────────────────────────────────────── */}
                 <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        disabled={enviando}
-                        className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors dark:text-slate-300 dark:hover:bg-slate-800"
-                    >
+                    <Button type="button" variant="outline" onClick={onClose} disabled={enviando}>
                         Descartar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="button"
+                        variant="destructive"
                         onClick={handleConfirmar}
                         disabled={!motivoValido || enviando}
                         data-testid="confirmar-sacar-de-viaje-btn"
-                        className="flex items-center gap-2 rounded-lg bg-rose-700 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-rose-800 disabled:opacity-50"
+                        className="gap-2"
                     >
                         {enviando && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                         {enviando ? 'Sacando…' : 'Sacar de viaje'}
-                    </button>
+                    </Button>
                 </div>
             </div>
         </div>

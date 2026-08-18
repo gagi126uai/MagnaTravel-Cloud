@@ -93,7 +93,7 @@ function FranjaSugerenciaComposicion({ sugerencia, onUsarSugerencia }) {
 
     return (
         <div
-            className="mb-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800/40 dark:bg-amber-950/10"
+            className="mb-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800/40 dark:bg-amber-950/10"
             data-testid="franja-sugerencia-composicion"
             role="status"
             aria-live="polite"
@@ -116,7 +116,7 @@ function FranjaSugerenciaComposicion({ sugerencia, onUsarSugerencia }) {
                 type="button"
                 onClick={handleUsar}
                 data-testid="btn-usar-sugerencia-composicion"
-                className="flex-shrink-0 rounded-lg border border-amber-400 bg-amber-100 px-4 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-200 dark:hover:bg-amber-900/60"
+                className="flex-shrink-0 rounded-[10px] border border-amber-400 bg-amber-100 px-4 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-200 dark:hover:bg-amber-900/60"
             >
                 Usar
             </button>
@@ -136,7 +136,7 @@ function ResumenCantidad({ etiqueta, valor }) {
             <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                 {etiqueta}
             </div>
-            <div className="mt-0.5 flex h-9 w-16 items-center justify-center rounded-lg border border-slate-200 text-sm font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+            <div className="mt-0.5 flex h-9 w-16 items-center justify-center rounded-[10px] border border-slate-200 text-sm font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200">
                 {valor}
             </div>
         </div>
@@ -290,14 +290,14 @@ export function PassengerList({
                             aria-label="Agregar pasajero — bloqueado, pedí autorización"
                             title={canAddPassenger?.reason || undefined}
                             data-testid="btn-agregar-pasajero-bloqueado"
-                            className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-[10px] border border-slate-200 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
                         >
                             <Lock className="w-4 h-4" aria-hidden="true" /> Agregar Pasajero
                         </button>
                     ) : (
                         <button
                             onClick={onAddPassenger}
-                            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-[10px] hover:bg-primary/90 transition-colors shadow-sm"
                             data-testid="btn-agregar-pasajero"
                         >
                             <Plus className="w-4 h-4" /> {tituloBotonAgregar}
@@ -317,7 +317,7 @@ export function PassengerList({
 
             {/* Estado vacío: cantidad declarada = 0 y sin pasajeros cargados */}
             {slots.length === 0 && (
-                <div className="text-center py-12 bg-gray-50 dark:bg-slate-800 rounded-lg border border-dashed border-gray-300 dark:border-slate-700">
+                <div className="text-center py-12 bg-gray-50 dark:bg-slate-800 rounded-[14px] border border-dashed border-gray-300 dark:border-slate-700">
                     <User className="w-12 h-12 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
                     <p className="text-gray-500 dark:text-slate-400">No hay pasajeros registrados.</p>
                 </div>
@@ -347,7 +347,7 @@ export function PassengerList({
                             <div key={index}>
                                 {/* Renglón del pasajero */}
                                 <div
-                                    className={`flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${
+                                    className={`flex items-center gap-3 rounded-[10px] border px-4 py-3 transition-colors ${
                                         tieneNombre
                                             ? "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
                                             : "border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-950/10"
@@ -357,7 +357,7 @@ export function PassengerList({
                                     {/* Avatar o icono vacío */}
                                     <div className={`flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold border ${
                                         tieneNombre
-                                            ? "bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800/50"
+                                            ? "bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800/50"
                                             : "bg-amber-100 text-amber-500 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800/40"
                                     }`}>
                                         {tieneNombre
@@ -388,7 +388,7 @@ export function PassengerList({
                                             {chipPasaporte && (
                                                 <span
                                                     data-testid={`chip-pasaporte-${chipPasaporte.key}-${index}`}
-                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipPasaporte.className}`}
+                                                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider border ${chipPasaporte.className}`}
                                                     title={chipPasaporte.title}
                                                 >
                                                     {chipPasaporte.label}
@@ -399,7 +399,7 @@ export function PassengerList({
                                             {chipDni && (
                                                 <span
                                                     data-testid={`chip-dni-vencido-${index}`}
-                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipDni.className}`}
+                                                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider border ${chipDni.className}`}
                                                     title={chipDni.title}
                                                 >
                                                     {chipDni.label}
@@ -411,7 +411,7 @@ export function PassengerList({
                                             {chipMenor && (
                                                 <span
                                                     data-testid={`chip-menor-autorizacion-${index}`}
-                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chipMenor.className}`}
+                                                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider border ${chipMenor.className}`}
                                                     title={chipMenor.title}
                                                 >
                                                     {chipMenor.label}
@@ -420,7 +420,7 @@ export function PassengerList({
                                         </div>
                                         {/* Documento del pasajero (si existe) */}
                                         {tieneNombre && slot.pasajero.documentNumber && (
-                                            <div className="text-[10px] text-slate-500 mt-0.5 uppercase">
+                                            <div className="text-[11px] text-slate-500 mt-0.5 uppercase">
                                                 {slot.pasajero.documentType || "DNI"} {slot.pasajero.documentNumber}
                                             </div>
                                         )}
@@ -447,7 +447,7 @@ export function PassengerList({
                                                             type="button"
                                                             onClick={onRequestEdit}
                                                             aria-label="Editar pasajero — bloqueado, pedí autorización"
-                                                            className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
+                                                            className="flex items-center gap-1 rounded-[10px] p-2 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
                                                         >
                                                             <Lock className="w-4 h-4" aria-hidden="true" />
                                                             Editar
@@ -456,7 +456,7 @@ export function PassengerList({
                                                             type="button"
                                                             onClick={onRequestEdit}
                                                             aria-label="Borrar pasajero — bloqueado, pedí autorización"
-                                                            className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
+                                                            className="flex items-center gap-1 rounded-[10px] p-2 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800"
                                                         >
                                                             <Lock className="w-4 h-4" aria-hidden="true" />
                                                             Borrar
@@ -468,7 +468,7 @@ export function PassengerList({
                                                         type="button"
                                                         onClick={() => onEditPassenger(slot.pasajero)}
                                                         aria-label="Editar pasajero"
-                                                        className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-indigo-600 transition-colors hover:bg-indigo-50 dark:hover:bg-indigo-900/40"
+                                                        className="flex items-center gap-1 rounded-[10px] p-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
                                                     >
                                                         <Edit2 className="w-4 h-4" />
                                                         Editar
@@ -477,7 +477,7 @@ export function PassengerList({
                                                         type="button"
                                                         onClick={() => onDeletePassenger(getPublicId(slot.pasajero))}
                                                         aria-label="Borrar pasajero"
-                                                        className="flex items-center gap-1 rounded-lg p-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50 dark:hover:bg-rose-900/40"
+                                                        className="flex items-center gap-1 rounded-[10px] p-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50 dark:hover:bg-rose-900/40"
                                                     >
                                                         <Trash2 className="w-4 h-4" />
                                                         Borrar
@@ -492,7 +492,7 @@ export function PassengerList({
                                                     aria-label={`Cargar datos de ${slot.etiqueta}`}
                                                     aria-expanded={esteSlotAbierto}
                                                     data-testid={`btn-cargar-pasajero-${index}`}
-                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50"
+                                                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50"
                                                 >
                                                     <Plus className="w-3.5 h-3.5" />
                                                     Cargar

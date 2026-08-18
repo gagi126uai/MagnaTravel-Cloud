@@ -14,7 +14,7 @@ const ACENTO_POR_TONO = {
   rojo: { icon: AlertCircle, className: "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400" },
   verde: { icon: CheckCircle2, className: "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400" },
   ambar: { icon: AlertCircle, className: "bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400" },
-  gris: { icon: FolderOpen, className: "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400" },
+  gris: { icon: FolderOpen, className: "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400" },
 };
 
 /**
@@ -37,7 +37,7 @@ export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState 
         <ListEmptyState
           title="No se encontraron reservas"
           description="Probá cambiando los filtros."
-          className="rounded-xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900"
+          className="rounded-[14px] border border-dashed border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900"
         />
       )
     );
@@ -76,7 +76,7 @@ export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState 
                 <div>
                   {reserva.startDate ? (
                     <div className="flex items-center gap-1.5 text-xs font-medium">
-                      <Calendar className="h-3.5 w-3.5 text-indigo-500 opacity-60" />
+                      <Calendar className="h-3.5 w-3.5 text-blue-500 opacity-60" />
                       {formatDate(reserva.startDate)}
                     </div>
                   ) : (
@@ -135,7 +135,7 @@ export function ReservaMobileList({ reservas, onRowClick, onArchive, emptyState 
                 {/* Fix B2 (review 11/08/2026): táctil no tiene hover, así que acá el
                     motivo sigue escrito a la vista — nunca en tooltip (enmienda P-9). */}
                 {archiveBlockReason ? (
-                  <span className="max-w-[140px] text-right text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                  <span className="max-w-[140px] text-right text-[11px] leading-tight text-slate-400 dark:text-slate-500">
                     {archiveBlockReason}
                   </span>
                 ) : null}

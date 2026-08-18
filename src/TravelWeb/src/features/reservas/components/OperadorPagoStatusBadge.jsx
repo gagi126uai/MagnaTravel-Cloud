@@ -48,7 +48,7 @@ export function OperadorPagoStatusBadge({ servicioStatus, amountsVisible, loadin
     if (status === "paid") {
         return (
             <span
-                className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"
                 data-testid="badge-operador-pagado"
                 title="Este servicio está completamente pagado al operador"
             >
@@ -65,7 +65,7 @@ export function OperadorPagoStatusBadge({ servicioStatus, amountsVisible, loadin
     if (status === "partial") {
         return (
             <span
-                className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-400"
                 data-testid="badge-operador-parcial"
                 title={
                     amountsVisible
@@ -83,7 +83,7 @@ export function OperadorPagoStatusBadge({ servicioStatus, amountsVisible, loadin
     if (status === "unpaid") {
         return (
             <span
-                className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-400"
                 data-testid="badge-operador-impago"
                 title={
                     amountsVisible && netCost > 0

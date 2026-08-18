@@ -50,7 +50,7 @@ import { debeMostrarAvisoSinNombresParaElegir } from "../lib/serviceResolutionAc
 // media, esquinas redondeadas. Ancho fijo moderado (no un cuadrado gigante) para que la
 // lista de pasajeros entre cómoda sin ocupar media pantalla.
 const CLASE_POPOVER_FLOTANTE =
-    "w-72 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-md dark:border-slate-700 dark:bg-slate-900";
+    "w-72 rounded-[10px] border border-slate-200 bg-white px-4 py-3 shadow-md dark:border-slate-700 dark:bg-slate-900";
 
 export function ControlAsignacionServicio({
     reservaId,
@@ -125,7 +125,7 @@ export function ControlAsignacionServicio({
         }
         return (
             <span
-                className={`inline-flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 italic ${className}`}
+                className={`inline-flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 italic ${className}`}
                 title="Cargá los nombres para poder elegir quiénes van"
                 data-testid="control-asignacion-sin-nombres"
             >
@@ -148,9 +148,9 @@ export function ControlAsignacionServicio({
                 aria-expanded={panelAbierto}
                 aria-controls={`panel-asignacion-${servicePublicId}`}
                 data-testid={`control-asignacion-${servicePublicId}`}
-                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold transition-colors ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors ${
                     coverage?.hasExplicitAssignments
-                        ? "border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800/60 dark:bg-indigo-950/20 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+                        ? "border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
                         : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}
             >

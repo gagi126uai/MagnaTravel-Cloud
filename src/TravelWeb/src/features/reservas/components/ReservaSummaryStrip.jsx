@@ -80,7 +80,7 @@ function VentaPresupuestoPorMoneda({ lineas }) {
 /** Etiqueta chiquita en mayúsculas (mismo estilo que usaban los tres números antes). */
 function Rotulo({ children }) {
     return (
-        <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
+        <p className="text-[11px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
             {children}
         </p>
     );

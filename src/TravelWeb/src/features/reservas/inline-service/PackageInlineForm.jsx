@@ -62,7 +62,7 @@ const LABEL_BASE = "block text-[11px] font-semibold tracking-wide text-slate-500
  */
 function NewPackageBox({ newProduct, onChange, suppliers, supplierSugerido, onSupplierTouched }) {
     return (
-        <div className="border border-dashed border-violet-400 bg-violet-50 rounded-xl p-4 mb-4 dark:border-violet-700 dark:bg-violet-950/20">
+        <div className="border border-dashed border-violet-400 bg-violet-50 rounded-[14px] p-4 mb-4 dark:border-violet-700 dark:bg-violet-950/20">
             <div className="flex items-center gap-2 mb-3">
                 <Package className="w-4 h-4 text-violet-600 dark:text-violet-400" />
                 <span className="text-sm font-semibold text-violet-700 dark:text-violet-300">

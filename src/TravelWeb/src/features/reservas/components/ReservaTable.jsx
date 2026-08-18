@@ -156,7 +156,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive, emptyState, clas
                       {reserva.createdAt ? formatDate(reserva.createdAt) : "-"}
                     </span>
                     {reserva.responsibleUserName ? (
-                      <span className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                      <span className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
                         {reserva.responsibleUserName}
                       </span>
                     ) : null}

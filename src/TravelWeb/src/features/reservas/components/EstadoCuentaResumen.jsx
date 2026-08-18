@@ -49,7 +49,7 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
     <div className="space-y-6">
 
       {/* ── Eje 1: Venta / Facturación ─────────────────────────────────────── */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10">
           <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Venta y facturación
@@ -71,7 +71,7 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
                 label="Facturado"
                 porMoneda={reserva.porMoneda}
                 campo="facturadoNeto"
-                colorClass="text-indigo-700 dark:text-indigo-400"
+                colorClass="text-blue-700 dark:text-blue-400"
               />
               {/* F4-5: data-testid en la columna de "Falta facturar" para tests y QA.
                   Sub-testids por moneda van en ColumnaNumericaMultiCondicional. */}
@@ -97,7 +97,7 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
                 label="Facturado"
                 valor={reserva.facturadoNeto}
                 moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
-                colorClass="text-indigo-700 dark:text-indigo-400"
+                colorClass="text-blue-700 dark:text-blue-400"
               />
               {/* F4-5: data-testid en mono-moneda también, para consistencia en tests. */}
               <div data-testid="kpi-falta-facturar">
@@ -119,11 +119,11 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
 
       {/* ── Eje 3: Costo / Margen (solo si el usuario puede ver costos) ────── */}
       {puedeVerCostos && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Costo y margen
-              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                 Solo visible para vos
               </span>
             </h4>
@@ -159,14 +159,14 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
 
       {/* ── Saldo a favor del cliente + link a su cuenta ───────────────────── */}
       {clientePublicId && (
-        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-800/30">
+        <div className="flex flex-col gap-3 rounded-[14px] border border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-800/30">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
               Cuenta corriente del cliente
             </span>
             <Link
               to={`/customers/${clientePublicId}/account`}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+              className="inline-flex items-center gap-1.5 rounded-[10px] border border-primary/30 px-3 py-1.5 text-xs font-bold text-primary transition-colors hover:bg-primary/10"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Ver cuenta del cliente
@@ -204,7 +204,7 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
 function EjeNumero({ label, valor, moneda, colorClass }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
         {label}
       </span>
       <span className={`text-xl font-extrabold leading-none ${colorClass}`}>
@@ -228,7 +228,7 @@ function EjeMargen({ valor, moneda }) {
 
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-1">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-1">
         <TrendingUp className="h-3 w-3" />Margen
       </span>
       <span className={`text-xl font-extrabold leading-none ${colorClass}`}>
@@ -254,7 +254,7 @@ function EjeFaltaFacturar({ valor, moneda }) {
 
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
         Falta facturar
       </span>
       <span className={`text-xl font-extrabold leading-none ${colorClass}`}>
@@ -276,7 +276,7 @@ function EjeFaltaFacturar({ valor, moneda }) {
 function ColumnaNumericaMultiCondicional({ label, porMoneda, campo, rowTestIdPrefix }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
         {label}
       </span>
       <div className="flex flex-col gap-1">
@@ -321,7 +321,7 @@ function ColumnaNumericaMultiCondicional({ label, porMoneda, campo, rowTestIdPre
 function ColumnaNumericaMulti({ label, porMoneda, campo, colorClass, nullLabel }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
         {label}
       </span>
       <div className="flex flex-col gap-1">
@@ -353,7 +353,7 @@ function ColumnaNumericaMulti({ label, porMoneda, campo, colorClass, nullLabel }
 function ColumnaMargenMulti({ porMoneda }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-1">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-1">
         <TrendingUp className="h-3 w-3" />Margen
       </span>
       <div className="flex flex-col gap-1">
@@ -384,7 +384,7 @@ function ColumnaMargenMulti({ porMoneda }) {
 function ChipInvoicingStatus({ status }) {
   if (!status || status === "NotInvoiced") {
     return (
-      <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+      <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-black uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
         Sin facturar
       </span>
     );
@@ -394,14 +394,14 @@ function ChipInvoicingStatus({ status }) {
     // ("Facturada en parte"). Antes decía "Facturada parcial" acá y distinto en el chip
     // de la ficha — mismo estado, dos textos, confundía a quien comparaba las dos pantallas.
     return (
-      <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black uppercase text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+      <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-black uppercase text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
         Facturada en parte
       </span>
     );
   }
   if (status === "FullyInvoiced") {
     return (
-      <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+      <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-black uppercase text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
         Facturada total
       </span>
     );
@@ -412,7 +412,7 @@ function ChipInvoicingStatus({ status }) {
     // nuevo — un hueco visual justo donde había que mostrar el rastro fiscal. Mismo gris
     // pizarra + tilde que ReservaStatusChips, para que las dos pantallas digan lo mismo.
     return (
-      <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+      <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-black uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
         ✓ Facturada y devuelta
       </span>
     );

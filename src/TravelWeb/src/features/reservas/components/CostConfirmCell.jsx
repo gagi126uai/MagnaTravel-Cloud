@@ -50,8 +50,8 @@ function buildConfirmCostUrl(reservaId, service) {
 
 // ─── Clases reutilizables ─────────────────────────────────────────────────────
 
-const CLASES_PILL_AMBAR = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
-const CLASES_BTN_CONFIRMAR_COSTO = "text-[11px] font-semibold px-2 py-1 rounded-lg border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400 transition-colors";
+const CLASES_PILL_AMBAR = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+const CLASES_BTN_CONFIRMAR_COSTO = "text-[11px] font-semibold px-2 py-1 rounded-[10px] border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400 transition-colors";
 const CLASES_INPUT = "w-20 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500";
 
 // ─── Diálogo de confirmación de costo $0 ─────────────────────────────────────
@@ -115,7 +115,7 @@ function DialogoCostoCero({ onVolver, onConfirmar }) {
                 aria-labelledby={titleId}
                 aria-describedby={descId}
                 data-testid={dialogId}
-                className="bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-6 max-w-sm w-full mx-4"
+                className="bg-white dark:bg-slate-900 rounded-[14px] shadow-xl border border-slate-200 dark:border-slate-700 p-6 max-w-sm w-full mx-4"
             >
                 <h2
                     id={titleId}
@@ -135,7 +135,7 @@ function DialogoCostoCero({ onVolver, onConfirmar }) {
                         ref={volverBtnRef}
                         type="button"
                         onClick={onVolver}
-                        className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+                        className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-[10px] hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
                     >
                         Volver
                     </button>
@@ -143,7 +143,7 @@ function DialogoCostoCero({ onVolver, onConfirmar }) {
                         ref={confirmarBtnRef}
                         type="button"
                         onClick={onConfirmar}
-                        className="px-4 py-2 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors"
+                        className="px-4 py-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-300 hover:bg-amber-100 rounded-[10px] transition-colors dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
                     >
                         Sí, confirmar
                     </button>
@@ -320,7 +320,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
                 )}
 
                 {/* Fila 1: etiquetas */}
-                <div className="flex gap-2 text-[10px] text-slate-500 mb-0.5">
+                <div className="flex gap-2 text-[11px] text-slate-500 mb-0.5">
                     <span className="w-20">Costo</span>
                     <span className="w-16">Impuesto</span>
                 </div>
@@ -341,7 +341,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
                         aria-label="Costo a confirmar"
                         data-testid="input-confirm-cost"
                     />
-                    <span className="text-[10px] text-slate-500 font-mono">{moneda}</span>
+                    <span className="text-[11px] text-slate-500 font-mono">{moneda}</span>
                     <input
                         type="number"
                         value={valorImpuesto}
@@ -359,7 +359,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
                         onClick={intentarConfirmar}
                         disabled={confirmando}
                         aria-busy={confirmando}
-                        className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60 transition-colors"
+                        className="text-[11px] font-semibold px-2 py-1 rounded-[10px] border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-60 transition-colors dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
                         data-testid="btn-confirm-cost-submit"
                     >
                         {confirmando ? "Confirmando…" : "Confirmar"}
@@ -368,7 +368,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
                         type="button"
                         onClick={salirModoEdicion}
                         disabled={confirmando}
-                        className="text-[11px] font-medium px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors"
+                        className="text-[11px] font-medium px-2 py-1 rounded-[10px] border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors"
                         data-testid="btn-confirm-cost-cancel"
                     >
                         Cancelar
@@ -378,7 +378,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
                 {/* Fila 3: mensaje de error (solo cuando hubo un fallo) */}
                 {error && (
                     <div
-                        className="text-[10px] text-rose-600 dark:text-rose-400 mt-1"
+                        className="text-[11px] text-rose-600 dark:text-rose-400 mt-1"
                         role="alert"
                     >
                         {error}
@@ -417,7 +417,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
                             type="button"
                             onClick={onRequestEdit}
                             aria-label="Confirmar costo — bloqueado, pedí autorización"
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-[10px] border border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors"
                             data-testid="btn-confirm-cost"
                         >
                             <Lock className="h-3 w-3" aria-hidden="true" />
@@ -543,7 +543,7 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
                 )}
                 {/* Costo */}
                 <div className="flex items-center gap-1">
-                    <span className="text-[10px] text-slate-500 w-16">Costo</span>
+                    <span className="text-[11px] text-slate-500 w-16">Costo</span>
                     <input
                         ref={inputCostoRef}
                         type="number"
@@ -554,11 +554,11 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
                         aria-label="Costo a confirmar"
                         data-testid="input-confirm-cost"
                     />
-                    <span className="text-[10px] text-slate-500 font-mono">{moneda}</span>
+                    <span className="text-[11px] text-slate-500 font-mono">{moneda}</span>
                 </div>
                 {/* Impuesto */}
                 <div className="flex items-center gap-1">
-                    <span className="text-[10px] text-slate-500 w-16">Impuesto</span>
+                    <span className="text-[11px] text-slate-500 w-16">Impuesto</span>
                     <input
                         type="number"
                         value={valorImpuesto}
@@ -576,7 +576,7 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
                         onClick={intentarConfirmar}
                         disabled={confirmando}
                         aria-busy={confirmando}
-                        className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60 transition-colors"
+                        className="text-[11px] font-semibold px-2 py-1 rounded-[10px] border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-60 transition-colors dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
                         data-testid="btn-confirm-cost-submit"
                     >
                         {confirmando ? "Confirmando…" : "Confirmar"}
@@ -585,14 +585,14 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
                         type="button"
                         onClick={salirModoEdicion}
                         disabled={confirmando}
-                        className="text-[11px] font-medium px-2 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-60 transition-colors"
+                        className="text-[11px] font-medium px-2 py-1 rounded-[10px] border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-60 transition-colors"
                         data-testid="btn-confirm-cost-cancel"
                     >
                         Cancelar
                     </button>
                 </div>
                 {error && (
-                    <div className="text-[10px] text-rose-600 dark:text-rose-400" role="alert">
+                    <div className="text-[11px] text-rose-600 dark:text-rose-400" role="alert">
                         {error}
                     </div>
                 )}
@@ -602,7 +602,7 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
 
     return (
         <>
-            <span className="text-[9px] opacity-70">Costo: {formatCurrency(service.netCost, moneda)}</span>
+            <span className="text-[11px] opacity-70">Costo: {formatCurrency(service.netCost, moneda)}</span>
             {service.costToConfirm && (
                 <div className="flex flex-col gap-1 mt-0.5">
                     <span
@@ -618,7 +618,7 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
                             type="button"
                             onClick={onRequestEdit}
                             aria-label="Confirmar costo — bloqueado, pedí autorización"
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-[10px] border border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors"
                             data-testid="btn-confirm-cost"
                         >
                             <Lock className="h-3 w-3" aria-hidden="true" />

@@ -118,7 +118,7 @@ export function PaymentTermsCard({ reservaPublicId, initialText, onSaved }) {
   useEffect(() => () => clearTimeout(ocultarGuardadoTimer.current), []);
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-[14px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-1 flex items-center gap-2">
         <CreditCard className="h-4 w-4 text-slate-400" aria-hidden="true" />
         <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -140,7 +140,7 @@ export function PaymentTermsCard({ reservaPublicId, initialText, onSaved }) {
         placeholder="Ej: Seña del 30% al reservar, saldo antes de la salida…"
         disabled={cargandoPlantilla}
         data-testid="textarea-formas-de-pago-reserva"
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+        className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
       />
       {/* Feedback discreto de guardado (P8c): nunca un toast, para no interrumpir al
           vendedor mientras sigue editando. */}

@@ -100,7 +100,7 @@ function MenuAccionesExcepcion({ items }) {
                 <div
                     role="menu"
                     data-testid="reserva-menu-excepciones"
-                    className="absolute right-0 top-full z-20 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                    className="absolute right-0 top-full z-20 mt-1 w-56 rounded-[14px] border border-slate-200 bg-white p-1.5 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
                 >
                     {items.map((item) => (
                         <button
@@ -112,7 +112,7 @@ function MenuAccionesExcepcion({ items }) {
                                 setAbierto(false);
                                 item.onClick();
                             }}
-                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                            className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left text-slate-600 transition-colors hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                             {item.icon}
                             {item.label}
@@ -540,7 +540,7 @@ export function ReservaHeader({
                         sobre un viaje que ya quedo sin efecto. */}
                     {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
                         <span
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700"
                             data-testid="badge-con-cambios"
                             title="Hay cambios de precio/costo pendientes de revisión"
                         >
@@ -649,7 +649,7 @@ export function ReservaHeader({
                                 type="button"
                                 data-testid="reserva-action-reschedule"
                                 aria-label="Reprogramar viaje — bloqueado, pedí autorización"
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                                className="inline-flex items-center gap-1.5 rounded-[10px] border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                             >
                                 <Lock className="w-3.5 h-3.5" aria-hidden="true" />
                                 Reprogramar viaje
@@ -662,7 +662,7 @@ export function ReservaHeader({
                                 // Residuo de coherencia (lavado de cara, 2026-08-11): antes era índigo
                                 // suelto — mismo molde secundario que el resto de los botones de esta
                                 // fila, único color de acción del sistema reservado al botón principal.
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                className="inline-flex items-center gap-1.5 rounded-[10px] border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                                 title="Mueve todas las fechas de los servicios"
                             >
                                 <FastForward className="w-3.5 h-3.5" />
@@ -681,7 +681,7 @@ export function ReservaHeader({
                 de elección DEBAJO, cada uno en su propia línea — nunca se pisan. */}
             <div className="flex flex-col items-end gap-2 sm:mt-7">
             {isArchived ? (
-                <div className="flex items-center gap-2 px-4 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+                <div className="flex items-center gap-2 px-4 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-[10px]">
                     <AlertTriangle className="w-4 h-4 text-slate-500" />
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Solo lectura — Reserva archivada</span>
                 </div>
@@ -934,7 +934,7 @@ export function ReservaHeader({
                                     onClick={canArchive ? onArchive : undefined}
                                     disabled={!canArchive}
                                     aria-label="Archivar reserva"
-                                    className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
+                                    className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-[10px] transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
                                 >
                                     <Archive className="w-4 h-4" aria-hidden="true" />
                                     Archivar
@@ -958,7 +958,7 @@ export function ReservaHeader({
                 "Descartar" cierra sin emitir nada — el vendedor se arrepintió del click. */}
             {!isArchived && eleccionPrecioPendiente && (
                 <div
-                    className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40"
+                    className="flex flex-wrap items-center gap-2 rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40"
                     data-testid="reserva-eleccion-precio-presupuesto"
                 >
                     <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">

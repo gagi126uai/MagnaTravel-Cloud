@@ -90,9 +90,9 @@ export function estaEnVentana(fechaIso, windowDays) {
 }
 
 // Clases de la pill ámbar (vigente, faltan días) — mismo patrón que DeadlinePill.jsx
-const CLASES_VIGENTE = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+const CLASES_VIGENTE = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
 // Clases de la pill roja (arranca hoy)
-const CLASES_HOY = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400";
+const CLASES_HOY = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400";
 const CLASES_SIN_FECHA = "text-slate-300 dark:text-slate-600";
 
 /**

@@ -3,6 +3,7 @@ import { X, Loader2, AlertTriangle } from 'lucide-react';
 import { api } from '../../../api';
 import { showError, showSuccess } from '../../../alerts';
 import { getApiErrorMessage } from '../../../lib/errors';
+import { Button } from '../../../components/ui/button';
 
 /**
  * Modal para marcar una reserva como "Perdida".
@@ -48,7 +49,7 @@ export function MarkLostModal({ reservaPublicId, onClose, onMarked }) {
             aria-label="Marcar como Perdida"
             onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
         >
-            <div className="w-full max-w-sm rounded-2xl border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800">
+            <div className="w-full max-w-sm rounded-[14px] border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800">
                 {/* Header */}
                 <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
                     <div className="flex items-center gap-2">
@@ -83,30 +84,25 @@ export function MarkLostModal({ reservaPublicId, onClose, onMarked }) {
                             onChange={(e) => setMotivo(e.target.value)}
                             placeholder="¿Por qué no compró? (podés dejarlo en blanco)"
                             rows={2}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         />
                     </div>
                 </div>
 
                 <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        disabled={loading}
-                        className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors dark:text-slate-300 dark:hover:bg-slate-800"
-                    >
+                    <Button type="button" variant="ghost" onClick={onClose} disabled={loading}>
                         Cancelar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="button"
                         onClick={handleConfirmar}
                         disabled={loading}
                         data-testid="mark-lost-confirm-btn"
-                        className="flex items-center gap-2 rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+                        className="gap-2"
                     >
                         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                         Si, marcar como perdida
-                    </button>
+                    </Button>
                 </div>
             </div>
         </div>

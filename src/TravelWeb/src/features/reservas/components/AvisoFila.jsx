@@ -35,7 +35,7 @@ export function AvisoFila({ variante = 'info', children, textoBoton, onClickBoto
 
     return (
         <div
-            className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-2 text-sm ${estilosPorVariante[variante] || estilosPorVariante.info}`}
+            className={`flex items-center justify-between gap-3 rounded-[10px] border px-4 py-2 text-sm ${estilosPorVariante[variante] || estilosPorVariante.info}`}
             data-testid={dataTestId}
             role="status"
         >
@@ -48,7 +48,7 @@ export function AvisoFila({ variante = 'info', children, textoBoton, onClickBoto
                     type="button"
                     onClick={onClickBoton}
                     disabled={botonDeshabilitado}
-                    className={`flex-shrink-0 rounded-lg border px-3 py-1 text-xs font-bold transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${estilosBotonPorVariante[variante] || estilosBotonPorVariante.info}`}
+                    className={`flex-shrink-0 rounded-[10px] border px-3 py-1 text-xs font-bold transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${estilosBotonPorVariante[variante] || estilosBotonPorVariante.info}`}
                 >
                     {textoBoton}
                 </button>

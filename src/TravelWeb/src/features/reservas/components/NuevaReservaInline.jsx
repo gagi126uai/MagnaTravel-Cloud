@@ -6,6 +6,7 @@ import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { CustomerFormModal } from "../../customers/components/CustomerFormModal";
+import { Button } from "../../../components/ui/button";
 
 // Umbral y cantidad de resultados: mismo criterio que el buscador de productos
 // del tarifario (ProductSearchField) para que el buscador de clientes se sienta
@@ -198,7 +199,7 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
         <div
             // Fix review (2026-08-11, I5): el marco era índigo — pasa a la familia del
             // azul boleto (blue-*), el único color de acción del lavado de cara.
-            className="rounded-2xl border-2 border-blue-300 bg-blue-50/40 p-4 dark:border-blue-700 dark:bg-blue-950/20"
+            className="rounded-[14px] border-2 border-blue-300 bg-blue-50/40 p-4 dark:border-blue-700 dark:bg-blue-950/20"
             data-testid="fila-nueva-reserva"
         >
             <div className="mb-3 text-sm font-bold text-slate-800 dark:text-slate-100">Nuevo presupuesto</div>
@@ -245,7 +246,7 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                         // Lavado de cara (2026-08-11, D residuos de la review T1): el aro de foco
                         // pasa de índigo suelto a los tokens del sistema (--primary/--ring, azul
                         // boleto) — mismo azul que ya usan los botones y el resto de la app.
-                        className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-primary focus:ring-1 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        className="w-full rounded-[10px] border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-primary focus:ring-1 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                 </div>
 
@@ -254,7 +255,7 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                         id={listboxId.current}
                         role="listbox"
                         aria-label="Resultados de búsqueda de clientes"
-                        className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
+                        className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-[14px] border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
                     >
                         {buscando && (
                             <div className="px-3 py-2 text-xs italic text-slate-400" role="status">
@@ -339,28 +340,21 @@ export function NuevaReservaInline({ clienteInicial = null, onCreada, onCancelar
                         type="date"
                         value={startDate}
                         onChange={(event) => setStartDate(event.target.value)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary focus:ring-1 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        className="rounded-[10px] border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary focus:ring-1 focus:ring-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                 </div>
                 <div className="flex-1" />
-                <button
-                    type="button"
-                    onClick={onCancelar}
-                    className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
+                <Button type="button" variant="ghost" onClick={onCancelar}>
                     Cancelar
-                </button>
-                <button
+                </Button>
+                <Button
                     type="button"
                     onClick={handleCrear}
                     disabled={creando}
                     data-testid="nueva-reserva-crear-boton"
-                    // Fix review (2026-08-11, I5): el relleno era índigo — pasa al token
-                    // `primary` (azul boleto), el único color de acción de la app.
-                    className="rounded-lg bg-primary px-5 py-2 text-sm font-bold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                     {creando ? "Creando…" : "Crear presupuesto"}
-                </button>
+                </Button>
             </div>
 
             {/* Fix bloqueante (review frontend, 2026-08-04): CustomerFormModal se monta

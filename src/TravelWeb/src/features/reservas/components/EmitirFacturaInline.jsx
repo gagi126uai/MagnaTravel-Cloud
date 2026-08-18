@@ -969,13 +969,13 @@ export function EmitirFacturaInline({
   return (
     <div
       data-testid="emitir-factura-inline"
-      className="rounded-xl border border-indigo-200 bg-indigo-50 dark:border-indigo-900/40 dark:bg-indigo-950/20 shadow-sm"
+      className="rounded-[14px] border border-blue-200 bg-blue-50 dark:border-blue-900/40 dark:bg-blue-950/20 shadow-sm"
     >
       {/* Encabezado de la ficha ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between border-b border-indigo-200 dark:border-indigo-900/40 px-6 py-4">
+      <div className="flex items-center justify-between border-b border-blue-200 dark:border-blue-900/40 px-6 py-4">
         <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-indigo-100 dark:bg-indigo-900/40 p-2">
-            <Calculator className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+          <div className="rounded-[10px] bg-blue-100 dark:bg-blue-900/40 p-2">
+            <Calculator className="w-5 h-5 text-blue-600 dark:text-blue-400" />
           </div>
           <div>
             <div className="text-sm font-bold text-slate-900 dark:text-white">Nueva factura ARCA</div>
@@ -988,7 +988,7 @@ export function EmitirFacturaInline({
         <button
           type="button"
           onClick={onCancelar}
-          className="rounded-lg p-1.5 text-slate-400 hover:bg-indigo-100 hover:text-slate-600 dark:hover:bg-indigo-900/40 dark:hover:text-slate-300 transition-colors"
+          className="rounded-[10px] p-1.5 text-slate-400 hover:bg-blue-100 hover:text-slate-600 dark:hover:bg-blue-900/40 dark:hover:text-slate-300 transition-colors"
           title="Cerrar"
           data-testid="btn-cerrar-factura-inline"
         >
@@ -1011,7 +1011,7 @@ export function EmitirFacturaInline({
             Por eso el formulario entero queda oculto, con un solo botón "Cerrar". */}
         {!cargandoInicial && bloqueadoPorEstado && (
           <div
-            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 dark:border-rose-900/40 dark:bg-rose-900/20"
+            className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-4 dark:border-rose-900/40 dark:bg-rose-900/20"
             data-testid="bloque-estado-no-facturable"
           >
             <div className="flex items-start gap-3 text-rose-700 dark:text-rose-300">
@@ -1032,7 +1032,7 @@ export function EmitirFacturaInline({
               <button
                 type="button"
                 onClick={onCancelar}
-                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-[10px] hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
                 data-testid="btn-cerrar-bloqueo-estado"
               >
                 Cerrar
@@ -1053,7 +1053,7 @@ export function EmitirFacturaInline({
             {/* Bloque de deuda / override ──────────────────────────────── */}
             {(requiereOverride || bloqueadoPorDeuda) && (
               <div
-                className={`rounded-xl border px-4 py-4 ${
+                className={`rounded-[10px] border px-4 py-4 ${
                   bloqueadoPorDeuda
                     ? "border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20"
                     : "border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20"
@@ -1113,7 +1113,7 @@ export function EmitirFacturaInline({
                         onChange={(e) => setForceReason(e.target.value)}
                         rows={2}
                         placeholder="Ej: emisión anticipada autorizada por el agente por pedido del cliente."
-                        className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white px-3 py-2 text-sm"
+                        className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white px-3 py-2 text-sm"
                       />
                     </div>
                   </div>
@@ -1129,7 +1129,7 @@ export function EmitirFacturaInline({
             {soloServiciosUSD && (
               <div
                 data-testid="aviso-solo-usd"
-                className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300"
+                className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300"
                 role="alert"
               >
                 <div className="flex items-start gap-2">
@@ -1152,7 +1152,7 @@ export function EmitirFacturaInline({
             {excludedServices.length > 0 && (
               <div
                 data-testid="aviso-servicios-excluidos"
-                className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200"
+                className="rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200"
                 role="status"
               >
                 <div className="flex items-start gap-2">
@@ -1186,7 +1186,7 @@ export function EmitirFacturaInline({
             {descuadre && (
               <div
                 data-testid="franja-descuadre"
-                className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
+                className="rounded-[10px] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
                 role="status"
                 aria-live="polite"
               >
@@ -1211,9 +1211,9 @@ export function EmitirFacturaInline({
             {isMultiCurrencyEnabled && (
               <div
                 data-testid="selector-moneda-inline"
-                className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900/40 px-4 py-4 space-y-4"
+                className="rounded-[10px] border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900/40 px-4 py-4 space-y-4"
               >
-                <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
                   Moneda de la factura
                 </span>
                 <div className="flex items-center gap-4">
@@ -1247,7 +1247,7 @@ export function EmitirFacturaInline({
                     dólares y emite: el motor completa el tipo de cambio solo, sin que haya
                     nada acá que le pida un número que no es plata de verdad. */}
                 {esUSD && !loCompletaElSistema && (
-                  <div className="space-y-3 pt-2 border-t border-indigo-200 dark:border-indigo-700">
+                  <div className="space-y-3 pt-2 border-t border-blue-200 dark:border-blue-700">
                     <div className="w-full sm:w-40">
                       <label
                         htmlFor="tc-inline-input"
@@ -1332,7 +1332,7 @@ export function EmitirFacturaInline({
                           onChange={(e) => setJustificacionTC(e.target.value)}
                           maxLength={500}
                           placeholder="Cotización que me pasó el operador, dólar de la web del banco…"
-                          className="w-full rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white px-3 py-2 text-sm"
+                          className="w-full rounded-[10px] border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white px-3 py-2 text-sm"
                           data-testid="input-justificacion-tc-inline"
                         />
                       </div>
@@ -1344,7 +1344,7 @@ export function EmitirFacturaInline({
 
             {/* Aviso de Factura C (Monotributo) ─────────────────────── */}
             {isMonotributista && (
-              <div className="flex items-center gap-2 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg border border-amber-100 dark:border-amber-900/30">
+              <div className="flex items-center gap-2 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-[10px] border border-amber-100 dark:border-amber-900/30">
                 <AlertCircle className="w-3.5 h-3.5" />
                 Factura C (Monotributo): no discrimina IVA — el precio ingresado es el total.
               </div>
@@ -1357,7 +1357,7 @@ export function EmitirFacturaInline({
                   Renglones
                 </h4>
                 {gruposSugeridos.length > 0 && (
-                  <span className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">
+                  <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
                     Precargados desde servicios confirmados — podés editar
                   </span>
                 )}
@@ -1367,7 +1367,7 @@ export function EmitirFacturaInline({
                 {items.map((item, index) => (
                   <div
                     key={index}
-                    className="flex flex-col md:flex-row gap-3 items-end bg-white dark:bg-slate-900/40 p-3 rounded-lg border border-slate-200 dark:border-slate-700"
+                    className="flex flex-col md:flex-row gap-3 items-end bg-white dark:bg-slate-900/40 p-3 rounded-[10px] border border-slate-200 dark:border-slate-700"
                     data-testid={`item-renglon-${index}`}
                   >
                     {/* Descripción */}
@@ -1461,7 +1461,7 @@ export function EmitirFacturaInline({
                 <button
                   type="button"
                   onClick={handleAgregarItem}
-                  className="flex items-center gap-2 text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-medium mt-1"
+                  className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium mt-1"
                   data-testid="btn-agregar-item"
                 >
                   <Plus className="w-4 h-4" />
@@ -1482,7 +1482,7 @@ export function EmitirFacturaInline({
                 {tributes.map((tribute, index) => (
                   <div
                     key={index}
-                    className="flex flex-col md:flex-row gap-3 items-end bg-orange-50 dark:bg-orange-900/10 p-3 rounded-lg border border-orange-100 dark:border-orange-900/30"
+                    className="flex flex-col md:flex-row gap-3 items-end bg-orange-50 dark:bg-orange-900/10 p-3 rounded-[10px] border border-orange-100 dark:border-orange-900/30"
                     data-testid={`tributo-${index}`}
                   >
                     <div className="w-48">
@@ -1553,7 +1553,7 @@ export function EmitirFacturaInline({
             {errorEnvio && (
               <div
                 data-testid="error-envio-factura"
-                className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300"
+                className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300"
                 role="alert"
               >
                 <div className="flex items-start gap-2">
@@ -1569,7 +1569,7 @@ export function EmitirFacturaInline({
       {/* Pie: totales + botones ─────────────────────────────────────────── */}
       {/* F4-8: el pie también se muestra en "preflight-cargando" (botón deshabilitado con spinner). */}
       {!cargandoInicial && (estadoEmision === "idle" || estadoEmision === "preflight-cargando") && (
-        <div className="border-t border-indigo-200 dark:border-indigo-900/40 bg-white dark:bg-slate-900/20 px-6 py-4">
+        <div className="border-t border-blue-200 dark:border-blue-900/40 bg-white dark:bg-slate-900/20 px-6 py-4">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
 
             {/* Totales */}
@@ -1611,7 +1611,7 @@ export function EmitirFacturaInline({
               {esUSD && !loCompletaElSistema && Number(valorMostradoEnCasillero) > 1 && (
                 <div
                   data-testid="equivalente-pesos-inline"
-                  className="text-xs text-indigo-600 dark:text-indigo-400 font-medium"
+                  className="text-xs text-blue-600 dark:text-blue-400 font-medium"
                 >
                   ≈ {formatCurrency(totales.total * Number(valorMostradoEnCasillero), "ARS")}{" "}
                   (TC ${Number(valorMostradoEnCasillero).toLocaleString("es-AR", {
@@ -1630,7 +1630,7 @@ export function EmitirFacturaInline({
                 <button
                   type="button"
                   onClick={onCancelar}
-                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-[10px] hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
                 >
                   Cancelar
                 </button>
@@ -1660,7 +1660,7 @@ export function EmitirFacturaInline({
                         faltaJustificacionTC({ mostrar: mostrarJustificacionTC, texto: justificacionTC })))
                   }
                   data-testid="btn-emitir-factura-inline"
-                  className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-900 disabled:opacity-50 flex items-center gap-2 transition-colors"
+                  className="px-4 py-2 text-sm font-bold text-primary-foreground bg-primary rounded-[10px] hover:bg-primary/90 focus:ring-4 focus:ring-primary/30 dark:focus:ring-primary/40 disabled:opacity-50 flex items-center gap-2 transition-colors"
                 >
                   {estadoEmision === "preflight-cargando" ? (
                     // Spinner mientras el preflight verifica la condición fiscal del cliente
@@ -1695,9 +1695,9 @@ export function EmitirFacturaInline({
           aria-describedby="preflight-block-desc"
           data-testid="aviso-factura-a-no-corresponde"
         >
-          <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+          <div className="relative bg-white dark:bg-slate-900 rounded-[14px] shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
+              <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-[10px]">
                 <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400" aria-hidden="true" />
               </div>
               <h2
@@ -1719,7 +1719,7 @@ export function EmitirFacturaInline({
 
             {/* Si el backend informa qué datos faltan, los mostramos */}
             {Array.isArray(preflightInfo?.missingData) && preflightInfo.missingData.length > 0 && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+              <div className="rounded-[10px] border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
                 <p className="font-semibold mb-1">Datos faltantes:</p>
                 <ul className="list-disc list-inside">
                   {preflightInfo.missingData.map((dato) => (
@@ -1736,7 +1736,7 @@ export function EmitirFacturaInline({
                 onClick={() => setEstadoEmision("idle")}
                 autoFocus
                 data-testid="btn-volver-bloqueo-preflight"
-                className="px-5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                className="px-5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 rounded-[10px] hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
               >
                 Volver
               </button>
@@ -1758,10 +1758,10 @@ export function EmitirFacturaInline({
           aria-labelledby="factura-confirm-dialog-title"
           aria-describedby="factura-confirm-dialog-desc"
         >
-          <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+          <div className="relative bg-white dark:bg-slate-900 rounded-[14px] shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
-                <Calculator className="w-6 h-6 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+              <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-[10px]">
+                <Calculator className="w-6 h-6 text-blue-600 dark:text-blue-400" aria-hidden="true" />
               </div>
               <h2
                 id="factura-confirm-dialog-title"
@@ -1796,7 +1796,7 @@ export function EmitirFacturaInline({
                 onClick={handleCancelarConfirmacion}
                 autoFocus
                 data-testid="btn-volver-confirmar-factura"
-                className="flex-1 rounded-xl border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                className="flex-1 rounded-[10px] border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
               >
                 Volver
               </button>
@@ -1804,7 +1804,7 @@ export function EmitirFacturaInline({
                 type="button"
                 onClick={handleConfirmarEmision}
                 data-testid="btn-si-emitir-factura"
-                className="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-sm font-bold text-white"
+                className="flex-1 rounded-[10px] bg-primary hover:bg-primary/90 px-4 py-2 text-sm font-bold text-primary-foreground"
               >
                 Sí, emitir
               </button>
@@ -1852,7 +1852,7 @@ export function EmitirFacturaInline({
           {warningEmision && (
             <div
               data-testid="warning-emision"
-              className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
+              className="mt-2 rounded-[10px] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
             >
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -1869,7 +1869,7 @@ export function EmitirFacturaInline({
             // teclado pueda seguir con Tab/Enter sin ir a buscar el botón con el mouse.
             autoFocus
             data-testid="btn-listo-factura-en-proceso"
-            className="mt-2 px-5 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
+            className="mt-2 px-5 py-2 text-sm font-semibold text-primary-foreground bg-primary rounded-[10px] hover:bg-primary/90 transition-colors"
           >
             Listo
           </button>
@@ -1909,7 +1909,7 @@ export function EmitirFacturaInline({
             type="button"
             onClick={handleCerrarExito}
             data-testid="btn-cerrar-exito-factura"
-            className="mt-2 px-5 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
+            className="mt-2 px-5 py-2 text-sm font-semibold text-primary-foreground bg-primary rounded-[10px] hover:bg-primary/90 transition-colors"
           >
             Cerrar
           </button>
@@ -1932,16 +1932,18 @@ export function EmitirFacturaInline({
               ARCA rechazó la factura.
             </p>
             {motivoRechazo && (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300 text-left">
+              <div className="rounded-[10px] border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300 text-left">
                 <span className="font-semibold">Motivo: </span>{motivoRechazo}
               </div>
             )}
           </div>
+          {/* B.3: es el ÚNICO camino de salida de esta pantalla de error — acción
+              principal, relleno azul del molde (no es destructiva: corrige y sigue). */}
           <button
             type="button"
             onClick={handleReintentar}
             data-testid="btn-corregir-reintentar-factura"
-            className="mt-2 px-5 py-2 text-sm font-semibold text-white bg-rose-600 rounded-xl hover:bg-rose-700 transition-colors"
+            className="mt-2 px-5 py-2 text-sm font-semibold text-primary-foreground bg-primary rounded-[10px] hover:bg-primary/90 transition-colors"
           >
             Corregir y reintentar
           </button>
@@ -1972,7 +1974,7 @@ export function EmitirFacturaInline({
             type="button"
             onClick={onCancelar}
             data-testid="btn-cerrar-timeout-factura"
-            className="mt-2 px-5 py-2 text-sm font-semibold border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+            className="mt-2 px-5 py-2 text-sm font-semibold border border-slate-300 text-slate-700 rounded-[10px] hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
           >
             Cerrar
           </button>

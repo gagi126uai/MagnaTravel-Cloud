@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Loader2, BookOpen } from "lucide-react";
+import { Button } from "../../../components/ui/button";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
@@ -92,14 +93,10 @@ export function EstadoCuentaExtracto({
     return (
       <div className="flex flex-col items-center gap-3 py-10 text-center">
         <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
-        <button
-          type="button"
-          onClick={cargarExtracto}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-        >
+        <Button type="button" variant="outline" size="sm" onClick={cargarExtracto} className="gap-1.5">
           <RefreshCw className="h-3.5 w-3.5" />
           Reintentar
-        </button>
+        </Button>
       </div>
     );
   }
@@ -151,7 +148,7 @@ export function EstadoCuentaExtracto({
         (que refleja lo VENDIDO / confirmado) puede ser mayor que el saldo del extracto.
         Texto chico y sobrio — no alarma, solo informa.
       */}
-      <p className="text-[10px] text-slate-400 dark:text-slate-500 text-center">
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 text-center">
         El saldo del extracto refleja lo facturado. Puede diferir del "Saldo a cobrar" si hay servicios
         confirmados aún sin facturar.
       </p>
@@ -163,7 +160,7 @@ export function EstadoCuentaExtracto({
 
 function BloqueMoneda({ bloque, reserva, congelado, renderAccionesFactura, renderAccionesCobro }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
       {/* Cabecera del bloque con moneda y saldo de cierre */}
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10">
         <div className="flex items-center gap-2">
@@ -177,7 +174,7 @@ function BloqueMoneda({ bloque, reserva, congelado, renderAccionesFactura, rende
               "Saldo" pelado — deja explícito que es un corte al día de hoy, como
               cualquier extracto bancario. hoyArgentina() ancla la fecha a Argentina,
               nunca al reloj del navegador de quien mira la pantalla. */}
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
             Saldo al {formatDate(hoyArgentina())}:
           </span>
           <span
@@ -316,7 +313,7 @@ function FilaExtracto({ linea, reserva, congelado, renderAccionesFactura, render
         {/* Guarda contra filas históricas sin backfill (2026-07-27): un registeredAt con
             año "cero" del motor (0001-01-01) no se muestra — ver esAnioRealista en lib/utils. */}
         {esCobro && cobroOrigen?.registeredAt && esAnioRealista(cobroOrigen.registeredAt) && (
-          <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+          <div className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
             Registrado: {formatDateTime(cobroOrigen.registeredAt)}
           </div>
         )}

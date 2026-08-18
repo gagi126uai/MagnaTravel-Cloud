@@ -36,7 +36,7 @@ export function TripDatesRow({ reserva, canEditPromisedDates, candadoDeEdicionAc
 
     return (
         <div className="flex flex-col gap-1.5">
-            <div className="inline-flex w-fit flex-col gap-0.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="inline-flex w-fit flex-col gap-0.5 rounded-[10px] border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-800 dark:bg-slate-900">
                 <span className="inline-flex items-center gap-2">
                     <Calendar className="h-4 w-4 flex-shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
                     <span className="font-bold text-slate-900 dark:text-white" data-testid="reserva-fechas-calculadas">

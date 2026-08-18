@@ -177,10 +177,10 @@ function getDocumentTypeLabel(tipoComprobante) {
 // historico (la factura sigue con Resultado="A" en BD pero esta anulada).
 function InvoiceStatusBadge({ resultado, annulmentStatus }) {
   if (annulmentStatus === "Succeeded") {
-    return <span className="rounded px-2 py-0.5 text-[10px] font-black uppercase bg-rose-100 text-rose-700">Anulada</span>;
+    return <span className="rounded px-2 py-0.5 text-[11px] font-black uppercase bg-rose-100 text-rose-700">Anulada</span>;
   }
   if (annulmentStatus === "Pending") {
-    return <span className="rounded px-2 py-0.5 text-[10px] font-black uppercase bg-amber-100 text-amber-700">Anulando…</span>;
+    return <span className="rounded px-2 py-0.5 text-[11px] font-black uppercase bg-amber-100 text-amber-700">Anulando…</span>;
   }
   const isApproved = resultado === "A";
   const isRejected = resultado === "R";
@@ -190,7 +190,7 @@ function InvoiceStatusBadge({ resultado, annulmentStatus }) {
     ? "bg-rose-100 text-rose-700"
     : "bg-slate-100 text-slate-600";
   const label = isApproved ? "Aprobada" : isRejected ? "Rechazada" : "En proceso";
-  return <span className={`rounded px-2 py-0.5 text-[10px] font-black uppercase ${className}`}>{label}</span>;
+  return <span className={`rounded px-2 py-0.5 text-[11px] font-black uppercase ${className}`}>{label}</span>;
 }
 
 // Etiqueta del tipo de comprobante. Si es una NC/ND, muestra debajo un sub-label
@@ -204,13 +204,13 @@ function InvoiceTypeLabel({ tipoComprobante, originalInvoiceNumeroComprobante, o
     originalInvoicePuntoDeVenta != null;
   const colorClass =
     kind === "nc" ? "text-amber-700 dark:text-amber-300" :
-    kind === "nd" ? "text-indigo-700 dark:text-indigo-300" :
+    kind === "nd" ? "text-blue-700 dark:text-blue-300" :
     "";
   return (
     <div className="flex flex-col gap-0.5">
       <span className={colorClass}>{label}</span>
       {showsOriginalRef ? (
-        <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">
+        <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
           {kind === "nc" ? "Anula" : "Amplía"} {getDocumentTypeLabel(originalInvoiceTipoComprobante ?? 0).label.replace(/ ?[ABCM]$/, "")} {String(originalInvoicePuntoDeVenta).padStart(5, "0")}-{String(originalInvoiceNumeroComprobante).padStart(8, "0")}
         </span>
       ) : null}
@@ -336,7 +336,7 @@ function InvoicePdfActions({ invoice, reserva }) {
         {numeroLegible}
       </div>
       {invoice.cae && (
-        <div className="text-[10px] text-slate-400 dark:text-slate-500">
+        <div className="text-[11px] text-slate-400 dark:text-slate-500">
           CAE: {invoice.cae}
           {invoice.vencimientoCAE && (
             // fix 2026-07-22 (mismo campo que EmitirFacturaInline.jsx): vencimientoCAE es la
@@ -353,7 +353,7 @@ function InvoicePdfActions({ invoice, reserva }) {
           type="button"
           onClick={view}
           disabled={busy || enviando}
-          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40 transition-colors"
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50 transition-colors"
           aria-label="Ver PDF de la factura"
         >
           <Eye className="h-3.5 w-3.5" aria-hidden="true" />
@@ -421,7 +421,7 @@ function EditarEliminarCobro({ payment, puedeEditar = true, onEditarCobro, onDes
           type="button"
           onClick={editarBloqueado ? undefined : () => onEditarCobro(payment)}
           disabled={editarBloqueado}
-          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-bold transition-colors ${
+          className={`inline-flex items-center gap-1 rounded-[10px] border px-2 py-1 text-xs font-bold transition-colors ${
             editarBloqueado
               ? "cursor-not-allowed border-slate-100 text-slate-300 dark:border-slate-800 dark:text-slate-600"
               : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -439,7 +439,7 @@ function EditarEliminarCobro({ payment, puedeEditar = true, onEditarCobro, onDes
           type="button"
           onClick={eliminarBloqueado ? undefined : () => onDeshacerCobro(payment)}
           disabled={eliminarBloqueado}
-          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-bold transition-colors ${
+          className={`inline-flex items-center gap-1 rounded-[10px] border px-2 py-1 text-xs font-bold transition-colors ${
             eliminarBloqueado
               ? "cursor-not-allowed border-slate-100 text-slate-300 dark:border-slate-800 dark:text-slate-600"
               : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -527,7 +527,7 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
       <div className="flex flex-wrap items-center gap-2">
         {/* El chip con el número de recibo (o "Comprobante anulado") se muestra siempre:
             es trazabilidad de un documento ya emitido, no una acción. */}
-        <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${reciboAnulado ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"}`}>
+        <span className={`rounded-full px-2 py-1 text-[11px] font-black uppercase ${reciboAnulado ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"}`}>
           {reciboAnulado ? "Comprobante anulado" : receipt.receiptNumber}
         </span>
         {!reciboAnulado ? (
@@ -536,7 +536,7 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
             <button
               type="button"
               onClick={() => onView(payment)}
-              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+              className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-xs font-bold text-primary transition-colors hover:bg-primary/10"
               title="Ver comprobante de pago"
               aria-label="Ver comprobante de pago"
             >
@@ -548,7 +548,7 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
               <button
                 type="button"
                 onClick={() => onVoid(payment)}
-                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
+                className="inline-flex items-center gap-1 rounded-[10px] border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
                 title="Anular comprobante de pago"
                 aria-label="Anular comprobante de pago"
               >
@@ -581,7 +581,7 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
         <button
           type="button"
           onClick={() => onIssue(payment)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+          className="inline-flex items-center gap-1.5 rounded-[10px] border border-primary/30 px-3 py-1.5 text-xs font-bold text-primary transition-colors hover:bg-primary/10"
         >
           <Receipt className="h-3.5 w-3.5" aria-hidden="true" />
           Emitir comprobante
@@ -743,7 +743,7 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
     if (valorActual === null) setter(valorGuardado);
   };
 
-  const inputClass = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-center text-lg font-bold text-slate-900 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+  const inputClass = "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-center text-lg font-bold text-slate-900 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 
   return (
     <div className="space-y-6">
@@ -785,7 +785,7 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
           />
         </div>
       </div>
-      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/50">
+      <div className="flex items-center justify-between rounded-[10px] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/50">
         <div className="text-sm">
           <div className="font-bold text-slate-700 dark:text-slate-200">Total: {total} {total === 1 ? "pasajero" : "pasajeros"}</div>
           {expectedCapacity > 0 ? (
@@ -1395,11 +1395,11 @@ export default function ReservaDetailPage() {
 
   if (!reserva) {
     return (
-      <div className="m-8 rounded-2xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
+      <div className="m-8 rounded-[14px] border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
         <h3 className="text-xl font-bold text-slate-900 dark:text-white">Reserva no encontrada</h3>
         <p className="mt-2 text-slate-500 dark:text-slate-400">No pudimos abrir esta reserva. Volvé al listado y entrá de nuevo.</p>
         <div className="mt-6 flex justify-center">
-          <button onClick={() => navigate("/reservas")} className="rounded-lg bg-indigo-600 px-4 py-2 text-white shadow-sm transition-colors hover:bg-indigo-700">
+          <button onClick={() => navigate("/reservas")} className="rounded-[10px] bg-primary px-4 py-2 text-primary-foreground shadow-sm transition-colors hover:bg-primary/90">
             Volver a la lista
           </button>
         </div>
@@ -1535,7 +1535,7 @@ export default function ReservaDetailPage() {
       {/* ── Estado "En viaje": solo lectura, cartel chico (ADR-036 punto 2) ── */}
       {reserva.status === "Traveling" ? (
         <div
-          className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-200"
+          className="rounded-[10px] border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-200"
           data-testid="banner-estado-terminal"
           role="status"
         >
@@ -1580,7 +1580,7 @@ export default function ReservaDetailPage() {
 
         return reserva.status === "Lost" ? (
         <div
-          className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
+          className="rounded-[10px] border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
           data-testid="banner-estado-terminal"
           role="status"
         >
@@ -1623,7 +1623,7 @@ export default function ReservaDetailPage() {
         // (2026-07-04) Solo este cartel simple cuando NO queda paso de multa: si la multa sigue pendiente o se
         // cerro sin multa, cae en la rama de mas abajo (junto con PendingOperatorRefund) para mostrar el paso.
         <div
-          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+          className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
           data-testid="banner-estado-terminal"
           role="status"
         >
@@ -1631,7 +1631,7 @@ export default function ReservaDetailPage() {
         </div>
       ) : reserva.status === "Closed" ? (
         <div
-          className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
+          className="rounded-[10px] border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
           data-testid="banner-estado-terminal"
           role="status"
         >
@@ -1665,7 +1665,7 @@ export default function ReservaDetailPage() {
               <div className="space-y-3">
                 {mostrarFranjaEnRevision && (
                   <div
-                    className="rounded-xl border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
+                    className="rounded-[10px] border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
                     data-testid="banner-anulacion-en-revision"
                     role="status"
                   >
@@ -1684,7 +1684,7 @@ export default function ReservaDetailPage() {
                           setShowRetryCancelInline(true);
                         }}
                         data-testid="btn-reintentar-anulacion"
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-400 bg-orange-100 px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-200 dark:hover:bg-orange-900/60 transition-colors flex-shrink-0"
+                        className="inline-flex items-center gap-1.5 rounded-[10px] border border-orange-400 bg-orange-100 px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-200 dark:hover:bg-orange-900/60 transition-colors flex-shrink-0"
                       >
                         Reintentar anulación
                       </button>
@@ -1727,7 +1727,7 @@ export default function ReservaDetailPage() {
             return (
               <div className="space-y-3">
                 <div
-                  className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+                  className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
                   data-testid="banner-estado-terminal"
                   role="status"
                 >
@@ -1816,7 +1816,7 @@ export default function ReservaDetailPage() {
                   Fix 2026-06-24 (H3): la capability es la fuente de verdad (no el estado).
                   2026-06-28: ahora hay DOS opciones (Sí cobró / No cobró), no una sola. */}
               <div
-                className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+                className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
                 data-testid="banner-estado-terminal"
                 role="status"
               >
@@ -1865,11 +1865,11 @@ export default function ReservaDetailPage() {
                       // normal, clickeable — regla dura de la spec: nunca se esconde ni se
                       // deshabilita el camino no sugerido, solo se le baja el volumen visual).
                       const claseBotonSiCobro = sugerencia.siResaltado
-                        ? "inline-flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
-                        : "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors disabled:opacity-50";
+                        ? "inline-flex items-center gap-2 rounded-[10px] border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
+                        : "inline-flex items-center gap-2 rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors disabled:opacity-50";
                       const claseBotonNoCobro = sugerencia.noResaltado
-                        ? "inline-flex items-center gap-2 rounded-lg border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-900/40 transition-colors disabled:opacity-50"
-                        : "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors disabled:opacity-50";
+                        ? "inline-flex items-center gap-2 rounded-[10px] border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-900/40 transition-colors disabled:opacity-50"
+                        : "inline-flex items-center gap-2 rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors disabled:opacity-50";
 
                       const botonSiCobro = (
                         // Sí cobró: abre el panel naranja (emite Nota de Débito)
@@ -2047,7 +2047,7 @@ export default function ReservaDetailPage() {
           "confirmá este cambio" sobre un viaje que ya quedo sin efecto. */}
       {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
         <div
-          className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
+          className="rounded-[10px] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
           data-testid="banner-con-cambios"
           role="status"
           aria-live="polite"
@@ -2132,7 +2132,7 @@ export default function ReservaDetailPage() {
                 type="button"
                 onClick={handleAcknowledgeChanges}
                 disabled={acknowledging}
-                className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
+                className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
                 data-testid="btn-dar-ok-cambios"
                 aria-label="Marcar cambios como revisados"
               >
@@ -2199,7 +2199,7 @@ export default function ReservaDetailPage() {
 
       {/* ── Estados activos: orientan al vendedor sobre el siguiente paso ── */}
       {reserva.status === "Quotation" ? (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-300">
+        <div className="rounded-[10px] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-300">
           <strong className="font-bold">Cotización.</strong>{" "}
           Carga los servicios y pasa a Presupuesto cuando tengas el armado listo para mostrarle al cliente.
         </div>
@@ -2209,7 +2209,7 @@ export default function ReservaDetailPage() {
           La frase "Los nombres de los pasajeros se cargan después" se BORRÓ: era texto
           muerto y ahora además MENTÍA — desde la Tanda 3 la solapa Pasajeros existe acá. */}
       {reserva.status === "Budget" ? (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-200">
+        <div className="rounded-[10px] border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
           <strong className="font-bold">Presupuesto.</strong>{" "}
           Cuando el cliente confirme, usá "El cliente aceptó" para pasar a En gestión.
         </div>
@@ -2228,7 +2228,7 @@ export default function ReservaDetailPage() {
 
         return (
           <div
-            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
+            className="rounded-[10px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
             data-testid="banner-pasajeros-recordatorio"
             role="status"
           >
@@ -2284,7 +2284,7 @@ export default function ReservaDetailPage() {
       })()}
 
       {(getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") || getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId")) ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="rounded-[14px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Origen comercial</div>
@@ -2296,7 +2296,7 @@ export default function ReservaDetailPage() {
               {getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") ? (
                 <button
                   onClick={() => navigate("/crm", { state: { openLeadId: getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") } })}
-                  className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                  className="rounded-[10px] bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                 >
                   Abrir posible cliente asociado
                 </button>
@@ -2304,7 +2304,7 @@ export default function ReservaDetailPage() {
               {getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId") ? (
                 <button
                   onClick={() => navigate("/quotes", { state: { openQuoteId: getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId") } })}
-                  className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
+                  className="rounded-[10px] bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90"
                 >
                   Abrir la cotización de origen
                 </button>
@@ -2314,7 +2314,7 @@ export default function ReservaDetailPage() {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+      <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
         <div className="border-b border-slate-100 bg-slate-50/30 px-4 dark:border-slate-800 dark:bg-slate-800/20 sm:px-6">
           <nav className="scrollbar-hide flex gap-8 overflow-x-auto">
             {[
@@ -2350,13 +2350,13 @@ export default function ReservaDetailPage() {
                 onClick={() => setActiveTab(tab.id)}
                 className={`relative flex items-center gap-2 whitespace-nowrap py-4 text-sm font-semibold transition-all ${
                   activeTab === tab.id
-                    ? "text-indigo-600 dark:text-indigo-400"
+                    ? "text-primary"
                     : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
                 <tab.icon className={`h-4 w-4 ${activeTab === tab.id ? "animate-bounce" : ""}`} />
                 {tab.label}
-                {activeTab === tab.id ? <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-indigo-600 dark:bg-indigo-400" /> : null}
+                {activeTab === tab.id ? <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-primary" /> : null}
               </button>
             ))}
           </nav>
@@ -2372,7 +2372,7 @@ export default function ReservaDetailPage() {
                   abajo, `activeTab === "passengers"` — así que acá solo se muestra en
                   Cotización, la única etapa donde esa solapa sigue oculta. */}
               {esCotizacion && (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="rounded-[14px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     Pasajeros del viaje
                   </h3>
@@ -2543,7 +2543,7 @@ export default function ReservaDetailPage() {
                   adelante, la cantidad ya no se toca en la ficha (mismo comportamiento
                   de siempre — solo cambia DÓNDE se ve en Presupuesto). */}
               {reserva.status === "Budget" && (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="rounded-[14px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     Cantidad de pasajeros
                   </h3>
@@ -2674,7 +2674,7 @@ export default function ReservaDetailPage() {
                 if (!mostrarCobro && !mostrarFactura && !facturaEnProceso) return null;
 
                 return (
-                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+                  <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
 
                     {mostrarCobro && (
                       <>
@@ -2684,10 +2684,13 @@ export default function ReservaDetailPage() {
                           data-testid="btn-registrar-cobro"
                           data-disabled-reason={!registroPagoHabilitado ? "cobro-no-habilitado" : undefined}
                           title={!registroPagoHabilitado ? capRegPago?.reason : undefined}
-                          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
+                          // B.3: "Emitir factura" (más abajo) ya es el único relleno azul de este
+                          // bloque — Registrar cobro pasa a outline (además, la guía de rollout
+                          // prohíbe botones con colores a mano como el verde relleno de antes).
+                          className={`flex items-center gap-2 rounded-[10px] border px-4 py-2 text-sm font-bold transition-all ${
                             registroPagoHabilitado
-                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                              : "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                              ? "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                              : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
                           }`}
                         >
                           <Plus className="w-4 h-4" /> Registrar cobro
@@ -2710,7 +2713,7 @@ export default function ReservaDetailPage() {
                     {mostrarFactura && (
                       <button
                         onClick={() => setShowFacturaInline(true)}
-                        className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-indigo-700"
+                        className="flex items-center gap-2 rounded-[10px] bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition-all hover:bg-primary/90"
                         data-testid="btn-emitir-factura"
                       >
                         <FileText className="w-4 h-4" /> Emitir factura
@@ -2722,7 +2725,7 @@ export default function ReservaDetailPage() {
                         Evita que el usuario reemita una segunda factura sin saber que ya hay una en camino. */}
                     {facturaEnProceso && (
                       <div
-                        className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                        className="flex items-center gap-2 rounded-[10px] border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
                         data-testid="factura-en-proceso-pill"
                         role="status"
                         aria-live="polite"
@@ -2809,7 +2812,7 @@ export default function ReservaDetailPage() {
               />
 
               {/* ── Extracto único (libro mayor) ──────────────────────────────── */}
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/10">
                   <History className="w-4 h-4 text-emerald-500" />
                   <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">

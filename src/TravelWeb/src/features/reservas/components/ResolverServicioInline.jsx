@@ -43,8 +43,8 @@ import {
     debeMostrarCartelEmergente,
 } from "../lib/serviceResolutionActions";
 
-const CLASES_BOTON_PRIMARIO = "inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300";
-const CLASES_BOTON_SECUNDARIO = "inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
+const CLASES_BOTON_PRIMARIO = "inline-flex items-center gap-1 rounded-[10px] border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300";
+const CLASES_BOTON_SECUNDARIO = "inline-flex items-center gap-1 rounded-[10px] border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
 
 /**
  * Props:
@@ -195,12 +195,12 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
 
     return (
         <div
-            className={`flex flex-col ${alineacion} gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 p-2 dark:border-emerald-800 dark:bg-emerald-950/20`}
+            className={`flex flex-col ${alineacion} gap-1.5 rounded-[10px] border border-emerald-200 bg-emerald-50/70 p-2 dark:border-emerald-800 dark:bg-emerald-950/20`}
             data-testid={`casillero-resolver-${servicePublicId}`}
         >
             <label
                 htmlFor={`numero-confirmacion-${servicePublicId}`}
-                className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300"
+                className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300"
             >
                 N° de confirmación del operador
             </label>
@@ -218,7 +218,7 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
             {/* Rechazo corto: chico, pegado al casillero. Los rechazos largos van al Cartel
                 emergente único (ver abajo) — nunca los dos a la vez. */}
             {errorMensaje && !mostrarCartel && (
-                <p className="text-[10px] text-rose-600 dark:text-rose-400" role="alert">
+                <p className="text-[11px] text-rose-600 dark:text-rose-400" role="alert">
                     {errorMensaje}
                 </p>
             )}

@@ -67,6 +67,7 @@ import { getReservationServicePublicId } from "../lib/reservationServiceModel";
 import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
 import { formatCurrency } from "../../../lib/utils";
 import { normalizeMessage } from "../../../lib/errors";
+import { Button } from "../../../components/ui/button";
 
 // Mínimo de caracteres para el motivo (igual que en ModalBorrarVsCancelar del ServiceList).
 const MOTIVO_MIN_CHARS = 10;
@@ -267,7 +268,7 @@ export function CancelarVariosServiciosInline({
   return (
     <section
       data-testid="seccion-cancelar-varios"
-      className="rounded-2xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20"
+      className="rounded-[14px] border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20"
       aria-label="Anular varios servicios"
     >
       {/* ─ Header de la sección ─────────────────────────────────────────── */}
@@ -290,7 +291,7 @@ export function CancelarVariosServiciosInline({
         {/* ─ Bloqueo fiscal a nivel reserva ─────────────────────────────── */}
         {estaBloqueada && (
           <div
-            className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-900/40 dark:bg-rose-950/20"
+            className="flex items-start gap-3 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-900/40 dark:bg-rose-950/20"
             role="alert"
             data-testid="bloqueo-cancelacion-reserva"
           >
@@ -323,14 +324,14 @@ export function CancelarVariosServiciosInline({
                 <button
                   type="button"
                   onClick={handleSeleccionarTodos}
-                  className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                  className="text-xs text-primary hover:underline"
                 >
                   {seleccionados.size === serviciosCancelables.length ? "Deseleccionar todos" : "Seleccionar todos"}
                 </button>
               )}
             </div>
 
-            <div className="divide-y divide-amber-100 rounded-xl border border-amber-200 bg-white dark:divide-amber-900/30 dark:border-amber-900/40 dark:bg-slate-900">
+            <div className="divide-y divide-amber-100 rounded-[10px] border border-amber-200 bg-white dark:divide-amber-900/30 dark:border-amber-900/40 dark:bg-slate-900">
               {serviciosCancelables.map((svc) => {
                 const publicId = getReservationServicePublicId(svc);
                 const estaSeleccionado = seleccionados.has(publicId);
@@ -410,7 +411,7 @@ export function CancelarVariosServiciosInline({
 
         {/* ─ Total por moneda (se actualiza al tildar) ─────────────────── */}
         {serviciosSeleccionados.length > 0 && !procesoTerminado && (
-          <div className="rounded-xl border border-amber-200 bg-amber-100/60 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/30">
+          <div className="rounded-[10px] border border-amber-200 bg-amber-100/60 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/30">
             <p className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300 mb-1">
               Total a devolver al cliente
             </p>
@@ -428,7 +429,7 @@ export function CancelarVariosServiciosInline({
                 ))}
               </div>
             )}
-            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
               Suma de precios de venta de los servicios seleccionados
               {monedasConTotal.length > 1 && " · Monedas separadas (no se mezclan)"}
             </p>
@@ -445,7 +446,7 @@ export function CancelarVariosServiciosInline({
               value={targetInvoicePublicId}
               onChange={(e) => setTargetInvoicePublicId(e.target.value)}
               disabled={Boolean(procesoEstado?.enProceso)}
-              className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm dark:border-amber-700 dark:bg-slate-800 dark:text-white"
+              className="w-full rounded-[10px] border border-amber-200 bg-white px-3 py-2 text-sm dark:border-amber-700 dark:bg-slate-800 dark:text-white"
               data-testid="select-factura-cancelar-varios"
               aria-describedby={
                 // Accesibilidad: el lector de pantalla anuncia la aclaración de la
@@ -474,7 +475,7 @@ export function CancelarVariosServiciosInline({
         {/* ─ Resultado del proceso (cuando ya terminó) ─────────────────── */}
         {procesoTerminado && (
           <div
-            className={`rounded-xl border px-4 py-3 text-sm ${
+            className={`rounded-[10px] border px-4 py-3 text-sm ${
               todosOk
                 ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-200"
                 : algunoFallo
@@ -514,15 +515,17 @@ export function CancelarVariosServiciosInline({
                             factura que ir a ver. */}
                         {r.esBloqueo409 && onIrAFacturas && (
                           <div className="mt-1">
-                            <button
+                            <Button
                               type="button"
+                              variant="outline"
+                              size="sm"
                               data-testid={`btn-ir-a-facturas-${getReservationServicePublicId(r.svc)}`}
                               onClick={onIrAFacturas}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700"
+                              className="gap-1.5"
                             >
                               <FileText className="h-3.5 w-3.5" />
                               Ver facturas de la reserva
-                            </button>
+                            </Button>
                           </div>
                         )}
                       </div>
@@ -550,7 +553,7 @@ export function CancelarVariosServiciosInline({
               placeholder="¿Por qué se anulan estos servicios? (se aplica a todos los seleccionados)"
               rows={3}
               disabled={estaBloqueada || Boolean(procesoEstado?.enProceso)}
-              className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none disabled:opacity-50 dark:border-amber-700 dark:bg-slate-800 dark:text-white"
+              className="w-full rounded-[10px] border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none disabled:opacity-50 dark:border-amber-700 dark:bg-slate-800 dark:text-white"
             />
             {/* Helper del mínimo: solo cuando el usuario empezó a tipear pero no llega aún */}
             {motivo.length > 0 && !motivoValido && (
@@ -565,25 +568,20 @@ export function CancelarVariosServiciosInline({
         <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2">
           {procesoTerminado ? (
             // Una vez terminado el proceso, solo el botón de cerrar
-            <button
-              type="button"
-              onClick={onCerrar}
-              className="rounded-lg bg-slate-100 px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-200 transition-colors dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-            >
+            <Button type="button" variant="outline" onClick={onCerrar}>
               Cerrar
-            </button>
+            </Button>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={onCerrar}
-                disabled={Boolean(procesoEstado?.enProceso)}
-                className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors dark:text-slate-300 dark:hover:bg-slate-800"
-              >
+              <Button type="button" variant="ghost" onClick={onCerrar} disabled={Boolean(procesoEstado?.enProceso)}>
                 Cancelar
-              </button>
-              <button
+              </Button>
+              {/* "Anular" = destructiva discreta (molde B.3, nivel 4) — la propia confirmación
+                  de este panel ya funciona como el paso de P-14, así que el botón sale en rojo
+                  discreto, nunca relleno. */}
+              <Button
                 type="button"
+                variant="destructive"
                 onClick={handleConfirmar}
                 disabled={
                   estaBloqueada ||
@@ -593,13 +591,13 @@ export function CancelarVariosServiciosInline({
                   Boolean(procesoEstado?.enProceso)
                 }
                 data-testid="btn-confirmar-cancelar-varios"
-                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+                className="gap-2"
               >
                 {procesoEstado?.enProceso && <Loader2 className="h-4 w-4 animate-spin" />}
                 {procesoEstado?.enProceso
                   ? `Anulando...`
                   : `Confirmar anulación (${serviciosSeleccionados.length} servicio${serviciosSeleccionados.length !== 1 ? "s" : ""})`}
-              </button>
+              </Button>
             </>
           )}
         </div>

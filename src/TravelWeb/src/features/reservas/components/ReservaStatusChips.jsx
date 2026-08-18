@@ -204,7 +204,7 @@ export function ReservaStatusChips({ reserva }) {
                 antes no tenía chip propio. El `chipPago &&` queda como red defensiva. */}
             {chipPago && (
                 <span className="inline-flex items-center gap-1.5" data-testid="reserva-payment-chips">
-                    <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                         Pago:
                     </span>
                     <span
@@ -220,7 +220,7 @@ export function ReservaStatusChips({ reserva }) {
             {/* Eje Viaje: solo cuando hay deuda vencida (anomalía que el badge no comunica). */}
             {chipViaje && (
                 <span className="inline-flex items-center gap-1.5" data-testid="reserva-travel-chips">
-                    <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                         Viaje:
                     </span>
                     <span
@@ -235,7 +235,7 @@ export function ReservaStatusChips({ reserva }) {
 
             {/* Eje Factura: siempre visible (ADR-037). */}
             <span className="inline-flex items-center gap-1.5" data-testid="reserva-invoicing-chip">
-                <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                     Factura:
                 </span>
                 <span

@@ -598,7 +598,7 @@ export function ProductSearchField({
             {showDropdown && (
                 <div
                     id={listboxId.current}
-                    className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden dark:border-slate-700 dark:bg-slate-900"
+                    className="absolute left-0 right-0 top-full z-50 mt-1 rounded-[14px] border border-slate-200 bg-white shadow-xl overflow-hidden dark:border-slate-700 dark:bg-slate-900"
                     role="listbox"
                     aria-label={`Resultados de búsqueda de ${label || "productos"}`}
                 >

@@ -31,6 +31,7 @@ import { showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { ayudaNumeroDocumento } from "../../../lib/documentoAyuda.js";
+import { Button } from "../../../components/ui/button";
 
 // Tipos de documento aceptados por el backend (mismo listado que el modal completo).
 const DOC_TYPES = [
@@ -142,11 +143,11 @@ export function PasajeroInlineForm({ reservaId, passengerToEdit, slotLabel, mode
         }
     };
 
-    const inputClass = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+    const inputClass = "rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 
     return (
         <div
-            className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/40 dark:bg-amber-950/20"
+            className="rounded-[10px] border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/40 dark:bg-amber-950/20"
             data-testid={`pasajero-inline-form-${slotLabel || "nuevo"}`}
         >
             {/* Etiqueta del slot: "Adulto 1", "Titular", etc. */}
@@ -216,33 +217,34 @@ export function PasajeroInlineForm({ reservaId, passengerToEdit, slotLabel, mode
                 )}
 
                 {/* Botón Guardar */}
-                <button
+                <Button
                     type="button"
                     onClick={handleGuardar}
                     disabled={!formularioListo || guardando}
                     data-testid={`btn-guardar-pasajero-${slotLabel || "nuevo"}`}
                     aria-label="Guardar pasajero"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                    className="gap-1.5"
                 >
                     {guardando
                         ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                         : <Save className="h-4 w-4" aria-hidden="true" />
                     }
                     {guardando ? "Guardando..." : "Guardar"}
-                </button>
+                </Button>
 
                 {/* Botón Cancelar */}
                 {onCancelar && (
-                    <button
+                    <Button
                         type="button"
+                        variant="outline"
                         onClick={onCancelar}
                         disabled={guardando}
                         aria-label="Cancelar carga de pasajero"
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        className="gap-1.5"
                     >
                         <X className="h-4 w-4" aria-hidden="true" />
                         Cancelar
-                    </button>
+                    </Button>
                 )}
             </div>
 

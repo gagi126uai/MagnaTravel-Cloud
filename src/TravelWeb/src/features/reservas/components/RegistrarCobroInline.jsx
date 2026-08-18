@@ -293,7 +293,7 @@ export function RegistrarCobroInline({
 
     return (
         <div
-            className="rounded-xl border-2 border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10 p-5 space-y-4"
+            className="rounded-[14px] border-2 border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10 p-5 space-y-4"
             data-testid="registrar-cobro-inline"
         >
             <div className="flex items-center justify-between">
@@ -343,7 +343,7 @@ export function RegistrarCobroInline({
                     ningún selector (caso normal, lo más común). */}
                 {monedaPrincipalDefault && saldoMonedaPrincipal !== null && !paymentToEdit && (
                     <div
-                        className="flex items-center justify-between rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-900/40 px-4 py-2"
+                        className="flex items-center justify-between rounded-[10px] bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-900/40 px-4 py-2"
                         data-testid="cobro-banner-moneda-principal"
                     >
                         <span className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
@@ -381,7 +381,7 @@ export function RegistrarCobroInline({
                             value={monto}
                             disabled={saving || (paymentToEdit && estaEditandoCruzado)}
                             onChange={(e) => setMonto(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             placeholder="0,00"
                             data-testid="cobro-monto"
                         />
@@ -396,7 +396,7 @@ export function RegistrarCobroInline({
                                 value={monedaCobro}
                                 disabled={saving || (paymentToEdit && estaEditandoCruzado)}
                                 onChange={(e) => setMonedaCobro(e.target.value)}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 data-testid="cobro-moneda"
                             >
                                 {/* Listamos SOLO las monedas reales de la reserva (nada de "US$ 0" fantasma).
@@ -418,7 +418,7 @@ export function RegistrarCobroInline({
                                 value={saldoImputado}
                                 disabled={saving || (paymentToEdit && estaEditandoCruzado)}
                                 onChange={(e) => setSaldoImputado(e.target.value)}
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 data-testid="cobro-imputar-a"
                             >
                                 {reserva?.porMoneda?.map((pm) => (
@@ -439,7 +439,7 @@ export function RegistrarCobroInline({
                             value={metodo}
                             disabled={saving}
                             onChange={(e) => setMetodo(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             data-testid="cobro-metodo"
                         >
                             {METODOS_PAGO.map((m) => (
@@ -454,7 +454,7 @@ export function RegistrarCobroInline({
                             value={paidAt}
                             disabled={saving || (paymentToEdit && estaEditandoCruzado)}
                             onChange={(e) => setPaidAt(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                         />
                     </div>
                     <div className="space-y-1">
@@ -464,7 +464,7 @@ export function RegistrarCobroInline({
                             value={notas}
                             disabled={saving}
                             onChange={(e) => setNotas(e.target.value)}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                            className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             placeholder="Referencia, nro. de comprobante..."
                             data-testid="cobro-notas"
                         />
@@ -475,10 +475,10 @@ export function RegistrarCobroInline({
                     Regla 2026-06-09 P4: si moneda del cobro = saldo imputado → no aparece nada. */}
                 {esCobroCruzadoEnCurso && (
                     <div
-                        className="rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/50 dark:border-indigo-900/50 dark:bg-indigo-950/20 p-4 space-y-3"
+                        className="rounded-[10px] border-2 border-dashed border-blue-300 bg-blue-50/50 dark:border-blue-900/50 dark:bg-blue-950/20 p-4 space-y-3"
                         data-testid="recuadro-tipo-cambio"
                     >
-                        <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                        <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">
                             {monedaCobro === "ARS"
                                 ? "↕ Pagás en pesos para bajar deuda en dólares: decinos el tipo de cambio"
                                 : "↕ Pagás en dólares para bajar deuda en pesos: decinos el tipo de cambio"
@@ -487,7 +487,7 @@ export function RegistrarCobroInline({
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             {/* Tipo de cambio */}
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                                <label className="text-xs font-semibold text-blue-700 dark:text-blue-300">
                                     1 US$ = $ ___
                                 </label>
                                 <input
@@ -497,19 +497,19 @@ export function RegistrarCobroInline({
                                     value={tipoCambio}
                                     disabled={saving}
                                     onChange={(e) => setTipoCambio(e.target.value)}
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-blue-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary dark:border-blue-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     placeholder="1.200,00"
                                     data-testid="cobro-tipo-cambio"
                                 />
                             </div>
                             {/* Fuente */}
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fuente</label>
+                                <label className="text-xs font-semibold text-blue-700 dark:text-blue-300">Fuente</label>
                                 <select
                                     value={fuenteTC}
                                     disabled={saving}
                                     onChange={(e) => setFuenteTC(Number(e.target.value))}
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-blue-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary dark:border-blue-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     data-testid="cobro-fuente-tc"
                                 >
                                     {FUENTES_TC.map((f) => (
@@ -519,13 +519,13 @@ export function RegistrarCobroInline({
                             </div>
                             {/* Fecha del tipo de cambio */}
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fecha del tipo de cambio</label>
+                                <label className="text-xs font-semibold text-blue-700 dark:text-blue-300">Fecha del tipo de cambio</label>
                                 <input
                                     type="date"
                                     value={fechaTC}
                                     disabled={saving}
                                     onChange={(e) => setFechaTC(e.target.value)}
-                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                    className="w-full rounded-[10px] border border-blue-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary dark:border-blue-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     data-testid="cobro-fecha-tc"
                                 />
                             </div>
@@ -534,7 +534,7 @@ export function RegistrarCobroInline({
                         {/* Línea de resultado: monto equivalente calculado en tiempo real.
                             Solo se muestra cuando hay suficiente info para calcular. */}
                         {montoEquivalente != null && (
-                            <p className="text-xs font-medium text-indigo-700 dark:text-indigo-300 mt-1">
+                            <p className="text-xs font-medium text-blue-700 dark:text-blue-300 mt-1">
                                 → Se cancelan{" "}
                                 {/* formatCurrency ya incluye el símbolo; no agregar CurrencyBadge ni símbolo manual. */}
                                 <strong>{formatCurrency(montoEquivalente, saldoImputado)}</strong>
@@ -546,7 +546,7 @@ export function RegistrarCobroInline({
 
                 {/* Aviso en modo editar-cruzado: monto/moneda/TC son de solo lectura */}
                 {paymentToEdit && estaEditandoCruzado && (
-                    <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
+                    <div className="rounded-[10px] bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
                         Este cobro cruzó de moneda. Para cambiar el monto, la moneda o el tipo de cambio, anulá este cobro y registrá uno nuevo.
                         Solo podés editar las notas y el método.
                     </div>
@@ -555,7 +555,7 @@ export function RegistrarCobroInline({
                 {/* Mensaje de error: visible arriba de los botones para que sea lo primero que el usuario vea */}
                 {errorGuardar && (
                     <div
-                        className="rounded-lg bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
+                        className="rounded-[10px] bg-rose-50 border border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
                         role="alert"
                         data-testid="cobro-error"
                     >
@@ -569,14 +569,14 @@ export function RegistrarCobroInline({
                         type="button"
                         onClick={onCancelar}
                         disabled={saving}
-                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                        className="rounded-[10px] border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                     >
                         Cancelar
                     </button>
                     <button
                         type="submit"
                         disabled={saving || camposIncompletosParaCruzado}
-                        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
+                        className="rounded-[10px] bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90 shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
                         data-testid="cobro-confirmar"
                     >
                         {saving ? "Guardando…" : "Confirmar"}

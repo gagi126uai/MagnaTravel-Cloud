@@ -1,5 +1,6 @@
 import React from 'react';
 import { Lock, LockOpen, AlertTriangle } from 'lucide-react';
+import { Button } from '../../../components/ui/button';
 
 /**
  * Franja informativa que aparece al inicio de la pagina de detalle según el estado del candado.
@@ -59,7 +60,7 @@ export function ReservaLockBanner({
         return (
             <div
                 data-testid="reserva-regression-banner"
-                className="flex items-center gap-2 rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-900 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-200"
+                className="flex items-center gap-2 rounded-[10px] border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-900 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-200"
             >
                 <AlertTriangle className="h-4 w-4 flex-shrink-0 text-orange-500" aria-hidden="true" />
                 <span>
@@ -91,7 +92,7 @@ export function ReservaLockBanner({
         return (
             <div
                 data-testid="reserva-unlocked-banner"
-                className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                className="flex items-center gap-2 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200"
             >
                 <LockOpen className="h-4 w-4 flex-shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
                 <span>
@@ -118,7 +119,7 @@ export function ReservaLockBanner({
     return (
         <div
             data-testid="reserva-lock-banner"
-            className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
+            className="flex items-center gap-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
         >
             <Lock className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
             <span>
@@ -126,14 +127,18 @@ export function ReservaLockBanner({
                 {' '}{textoFranja}
             </span>
             {onRequestEdit && (
-                <button
+                // B.3: esta franja no es "la" acción principal de la pantalla (esa es la del
+                // header/ficha), así que va en outline aunque antes tuviera fondo ámbar propio.
+                <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={onRequestEdit}
                     data-testid="reserva-request-edit-btn"
-                    className="ml-auto flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-200 dark:hover:bg-amber-900/30"
+                    className="ml-auto flex-shrink-0"
                 >
                     {textoBoton}
-                </button>
+                </Button>
             )}
         </div>
     );

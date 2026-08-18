@@ -95,7 +95,7 @@ export function PromisedDatesBlock({ reserva, publicId, canEdit, candadoActivo, 
     if (mostrarFormulario) {
         return (
             <div
-                className="w-full max-w-xl rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900"
+                className="w-full max-w-xl rounded-[10px] border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900"
                 data-testid="promised-dates-form"
             >
                 <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -110,7 +110,7 @@ export function PromisedDatesBlock({ reserva, publicId, canEdit, candadoActivo, 
                             onChange={(e) => setSalidaInput(e.target.value)}
                             disabled={guardando}
                             data-testid="promised-dates-input-salida"
-                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                            className="rounded-[10px] border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         />
                     </label>
                     <label className="flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400">
@@ -121,7 +121,7 @@ export function PromisedDatesBlock({ reserva, publicId, canEdit, candadoActivo, 
                             onChange={(e) => setRegresoInput(e.target.value)}
                             disabled={guardando}
                             data-testid="promised-dates-input-regreso"
-                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                            className="rounded-[10px] border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         />
                     </label>
                 </div>

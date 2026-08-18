@@ -8,6 +8,7 @@ import { isReservaAnulada } from "../moneyStatus";
 import { construirConfirmacionDeshacerAnulacion } from "../lib/revertAnuladaConfirmLogic";
 import { debeMostrarCartelPorRechazoDeRevert } from "../lib/revertRejectionPresentation";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
+import { Button } from "../../../components/ui/button";
 
 /**
  * Modal para revertir el status de una Reserva.
@@ -117,7 +118,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="w-full max-w-lg rounded-2xl border bg-card shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="w-full max-w-lg rounded-[14px] border bg-card shadow-2xl max-h-[90vh] overflow-y-auto">
                 <div className="px-6 py-4 border-b bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <Undo2 className="h-5 w-5 text-amber-600" />
@@ -144,7 +145,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                     ) : (
                         <>
                             {hardBlocked && (
-                                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200">
+                                <div className="rounded-[10px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200">
                                     <div className="flex items-start gap-2">
                                         <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                                         <div>
@@ -169,7 +170,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                                         - Con lockedTarget: el destino ya está fijado, ocultamos el select para simplificar.
                                         - Sin lockedTarget: select normal con todas las opciones. */}
                                     {lockedTarget ? (
-                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                        <div className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                                             Destino: <strong>{translateStatus(lockedTarget)}</strong>
                                         </div>
                                     ) : (
@@ -190,7 +191,7 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                                     )}
 
                                     {requiresAuth && (
-                                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
+                                        <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
                                             Para cambiar el estado necesitás que te autorice un supervisor.
                                         </div>
                                     )}
@@ -244,25 +245,20 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                 </div>
 
                 <div className="px-6 py-4 border-t bg-slate-50/50 dark:bg-slate-900/50 flex justify-end gap-3">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        disabled={submitting}
-                        className="px-4 py-2 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
-                    >
+                    <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
                         Cancelar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="button"
                         onClick={handleSubmit}
                         disabled={submitting || !canSubmit}
-                        className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                        className="gap-2"
                         data-testid="revert-submit-btn"
                     >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
                         {/* ADR-036: "Reabrir" cuando hay lockedTarget (flujo Reabrir-para-facturar), "Revertir" para el generico */}
                         {lockedTarget ? "Reabrir" : "Revertir"}
-                    </button>
+                    </Button>
                 </div>
             </div>
 

@@ -46,12 +46,13 @@ import React, { useState, useEffect } from "react";
 import { Loader2, Users } from "lucide-react";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { Button } from "../../../components/ui/button";
 // Helpers de lógica pura en archivo separado para que los tests de Node puedan importarlos
 // sin transpiler de JSX (los tests usan node --test sobre .mjs, sin Vite/Babel).
 import { inicializarTildados, armarPayloadPut } from "../lib/panelAsignarPasajerosHelpers";
 
 const CLASE_CONTENEDOR_INLINE_DEFAULT =
-    "mt-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 dark:border-indigo-800/40 dark:bg-indigo-950/10";
+    "mt-2 rounded-[10px] border border-blue-200 bg-blue-50/60 px-4 py-3 dark:border-blue-800/40 dark:bg-blue-950/10";
 
 export function PanelAsignarPasajeros({
     reservaId,
@@ -135,7 +136,7 @@ export function PanelAsignarPasajeros({
             className={claseContenedor}
             data-testid="panel-asignar-pasajeros"
         >
-            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
+            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
                 <Users className="h-4 w-4" aria-hidden="true" />
                 ¿Quiénes van en este servicio?
             </div>
@@ -151,7 +152,7 @@ export function PanelAsignarPasajeros({
                         <label
                             key={publicId}
                             htmlFor={inputId}
-                            className="flex items-center gap-3 rounded-lg px-2 py-1.5 cursor-pointer hover:bg-indigo-100/60 dark:hover:bg-indigo-900/20 transition-colors"
+                            className="flex items-center gap-3 rounded-[10px] px-2 py-1.5 cursor-pointer hover:bg-blue-100/60 dark:hover:bg-blue-900/20 transition-colors"
                         >
                             <input
                                 type="checkbox"
@@ -159,7 +160,7 @@ export function PanelAsignarPasajeros({
                                 checked={esTildado}
                                 onChange={() => handleToggle(publicId)}
                                 disabled={guardando}
-                                className="h-4 w-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500 dark:border-indigo-700"
+                                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-ring dark:border-slate-600"
                             />
                             {/* min-w-0 + break-words: en el popover flotante (w-72) un nombre largo
                                 hace wrap adentro del borde en vez de desbordar (review 2026-08-06). */}
@@ -176,7 +177,7 @@ export function PanelAsignarPasajeros({
                                 );
                                 if (paxEnSet && !paxEnSet.hasRequiredDataForServiceType) {
                                     return (
-                                        <span className="ml-auto text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+                                        <span className="ml-auto text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
                                             faltan datos
                                         </span>
                                     );
@@ -194,31 +195,27 @@ export function PanelAsignarPasajeros({
             {errorGuardando && (
                 <div
                     role="alert"
-                    className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800/40 dark:bg-rose-950/20 dark:text-rose-300"
+                    className="mb-3 rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800/40 dark:bg-rose-950/20 dark:text-rose-300"
                 >
                     {errorGuardando}
                 </div>
             )}
 
             <div className="flex gap-2">
-                <button
-                    type="button"
-                    onClick={onCancelar}
-                    disabled={guardando}
-                    className="rounded-lg px-4 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors dark:text-slate-300 dark:hover:bg-slate-800"
-                >
+                <Button type="button" variant="ghost" size="sm" onClick={onCancelar} disabled={guardando}>
                     Cancelar
-                </button>
-                <button
+                </Button>
+                <Button
                     type="button"
+                    size="sm"
                     onClick={handleListo}
                     disabled={guardando || !tildados}
                     data-testid="btn-listo-asignacion"
-                    className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                    className="gap-1.5"
                 >
                     {guardando && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
                     {errorGuardando ? "Reintentar" : "Listo"}
-                </button>
+                </Button>
             </div>
         </div>
     );

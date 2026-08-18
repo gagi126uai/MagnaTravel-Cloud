@@ -16,7 +16,7 @@ import { formatMontosPorMoneda } from "../lib/reservaMoneyDisplay";
  */
 export function ReservaKPIs({ stats }) {
     return (
-        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-[10px] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40">
             <Kpi label="Reservas activas">
                 <span className="text-base font-extrabold text-slate-900 dark:text-white">
                     {stats.activeCount}
@@ -37,7 +37,7 @@ export function ReservaKPIs({ stats }) {
                 estado (ver EstadoReserva.SoldKpiStatuses en ReservaService.cs) — esta
                 aclaración solo hace visible en pantalla lo que el número ya representa. */}
             <Kpi label="Vendido" hint="(solo confirmado)">
-                <MontoPorMoneda lineas={stats.vendidoPorMoneda} colorClass="text-indigo-600 dark:text-indigo-400" />
+                <MontoPorMoneda lineas={stats.vendidoPorMoneda} colorClass="text-primary" />
             </Kpi>
         </div>
     );

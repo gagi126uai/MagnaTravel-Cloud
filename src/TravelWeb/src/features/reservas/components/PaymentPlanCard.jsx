@@ -17,7 +17,7 @@ import {
 } from "../lib/paymentPlanCardLogic";
 
 const INPUT_CLASS =
-  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
+  "w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
 
 /**
  * Card "Plan de pagos" de la solapa Servicios (spec 2026-08-14, ronda 2, §6): tabla de filas
@@ -101,7 +101,7 @@ export function PaymentPlanCard({ reservaPublicId, initialInstallments, reserva,
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-[14px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-1 flex items-center gap-2">
         <CalendarClock className="h-4 w-4 text-slate-400" aria-hidden="true" />
         <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
