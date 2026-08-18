@@ -7,7 +7,10 @@
  * Se usa en DOS lugares con el MISMO componente (P4=A, unificación — "un solo lenguaje
  * para avanzar en toda la app"):
  *   - ServiceList.jsx: fila de un servicio pendiente en la ficha de la reserva.
- *   - SupplierAccountPage.jsx: fila de "Servicios comprados" en la cuenta del operador.
+ *   - SupplierAccountPage.jsx: vista mobile de "Servicios comprados" (la vista
+ *     desktop pasó a usar `ResolverServicioBotones` + `ResolverServicioCasillero`,
+ *     Tanda T5 2026-08-18, para tener más aire en una fila de expansión propia — ver
+ *     el docstring de esos componentes).
  *
  * Comportamiento (P1/P2/P3 de la spec):
  *   - Un traslado pendiente puede tener DOS botones a la vez ("Marcar confirmado" +
@@ -28,20 +31,17 @@
  * Este botón SOLO avanza (Solicitado -> Confirmado/Emitido). Bajar un estado ya
  * confirmado sigue viviendo únicamente en la cuenta del operador, como acción
  * secundaria y separada (P4=A) — este componente no la ofrece.
+ *
+ * Nota Tanda T5 (2026-08-18): la lógica de estado (acciones, casillero, guardando,
+ * error) vive ahora en el hook `useResolverServicioAcciones` — este componente solo
+ * arma el JSX con lo que el hook le da. Se movió el código TAL CUAL (sin reescribir
+ * nada) para poder compartirlo con la fila de expansión de la cuenta del operador sin
+ * duplicar la lógica de guardado/errores.
  */
 
-import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
-import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
-import { getApiErrorMessage } from "../../../lib/errors";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
-import {
-    resolverAccionesParaServicioPendiente,
-    construirRequestResolverServicio,
-    resolverMensajeExito,
-    debeMostrarCartelEmergente,
-} from "../lib/serviceResolutionActions";
+import { useResolverServicioAcciones } from "../lib/useResolverServicioAcciones";
 
 const CLASES_BOTON_PRIMARIO = "inline-flex items-center gap-1 rounded-[10px] border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300";
 const CLASES_BOTON_SECUNDARIO = "inline-flex items-center gap-1 rounded-[10px] border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
@@ -58,92 +58,25 @@ const CLASES_BOTON_SECUNDARIO = "inline-flex items-center gap-1 rounded-[10px] b
  *                      alineada a la izquierda) — solo cambia la alineación visual.
  */
 export function ResolverServicioInline({ reservaId, servicePublicId, recordKind, onResuelto, align = "end" }) {
-    const acciones = resolverAccionesParaServicioPendiente(recordKind);
-
-    const [accionAbierta, setAccionAbierta] = useState(null); // tipo de la acción con casillero abierto, o null
-    const [numero, setNumero] = useState("");
-    const [guardando, setGuardando] = useState(false);
-    const [errorMensaje, setErrorMensaje] = useState(null);
-    const [mostrarCartel, setMostrarCartel] = useState(false);
-    // H8 (2026-07-25): rechazo de la acción SIN casillero ("No requiere confirmación").
-    // Antes este camino solo mostraba un toast (showError) sin importar el largo del
-    // mensaje — un rechazo largo (ej. candado C2 de destrabe, o el gate de titular de H7)
-    // se veía 4 segundos y desaparecía solo, "moría mudo" para el cajero que no llegó a
-    // leerlo entero. Mismo criterio que el camino CON casillero: corto = toast, largo =
-    // Cartel emergente que hay que cerrar a mano.
-    const [errorSinCasillero, setErrorSinCasillero] = useState(null);
-    const inputRef = useRef(null);
-
-    // Al abrir el casillero, el foco va directo al input — el usuario puede tipear el
-    // número sin hacer clic primero (mismo criterio de foco que el resto de la app).
-    useEffect(() => {
-        if (accionAbierta && inputRef.current) inputRef.current.focus();
-    }, [accionAbierta]);
+    const {
+        acciones,
+        accionAbierta,
+        numero,
+        setNumero,
+        guardando,
+        errorMensaje,
+        mostrarCartel,
+        setMostrarCartel,
+        errorSinCasillero,
+        setErrorSinCasillero,
+        inputRef,
+        abrirCasillero,
+        cerrarCasillero,
+        ejecutarAccionConCasillero,
+        ejecutarAccionSinCasillero,
+    } = useResolverServicioAcciones({ reservaId, servicePublicId, recordKind, onResuelto });
 
     if (acciones.length === 0) return null; // "generic": sin flujo de confirmación con operador
-
-    const abrirCasillero = (tipo) => {
-        setAccionAbierta(tipo);
-        setNumero("");
-        setErrorMensaje(null);
-        setMostrarCartel(false);
-    };
-
-    const cerrarCasillero = () => {
-        setAccionAbierta(null);
-        setNumero("");
-        setErrorMensaje(null);
-        setMostrarCartel(false);
-    };
-
-    // Camino CON casillero (P2=B): si el motor rechaza, el casillero queda abierto con
-    // el número intacto y el error se muestra en línea (o en el Cartel emergente si es
-    // largo) — nunca un toast que desaparece solo, porque el usuario todavía tiene que
-    // decidir qué hacer con lo que escribió.
-    const ejecutarAccionConCasillero = async (tipo) => {
-        const request = construirRequestResolverServicio({ tipo, recordKind, reservaId, servicePublicId, numero });
-        if (!request) return;
-
-        setGuardando(true);
-        setErrorMensaje(null);
-        try {
-            await api[request.method](request.url, request.body);
-            showSuccess(resolverMensajeExito(tipo));
-            setAccionAbierta(null);
-            setNumero("");
-            onResuelto?.();
-        } catch (error) {
-            const mensaje = getApiErrorMessage(error, "No se pudo confirmar el servicio.");
-            setErrorMensaje(mensaje);
-            setMostrarCartel(debeMostrarCartelEmergente(mensaje));
-        } finally {
-            setGuardando(false);
-        }
-    };
-
-    // "No requiere confirmación": único de 1 click, sin casillero — no hay número que
-    // cargar. El rechazo corto sigue yendo por toast (como antes); el rechazo LARGO va
-    // al Cartel emergente único, para que no se pierda como un toast que se cierra solo.
-    const ejecutarAccionSinCasillero = async (tipo) => {
-        const request = construirRequestResolverServicio({ tipo, recordKind, reservaId, servicePublicId, numero: null });
-        if (!request) return;
-
-        setGuardando(true);
-        try {
-            await api[request.method](request.url, request.body);
-            showSuccess(resolverMensajeExito(tipo));
-            onResuelto?.();
-        } catch (error) {
-            const mensaje = getApiErrorMessage(error, "No se pudo registrar el traslado.");
-            if (debeMostrarCartelEmergente(mensaje)) {
-                setErrorSinCasillero(mensaje);
-            } else {
-                showError(mensaje);
-            }
-        } finally {
-            setGuardando(false);
-        }
-    };
 
     const alineacion = align === "start" ? "items-start" : "items-end";
 

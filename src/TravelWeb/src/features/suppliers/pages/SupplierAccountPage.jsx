@@ -9,8 +9,6 @@ import {
     Plus,
     Search,
     Filter,
-    Check,
-    X,
     Layers,
     ExternalLink,
     Loader2,
@@ -27,7 +25,6 @@ import {
 import { api } from "../../../api";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
-import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import {
     DataGrid,
     DataGridBody,
@@ -44,20 +41,24 @@ import { MobileRecordCard, MobileRecordList } from "../../../components/ui/Mobil
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { showSuccess, showError, showConfirm } from "../../../alerts";
-// P1 "circuito proveedor" (2026-07-21): mismo motivo/código que "anular servicio" (Tanda 7),
-// reusado acá para el PATCH de "bajar el estado" desde la cuenta del proveedor. No se duplica
-// el mapeo code → botón, se importa la misma lib pura.
-import { CODIGO_RECHAZO_ANULAR_SERVICIO } from "../../reservas/lib/serviceCancellationGuard";
-// P4=A (unificación, Tanda 3, 2026-07-24, fix #34): "Servicios comprados" usa los MISMOS
-// botones "Marcar confirmado"/"Marcar emitido" que la ficha de la reserva para avanzar el
-// estado — un solo lenguaje en toda la app. mapearTipoEspanolARecordKind traduce el Type en
-// español de este listado ("Hotel", "Vuelo", ...) al recordKind en inglés que espera el
-// componente compartido.
+// P4=A (unificación, Tanda 3, 2026-07-24, fix #34): la vista MOBILE de "Servicios
+// comprados" sigue usando los MISMOS botones "Marcar confirmado"/"Marcar emitido" que la
+// ficha de la reserva — un solo lenguaje en toda la app. mapearTipoEspanolARecordKind
+// traduce el Type en español de este listado ("Hotel", "Vuelo", ...) al recordKind en
+// inglés que espera el componente compartido. La vista DESKTOP usa la fila de expansión
+// nueva (`PurchasedServiceRow`, Tanda T5 2026-08-18) en vez de este componente.
 import { ResolverServicioInline } from "../../reservas/components/ResolverServicioInline";
 import {
     mapearTipoEspanolARecordKind,
     debeMostrarBotonPrimarioEnCuentaOperador,
 } from "../../reservas/lib/serviceResolutionActions";
+// Tanda T5 (2026-08-18): la fila de escritorio de "Servicios comprados" pasó a una fila
+// de expansión a todo el ancho — ver el docstring de `PurchasedServiceRow`. Los editores
+// de estado/código se mudaron a sus propios archivos para que ese componente los pueda
+// reusar sin crear un import circular con esta página.
+import { PurchasedServiceRow } from "../components/PurchasedServiceRow";
+import { ServiceStatusEditor } from "../components/ServiceStatusEditor";
+import { ServiceConfirmationEditor } from "../components/ServiceConfirmationEditor";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
@@ -1146,110 +1147,21 @@ function FilaAnticipoCuenta({ anticipo, currency, puedeVerMontos }) {
 }
 
 // ─── Editor de estado del servicio ───────────────────────────────────────────
-
-// Mapeo de Type (en espanol, viene del backend) -> endpoint de status update.
-// Si no esta mapeado (servicios genericos), no se permite editar inline aca.
-const STATUS_ENDPOINT_BY_TYPE = {
-    "Hotel": "hotel-bookings",
-    "Vuelo": "flight-segments",
-    "Traslado": "transfer-bookings",
-    "Paquete": "package-bookings",
-    "Asistencia": "assistance-bookings",
-};
-
-const STATUS_OPTIONS = ["Solicitado", "Confirmado", "Cancelado"];
-
-function ServiceStatusEditor({ service, onUpdated, canEdit }) {
-    const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
-    const [value, setValue] = useState(service.status || "Solicitado");
-    const [saving, setSaving] = useState(false);
-    // P1 "circuito proveedor" (2026-07-21): cuando el PATCH de "bajar el estado" choca con el
-    // candado de plata (el servicio ya tiene pagos al operador que quedarían sin resolver), el
-    // backend manda el MISMO code que "anular servicio" solía mandar. Guardamos acá el mensaje
-    // real para mostrarlo en ventana (Aviso 1 del inventario, spec 2026-07-22: rechazo largo del
-    // motor → Cartel Emergente, no un toast que desaparece solo).
-    // Obra "anular sin factura" (2026-07-23): este rechazo YA NO ofrece el botón "Emitir
-    // factura" — el mensaje del motor orienta a "gestioná el reembolso con el operador".
-    const [bloqueoPagoSinFactura, setBloqueoPagoSinFactura] = useState(null);
-
-    if (!endpoint || !canEdit) {
-        // Servicio generico — no editable desde aca, mostramos texto plano
-        return <span className="text-sm">{service.status || "-"}</span>;
-    }
-
-    const handleChange = async (e) => {
-        const newStatus = e.target.value;
-        if (newStatus === value) return;
-        const previous = value;
-        setValue(newStatus);
-        setSaving(true);
-        setBloqueoPagoSinFactura(null);
-        try {
-            await api.patch(`/${endpoint}/${service.publicId}/status`, { status: newStatus });
-            showSuccess(`Estado actualizado a "${newStatus}"`);
-            if (onUpdated) onUpdated();
-        } catch (error) {
-            // Revertir el valor optimista en la UI antes de mostrar el error.
-            // Usamos getApiErrorMessage para evitar que strings de red en inglés
-            // ("Failed to fetch", "Internal Server Error") lleguen al usuario.
-            setValue(previous);
-            const mensaje = getApiErrorMessage(error, "No se pudo actualizar el estado.");
-            // Mismo code que manda "anular servicio" en otros casos (nunca se adivina el
-            // motivo comparando texto libre) — acá el único code real que puede llegar de este
-            // endpoint es PAGO_SIN_FACTURA (candado de "bajar estado"), así que lo comparamos
-            // directo en vez de reusar el mapeo de botón (que ya no aplica: obra 2026-07-23).
-            if (error?.payload?.code === CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA) {
-                // Aviso 1 del inventario (spec 2026-07-22): rechazo largo del motor → ventana
-                // fija, no un toast que desaparece solo.
-                setBloqueoPagoSinFactura(mensaje);
-            } else {
-                showError(mensaje, "No se pudo cambiar el estado");
-            }
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const colorClass = value === "Confirmado"
-        ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800"
-        : value === "Cancelado"
-            ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/30 dark:text-rose-300 dark:border-rose-800"
-            : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800";
-
-    return (
-        <div className="flex flex-col items-start gap-1">
-            <select
-                value={value}
-                onChange={handleChange}
-                disabled={saving}
-                className={`rounded-md border text-xs font-bold px-2 py-1 ${colorClass} disabled:opacity-50`}
-                title="Cambiar estado del servicio"
-            >
-                {STATUS_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
-                ))}
-            </select>
-            {/* Aviso 1 del inventario (spec 2026-07-22): rechazo largo del motor → ventana
-                única, no un recuadro incrustado en la fila que deformaba la tabla. Sin botón
-                de camino (obra "anular sin factura", 2026-07-23): el mensaje ya orienta a
-                gestionar el reembolso con el operador, "Entendido" alcanza. */}
-            <CartelEmergente
-                isOpen={Boolean(bloqueoPagoSinFactura)}
-                variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
-                message={bloqueoPagoSinFactura}
-                onClose={() => setBloqueoPagoSinFactura(null)}
-                dataTestId="status-editor-bloqueo-pago-sin-factura"
-            />
-        </div>
-    );
-}
+// `ServiceStatusEditor` se mudó a `../components/ServiceStatusEditor.jsx` (Tanda T5,
+// 2026-08-18) — mismo código, sin reescribir nada — para que la fila de escritorio
+// (`PurchasedServiceRow`) pueda usarlo sin crear un import circular con esta página.
 
 /**
- * Celda "Estado" de la fila de un servicio comprado (P4=A, unificación, Tanda 3,
- * 2026-07-24, fix #34): mientras el servicio está "Solicitado" (pendiente), el camino
- * PRIMARIO para avanzarlo es el MISMO botón "Marcar confirmado"/"Marcar emitido" que ya
- * usa la ficha de la reserva (ResolverServicioInline) — reemplaza al desplegable como
- * forma de resolver hacia adelante.
+ * Celda "Estado" de la fila de un servicio comprado — SOLO vista MOBILE (tarjetas) desde
+ * la Tanda T5 (2026-08-18): la vista desktop pasó a `PurchasedServiceRow`, que usa la
+ * fila de expansión a todo el ancho en vez de apilar todo dentro de esta columna angosta
+ * (spec docs/ux/2026-08-18-spec-t5-expansion-pasajero.md sección 2, P3=A). Acá en la
+ * tarjeta mobile no hace falta ese cambio — ya hay lugar de sobra — así que se deja tal
+ * cual funcionaba (P4=A, unificación, Tanda 3, 2026-07-24, fix #34): mientras el servicio
+ * está "Solicitado" (pendiente), el camino PRIMARIO para avanzarlo es el MISMO botón
+ * "Marcar confirmado"/"Marcar emitido" que ya usa la ficha de la reserva
+ * (ResolverServicioInline) — reemplaza al desplegable como forma de resolver hacia
+ * adelante.
  *
  * El desplegable viejo (ServiceStatusEditor) NO desaparece: sigue siendo la única forma
  * de CORREGIR un estado hacia atrás (ej. deshacer una confirmación por error). Para no
@@ -1321,103 +1233,9 @@ function EstadoServicioCell({ service, onUpdated, canEdit }) {
 }
 
 // ─── Editor del código de confirmación del servicio ──────────────────────────
-
-// Editor inline del codigo de confirmacion del proveedor (PNR para vuelos,
-// ConfirmationNumber para el resto). Click para editar, Enter/blur para guardar,
-// Esc para cancelar.
-function ServiceConfirmationEditor({ service, onUpdated, canEdit }) {
-    const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
-    const [editing, setEditing] = useState(false);
-    const [value, setValue] = useState(service.confirmation || "");
-    const [saving, setSaving] = useState(false);
-
-    // Mantener sincronizado si cambia el dato externo (refresh)
-    useEffect(() => {
-        if (!editing) setValue(service.confirmation || "");
-    }, [service.confirmation, editing]);
-
-    if (!endpoint || !canEdit) {
-        return <span className="font-mono text-xs">{service.confirmation || "-"}</span>;
-    }
-
-    const save = async () => {
-        const trimmed = value.trim();
-        const previous = service.confirmation || "";
-        if (trimmed === previous) {
-            setEditing(false);
-            return;
-        }
-        setSaving(true);
-        try {
-            await api.patch(`/${endpoint}/${service.publicId}/status`, {
-                status: service.status || "Solicitado",
-                confirmationNumber: trimmed,
-            });
-            showSuccess(trimmed ? `Codigo guardado: ${trimmed}` : "Codigo eliminado");
-            setEditing(false);
-            if (onUpdated) onUpdated();
-        } catch (error) {
-            // getApiErrorMessage normaliza el error y evita strings en inglés del runtime.
-            showError(getApiErrorMessage(error, "No se pudo guardar el código."), "No se pudo guardar el código");
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const cancel = () => {
-        setValue(service.confirmation || "");
-        setEditing(false);
-    };
-
-    if (!editing) {
-        return (
-            <button
-                type="button"
-                onClick={() => setEditing(true)}
-                className="font-mono text-xs text-left hover:bg-accent px-1.5 py-0.5 rounded transition-colors"
-                title="Editar codigo de confirmacion"
-            >
-                {service.confirmation || <span className="text-muted-foreground italic">(agregar)</span>}
-            </button>
-        );
-    }
-
-    return (
-        <div className="inline-flex items-center gap-1">
-            <input
-                type="text"
-                autoFocus
-                value={value}
-                disabled={saving}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={(e) => {
-                    if (e.key === "Enter") save();
-                    if (e.key === "Escape") cancel();
-                }}
-                placeholder="Codigo..."
-                className="rounded border border-input bg-background px-1.5 py-0.5 text-xs font-mono w-28 focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <button
-                type="button"
-                onClick={save}
-                disabled={saving}
-                className="rounded p-0.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"
-                title="Guardar"
-            >
-                <Check className="h-3 w-3" />
-            </button>
-            <button
-                type="button"
-                onClick={cancel}
-                disabled={saving}
-                className="rounded p-0.5 text-slate-500 hover:bg-slate-100 disabled:opacity-50"
-                title="Cancelar"
-            >
-                <X className="h-3 w-3" />
-            </button>
-        </div>
-    );
-}
+// `ServiceConfirmationEditor` se mudó a `../components/ServiceConfirmationEditor.jsx`
+// (Tanda T5, 2026-08-18) — mismo código, sin reescribir nada — por el mismo motivo que
+// `ServiceStatusEditor` (evitar el import circular con `PurchasedServiceRow`).
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 
@@ -2196,69 +2014,18 @@ export default function SupplierAccountPage() {
                                         ) : services.length === 0 ? (
                                             <DataGridEmptyState colSpan={9} title="No hay servicios para este filtro." />
                                         ) : (
+                                            // Tanda T5 (2026-08-18): cada fila puede traer una SEGUNDA fila de
+                                            // tabla debajo (la expansión con el casillero de confirmación) —
+                                            // por eso se extrajo a `PurchasedServiceRow`, que devuelve las dos
+                                            // juntas. El resto de la grilla (columnas, permisos) no cambió.
                                             services.map((service) => (
-                                                <DataGridRow key={getPublicId(service)}>
-                                                    <DataGridCell>
-                                                        <span className="rounded bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                                                            {service.type}
-                                                        </span>
-                                                    </DataGridCell>
-                                                    <DataGridCell>
-                                                        <div className="font-medium">{service.description || "-"}</div>
-                                                        {service.fileName
-                                                            ? <div className="text-xs text-muted-foreground">{service.fileName}</div>
-                                                            : null}
-                                                    </DataGridCell>
-                                                    <DataGridCell>
-                                                        {service.reservaPublicId ? (
-                                                            <Link
-                                                                to={`/reservas/${service.reservaPublicId}`}
-                                                                className="font-medium text-primary hover:underline"
-                                                            >
-                                                                {service.numeroReserva || "Ver reserva"}
-                                                            </Link>
-                                                        ) : (
-                                                            service.numeroReserva || "-"
-                                                        )}
-                                                    </DataGridCell>
-                                                    <DataGridCell>{formatDate(service.date)}</DataGridCell>
-                                                    <DataGridCell>
-                                                        {(() => {
-                                                            const due = supplierDueState(service.suggestedDueDate);
-                                                            if (!due) return <span className="text-xs text-slate-400">Sin plazo</span>;
-                                                            const tone = due.tone === "overdue" || due.tone === "today"
-                                                                ? "text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/30"
-                                                                : due.tone === "soon"
-                                                                    ? "text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/30"
-                                                                    : "text-slate-600 bg-slate-50 dark:text-slate-300 dark:bg-slate-800";
-                                                            return <span className={`rounded px-2 py-1 text-xs font-semibold ${tone}`}>{due.label}</span>;
-                                                        })()}
-                                                    </DataGridCell>
-                                                    <DataGridCell>
-                                                        <EstadoServicioCell
-                                                            service={service}
-                                                            canEdit={puedeEditarReservas}
-                                                            onUpdated={() => { loadServices(); loadOverview(); }}
-                                                        />
-                                                    </DataGridCell>
-                                                    <DataGridCell>
-                                                        <ServiceConfirmationEditor
-                                                            service={service}
-                                                            canEdit={puedeEditarReservas}
-                                                            onUpdated={() => { loadServices(); loadOverview(); }}
-                                                        />
-                                                    </DataGridCell>
-                                                    {/* Costo: enmascarado sin permiso cobranzas.see_cost */}
-                                                    <DataGridCell align="right" className="font-mono">
-                                                        {puedeVerMontos
-                                                            ? formatCurrency(service.netCost, service.currency)
-                                                            : <span className="text-muted-foreground">—</span>
-                                                        }
-                                                    </DataGridCell>
-                                                    <DataGridCell align="right" className="font-mono">
-                                                        {formatCurrency(service.salePrice, service.currency)}
-                                                    </DataGridCell>
-                                                </DataGridRow>
+                                                <PurchasedServiceRow
+                                                    key={getPublicId(service)}
+                                                    service={service}
+                                                    canEdit={puedeEditarReservas}
+                                                    onUpdated={() => { loadServices(); loadOverview(); }}
+                                                    puedeVerMontos={puedeVerMontos}
+                                                />
                                             ))
                                         )}
                                     </DataGridBody>
