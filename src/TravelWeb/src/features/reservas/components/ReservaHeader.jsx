@@ -623,12 +623,16 @@ export function ReservaHeader({
                     <ReservaStatusChips reserva={reserva} />
                 </div>
 
-                {/* Fechas del viaje (ADR-053, 2026-08-13): TripDatesRow pinta la Salida/Regreso
-                    CALCULADA (solo lectura, ver ese componente) + el bloque opcional de "fecha
-                    prometida al cliente" debajo. "Reprogramar viaje" se queda al lado, tal cual
-                    estaba (spec §1: "esto ya estaba firmado y NO se toca"). items-start porque
-                    el bloque de fechas ahora puede ocupar dos renglones. */}
-                <div className="mt-3 flex items-start gap-3 flex-wrap">
+                {/* Fechas del viaje (ADR-053, 2026-08-13) + "Reprogramar viaje" (fix
+                    layout 2026-08-18): antes compartían un mismo renglón flex, así que
+                    cuando el formulario de "fecha prometida" se abría (ver
+                    PromisedDatesBlock.jsx) el bloque de fechas se agrandaba y el botón
+                    "Reprogramar viaje" saltaba a mitad de línea, en diagonal. Ahora son
+                    DOS bloques apilados verticalmente (mismo patrón que la lista de
+                    pasajeros, PassengerList.jsx) — el bloque de fechas SIEMPRE va arriba
+                    en su propio renglón full-width y, si crece, solo empuja al botón
+                    hacia abajo, nunca lo desplaza al costado. */}
+                <div className="mt-3 flex flex-col gap-2">
                     <TripDatesRow
                         reserva={reserva}
                         canEditPromisedDates={canEditDates}
@@ -641,34 +645,37 @@ export function ReservaHeader({
                         Distinto de la "fecha prometida" (nota aparte, nunca toca servicios): este corre
                         todo el viaje en bloque. Visible cuando canEditServices.allowed=true → el backend
                         sabe si la reserva es editable. Candado C1 (2026-07-22): gris + candadito cuando
-                        la reserva está bloqueada sin autorización viva. */}
+                        la reserva está bloqueada sin autorización viva. Renglón propio (ver comentario de
+                        arriba): por eso va en un div aparte en vez de compartir fila con TripDatesRow. */}
                     {showRescheduleButton && (
-                        candadoDeEdicionActivo ? (
-                            <button
-                                onClick={onRequestEdit}
-                                type="button"
-                                data-testid="reserva-action-reschedule"
-                                aria-label="Reprogramar viaje — bloqueado, pedí autorización"
-                                className="inline-flex items-center gap-1.5 rounded-[10px] border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                            >
-                                <Lock className="w-3.5 h-3.5" aria-hidden="true" />
-                                Reprogramar viaje
-                            </button>
-                        ) : (
-                            <button
-                                onClick={onReschedule}
-                                type="button"
-                                data-testid="reserva-action-reschedule"
-                                // Residuo de coherencia (lavado de cara, 2026-08-11): antes era índigo
-                                // suelto — mismo molde secundario que el resto de los botones de esta
-                                // fila, único color de acción del sistema reservado al botón principal.
-                                className="inline-flex items-center gap-1.5 rounded-[10px] border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                                title="Mueve todas las fechas de los servicios"
-                            >
-                                <FastForward className="w-3.5 h-3.5" />
-                                Reprogramar viaje
-                            </button>
-                        )
+                        <div>
+                            {candadoDeEdicionActivo ? (
+                                <button
+                                    onClick={onRequestEdit}
+                                    type="button"
+                                    data-testid="reserva-action-reschedule"
+                                    aria-label="Reprogramar viaje — bloqueado, pedí autorización"
+                                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                                >
+                                    <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                                    Reprogramar viaje
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={onReschedule}
+                                    type="button"
+                                    data-testid="reserva-action-reschedule"
+                                    // Residuo de coherencia (lavado de cara, 2026-08-11): antes era índigo
+                                    // suelto — mismo molde secundario que el resto de los botones de esta
+                                    // fila, único color de acción del sistema reservado al botón principal.
+                                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                    title="Mueve todas las fechas de los servicios"
+                                >
+                                    <FastForward className="w-3.5 h-3.5" />
+                                    Reprogramar viaje
+                                </button>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>

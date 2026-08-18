@@ -2423,6 +2423,17 @@ export default function ReservaDetailPage() {
                     // Ficha en línea (ADR-017): se abre debajo de la lista, sin modal
                     setServiceToEditInline(null);
                     setShowInlineCard(true);
+                    // Fix scroll/foco 2026-08-18: la ficha se abre debajo de la lista de
+                    // servicios, que puede ser larga — sin este scroll, el vendedor apreta
+                    // "Agregar servicio" y no ve que pasó nada (la tarjeta nueva queda fuera
+                    // de la pantalla). Mismo patrón que el botón "Ver las opciones" de arriba
+                    // (:1496) y PagarProveedorInline.jsx:919 — timeout chico porque el testid
+                    // recién existe en el DOM después de este render.
+                    setTimeout(() => {
+                      document
+                        .querySelector('[data-testid="service-inline-card"]')
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }, 50);
                   } else {
                     // Modal viejo: comportamiento intacto con flag OFF
                     setServiceToEdit(null);
@@ -2437,6 +2448,13 @@ export default function ReservaDetailPage() {
                   if (isCatalogFindOrCreateEnabled && !esGenerico) {
                     setServiceToEditInline(service);
                     setShowInlineCard(true);
+                    // Mismo motivo que en onAddService de arriba: sin scroll, editar un
+                    // servicio que está lejos en la lista no se "siente" que hizo algo.
+                    setTimeout(() => {
+                      document
+                        .querySelector('[data-testid="service-inline-card"]')
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }, 50);
                   } else {
                     setServiceToEdit(service);
                     setShowServiceModal(true);

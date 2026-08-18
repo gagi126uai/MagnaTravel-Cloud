@@ -85,6 +85,25 @@ const CAMPO_COSTO_POR_TAB = {
     Asistencia: "assistance-costo",
 };
 
+// ─── Id del PRIMER campo del form por pestaña (fix foco 2026-08-18) ──────────
+
+// Fix layout/scroll 2026-08-18: al abrir la ficha (agregar o editar servicio) o al
+// cambiar de tipo, el foco tiene que caer solo en algún campo — si no, el vendedor
+// tiene que ir a buscar el casillero con el mouse cada vez. El buscador de catálogo
+// (ProductSearchField, arriba de todo) queda afuera de este mapa a propósito: en
+// modo edición viene `disabled` (el producto ya no se puede cambiar, ver los 5
+// Inline*Form) y además su id es aleatorio por instancia (no hay uno fijo para
+// buscar con getElementById). El "operador"/"proveedor" es el primer campo REAL
+// que siempre está habilitado, tanto al crear como al editar, así que es el punto
+// de foco consistente en los 5 tipos.
+const CAMPO_PRIMERO_POR_TAB = {
+    Hotel: "hotel-operador",
+    Aereo: "flight-operador",
+    Traslado: "transfer-operador",
+    Paquete: "package-operador",
+    Asistencia: "assistance-proveedor",
+};
+
 // â”€â”€â”€ Estado inicial por tipo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Traductor de valores guardados con el vocabulario de la version anterior de esta ficha
@@ -1157,6 +1176,17 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     useEffect(() => {
         setErrorValidacion(null);
     }, [tabActiva, formHotel, formVuelo, formTraslado, formPaquete, formAsistencia]);
+
+    // Foco automático al primer campo del form (fix 2026-08-18): corre al montar la
+    // ficha Y cada vez que cambia `tabActiva` (agregar servicio, editar servicio, o
+    // saltar de solapa por el buscador versátil D2/D3). Dependencia SOLO `tabActiva`
+    // a propósito — si pusiéramos los 5 `form*` de dependencia, el foco se robaría de
+    // nuevo en CADA tecleo del vendedor (serían "re-renders posteriores", justo lo que
+    // no tiene que pasar). `.focus()` simple, nunca `.select()`: en edición el campo
+    // ya trae un valor cargado del servidor y no hay que pisarlo ni seleccionarlo.
+    useEffect(() => {
+        document.getElementById(CAMPO_PRIMERO_POR_TAB[tabActiva])?.focus();
+    }, [tabActiva]);
 
     // â”€â”€â”€ Acceso al form activo (lectura) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

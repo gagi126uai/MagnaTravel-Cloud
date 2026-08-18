@@ -84,18 +84,15 @@ export function PromisedDatesBlock({ reserva, publicId, canEdit, candadoActivo, 
     };
 
     // ─── Estado 2: formulario en línea ─────────────────────────────────────────
-    // `w-full` (Tanda A UX 2026-08-16, en vez del `w-fit` que tenía antes): este
-    // bloque vive dentro de TripDatesRow, que comparte renglón con el botón
-    // "Reprogramar viaje" (ver ReservaHeader.jsx). Si el form quedaba `w-fit`, al
-    // abrirse ensanchaba esa columna y "Reprogramar viaje" saltaba a mitad de
-    // línea, en diagonal. Con `w-full` (acotado por `max-w-xl` para que no quede
-    // gigante en pantallas anchas) el form SIEMPRE ocupa todo el ancho disponible
-    // del renglón compartido, así el navegador lo manda limpio a su propia línea
-    // completa — "Reprogramar viaje" cae prolijo debajo, nunca a un costado raro.
+    // `w-fit` (fix layout 2026-08-18, vuelve a como estaba antes del band-aid de
+    // Tanda A UX 2026-08-16): el bloque de fechas y el botón "Reprogramar viaje"
+    // ahora viven en renglones separados (ver ReservaHeader.jsx), así que este
+    // form ya no tiene que competir por ancho con nada — puede ocupar solo el
+    // ancho que necesita, como cualquier casillero suelto de la pantalla.
     if (mostrarFormulario) {
         return (
             <div
-                className="w-full max-w-xl rounded-[10px] border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900"
+                className="w-fit rounded-[10px] border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900"
                 data-testid="promised-dates-form"
             >
                 <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
