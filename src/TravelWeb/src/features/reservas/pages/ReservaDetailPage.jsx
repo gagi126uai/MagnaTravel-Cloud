@@ -6,7 +6,6 @@ import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
-import PassengerFormModal from "../../../components/PassengerFormModal";
 import ServiceFormModal from "../../../components/ServiceFormModal";
 import { ServiceInlineCard } from "../inline-service/ServiceInlineCard";
 // P12 (Tanda 3 del rediseño, 2026-08-03): "Vouchers" y "Documentos" se fusionaron
@@ -889,8 +888,6 @@ export default function ReservaDetailPage() {
 
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [serviceToEdit, setServiceToEdit] = useState(null);
-  const [showPassengerForm, setShowPassengerForm] = useState(false);
-  const [editingPassenger, setEditingPassenger] = useState(null);
   // Ficha de cobro en línea (2026-06-09): reemplaza el modal de pago en la solapa Estado de Cuenta.
   const [showCobroInline, setShowCobroInline] = useState(false);
   const [cobroAEditar, setCobroAEditar] = useState(null);
@@ -2584,16 +2581,11 @@ export default function ReservaDetailPage() {
                 canAddPassenger={reserva?.capabilities?.canAddPassenger ?? null}
                 onPasajeroGuardado={() => {
                   // Recargar la reserva para actualizar el snapshot de pasajeros
-                  // y que el contador y los hints queden al día.
+                  // y que el contador y los hints queden al día. T5 (2026-08-18):
+                  // este único callback ahora cubre los tres flujos de pasajero
+                  // (cargar slot vacío, editar, agregar extra) — PassengerFormModal
+                  // se jubiló, ya no hay callbacks separados de "abrir formulario".
                   fetchReserva({ showLoading: false, preserveOnError: true });
-                }}
-                onAddPassenger={() => {
-                  setEditingPassenger(null);
-                  setShowPassengerForm(true);
-                }}
-                onEditPassenger={(passenger) => {
-                  setEditingPassenger(passenger);
-                  setShowPassengerForm(true);
                 }}
                 // ADR-031 v2.1 — Pieza C: sugerencia de composición desde los servicios.
                 // sugerenciaComposicion es null cuando ya coincide con lo actual (franja no aparece).
@@ -2888,17 +2880,6 @@ export default function ReservaDetailPage() {
         serviceToEdit={serviceToEdit}
         onSuccess={(options) => fetchReserva(options)}
         suppliers={suppliers}
-      />
-
-      <PassengerFormModal
-        isOpen={showPassengerForm}
-        onClose={() => {
-          setShowPassengerForm(false);
-          setEditingPassenger(null);
-        }}
-        reservaId={publicId}
-        passengerToEdit={editingPassenger}
-        onSuccess={(options) => fetchReserva({ ...options, showLoading: false, preserveOnError: true })}
       />
 
       <ConfirmModal

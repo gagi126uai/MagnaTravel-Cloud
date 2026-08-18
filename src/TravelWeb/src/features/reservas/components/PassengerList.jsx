@@ -6,6 +6,17 @@
  * Para cada slot vacío muestra un botón [Cargar] que despliega el mini-formulario
  * en línea (PasajeroInlineForm) sin abrir ninguna ventana flotante.
  *
+ * T5 (2026-08-18, spec sección 3 — "muere el modal"): "Editar" y "Agregar Pasajero"
+ * ya NO abren PassengerFormModal (jubilado). Los dos flujos se resuelven acá mismo
+ * con PasajeroInlineForm en modo `conFuncionesCompletas` (lupa AFIP, histórico de la
+ * agencia, "+ Más detalles"):
+ *   - Editar: la MISMA fila del pasajero se transforma en el formulario (no se abre
+ *     una tarjeta nueva debajo — P-16, no duplicar el nombre dos veces en pantalla).
+ *     Los chips de vencimiento se esconden mientras se edita (P5=A, vuelven al
+ *     guardar o cancelar) porque al reemplazar la fila entera, ya no están en el DOM.
+ *   - Agregar Pasajero (uno "de más", no un slot declarado): abre el formulario de
+ *     alta AL FINAL de la lista (P4=A), con el histórico activo (solo alta).
+ *
  * Guía UX 2026-06-15 (P9, P10):
  *   - Un renglón por pasajero declarado con "sin cargar" cuando no tiene nombre.
  *   - Contador "X de N nombres cargados" arriba de la lista.
@@ -19,9 +30,9 @@
  * Props:
  *   reserva               — objeto reserva con adultCount, childCount, infantCount, passengers[]
  *   reservaId             — publicId de la reserva (necesario para POST/PUT pasajeros)
- *   onPasajeroGuardado    — callback() que el padre llama para recargar la reserva
- *   onAddPassenger        — callback() para abrir el formulario completo de agregar
- *   onEditPassenger       — callback(passenger) para abrir el formulario completo de editar
+ *   onPasajeroGuardado    — callback() que el padre llama para recargar la reserva. Se usa para
+ *                           los tres flujos (cargar slot vacío, editar, agregar extra) — ya no
+ *                           hay callbacks separados de "abrir formulario completo" (el modal murió).
  *   onDeletePassenger     — callback(passengerId) para eliminar un pasajero
  *   sugerenciaComposicion — objeto { adultos, menores, infantes, ambigua } del backend, o null
  *                           Si es null, la franja de sugerencia no aparece.
@@ -177,8 +188,6 @@ export function PassengerList({
     reserva,
     reservaId,
     onPasajeroGuardado,
-    onAddPassenger,
-    onEditPassenger,
     onDeletePassenger,
     // Pieza C (ADR-031 v2.1): sugerencia de composición desde los servicios.
     // Viene del padre (ReservaDetailPage) que ya tiene el TransitionReadinessDto procesado.
@@ -196,9 +205,18 @@ export function PassengerList({
     // Pasajero" (roster declarado completo bajo candado). Ver doc de props arriba.
     canAddPassenger = null,
 }) {
-    // Slot que tiene el mini-formulario inline abierto.
+    // Slot que tiene el mini-formulario inline abierto (para CARGAR un slot vacío).
     // null = ninguno; guardamos el índice del slot.
     const [slotAbierto, setSlotAbierto] = useState(null);
+
+    // T5 (2026-08-18): índice del slot que se está EDITANDO (pasajero ya cargado).
+    // La fila entera se reemplaza por PasajeroInlineForm mientras esto no sea null
+    // (P-16: nunca dos tarjetas con el mismo nombre a la vez en pantalla).
+    const [editandoIndex, setEditandoIndex] = useState(null);
+
+    // T5: si está abierto el formulario de "Agregar Pasajero" (uno DE MÁS, no un
+    // slot declarado) — aparece al final de la lista (P4=A), nunca arriba.
+    const [agregandoPasajeroExtra, setAgregandoPasajeroExtra] = useState(false);
 
     // Candado C1 (spec 2026-07-22): con la reserva bloqueada y sin autorización viva, los
     // botones "Editar" y "Eliminar" de un pasajero YA CARGADO quedan gris + candadito.
@@ -296,7 +314,7 @@ export function PassengerList({
                         </button>
                     ) : (
                         <button
-                            onClick={onAddPassenger}
+                            onClick={() => setAgregandoPasajeroExtra(true)}
                             className="w-full sm:w-auto flex items-center justify-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-[10px] hover:bg-primary/90 transition-colors shadow-sm"
                             data-testid="btn-agregar-pasajero"
                         >
@@ -329,6 +347,9 @@ export function PassengerList({
                     {slots.map((slot, index) => {
                         const tieneNombre = Boolean(slot.pasajero?.fullName?.trim());
                         const esteSlotAbierto = slotAbierto === index;
+                        // T5: esta fila está en modo edición — se reemplaza ENTERA por
+                        // PasajeroInlineForm más abajo (ver el ternario que envuelve el renglón).
+                        const esteSlotEditando = editandoIndex === index;
                         // F11 (D2, 2026-07-31, mockup firmado): chip fijo de vencimiento de
                         // pasaporte por fila. null cuando el motor no mandó alerta para este
                         // pasajero (pasaporte al día, sin vencimiento cargado, o slot vacío).
@@ -345,7 +366,26 @@ export function PassengerList({
 
                         return (
                             <div key={index}>
-                                {/* Renglón del pasajero */}
+                                {/* T5 (2026-08-18): editando un pasajero ya cargado — la fila ENTERA
+                                    se transforma en el formulario (no se abre una tarjeta aparte
+                                    dejando el nombre viejo arriba, P-16). Los chips de vencimiento
+                                    quedan afuera del DOM mientras se edita (P5=A: se esconden, vuelven
+                                    al guardar/cancelar porque ahí termina esteSlotEditando). */}
+                                {esteSlotEditando ? (
+                                    <PasajeroInlineForm
+                                        reservaId={reservaId}
+                                        passengerToEdit={slot.pasajero}
+                                        slotLabel={slot.etiqueta}
+                                        mode="full"
+                                        conFuncionesCompletas
+                                        existingPassengers={passengers}
+                                        onGuardado={() => {
+                                            setEditandoIndex(null);
+                                            onPasajeroGuardado?.();
+                                        }}
+                                        onCancelar={() => setEditandoIndex(null)}
+                                    />
+                                ) : (
                                 <div
                                     className={`flex items-center gap-3 rounded-[10px] border px-4 py-3 transition-colors ${
                                         tieneNombre
@@ -466,7 +506,7 @@ export function PassengerList({
                                                 <>
                                                     <button
                                                         type="button"
-                                                        onClick={() => onEditPassenger(slot.pasajero)}
+                                                        onClick={() => setEditandoIndex(index)}
                                                         aria-label="Editar pasajero"
                                                         className="flex items-center gap-1 rounded-[10px] p-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
                                                     >
@@ -501,9 +541,13 @@ export function PassengerList({
                                         ) : null /* estado terminal: solo lectura, sin botones */}
                                     </div>
                                 </div>
+                                )}
 
                                 {/* Mini-formulario inline: solo se despliega para el slot abierto
-                                    Y cuando canEditPassengers=true (no en solo lectura terminal). */}
+                                    Y cuando canEditPassengers=true (no en solo lectura terminal).
+                                    conFuncionesCompletas (T5): "Cargar" de un slot vacío es un alta
+                                    desde la ficha — mismas funciones que cualquier otro alta
+                                    (lupa AFIP, histórico, "+ Más detalles"). */}
                                 {esteSlotAbierto && !tieneNombre && canEditPassengers && (
                                     <div className="mt-1 ml-4">
                                         <PasajeroInlineForm
@@ -511,6 +555,8 @@ export function PassengerList({
                                             passengerToEdit={slot.pasajero}
                                             slotLabel={slot.etiqueta}
                                             mode="full"
+                                            conFuncionesCompletas
+                                            existingPassengers={passengers}
                                             onGuardado={(pasajeroGuardado) => {
                                                 setSlotAbierto(null);
                                                 onPasajeroGuardado?.();
@@ -522,6 +568,27 @@ export function PassengerList({
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {/* T5 (2026-08-18, P4=A): "Agregar Pasajero" (uno DE MÁS, no un slot declarado)
+                abre el alta AL FINAL de la lista — mismo lugar donde después va a quedar,
+                no reordena a los pasajeros ya cargados arriba. Con histórico activo (alta). */}
+            {agregandoPasajeroExtra && canEditPassengers && (
+                <div className="mt-2">
+                    <PasajeroInlineForm
+                        reservaId={reservaId}
+                        passengerToEdit={null}
+                        slotLabel={`Pasajero ${slots.length + 1}`}
+                        mode="full"
+                        conFuncionesCompletas
+                        existingPassengers={passengers}
+                        onGuardado={() => {
+                            setAgregandoPasajeroExtra(false);
+                            onPasajeroGuardado?.();
+                        }}
+                        onCancelar={() => setAgregandoPasajeroExtra(false)}
+                    />
                 </div>
             )}
         </div>

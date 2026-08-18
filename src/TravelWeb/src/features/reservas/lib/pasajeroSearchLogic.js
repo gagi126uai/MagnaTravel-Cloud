@@ -4,7 +4,10 @@
  * Está separada del componente (sin JSX, sin hooks) para que los tests
  * puedan importarla directamente con Node sin transpiler.
  *
- * Se usa desde PassengerFormModal cuando el usuario tipea en nombre o documento.
+ * Se usa desde PasajeroInlineForm (modo conFuncionesCompletas, solo al crear un
+ * pasajero nuevo) cuando el usuario tipea en nombre o documento. Hasta el
+ * 2026-08-18 vivía en PassengerFormModal — ese modal se jubiló (spec T5): todo
+ * el alta/edición de pasajero pasó a ser en línea.
  */
 
 /** Cantidad mínima de caracteres para disparar la búsqueda. */
