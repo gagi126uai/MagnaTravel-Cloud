@@ -12,18 +12,23 @@ import {
     textoBotonActualizarDolar,
 } from "../lib/dolarTiraDashboardLogic";
 
-// Copia CARÁCTER POR CARÁCTER del contenedor de ReservaKPIs.jsx:19 (molde firmado, guía P2=A).
-// El review 2026-08-05 bloqueó un desvío acá (items-center/gap-3/py-2.5): no volver a desviarse.
+// Chip compacto de la cabecera de "Inicio" (spec dashboard 2026-08-18, sección 1.3:
+// "chip del dólar (blanco, borde 1px línea, texto 'Dólar BNA venta $X')"). Antes esta
+// tira vivía ancha, debajo del título, con el molde de ReservaKPIs.jsx (fondo Mesa,
+// esquinas 10px) — el dueño pidió mudarla A LA CABECERA como chip (2026-08-18), así que
+// pasa a fondo Papel (blanco) + esquina redonda completa (B.5, "un solo molde de chip").
+// La lógica de adentro (botón actualizar, otras monedas, fecha) no cambió en nada.
 const CLASES_CONTENEDOR =
-    "flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40";
+    "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-full border border-slate-200 bg-white px-4 py-2 dark:border-slate-800 dark:bg-slate-900";
 const CLASES_ROTULO = "text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500";
 
 /**
- * Tira fina de una línea con el dólar Banco Nación, arriba de los KPIs del
- * dashboard. Reemplaza a la tarjeta grande `BnaUsdSellerRateCard` (desaprobada
- * por el dueño el 2026-08-05 — "es feo"): se monta TAL CUAL en `AdminDashboard.jsx`
- * y `AgentDashboard.jsx` (P5=B de la spec: la misma tira para admin y vendedor, acá
- * no hay ningún número fiscal que ocultarle a nadie).
+ * Chip con el dólar Banco Nación, en la cabecera del dashboard "Inicio"
+ * (`DashboardHeader.jsx`). Reemplaza a la tarjeta grande `BnaUsdSellerRateCard`
+ * (desaprobada por el dueño el 2026-08-05 — "es feo"); la tanda del dashboard nuevo
+ * (spec 2026-08-18) la mudó de tira ancha debajo del título a chip compacto arriba
+ * (P5=B de la spec original: el mismo chip para cualquier rol, acá no hay ningún
+ * número fiscal que ocultarle a nadie).
  *
  * Mismo molde visual que la tira firmada del listado de Reservas (`ReservaKPIs.jsx`,
  * guía UX 2026-08-03 P2=A): rótulo chiquito en mayúsculas + número grande, SIN
@@ -46,8 +51,7 @@ const CLASES_ROTULO = "text-[11px] font-bold uppercase tracking-wide text-slate-
  *
  * @param {{ value?: number|null }|null} rate
  * @param {() => void} [onRefrescar] callback para volver a pedir `/reports/dashboard` — lo maneja
- *   la página dueña del estado (`AdminDashboard.jsx` / `AgentDashboard.jsx`), este componente no
- *   guarda el dashboard entero.
+ *   la página dueña del estado (`DashboardPage.jsx`), este componente no guarda el dashboard entero.
  */
 export function DolarBnaTira({ rate, onRefrescar }) {
     // Estado propio SOLO para abrir/cerrar "otras monedas" — no se persiste entre

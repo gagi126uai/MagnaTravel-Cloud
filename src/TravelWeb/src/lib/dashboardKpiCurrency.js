@@ -1,6 +1,7 @@
 /**
- * Lógica PURA de las tarjetas KPI multimoneda del dashboard (AdminDashboard.jsx y
- * AgentDashboard.jsx). Recibe una de las listas de `dashboard.porMoneda`
+ * Lógica PURA de las tarjetas KPI multimoneda del dashboard (`DashboardPage.jsx`,
+ * vía `features/dashboard/components/MoneyKpiGrid.jsx`). Recibe una de las listas
+ * de `dashboard.porMoneda`
  * (`DashboardByCurrencyDto`, ver `IReportService.cs`) y decide QUÉ líneas mostrar —
  * el mismo patrón que ya usa `ReportsPage.jsx` para las tarjetas de la solapa Finanzas.
  *
@@ -55,8 +56,8 @@ export function construirLineasKpiPorMoneda(listaPorMoneda, { negativoEsSaldoAFa
  * compatibilidad SOLO cuando la lista puntual no vino en la respuesta del backend
  * (deploy viejo en caché, sin `dashboard.porMoneda` todavía, o un campo puntual de
  * `porMoneda` que todavía no existe). Antes esta lógica vivía duplicada, sin test,
- * adentro del JSX de `AdminDashboard.jsx` (función `armarLineasKpi`) y también repetida
- * a mano en `AgentDashboard.jsx` — se centraliza acá para poder testearla una sola vez.
+ * adentro del JSX del dashboard viejo (función `armarLineasKpi`, hoy reemplazado por
+ * `DashboardPage.jsx`) — se centraliza acá para poder testearla una sola vez.
  *
  * FIX (revisión 2026-07-27, ítem 4 del re-review): la versión vieja cae al escalar
  * también cuando la lista puntual venía VACÍA — pero una lista vacía es un dato REAL

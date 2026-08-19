@@ -281,7 +281,7 @@ export default function ReservasPage() {
           // Desempate del dueño (2026-08-11, B1 — pisa el intento previo de "+ Nueva
           // reserva"): el botón de alta se sigue llamando "+ Nuevo presupuesto",
           // coherente con NuevaReservaInline.jsx y el resto de los botones de alta
-          // (CustomersPage/CustomerAccountPage/AdminDashboard/AgentDashboard/CRMPage).
+          // (CustomersPage/CustomerAccountPage/DashboardPage/CRMPage).
           <Button
             onClick={() => { setClienteInicial(null); setMostrarFilaAlta(true); }}
             disabled={mostrarFilaAlta}

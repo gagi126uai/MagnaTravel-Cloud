@@ -7,7 +7,7 @@ import { RESERVA_STATUS_LABELS, traducirEstadoReserva } from '../lib/reservaStat
  *
  * Los labels (el texto) viven en `reservaStatusLabels.js` (un archivo `.js` puro, sin
  * JSX) — Obra 6 (2026-07-27): ese archivo es ahora la FUENTE UNICA del texto de cada
- * estado, para que los dashboards (AgentDashboard/AdminDashboard) puedan reusar
+ * estado, para que otras pantallas (ej. el dashboard "Inicio") puedan reusar
  * exactamente el mismo mapeo sin duplicarlo, y para poder testear la traduccion con
  * `node --test` (este archivo .jsx, con JSX de verdad, no se puede importar desde un
  * test plano de Node). El color sigue viviendo aca, es solo de presentacion.
