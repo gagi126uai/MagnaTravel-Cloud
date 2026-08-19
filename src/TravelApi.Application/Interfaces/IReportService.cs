@@ -134,7 +134,30 @@ public record CurrencyAmount(string Currency, decimal Amount);
 // Currency (contrato aditivo; default ARS para compat con el front viejo). Una instalacion 100% ARS
 // solo produce items ARS = identico a hoy.
 public record PendingReservaDto(Guid PublicId, string NumeroReserva, string Name, decimal Balance, string Status, string Currency = "ARS");
-public record UpcomingTripDto(Guid PublicId, string NumeroReserva, string Name, DateTime StartDate, string Status);
+
+/// <summary>
+/// Una salida de los proximos 7 dias, para la tarjeta "Salidas próximas" del dashboard.
+/// </summary>
+/// <param name="PaxCount">
+/// R4 (spec dashboard 2026-08-18): cuantos pasajeros lleva la reserva (cuenta simple de
+/// <c>Passenger</c> cargados). 0 si todavia no se cargo ningun pasajero — no es un error, muchas
+/// reservas recien confirmadas todavia no tienen la nomina completa.
+/// </param>
+/// <param name="PendingBalances">
+/// R4: saldo pendiente de la reserva, UNA linea por moneda (nunca un escalar que sume ARS+USD,
+/// P-3). Misma logica de "que cuenta como deuda real" que <see cref="PendingReservaDto"/> (tabla
+/// hija ReservaMoneyByCurrency + el eje DerivedCollectionStatus cuando ya esta calculado, ver
+/// H15). Lista VACIA significa reserva saldada — el front pinta el chip verde "Saldada"; si trae
+/// alguna moneda, pinta el chip rojo "Debe $ X" con esa moneda.
+/// </param>
+public record UpcomingTripDto(
+    Guid PublicId,
+    string NumeroReserva,
+    string Name,
+    DateTime StartDate,
+    string Status,
+    int PaxCount,
+    List<CurrencyAmount> PendingBalances);
 public record MonthlyMetricDto(string Month, decimal Sales, decimal Costs, decimal Profit);
 public record StatusDistributionDto(int Budgets, int Reserved, int Operational, int Closed, int Cancelled);
 /// <summary>
@@ -269,11 +292,40 @@ public record CashFlowProjectionResponse(
     decimal ProjectedBalance60,
     decimal ProjectedBalance90);
 
+/// <summary>
+/// Un dia de la curva de caja (historica o proyectada), "Ritmo de cobros y pagos" del dashboard.
+/// </summary>
+/// <param name="CashIn">
+/// TOTAL de cobros de ese dia, TODAS las monedas sumadas en un solo numero. Se conserva SOLO por
+/// compatibilidad con <c>AnalyticsPage.jsx</c> (unico consumidor legacy, ver R2 spec dashboard
+/// 2026-08-18) — mismo criterio ya usado en <see cref="DashboardResponse"/> para sus escalares
+/// viejos. Un consumidor NUEVO (la tarjeta "Ritmo de cobros y pagos") NUNCA debe leer este campo:
+/// tiene que usar <see cref="CashInByCurrency"/>, que nunca mezcla ARS con USD (P-3).
+/// </param>
+/// <param name="CashOut">
+/// Igual que <paramref name="CashIn"/> pero de pagos a operadores — Y ADEMAS enmascarado a 0 sin
+/// <c>cobranzas.see_cost</c> (es informacion de costo, mismo criterio que PagosProveedores del
+/// dashboard).
+/// </param>
+/// <param name="RunningBalance">
+/// Saldo acumulado (cobros menos pagos), TOTAL todas las monedas, ya calculado con el
+/// <see cref="CashOut"/> enmascarado — si se calculara con el pago REAL sin enmascarar, cualquiera
+/// podria despejar el costo real restando el cobro (visible) del cambio de saldo dia a dia.
+/// </param>
+/// <param name="CashInByCurrency">R2: cobros de ese dia, UNA linea por moneda.</param>
+/// <param name="CashOutByCurrency">
+/// R2+R3: pagos a operadores de ese dia, UNA linea por moneda. Lista VACIA (no solo en 0) sin
+/// <c>cobranzas.see_cost</c> — es costo, se omite entero.
+/// </param>
+/// <param name="RunningBalanceByCurrency">Saldo acumulado, UNA linea por moneda (mismo enmascarado que <see cref="RunningBalance"/>).</param>
 public record CashFlowDayDto(
     DateTime Date,
     decimal CashIn,
     decimal CashOut,
-    decimal RunningBalance);
+    decimal RunningBalance,
+    List<CurrencyAmount> CashInByCurrency,
+    List<CurrencyAmount> CashOutByCurrency,
+    List<CurrencyAmount> RunningBalanceByCurrency);
 
 public record YearOverYearResponse(
     List<YoyMonthDto> CurrentYear,

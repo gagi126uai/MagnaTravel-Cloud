@@ -809,4 +809,92 @@ public class ReportServiceDashboardScopingTests
 
         Assert.NotEmpty(dto.PorMoneda.CuentasPorPagar);
     }
+
+    // ============================================================================================
+    // R4 (spec dashboard 2026-08-18): la tarjeta "Salidas próximas" necesita cuantos pasajeros lleva
+    // la reserva y si debe plata (por moneda) para pintar el chip rojo "Debe US$ X" / verde "Saldada".
+    // Misma logica de saldo que ReservasPendientes (tabla hija ReservaMoneyByCurrency + el eje
+    // DerivedCollectionStatus cuando ya esta calculado, ver H15 mas arriba en este archivo).
+    // ============================================================================================
+
+    [Fact]
+    public async Task Dashboard_ProximosViajes_TraePaxCountYSaldoPendientePorMoneda()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+
+        context.Reservas.Add(new Reserva
+        {
+            Id = 10,
+            NumeroReserva = "F-DASH-R4-DEBE",
+            Name = "Reserva que debe USD",
+            Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedor-A",
+            CreatedAt = DateTime.UtcNow,
+            TotalSale = 500m,
+            TotalCost = 300m,
+            Balance = 0m, // el escalar surrogate no importa aca: R4 lee la tabla hija por moneda
+            StartDate = DateTime.UtcNow.AddDays(2),
+        });
+        context.Passengers.AddRange(
+            new Passenger { ReservaId = 10, FullName = "Pasajero Uno" },
+            new Passenger { ReservaId = 10, FullName = "Pasajero Dos" },
+            new Passenger { ReservaId = 10, FullName = "Pasajero Tres" });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency
+        {
+            ReservaId = 10, Currency = Monedas.USD, TotalSale = 200m, ConfirmedSale = 200m,
+            TotalCost = 150m, TotalPaid = 0m, Balance = 200m,
+        });
+        await context.SaveChangesAsync();
+
+        var accessor = BuildContextAccessor("admin-1", "Admin");
+        var resolver = BuildResolver("admin-1");
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+
+        var dto = await service.GetDashboardAsync(CancellationToken.None);
+
+        var trip = Assert.Single(dto.ProximosViajes);
+        Assert.Equal("F-DASH-R4-DEBE", trip.NumeroReserva);
+        Assert.Equal(3, trip.PaxCount);
+        var pending = Assert.Single(trip.PendingBalances);
+        Assert.Equal(Monedas.USD, pending.Currency);
+        Assert.Equal(200m, pending.Amount);
+    }
+
+    [Fact]
+    public async Task Dashboard_ProximosViajes_ReservaSaldada_TraePendingBalancesVacio()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+
+        context.Reservas.Add(new Reserva
+        {
+            Id = 11,
+            NumeroReserva = "F-DASH-R4-SALDADA",
+            Name = "Reserva saldada",
+            Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedor-A",
+            CreatedAt = DateTime.UtcNow,
+            TotalSale = 500m,
+            TotalCost = 300m,
+            Balance = 0m,
+            StartDate = DateTime.UtcNow.AddDays(3),
+            DerivedCollectionStatus = ReservaCollectionStatus.Settled,
+        });
+        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency
+        {
+            ReservaId = 11, Currency = Monedas.ARS, TotalSale = 500m, ConfirmedSale = 500m,
+            TotalCost = 300m, TotalPaid = 500m, Balance = 0m,
+        });
+        await context.SaveChangesAsync();
+
+        var accessor = BuildContextAccessor("admin-1", "Admin");
+        var resolver = BuildResolver("admin-1");
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+
+        var dto = await service.GetDashboardAsync(CancellationToken.None);
+
+        var trip = Assert.Single(dto.ProximosViajes);
+        Assert.Equal("F-DASH-R4-SALDADA", trip.NumeroReserva);
+        Assert.Equal(0, trip.PaxCount);
+        Assert.Empty(trip.PendingBalances);
+    }
 }

@@ -152,8 +152,15 @@ public class ReportsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// R3 (spec dashboard 2026-08-18): dejo de ser [Authorize(Roles="Admin")] duro. Ahora sigue el
+    /// mismo sistema de permisos que <c>GET /reports/dashboard</c>: cualquiera con <c>reportes.view</c>
+    /// puede pedirlo, y el service enmascara adentro los pagos a operadores (informacion de costo) para
+    /// quien no tenga <c>cobranzas.see_cost</c> — ver el docstring de
+    /// <c>ReportService.GetCashFlowProjectionAsync</c>.
+    /// </summary>
     [HttpGet("cashflow")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReportesView)]
     public async Task<ActionResult> GetCashFlowProjection(
         [FromQuery] int days = 90, CancellationToken cancellationToken = default)
     {

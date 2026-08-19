@@ -71,14 +71,25 @@ public class ReportService : IReportService
         _aiConnectionResolver = aiConnectionResolver;
     }
 
-    public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
-    {
-        var now = DateTime.UtcNow;
-        var startOfMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    /// <summary>
+    /// Que puede ver el usuario logueado, en dos preguntas: "¿ve costos/pagos a proveedores?"
+    /// (<c>cobranzas.see_cost</c>) y "¿ve la agencia entera o solo su propia cartera?"
+    /// (<c>reservas.view_all</c>). Lo usan tanto <see cref="GetDashboardAsync"/> como
+    /// <see cref="GetCashFlowProjectionAsync"/> — el mismo vendedor tiene que ver EXACTAMENTE el mismo
+    /// recorte en las dos pantallas, asi que el calculo vive en un solo lugar (B1.15 Fase 2a + Lote 2).
+    /// </summary>
+    private readonly record struct UserScope(bool CanSeeCost, bool HasReservasViewAll, string? OwnerFilter);
 
-        // B1.15 Fase 2a (FIX 4): resolver scope segun permisos del user actual.
-        // - sin cobranzas.see_cost: enmascarar costos / margen / pagos a proveedores y costs/profit del trend.
-        // - sin reservas.view_all: filtrar pendientes y proximos por owner.
+    /// <summary>
+    /// Un dia con movimiento, agrupado por moneda. Tipo interno de <see cref="GetCashFlowProjectionAsync"/>.
+    /// Record (no struct): mismo patron que <see cref="CurrencyAmount"/>, que EF Core ya traduce sin
+    /// problemas dentro de un <c>Select</c> contra Postgres en el resto de este archivo — un record
+    /// struct es una variante menos probada en las queries de este proyecto, mejor no innovar aca.
+    /// </summary>
+    private sealed record DayCurrencyAmount(DateTime Date, string Currency, decimal Amount);
+
+    private async Task<UserScope> ResolveUserScopeAsync(CancellationToken cancellationToken)
+    {
         var httpUser = _httpContextAccessor?.HttpContext?.User;
         var currentUserId = httpUser?.FindFirstValue(ClaimTypes.NameIdentifier);
         var isAdmin = httpUser?.IsInRole("Admin") ?? false;
@@ -90,6 +101,32 @@ public class ReportService : IReportService
         var canSeeCost = isAdmin || (perms?.Contains(Permissions.CobranzasSeeCost) ?? false);
         var hasReservasViewAll = isAdmin || (perms?.Contains(Permissions.ReservasViewAll) ?? false);
 
+        // "__no_user__" es un sentinel que nunca matchea ningun ResponsibleUserId real: asi, si por
+        // algun motivo no hay usuario logueado (no deberia pasar detras de [Authorize]), el recorte por
+        // cartera se comporta como "no veo nada" en vez de "veo todo" (falla cerrado, no abierto).
+        var ownerFilter = hasReservasViewAll
+            ? null
+            : (string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId);
+
+        return new UserScope(canSeeCost, hasReservasViewAll, ownerFilter);
+    }
+
+    public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var startOfMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // B1.15 Fase 2a (FIX 4): resolver scope segun permisos del user actual.
+        // - sin cobranzas.see_cost: enmascarar costos / margen / pagos a proveedores y costs/profit del trend.
+        // - sin reservas.view_all: filtrar pendientes y proximos por owner.
+        //
+        // R3 (spec dashboard 2026-08-18): este mismo calculo lo necesita TAMBIEN GetCashFlowProjectionAsync
+        // (antes vivia inline aca solamente) — se saco a ResolveUserScopeAsync para no duplicar la logica
+        // de permisos en dos metodos que tienen que comportarse identico.
+        var scope = await ResolveUserScopeAsync(cancellationToken);
+        var canSeeCost = scope.CanSeeCost;
+        var hasReservasViewAll = scope.HasReservasViewAll;
+
         // Firma post-verificacion Lote 2 (2026-07-27, obra 5 "Ventas personales"): scope UNICO de "mi
         // cartera" para TODO el dashboard de un vendedor sin reservas.view_all. Antes este mismo criterio
         // se recalculaba dos veces mas abajo (una para "Proximos viajes", otra para "Cobros pendientes")
@@ -98,9 +135,7 @@ public class ReportService : IReportService
         // Se unifica aca arriba para que ventas, costos, margen, cobros y saldo pendiente usen EXACTAMENTE
         // el mismo filtro que ya usaban ReservasPendientes/ProximosViajes. El admin (hasReservasViewAll
         // via rol Admin) sigue viendo todo: ownerFilter queda null y ningun query se acota.
-        var ownerFilter = hasReservasViewAll
-            ? null
-            : (string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId);
+        var ownerFilter = scope.OwnerFilter;
 
         // Hallazgo de review (2026-07-27, bloqueante backend+security): el criterio firmado es "el
         // vendedor no ve los numeros de toda la agencia" SIN EXCEPCIONES. filesByStatus alimenta los 3
@@ -244,12 +279,57 @@ public class ReportService : IReportService
             pendingReservas.AddRange(topForCurrency);
         }
 
-        var upcomingTrips = await upcomingQuery
+        var upcomingTripsBase = await upcomingQuery
             .OrderBy(f => f.StartDate)
             .Take(5)
             // f.Status YA es string: mismo fix de traduccion que arriba (H15).
-            .Select(f => new UpcomingTripDto(f.PublicId, f.NumeroReserva, f.Name, f.StartDate!.Value, f.Status))
+            .Select(f => new { f.Id, f.PublicId, f.NumeroReserva, f.Name, f.StartDate, f.Status })
             .ToListAsync(cancellationToken);
+
+        // R4 (spec dashboard 2026-08-18): la tarjeta "Salidas próximas" necesita, ademas de dia y
+        // destino, cuantos pasajeros lleva la reserva y si debe plata. Se resuelven en dos consultas
+        // aparte (Passengers y ReservaMoneyByCurrency no son parte de la query de arriba) y despues se
+        // pegan en memoria — son a lo sumo 5 reservas, no vale la pena complicar el query principal.
+        var upcomingReservaIds = upcomingTripsBase.Select(t => t.Id).ToList();
+
+        var paxCountByReservaId = await _dbContext.Passengers
+            .Where(p => upcomingReservaIds.Contains(p.ReservaId))
+            .GroupBy(p => p.ReservaId)
+            .Select(g => new { ReservaId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ReservaId, x => x.Count, cancellationToken);
+
+        // MISMO filtro que pendingByCurrencyQuery de arriba (Balance > 0 y, si el eje de cobranza ya
+        // esta calculado, que diga "ConDeuda" — evita mostrar residuos de centavos como deuda real,
+        // H15). No se reusa la query en si porque esa ya trae Take(5) por moneda del TOP de deudores de
+        // TODA la cartera; esta busca el saldo puntual de las 5 reservas de "Salidas próximas".
+        var pendingBalancesByReservaId = await (
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            where upcomingReservaIds.Contains(row.ReservaId)
+                && row.Balance > 0
+                // Espejo LITERAL del filtro de pendingByCurrencyQuery (pedido del reviewer 18/08):
+                // una reserva cerrada o cancelada no cuenta como deuda aunque tenga salida futura
+                // (borde teorico — upcomingQuery ya excluye canceladas, esto lo blinda igual).
+                && reservaPadre.Status != EstadoReserva.Closed
+                && reservaPadre.Status != EstadoReserva.Cancelled
+                && (reservaPadre.DerivedCollectionStatus == null
+                    || reservaPadre.DerivedCollectionStatus == ReservaCollectionStatus.WithDebt)
+            select new { row.ReservaId, row.Currency, row.Balance })
+            .ToListAsync(cancellationToken);
+
+        var upcomingTrips = upcomingTripsBase
+            .Select(f => new UpcomingTripDto(
+                f.PublicId,
+                f.NumeroReserva,
+                f.Name,
+                f.StartDate!.Value,
+                f.Status,
+                PaxCount: paxCountByReservaId.TryGetValue(f.Id, out var paxCount) ? paxCount : 0,
+                PendingBalances: pendingBalancesByReservaId
+                    .Where(x => x.ReservaId == f.Id)
+                    .Select(x => new CurrencyAmount(x.Currency, x.Balance))
+                    .ToList()))
+            .ToList();
 
         var sixMonthsAgo = startOfMonth.AddMonths(-5);
 
@@ -2225,58 +2305,161 @@ public class ReportService : IReportService
         return allBookings;
     }
 
+    /// <summary>
+    /// "Ritmo de cobros y pagos" del dashboard (spec 2026-08-18, respuesta firmada de Gaston a la
+    /// pregunta P1: se usa la TENDENCIA que ya calculaba este metodo, no un cronograma de vencimientos
+    /// nuevo). Promedia los cobros/pagos reales de los ultimos 30 dias y los estira <paramref name="days"/>
+    /// dias para adelante.
+    ///
+    /// <para>R2 (bloqueante, P-3 "las monedas jamas se mezclan"): antes esto sumaba TODOS los pagos sin
+    /// mirar la moneda — un cobro en pesos y uno en dolares se sumaban en un solo numero, cosa que la
+    /// constitucion del producto prohibe. Ahora cada dia trae ADEMAS un desglose por moneda
+    /// (<see cref="CashFlowDayDto.CashInByCurrency"/> y compania). Los campos escalares viejos
+    /// (<see cref="CashFlowDayDto.CashIn"/>/<c>CashOut</c>/<c>RunningBalance</c>) se CONSERVAN sin tocar
+    /// su formula de siempre (mismo criterio ya usado en <see cref="DashboardResponse"/> para no romper
+    /// <c>AnalyticsPage.jsx</c>, unico consumidor de hoy) — son compat, no la fuente de verdad.</para>
+    ///
+    /// <para>R3 (bloqueante): este endpoint dejo de ser Admin-only (ver <c>ReportsController</c>) y ahora
+    /// lo puede llamar cualquiera con <c>reportes.view</c>. Sin <c>cobranzas.see_cost</c> los pagos a
+    /// operadores (<c>CashOut</c>) — que SI son informacion de costo — se esconden, en el escalar viejo Y
+    /// en el desglose por moneda; los cobros de clientes (<c>CashIn</c>) no son costo, se ven igual. El
+    /// saldo acumulado (<c>RunningBalance</c>) se calcula CON el pago ya enmascarado, no con el real:
+    /// si se calculara con el pago real, cualquiera podria despejarlo restando el cobro visible del
+    /// cambio de saldo dia a dia — enmascarar solo el numero de arriba no alcanza, hay que enmascarar
+    /// el pago ANTES de sumarlo al acumulado.</para>
+    ///
+    /// <para>Lote 2 (2026-07-27, mismo criterio que <see cref="GetDashboardAsync"/>): sin
+    /// <c>reservas.view_all</c> la cartera se acota a las reservas del vendedor. Un pago sin reserva
+    /// asociada no se le puede atribuir a ningun vendedor puntual, asi que con el recorte activo queda
+    /// AFUERA (mismo criterio conservador que el resto del dashboard).</para>
+    /// </summary>
     public async Task<CashFlowProjectionResponse> GetCashFlowProjectionAsync(int days, CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow.Date;
         var historicalStart = now.AddDays(-30);
 
-        // Historical cash in (customer payments). ADR-022 (fix #3): solo los que movieron caja (AffectsCash);
-        // los Payment puente AffectsCash=false harian dipear el dia en negativo sin que entrara plata real.
-        var cashInByDay = await _dbContext.Payments
-            .Where(p => p.PaidAt >= historicalStart && p.PaidAt <= now && !p.IsDeleted && p.AffectsCash)
-            .GroupBy(p => p.PaidAt.Date)
-            .Select(g => new { Date = g.Key, Amount = g.Sum(p => p.Amount) })
+        var scope = await ResolveUserScopeAsync(cancellationToken);
+
+        // ADR-022 (fix #3): solo los pagos que MOVIERON caja (AffectsCash); los Payment "puente"
+        // (AffectsCash=false, sobrepago/reversion de NC) harian dipear el dia sin que entrara plata real.
+        var cashInRaw = await (
+            from p in _dbContext.Payments
+            join reservaPadre in _dbContext.Reservas on p.ReservaId equals reservaPadre.Id into reservaJoin
+            from reservaPadre in reservaJoin.DefaultIfEmpty()
+            where p.PaidAt >= historicalStart && p.PaidAt <= now && !p.IsDeleted && p.AffectsCash
+                && (scope.OwnerFilter == null || (reservaPadre != null && reservaPadre.ResponsibleUserId == scope.OwnerFilter))
+            group p by new { Date = p.PaidAt.Date, p.Currency } into g
+            select new DayCurrencyAmount(g.Key.Date, g.Key.Currency, g.Sum(x => x.Amount)))
             .ToListAsync(cancellationToken);
 
-        // Historical cash out (supplier payments)
-        var cashOutByDay = await _dbContext.SupplierPayments
-            .Where(p => p.PaidAt >= historicalStart && p.PaidAt <= now)
-            .GroupBy(p => p.PaidAt.Date)
-            .Select(g => new { Date = g.Key, Amount = g.Sum(p => p.Amount) })
+        // Se calcula SIEMPRE (igual que costsThisMonth en GetDashboardAsync) y se enmascara recien mas
+        // abajo, al armar cada dia — asi el resto del metodo no se llena de "if canSeeCost" repetidos.
+        var cashOutRaw = await (
+            from p in _dbContext.SupplierPayments
+            join reservaPadre in _dbContext.Reservas on p.ReservaId equals reservaPadre.Id into reservaJoin
+            from reservaPadre in reservaJoin.DefaultIfEmpty()
+            where p.PaidAt >= historicalStart && p.PaidAt <= now
+                && (scope.OwnerFilter == null || (reservaPadre != null && reservaPadre.ResponsibleUserId == scope.OwnerFilter))
+            group p by new { Date = p.PaidAt.Date, p.Currency } into g
+            select new DayCurrencyAmount(g.Key.Date, g.Key.Currency, g.Sum(x => x.Amount)))
             .ToListAsync(cancellationToken);
 
-        // Build historical daily entries
+        // Enmascarado R3: sin cobranzas.see_cost, los pagos a operadores quedan totalmente AFUERA (no
+        // en 0 — afuera), asi el resto del metodo ya trabaja con la version segura y no puede
+        // "olvidarse" de enmascarar en algun punto.
+        var cashOutEffective = scope.CanSeeCost ? cashOutRaw : new List<DayCurrencyAmount>();
+
+        // Solo las monedas que de verdad tuvieron movimiento en la ventana (mismo espiritu que el resto
+        // del dashboard por moneda: no se inventa una linea de USD en $0 si nunca hubo un pago en USD).
+        // Se recorre en el orden canonico ARS/USD (Monedas.Soportadas) para que el front siempre reciba
+        // las monedas en el mismo orden.
+        var currenciesWithMovement = Monedas.Soportadas
+            .Where(currency => cashInRaw.Any(x => x.Currency == currency) || cashOutEffective.Any(x => x.Currency == currency))
+            .ToList();
+
+        var runningBalanceByCurrency = currenciesWithMovement.ToDictionary(c => c, _ => 0m);
+
         var historical = new List<CashFlowDayDto>();
-        decimal runningBalance = 0;
         for (var date = historicalStart; date <= now; date = date.AddDays(1))
         {
-            var cashIn = cashInByDay.FirstOrDefault(c => c.Date == date)?.Amount ?? 0;
-            var cashOut = cashOutByDay.FirstOrDefault(c => c.Date == date)?.Amount ?? 0;
-            runningBalance += cashIn - cashOut;
-            historical.Add(new CashFlowDayDto(DateTime.SpecifyKind(date, DateTimeKind.Utc), cashIn, cashOut, runningBalance));
+            var day = BuildCashFlowDay(date, currenciesWithMovement, runningBalanceByCurrency,
+                currency => cashInRaw.FirstOrDefault(x => x.Date == date && x.Currency == currency)?.Amount ?? 0m,
+                currency => cashOutEffective.FirstOrDefault(x => x.Date == date && x.Currency == currency)?.Amount ?? 0m);
+            historical.Add(day);
         }
 
-        // Projection: use average daily cash in/out from last 30 days
-        var avgDailyCashIn = cashInByDay.Any() ? cashInByDay.Sum(c => c.Amount) / 30m : 0m;
-        var avgDailyCashOut = cashOutByDay.Any() ? cashOutByDay.Sum(c => c.Amount) / 30m : 0m;
+        // Proyeccion: promedio diario de cobros/pagos de los ultimos 30 dias, por moneda.
+        var avgDailyCashInByCurrency = currenciesWithMovement.ToDictionary(
+            c => c, c => cashInRaw.Where(x => x.Currency == c).Sum(x => x.Amount) / 30m);
+        var avgDailyCashOutByCurrency = currenciesWithMovement.ToDictionary(
+            c => c, c => cashOutEffective.Where(x => x.Currency == c).Sum(x => x.Amount) / 30m);
 
         var projected = new List<CashFlowDayDto>();
-        var projectedBalance = runningBalance;
-        for (int i = 1; i <= Math.Max(days, 90); i++)
+        var horizonDays = Math.Max(days, 90);
+        for (int i = 1; i <= horizonDays; i++)
         {
             var date = now.AddDays(i);
-            projectedBalance += avgDailyCashIn - avgDailyCashOut;
-            projected.Add(new CashFlowDayDto(DateTime.SpecifyKind(date, DateTimeKind.Utc), avgDailyCashIn, avgDailyCashOut, projectedBalance));
+            var day = BuildCashFlowDay(date, currenciesWithMovement, runningBalanceByCurrency,
+                currency => avgDailyCashInByCurrency[currency],
+                currency => avgDailyCashOutByCurrency[currency]);
+            projected.Add(day);
         }
+
+        var currentBalance = historical.Count > 0 ? historical[^1].RunningBalance : 0m;
+        var lastProjectedBalance = projected.Count > 0 ? projected[^1].RunningBalance : currentBalance;
 
         return new CashFlowProjectionResponse(
             Historical: historical,
             Projected: projected,
-            CurrentBalance: runningBalance,
-            ProjectedBalance30: projected.Count >= 30 ? projected[29].RunningBalance : projectedBalance,
-            ProjectedBalance60: projected.Count >= 60 ? projected[59].RunningBalance : projectedBalance,
-            ProjectedBalance90: projected.Count >= 90 ? projected[89].RunningBalance : projectedBalance
+            CurrentBalance: currentBalance,
+            ProjectedBalance30: projected.Count >= 30 ? projected[29].RunningBalance : lastProjectedBalance,
+            ProjectedBalance60: projected.Count >= 60 ? projected[59].RunningBalance : lastProjectedBalance,
+            ProjectedBalance90: projected.Count >= 90 ? projected[89].RunningBalance : lastProjectedBalance
         );
+    }
+
+    /// <summary>
+    /// Arma UN dia de la curva de caja (historica o proyectada): suma cobro/pago de cada moneda,
+    /// actualiza el saldo acumulado POR MONEDA (<paramref name="runningBalanceByCurrency"/>, se modifica
+    /// en el lugar porque el acumulado tiene que seguir sumando dia tras dia) y devuelve tanto el
+    /// desglose por moneda como los escalares legacy (suma de todas las monedas, ver el docstring de
+    /// <see cref="GetCashFlowProjectionAsync"/> sobre por que se conservan).
+    /// </summary>
+    private static CashFlowDayDto BuildCashFlowDay(
+        DateTime date,
+        List<string> currencies,
+        Dictionary<string, decimal> runningBalanceByCurrency,
+        Func<string, decimal> cashInForCurrency,
+        Func<string, decimal> cashOutForCurrency)
+    {
+        var cashInByCurrency = new List<CurrencyAmount>();
+        var cashOutByCurrency = new List<CurrencyAmount>();
+        var runningBalanceByCurrencyList = new List<CurrencyAmount>();
+        decimal cashInTotal = 0m;
+        decimal cashOutTotal = 0m;
+
+        foreach (var currency in currencies)
+        {
+            var cashIn = cashInForCurrency(currency);
+            var cashOut = cashOutForCurrency(currency);
+            runningBalanceByCurrency[currency] += cashIn - cashOut;
+
+            cashInByCurrency.Add(new CurrencyAmount(currency, cashIn));
+            cashOutByCurrency.Add(new CurrencyAmount(currency, cashOut));
+            runningBalanceByCurrencyList.Add(new CurrencyAmount(currency, runningBalanceByCurrency[currency]));
+
+            cashInTotal += cashIn;
+            cashOutTotal += cashOut;
+        }
+
+        return new CashFlowDayDto(
+            DateTime.SpecifyKind(date, DateTimeKind.Utc),
+            cashInTotal,
+            cashOutTotal,
+            runningBalanceByCurrency.Values.Sum(),
+            cashInByCurrency,
+            cashOutByCurrency,
+            runningBalanceByCurrencyList);
     }
 
     public async Task<YearOverYearResponse> GetYearOverYearAsync(CancellationToken cancellationToken)
