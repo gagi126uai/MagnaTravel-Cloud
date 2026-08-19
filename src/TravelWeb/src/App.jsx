@@ -21,7 +21,11 @@ import PaymentsMovementsPage from "./features/payments/pages/PaymentsMovementsPa
 import PaymentsPendingPage from "./features/payments/pages/PaymentsPendingPage";
 import MessagesPage from "./features/messages/pages/MessagesPage";
 import CashPage from "./features/payments/pages/CashPage";
-import SettingsPage from "./pages/SettingsPage";
+// Rediseño de Configuración "Mezcla A+B" (spec firmada 2026-08-18): la vieja
+// SettingsPage.jsx (pestañas horizontales, sin ruta propia) se reemplaza por dos
+// pantallas con ruta real — Portada (/settings) y Sección (/settings/:slug).
+import SettingsHomePage from "./features/settings/pages/SettingsHomePage";
+import SettingsSectionPage from "./features/settings/pages/SettingsSectionPage";
 import SuppliersPage from "./features/suppliers/pages/SuppliersPage";
 import SupplierAccountPage from "./features/suppliers/pages/SupplierAccountPage";
 import ReportsPage from "./pages/ReportsPage";
@@ -305,7 +309,11 @@ export default function App() {
                     />
                     <Route
                       path="/settings"
-                      element={hasPermission("configuracion.view") ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
+                      element={hasPermission("configuracion.view") ? <SettingsHomePage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
+                      path="/settings/:slug"
+                      element={hasPermission("configuracion.view") ? <SettingsSectionPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route
                       path="/analytics"
