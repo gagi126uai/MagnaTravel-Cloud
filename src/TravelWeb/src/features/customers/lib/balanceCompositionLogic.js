@@ -160,14 +160,58 @@ export function construirFotoDeSaldo(composicion, unappliedCreditByCurrency = []
 }
 
 /**
- * True si corresponde mostrar el botón "Usar saldo a favor" para UNA moneda puntual:
- * crédito a favor > 0 en esa moneda Y el usuario tiene permiso `cobranzas.edit` (el
- * permiso ya viene evaluado por el caller, esta función no conoce el sistema de auth).
+ * Tanda 2 (rediseño molde unificado de cuentas corrientes, 2026-08-18/19, spec §2.0/§2.1):
+ * el botón "Usar saldo a favor" se muda de la foto de saldo a la CABECERA de la pantalla
+ * (antes vivía adentro de cada tarjeta de moneda). Esta función arma la lista de monedas
+ * que necesitan su propio botón — sigue siendo "una por moneda" porque en el caso raro de
+ * tener crédito en pesos Y en dólares a la vez, cada botón abre la ficha inline de SU
+ * moneda (nunca se mezclan en un solo flujo). El permiso `cobranzas.edit` lo evalúa el
+ * caller (la página), acá solo importa si hay plata de verdad para usar.
  *
- * @param {{ creditoAFavor: number, canUsarSaldo: boolean }} params
+ * @param {Array<{currency:string, creditoAFavor:number}>} composicion - summary.balanceCompositionByCurrency
+ * @returns {string[]} monedas con crédito a favor consumible (> 0)
  */
-export function debeMostrarBotonUsarSaldo({ creditoAFavor, canUsarSaldo }) {
-  return Number(creditoAFavor ?? 0) > EPS && canUsarSaldo === true;
+export function obtenerMonedasConCreditoDisponible(composicion) {
+  const items = Array.isArray(composicion) ? composicion : [];
+  return items
+    .filter((item) => Number(item?.creditoAFavor ?? 0) > EPS)
+    .map((item) => item.currency);
+}
+
+/**
+ * Palabra de estado que acompaña al número grande de la franja de saldo (glosario
+ * firmado 18/08, spec §2.0): "Te debe" en rojo, "A favor" en verde, "Al día"
+ * en gris — nunca la palabra genérica "debe"/"a favor" sola, porque esta pantalla es la
+ * cuenta corriente del CLIENTE y hay que dejar sin ambigüedad quién le debe a quién
+ * (la cuenta del operador usa otras palabras, "Le debés"/"A favor", que NO viven acá).
+ *
+ * @param {"rose"|"emerald"|"neutral"} tono - mismo token que ya arma `construirFotoDeSaldo`
+ *   en `saldoPorMoneda[moneda].tono`.
+ * @returns {"Te debe"|"A favor"|"Al día"}
+ */
+export function resolverPalabraSaldoCliente(tono) {
+  if (tono === "rose") return "Te debe";
+  if (tono === "emerald") return "A favor";
+  return "Al día";
+}
+
+/**
+ * Ordena una lista de monedas (strings, no objetos) para que "ARS" siempre aparezca
+ * primero y "USD" después — mismo criterio que ya usa `ordenarBloquesPesosPrimero`
+ * (features/suppliers/lib/supplierPageLogic.js) para los recuadros del operador, pero
+ * trabajando sobre `foto.monedas` (un array de códigos, no de objetos con `.currency`).
+ * Cualquier moneda futura que no sea ARS/USD queda al final, en el orden que ya traía.
+ *
+ * @param {string[]} monedas
+ * @returns {string[]} copia ordenada (nunca muta el array de entrada)
+ */
+export function ordenarMonedasPesosPrimero(monedas) {
+  const lista = Array.isArray(monedas) ? monedas : [];
+  return [...lista].sort((a, b) => {
+    if (a === "USD" && b !== "USD") return 1;
+    if (b === "USD" && a !== "USD") return -1;
+    return 0;
+  });
 }
 
 /**

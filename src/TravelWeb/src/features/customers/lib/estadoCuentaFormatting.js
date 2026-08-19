@@ -82,3 +82,33 @@ export function formatCierreExtracto(saldoCierre, currency) {
   }
   return `Saldo al día: ${formatCurrency(0, currency)}`;
 }
+
+/**
+ * Tanda 2 (rediseño molde unificado, 2026-08-18/19, spec §2.0): filtro por moneda
+ * ("Todas" / "Pesos" / "Dólares") arriba de la tabla del extracto. Filtra los bloques
+ * YA CARGADOS del extracto — no pide de nuevo al servidor, es una selección de qué
+ * mostrar en pantalla sobre datos que ya llegaron.
+ *
+ * @param {Array<{currency:string}>} bloques - estadoCuenta.currencies
+ * @param {"todas"|string} monedaSeleccionada - "todas" o un código de moneda puntual
+ * @returns {Array<{currency:string}>}
+ */
+export function filtrarBloquesPorMoneda(bloques, monedaSeleccionada) {
+  const lista = Array.isArray(bloques) ? bloques : [];
+  if (!monedaSeleccionada || monedaSeleccionada === "todas") return lista;
+  return lista.filter((bloque) => bloque?.currency === monedaSeleccionada);
+}
+
+/**
+ * Monedas que tienen al menos un movimiento en el extracto (spec §2.0: "si solo hay una
+ * moneda con movimientos, no se muestra el filtro" — un bloque presente pero vacío, ej.
+ * un cliente que solo compró en pesos pero también tiene un bloque USD sin líneas, NO
+ * cuenta para decidir si el filtro aparece).
+ *
+ * @param {Array<{currency:string, lines?:Array}>} bloques
+ * @returns {string[]}
+ */
+export function obtenerMonedasConMovimientosExtracto(bloques) {
+  const lista = Array.isArray(bloques) ? bloques : [];
+  return lista.filter((bloque) => (bloque?.lines?.length ?? 0) > 0).map((bloque) => bloque.currency);
+}

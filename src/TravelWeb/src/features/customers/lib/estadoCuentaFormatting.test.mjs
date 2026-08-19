@@ -7,7 +7,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatEtiquetaDocumentoExtracto, formatCierreExtracto } from "./estadoCuentaFormatting.js";
+import {
+  formatEtiquetaDocumentoExtracto,
+  formatCierreExtracto,
+  filtrarBloquesPorMoneda,
+  obtenerMonedasConMovimientosExtracto,
+} from "./estadoCuentaFormatting.js";
 
 test("Invoice → 'Factura {número}'", () => {
   const texto = formatEtiquetaDocumentoExtracto({ kind: "Invoice", documentRef: "0001-00009" });
@@ -76,4 +81,50 @@ test("diferencia de un centavo por redondeo → se trata como 0 (tolerancia)", (
 test("USD usa el símbolo US$", () => {
   const texto = formatCierreExtracto(300, "USD");
   assert.ok(texto.includes("US$"));
+});
+
+// ============================================================================
+// Tanda 2 (rediseño molde unificado, 2026-08-18/19): filtro por moneda del extracto
+// ============================================================================
+
+test("filtrarBloquesPorMoneda - 'todas' devuelve todos los bloques sin tocar", () => {
+  const bloques = [{ currency: "ARS" }, { currency: "USD" }];
+  assert.deepEqual(filtrarBloquesPorMoneda(bloques, "todas"), bloques);
+});
+
+test("filtrarBloquesPorMoneda - sin selección (null/undefined) devuelve todos, como 'todas'", () => {
+  const bloques = [{ currency: "ARS" }, { currency: "USD" }];
+  assert.deepEqual(filtrarBloquesPorMoneda(bloques, null), bloques);
+  assert.deepEqual(filtrarBloquesPorMoneda(bloques, undefined), bloques);
+});
+
+test("filtrarBloquesPorMoneda - una moneda puntual deja solo ese bloque", () => {
+  const bloques = [{ currency: "ARS" }, { currency: "USD" }];
+  assert.deepEqual(filtrarBloquesPorMoneda(bloques, "USD"), [{ currency: "USD" }]);
+});
+
+test("filtrarBloquesPorMoneda - sin bloques no revienta", () => {
+  assert.deepEqual(filtrarBloquesPorMoneda(null, "ARS"), []);
+  assert.deepEqual(filtrarBloquesPorMoneda(undefined, "ARS"), []);
+});
+
+test("obtenerMonedasConMovimientosExtracto - solo cuenta bloques con al menos una línea", () => {
+  const bloques = [
+    { currency: "ARS", lines: [{ id: 1 }] },
+    { currency: "USD", lines: [] },
+  ];
+  assert.deepEqual(obtenerMonedasConMovimientosExtracto(bloques), ["ARS"]);
+});
+
+test("obtenerMonedasConMovimientosExtracto - dos monedas con movimientos → las dos", () => {
+  const bloques = [
+    { currency: "ARS", lines: [{ id: 1 }] },
+    { currency: "USD", lines: [{ id: 2 }] },
+  ];
+  assert.deepEqual(obtenerMonedasConMovimientosExtracto(bloques), ["ARS", "USD"]);
+});
+
+test("obtenerMonedasConMovimientosExtracto - sin bloques no revienta", () => {
+  assert.deepEqual(obtenerMonedasConMovimientosExtracto(null), []);
+  assert.deepEqual(obtenerMonedasConMovimientosExtracto(undefined), []);
 });

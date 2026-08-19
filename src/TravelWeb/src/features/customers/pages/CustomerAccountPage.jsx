@@ -1,36 +1,41 @@
 /**
- * Cuenta corriente del cliente — 4 solapas.
+ * Cuenta corriente del cliente — molde unificado de cuentas corrientes (Tanda 2,
+ * spec `docs/ux/2026-08-18-spec-dashboard-y-cuentas-corrientes.md`, §2.0/§2.1, firmada
+ * 18/08). Mismo esqueleto que va a usar la cuenta del operador en otra tanda: cabecera
+ * con link de vuelta + chip de condición fiscal, foto de saldo en tarjetas por moneda,
+ * solapas subrayadas con ícono, extracto con filtro por moneda.
  *
- * Layout (Tanda D2, spec `docs/ux/2026-07-16-extracto-profesional-cuenta-cliente.md`):
- *   ┌── Barra superior ──────────────────────────────────────────────────────────┐
- *   │  ← Nombre + contactos + CUIT/DNI (una línea sobria, sin avatar)  [+Nuevo]  │
- *   ├── Foto de saldo (UN recuadro, una columna por moneda) ─────────────────────┤
- *   │  Facturado sin cobrar / Multas abiertas / Crédito a favor / SALDO         │
- *   │  + botón "Usar saldo a favor" (ficha inline) + lista de aplicaciones      │
- *   └──────────────────────────────────────────────────────────────────────────┘
- *   ┌── Solapas ───────────────────────────────────────────────────────────────┐
- *   │  Reservas  │  Estado de cuenta (default)  │  Facturación  │  Datos bancarios│
+ * Layout:
+ *   ┌── Cabecera ────────────────────────────────────────────────────────────────┐
+ *   │  ← Clientes                                                                │
+ *   │  Nombre del cliente                    [Usar saldo a favor] [+ Nuevo pres.]│
+ *   │  [Condición fiscal] · CUIT/DNI · teléfono · email                          │
+ *   ├── Foto de saldo (una tarjeta por moneda, franja + desglose) ───────────────┤
+ *   │  EN PESOS │ Facturado sin cobrar / Multas abiertas (si hay) / Crédito favor│
+ *   ├── Solapas (ícono 16px + subrayado primary) ────────────────────────────────┤
+ *   │  Estado de cuenta (default) · Reservas · Facturación · Datos banc. · Datos │
  *   └──────────────────────────────────────────────────────────────────────────┘
  *
- * Decisiones de diseño (spec sec.3, 2026-06-28 + rediseño 2026-07-16):
+ * Decisiones de diseño heredadas de tandas anteriores (siguen vigentes):
  *   P10=A: solapa del dinero se llama "Estado de cuenta".
  *   P11=A: datos bancarios del cliente en su propia solapa "Datos bancarios".
  *   Nombre "Facturación" (no "Facturación AFIP": AFIP/ARCA solo aparece en el chip de cada comprobante).
- *   (2026-07-16, P2/P3=A) Las 4 tarjetitas de resumen (Documentado/Cobrado/Reservas/
- *   Comprobantes) y los carteles sueltos ("Debe en $", "A FAVOR", "Crédito no aplicado",
- *   "Multa pendiente de cobro") se REEMPLAZAN por una única "foto de saldo"
- *   (FotoDeSaldoCuenta) que ya incluye las multas en su composición — ver §7 de la spec.
+ *   La foto de saldo (FotoDeSaldoCuenta) ya incluye las multas en su composición — el
+ *   front nunca recalcula saldos, solo pinta lo que manda balanceCompositionByCurrency.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle,
-  ArrowLeft,
+  Briefcase,
+  CreditCard,
+  FileText,
+  Landmark,
   Loader2,
-  Mail,
-  Phone,
   Receipt,
+  Settings,
   Undo2,
+  Wallet,
 } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
@@ -66,7 +71,8 @@ import { getMoneyStatus, isReservaAnulada } from "../../reservas/moneyStatus";
 import { formatTipoComprobante } from "../lib/facturacionFilters";
 import { resolverFilaReservaAnuladaCuenta } from "../lib/pendingPenaltiesLogic";
 import { prefijoDestinoAplicacionSaldo } from "../lib/creditWithdrawalLogic";
-import { debeMostrarBannerDatosFiscales } from "../lib/datosClienteLogic";
+import { debeMostrarBannerDatosFiscales, mapearCondicionFiscalATexto } from "../lib/datosClienteLogic";
+import { obtenerMonedasConCreditoDisponible } from "../lib/balanceCompositionLogic";
 import { EstadoCuentaClienteTab } from "../components/EstadoCuentaClienteTab";
 import { FacturacionClienteTab } from "../components/FacturacionClienteTab";
 import { DatosClienteTab } from "../components/DatosClienteTab";
@@ -228,6 +234,12 @@ export default function CustomerAccountPage() {
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
 
+  // ── Condición fiscal para el chip de cabecera (molde unificado, spec §2.0) ─
+  // El overview de la cuenta (GET .../account) NO trae taxConditionId (ver docstring
+  // de DatosClienteTab) — se pide UNA vez, aparte, al mismo endpoint que ya usa esa
+  // solapa (GET /customers/{id}), sin tocar el backend ni duplicar lógica de negocio.
+  const [customerTaxConditionId, setCustomerTaxConditionId] = useState(null);
+
   // ── Solapa activa — default "estadoDeCuenta" (decisión UX P12=A) ──────────
   const [activeTab, setActiveTab] = useState("estadoDeCuenta");
 
@@ -288,6 +300,18 @@ export default function CustomerAccountPage() {
     }
   }, [publicId]);
 
+  // Carga la condición fiscal para el chip de cabecera (no bloquea la pantalla si falla:
+  // el chip simplemente no se muestra, igual que hace el resto de los datos auxiliares).
+  const loadCustomerTaxCondition = useCallback(async () => {
+    try {
+      const response = await api.get(`/customers/${publicId}`);
+      setCustomerTaxConditionId(response?.taxConditionId ?? null);
+    } catch (error) {
+      console.warn("[CustomerAccountPage] No se pudo cargar la condición fiscal");
+      setCustomerTaxConditionId(null);
+    }
+  }, [publicId]);
+
   // Carga deuda por reserva para el picker de "Aplicar saldo a reserva específica"
   const loadDeudaClientePorReserva = useCallback(async () => {
     try {
@@ -295,7 +319,7 @@ export default function CustomerAccountPage() {
       setDeudaClientePorReserva(response?.reservas ?? []);
     } catch (error) {
       // No bloquea la pantalla: el picker quedará vacío si falla
-      console.warn("[CustomerAccountPage] No se pudo cargar deuda por reserva:", error?.message);
+      console.warn("[CustomerAccountPage] No se pudo cargar deuda por reserva");
       setDeudaClientePorReserva([]);
     }
   }, [publicId]);
@@ -307,7 +331,7 @@ export default function CustomerAccountPage() {
       const creditOverview = await api.get(`/customers/${publicId}/credit`);
       setCreditApplications(Array.isArray(creditOverview?.activeApplications) ? creditOverview.activeApplications : []);
     } catch (error) {
-      console.warn("[CustomerAccountPage] No se pudo cargar aplicaciones de saldo:", error?.message);
+      console.warn("[CustomerAccountPage] No se pudo cargar aplicaciones de saldo");
       setCreditApplications([]);
     } finally {
       setLoadingCreditApplications(false);
@@ -387,7 +411,8 @@ export default function CustomerAccountPage() {
     loadOverview();
     loadCreditApplications();
     loadDeudaClientePorReserva();
-  }, [loadOverview, loadCreditApplications, loadDeudaClientePorReserva]);
+    loadCustomerTaxCondition();
+  }, [loadOverview, loadCreditApplications, loadDeudaClientePorReserva, loadCustomerTaxCondition]);
 
   // Carga el extracto (Estado de cuenta) al montar, cuando cambia el cliente,
   // y cada vez que extractoRefreshKey sube (refreshAll lo incrementa tras un cobro).
@@ -492,6 +517,19 @@ export default function CustomerAccountPage() {
   const customer = overview?.customer;
   const reservas = reservasPage.items || [];
 
+  // Chip de condición fiscal de la cabecera (molde unificado, spec §2.0): solo se
+  // pinta si YA sabemos el código — mientras carga o si el cliente no lo tiene
+  // cargado, el chip no aparece (nunca se inventa una condición fiscal en pantalla).
+  const condicionFiscalTexto =
+    customerTaxConditionId != null ? mapearCondicionFiscalATexto(customerTaxConditionId) : null;
+
+  // Botón(es) "Usar saldo a favor" de la cabecera: uno por moneda con crédito
+  // consumible (spec §2.1, mismo criterio que ya usaba la foto de saldo antes de
+  // mudarse a la cabecera — ver obtenerMonedasConCreditoDisponible).
+  const monedasConCredito = hasPermission("cobranzas.edit")
+    ? obtenerMonedasConCreditoDisponible(summary.balanceCompositionByCurrency)
+    : [];
+
   // Reservas sin cancelar: para el picker del modal de cobro
   const availableReservas = deudaClientePorReserva || [];
 
@@ -516,62 +554,93 @@ export default function CustomerAccountPage() {
 
   return (
     <div className="space-y-6">
-      {/* ── Barra superior: identidad sobria (P3=A, sin avatar) + acción de cabecera ── */}
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/customers")}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{customer?.fullName}</h1>
-            {/* Una sola línea sobria: nombre + contactos + CUIT/DNI (spec 2026-07-16, P3=A).
-                Antes había un círculo gigante con la inicial + tarjetas repetidas; el
-                nombre ya lo dice el título de arriba, esto solo agrega el contacto. */}
-            <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-500 dark:text-slate-400">
-              {customer?.email && (
-                <span className="flex items-center gap-1">
-                  <Mail className="h-3.5 w-3.5" /> {customer.email}
+      {/* ── Barra superior: molde unificado de cuentas corrientes (spec §2.0) ──── */}
+      <div className="space-y-4">
+        {/* Volver al listado: link de texto (13px/600, primary), no botón-icono —
+            mismo patrón que ya usa la cabecera de Configuración. */}
+        <Link
+          to="/customers"
+          className="inline-flex items-center gap-1 text-[13px] font-semibold text-primary hover:underline"
+        >
+          ← Clientes
+        </Link>
+
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+              {customer?.fullName}
+            </h1>
+            {/* Una sola línea: chip de condición fiscal + resto de contacto separado por
+                puntos (spec §2.0) — reemplaza la línea de íconos Mail/Phone de antes. */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+              {condicionFiscalTexto && (
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {condicionFiscalTexto}
                 </span>
               )}
-              {customer?.phone && (
-                <span className="flex items-center gap-1">
-                  <Phone className="h-3.5 w-3.5" /> {customer.phone}
-                </span>
-              )}
-              {customer?.taxId && <span>CUIT/DNI {customer.taxId}</span>}
+              {[
+                customer?.email || null,
+                customer?.phone || null,
+                customer?.taxId ? `CUIT/DNI ${customer.taxId}` : null,
+              ]
+                .filter(Boolean)
+                .map((dato, idx) => (
+                  <span key={`${dato}-${idx}`} className="flex items-center gap-2">
+                    {idx > 0 && <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">·</span>}
+                    {dato}
+                  </span>
+                ))}
             </div>
           </div>
-        </div>
 
-        {/* La propuesta nueva nace en el circuito único Reserva-Presupuesto. */}
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => navigate(`/reservas?create=1&customerPublicId=${publicId}`)}
-          className="gap-2"
-          disabled={databaseUnavailable}
-        >
-          <Receipt className="h-4 w-4" />
-          Nuevo presupuesto
-        </Button>
+          {/* Acciones de cabecera: "Usar saldo a favor" (una por moneda con crédito,
+              spec §2.1) + único botón relleno de la pantalla, "+ Nuevo presupuesto"
+              (B.3 regla de oro #2 — antes era outline, dejaba la pantalla sin ningún
+              botón principal). Mobile (spec §2.3): ancho completo, apiladas en columna,
+              en el MISMO orden que la maqueta firmada. */}
+          <div className="flex w-full flex-shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+            {monedasConCredito.map((moneda) => (
+              <Button
+                key={moneda}
+                type="button"
+                variant="outline"
+                onClick={() => setMonedaFichaUsarSaldo(monedaFichaUsarSaldo === moneda ? null : moneda)}
+                className="w-full gap-2 sm:w-auto"
+                data-testid={`usar-saldo-btn-${moneda}`}
+              >
+                <Wallet className="h-4 w-4" aria-hidden="true" />
+                {monedaFichaUsarSaldo === moneda
+                  ? "Cerrar"
+                  : monedasConCredito.length > 1
+                  ? `Usar saldo a favor (${moneda === "USD" ? "US$" : "$"})`
+                  : "Usar saldo a favor"}
+              </Button>
+            ))}
+            {/* La propuesta nueva nace en el circuito único Reserva-Presupuesto. */}
+            <Button
+              type="button"
+              onClick={() => navigate(`/reservas?create=1&customerPublicId=${publicId}`)}
+              className="w-full gap-2 sm:w-auto"
+              disabled={databaseUnavailable}
+            >
+              <Receipt className="h-4 w-4" />
+              Nuevo presupuesto
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/*
-        ── Foto de saldo (Tanda D2, spec 2026-07-16) ───────────────────────────
-        UN solo recuadro reemplaza las 4 tarjetitas (Documentado/Cobrado/Reservas/
-        Comprobantes) + los carteles sueltos (chip "Debe", "A FAVOR", "Crédito no
-        aplicado", "Multa pendiente de cobro"). La composición YA incluye las multas
-        (summary.balanceCompositionByCurrency) — el front no vuelve a sumar nada.
+        ── Foto de saldo (molde unificado, spec §2.0/§2.1) ─────────────────────
+        Una tarjeta por moneda (ARS primero) con la franja del saldo neto + el
+        desglose. La composición YA incluye las multas (summary.balanceCompositionByCurrency)
+        — el front no vuelve a sumar nada. El botón "Usar saldo a favor" ya NO vive acá,
+        se mudó a la cabecera de arriba (ver monedasConCredito).
       */}
       <FotoDeSaldoCuenta
         composicion={summary.balanceCompositionByCurrency}
         unappliedCreditByCurrency={summary.unappliedCreditByCurrency}
         loading={loadingOverview}
-        canUsarSaldo={hasPermission("cobranzas.edit")}
-        monedaFichaAbierta={monedaFichaUsarSaldo}
-        onToggleUsarSaldo={(moneda) =>
-          setMonedaFichaUsarSaldo(monedaFichaUsarSaldo === moneda ? null : moneda)
-        }
       />
 
       {/* Ficha inline "Usar saldo a favor": cuelga de la foto de saldo (EN LÍNEA, nunca
@@ -761,34 +830,37 @@ export default function CustomerAccountPage() {
 
       {/* ── Solapas ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4">
-        {/* Barra de solapas con data-testid estables */}
-        <div className="flex flex-wrap gap-6 border-b border-slate-200 dark:border-slate-800">
+        {/* Barra de solapas, molde subrayado (spec §2.0, como la ficha de reserva):
+            ícono 16px + palabra, línea primary de 2px debajo de la activa. Reordenada
+            para que "Estado de cuenta" (el default) quede primero — el operador NO se
+            reordena (spec §2.1, "solo las del cliente se reordenan"). Scroll horizontal
+            en mobile (scrollbar-hide), mismo patrón que ya usa la ficha de reserva. */}
+        <div className="scrollbar-hide flex gap-6 overflow-x-auto border-b border-slate-200 dark:border-slate-800">
           {[
-            { key: "reservas", label: "Reservas", count: summary.reservaCount || 0 },
-            { key: "estadoDeCuenta", label: "Estado de cuenta", count: null },
-            { key: "facturacion", label: "Facturación", count: summary.invoiceCount || 0 },
-            { key: "datosBancarios", label: "Datos bancarios", count: null },
-            { key: "datos", label: "Datos", count: null },
+            { key: "estadoDeCuenta", label: "Estado de cuenta", count: null, icon: CreditCard },
+            { key: "reservas", label: "Reservas", count: summary.reservaCount || 0, icon: Briefcase },
+            { key: "facturacion", label: "Facturación", count: summary.invoiceCount || 0, icon: FileText },
+            { key: "datosBancarios", label: "Datos bancarios", count: null, icon: Landmark },
+            { key: "datos", label: "Datos", count: null, icon: Settings },
           ].map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setActiveTab(tab.key)}
-              className={`relative pb-4 text-sm font-semibold transition-colors ${
+              className={`relative flex items-center gap-2 whitespace-nowrap pb-4 text-sm font-semibold transition-colors ${
                 activeTab === tab.key
                   ? "text-primary"
                   : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
               }`}
               data-testid={`tab-${tab.key}`}
             >
-              <span className="flex items-center gap-2">
-                {tab.label}
-                {tab.count !== null && (
-                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500 dark:bg-slate-800">
-                    {tab.count}
-                  </span>
-                )}
-              </span>
+              <tab.icon className="h-4 w-4" aria-hidden="true" />
+              {tab.label}
+              {tab.count !== null && (
+                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500 dark:bg-slate-800">
+                  {tab.count}
+                </span>
+              )}
               {activeTab === tab.key && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" />
               )}
@@ -1006,7 +1078,9 @@ export default function CustomerAccountPage() {
               customerPublicId={publicId}
               taxIdLocked={overview?.taxIdLocked}
               canEdit={hasPermission("clientes.edit")}
-              onGuardado={loadOverview}
+              // Editar acá puede cambiar la condición fiscal: recargamos overview (banner
+              // ámbar) Y el chip de cabecera, para que ninguno quede desactualizado.
+              onGuardado={() => { loadOverview(); loadCustomerTaxCondition(); }}
               hayFichaPrimariaAbierta={Boolean(monedaFichaUsarSaldo)}
             />
           </div>

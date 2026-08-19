@@ -46,12 +46,18 @@
  *   - onNuevaCobranza(): abre el modal para registrar un nuevo cobro
  *   - canRegistrarCobranza: boolean — si el usuario tiene permiso para registrar cobros
  */
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { BookOpen, Loader2, Plus, RefreshCw } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
-import { formatEtiquetaDocumentoExtracto, formatCierreExtracto } from "../lib/estadoCuentaFormatting";
+import {
+  formatEtiquetaDocumentoExtracto,
+  formatCierreExtracto,
+  filtrarBloquesPorMoneda,
+  obtenerMonedasConMovimientosExtracto,
+} from "../lib/estadoCuentaFormatting";
 import {
   DataGrid,
   DataGridBody,
@@ -81,6 +87,16 @@ export function EstadoCuentaClienteTab({
 }) {
   const bloques = estadoCuenta?.currencies ?? [];
   const totalLineas = bloques.reduce((acc, bloque) => acc + (bloque.lines?.length ?? 0), 0);
+
+  // Filtro por moneda (molde unificado, spec §2.0): "Todas" arranca seleccionado.
+  // Solo se MUESTRA el filtro si hay más de una moneda con movimientos reales — filtrar
+  // entre "Pesos" y "Dólares" no tiene sentido si el cliente solo compró en una.
+  const [monedaFiltro, setMonedaFiltro] = useState("todas");
+  // useMemo: bloques cambia en cada carga del extracto, no hace falta recalcular esta
+  // lista en cada render de la solapa si bloques no cambió.
+  const monedasConMovimientos = useMemo(() => obtenerMonedasConMovimientosExtracto(bloques), [bloques]);
+  const mostrarFiltroMoneda = monedasConMovimientos.length > 1;
+  const bloquesAMostrar = filtrarBloquesPorMoneda(bloques, monedaFiltro);
 
   if (loading) {
     return (
@@ -142,15 +158,54 @@ export function EstadoCuentaClienteTab({
         </div>
       )}
 
+      {/* Filtro por moneda ("Todas" / "Pesos" / "Dólares", spec §2.0) — pills, no
+          desplegable, para que se vea de un vistazo cuál está activo. */}
+      {mostrarFiltroMoneda && (
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar extracto por moneda">
+          <PildoraFiltroMoneda
+            activo={monedaFiltro === "todas"}
+            onClick={() => setMonedaFiltro("todas")}
+            label="Todas"
+          />
+          {monedasConMovimientos.map((moneda) => (
+            <PildoraFiltroMoneda
+              key={moneda}
+              activo={monedaFiltro === moneda}
+              onClick={() => setMonedaFiltro(moneda)}
+              label={moneda === "USD" ? "Dólares" : "Pesos"}
+            />
+          ))}
+        </div>
+      )}
+
       {/*
         Un bloque por moneda (el orden lo decide el servidor).
         Regla multimoneda: ARS y USD nunca se mezclan ni se suman.
         Si solo hay movimientos en una moneda, solo aparece ese bloque.
       */}
-      {bloques.map((bloque) => (
+      {bloquesAMostrar.map((bloque) => (
         <BloqueExtractoCliente key={bloque.currency} bloque={bloque} />
       ))}
     </div>
+  );
+}
+
+// ─── Pill del filtro de moneda ────────────────────────────────────────────────
+
+function PildoraFiltroMoneda({ activo, onClick, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={activo}
+      className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+        activo
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -185,7 +240,10 @@ function BloqueExtractoCliente({ bloque }) {
         <DataGridHeader>
           <DataGridHeaderRow>
             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-            <DataGridHeaderCell>Documento</DataGridHeaderCell>
+            {/* Molde unificado (spec §2.0): la columna se llama "Detalle" — sigue mostrando
+                lo mismo (tipo + número + link a la reserva), solo cambia el rótulo para
+                que las tres cuentas corrientes del sistema hablen igual. */}
+            <DataGridHeaderCell>Detalle</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Debe</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Haber</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
@@ -217,7 +275,7 @@ function BloqueExtractoCliente({ bloque }) {
         data-testid={`extracto-cierre-${bloque.currency}`}
       >
         <span
-          className={`text-sm font-extrabold ${
+          className={`text-sm font-extrabold tabular-nums ${
             saldoCierre > 0.01
               ? "text-rose-600 dark:text-rose-500"
               : saldoCierre < -0.01
@@ -278,7 +336,7 @@ function FilaExtractoCliente({ linea, currency }) {
       {/* Debe: visible solo para cargos (venta/multa); formateado en la moneda del bloque */}
       <DataGridCell align="right">
         {esCargo ? (
-          <span className="font-bold text-slate-800 dark:text-slate-200">
+          <span className="font-bold tabular-nums text-slate-800 dark:text-slate-200">
             {formatCurrency(linea.charge, currency)}
           </span>
         ) : (
@@ -290,7 +348,7 @@ function FilaExtractoCliente({ linea, currency }) {
           en la moneda del bloque */}
       <DataGridCell align="right">
         {esAbono ? (
-          <span className="font-bold text-emerald-600 dark:text-emerald-500">
+          <span className="font-bold tabular-nums text-emerald-600 dark:text-emerald-500">
             {formatCurrency(linea.credit, currency)}
           </span>
         ) : (
@@ -301,7 +359,7 @@ function FilaExtractoCliente({ linea, currency }) {
       {/* Saldo corriente del bloque (calculado por el servidor): rojo si debe, verde si a favor, gris si cero */}
       <DataGridCell align="right">
         <span
-          className={`font-extrabold ${
+          className={`font-extrabold tabular-nums ${
             (linea.runningBalance ?? 0) > 0
               ? "text-rose-600 dark:text-rose-500"
               : (linea.runningBalance ?? 0) < 0

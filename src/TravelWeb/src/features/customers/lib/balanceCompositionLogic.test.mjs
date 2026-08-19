@@ -10,8 +10,10 @@ import assert from "node:assert/strict";
 
 import {
   construirFotoDeSaldo,
-  debeMostrarBotonUsarSaldo,
+  obtenerMonedasConCreditoDisponible,
   resolverBadgeSaldoCliente,
+  resolverPalabraSaldoCliente,
+  ordenarMonedasPesosPrimero,
 } from "./balanceCompositionLogic.js";
 
 // ============================================================================
@@ -188,22 +190,6 @@ test("unappliedCreditByCurrency ausente (caller viejo) no revienta", () => {
 });
 
 // ============================================================================
-// debeMostrarBotonUsarSaldo
-// ============================================================================
-
-test("debeMostrarBotonUsarSaldo - con crédito y permiso → true", () => {
-  assert.strictEqual(debeMostrarBotonUsarSaldo({ creditoAFavor: 500, canUsarSaldo: true }), true);
-});
-
-test("debeMostrarBotonUsarSaldo - sin crédito → false aunque tenga permiso", () => {
-  assert.strictEqual(debeMostrarBotonUsarSaldo({ creditoAFavor: 0, canUsarSaldo: true }), false);
-});
-
-test("debeMostrarBotonUsarSaldo - con crédito pero sin permiso → false", () => {
-  assert.strictEqual(debeMostrarBotonUsarSaldo({ creditoAFavor: 500, canUsarSaldo: false }), false);
-});
-
-// ============================================================================
 // resolverBadgeSaldoCliente (Tanda 3, 2026-07-24, fix #4: badge de 3 estados
 // en el listado de clientes)
 // ============================================================================
@@ -256,4 +242,64 @@ test("resolverBadgeSaldoCliente - multimoneda: dos monedas con deuda, nunca se s
 test("resolverBadgeSaldoCliente - montos en 0 no cuentan como deuda ni como crédito → 'alDia'", () => {
   const badge = resolverBadgeSaldoCliente([{ currency: "ARS", amount: 0 }], [{ currency: "ARS", amount: 0 }]);
   assert.strictEqual(badge.estado, "alDia");
+});
+
+// ============================================================================
+// Tanda 2 (rediseño molde unificado, 2026-08-18/19): obtenerMonedasConCreditoDisponible,
+// resolverPalabraSaldoCliente, ordenarMonedasPesosPrimero
+// ============================================================================
+
+test("obtenerMonedasConCreditoDisponible - devuelve solo las monedas con crédito > 0", () => {
+  const monedas = obtenerMonedasConCreditoDisponible([
+    { currency: "ARS", creditoAFavor: 5000 },
+    { currency: "USD", creditoAFavor: 0 },
+  ]);
+  assert.deepEqual(monedas, ["ARS"]);
+});
+
+test("obtenerMonedasConCreditoDisponible - sin composicion → []", () => {
+  assert.deepEqual(obtenerMonedasConCreditoDisponible(null), []);
+  assert.deepEqual(obtenerMonedasConCreditoDisponible(undefined), []);
+});
+
+test("obtenerMonedasConCreditoDisponible - dos monedas con crédito a la vez → las dos, en el orden de composicion", () => {
+  const monedas = obtenerMonedasConCreditoDisponible([
+    { currency: "ARS", creditoAFavor: 5000 },
+    { currency: "USD", creditoAFavor: 100 },
+  ]);
+  assert.deepEqual(monedas, ["ARS", "USD"]);
+});
+
+test("obtenerMonedasConCreditoDisponible - crédito negativo (no debería pasar nunca) no cuenta", () => {
+  assert.deepEqual(obtenerMonedasConCreditoDisponible([{ currency: "ARS", creditoAFavor: -100 }]), []);
+});
+
+test("resolverPalabraSaldoCliente - tono 'rose' → 'Te debe'", () => {
+  assert.strictEqual(resolverPalabraSaldoCliente("rose"), "Te debe");
+});
+
+test("resolverPalabraSaldoCliente - tono 'emerald' → 'A favor'", () => {
+  assert.strictEqual(resolverPalabraSaldoCliente("emerald"), "A favor");
+});
+
+test("resolverPalabraSaldoCliente - tono 'neutral' o cualquier otro → 'Al día'", () => {
+  assert.strictEqual(resolverPalabraSaldoCliente("neutral"), "Al día");
+  assert.strictEqual(resolverPalabraSaldoCliente(undefined), "Al día");
+});
+
+test("ordenarMonedasPesosPrimero - ARS siempre antes que USD", () => {
+  assert.deepEqual(ordenarMonedasPesosPrimero(["USD", "ARS"]), ["ARS", "USD"]);
+  assert.deepEqual(ordenarMonedasPesosPrimero(["ARS", "USD"]), ["ARS", "USD"]);
+});
+
+test("ordenarMonedasPesosPrimero - no muta el array de entrada", () => {
+  const original = ["USD", "ARS"];
+  ordenarMonedasPesosPrimero(original);
+  assert.deepEqual(original, ["USD", "ARS"]);
+});
+
+test("ordenarMonedasPesosPrimero - array vacío o ausente no revienta", () => {
+  assert.deepEqual(ordenarMonedasPesosPrimero([]), []);
+  assert.deepEqual(ordenarMonedasPesosPrimero(null), []);
+  assert.deepEqual(ordenarMonedasPesosPrimero(undefined), []);
 });
