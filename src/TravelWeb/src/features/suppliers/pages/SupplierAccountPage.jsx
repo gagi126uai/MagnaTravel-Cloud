@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { hasPermission } from "../../../auth";
 import {
-    ArrowLeft,
     Building2,
-    Phone,
-    Mail,
     Plus,
     Search,
     Filter,
@@ -65,6 +62,7 @@ import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/err
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { Button } from "../../../components/ui/button";
 import { SupplierExtractoSection } from "../components/SupplierExtractoSection";
+import { FotoDeSaldoOperador } from "../components/FotoDeSaldoOperador";
 import { PagarProveedorInline } from "../components/PagarProveedorInline";
 import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
 import { ListaCuentasBancarias } from "../../../features/bank-accounts/components/ListaCuentasBancarias";
@@ -76,7 +74,6 @@ import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 // CURRENCY_OPTIONS se reutiliza del alta de operador para mantener las etiquetas consistentes.
 // No duplicamos el array: si el equipo agrega una moneda, se actualiza en un solo lugar.
 import { CURRENCY_OPTIONS } from "../lib/nuevoOperadorLogic.js";
-import { ordenarBloquesPesosPrimero, debeMostrarseEnGrisNeutro } from "../lib/supplierPageLogic.js";
 import {
     OPCIONES_ASUME_AJUSTE_DOLAR_OPERADOR,
     HEREDA_CONFIGURACION_GENERAL,
@@ -117,137 +114,6 @@ const TAX_CONDITION_LABELS = {
     IVA_EXENTO: "Exento",
     CONSUMIDOR_FINAL: "Cons. Final",
 };
-
-// ─── Los "dos números" del encabezado (Fase D, 2026-07-01) ───────────────────
-
-// Rótulo de cada juego de recuadros. Orden de renderizado: pesos primero, dólares después
-// (se ordena en el propio componente; este mapa solo da el texto).
-const ROTULO_GRUPO_MONEDA = {
-    ARS: "PESOS ($)",
-    USD: "DÓLARES (US$)",
-};
-
-// Paleta de color por tipo de recuadro. "neutro" se usa siempre que el monto sea $0
-// (no hay nada que remarcar) o cuando el usuario no tiene permiso de ver costos.
-// Importante: "Me tiene que devolver" (naranja) y "Saldo a favor" (verde) usan colores
-// DISTINTOS a propósito — son conceptos distintos (uno es un reclamo, el otro es plata gastable).
-const PALETA_RECUADRO = {
-    rojo: {
-        caja: "border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/20",
-        texto: "text-rose-700 dark:text-rose-400",
-    },
-    naranja: {
-        caja: "border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20",
-        texto: "text-amber-700 dark:text-amber-400",
-    },
-    verde: {
-        caja: "border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20",
-        texto: "text-emerald-700 dark:text-emerald-400",
-    },
-    neutro: {
-        caja: "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20",
-        texto: "text-slate-500",
-    },
-};
-
-/**
- * Un recuadro individual ("Le debo" / "Me tiene que devolver" / "Saldo a favor").
- *
- * El color fijo del recuadro (rojo/naranja/verde) se apaga a gris neutro cuando el monto
- * es $0 (nada que remarcar) o cuando el usuario no tiene permiso de ver costos.
- */
-function RecuadroSaldoOperador({ etiqueta, monto, esquema, puedeVerMontos, currency, testId }) {
-    const paleta = debeMostrarseEnGrisNeutro(monto, puedeVerMontos)
-        ? PALETA_RECUADRO.neutro
-        : PALETA_RECUADRO[esquema];
-
-    return (
-        <div
-            className={`inline-flex min-w-[9.5rem] flex-col rounded-[10px] border px-3 py-2 ${paleta.caja}`}
-            data-testid={testId}
-        >
-            <span className={`text-xs font-bold ${paleta.texto}`}>{etiqueta}</span>
-            <span className={`font-mono font-bold text-lg ${paleta.texto}`}>
-                {puedeVerMontos ? formatCurrency(monto ?? 0, currency) : "—"}
-            </span>
-        </div>
-    );
-}
-
-/**
- * Los "dos números" de la cuenta del operador + el saldo a favor, en tres recuadros por moneda.
- *
- * Reemplaza los chips viejos (BalanceHeaderChips) que leían el saldo de CAJA crudo
- * (balancesByCurrency[].balance) y pintaban "A favor" en verde cuando la caja quedaba en
- * negativo — mostrando como "plata para gastar" algo que en realidad el operador nos tiene
- * que DEVOLVER (bug de raíz corregido acá). Ahora lee los tres campos limpios que ya calcula
- * el backend por moneda (GET /suppliers/{id}/account/statement → currencies[]):
- *   - iTheyOwe   → "Le debo"              (rojo)    — lo que la agencia le tiene que pagar.
- *   - theyOweMe  → "Me tiene que devolver" (naranja) — reembolso pendiente por anulaciones.
- *                  NO es plata para gastar.
- *   - prepayment → "Saldo a favor"        (verde)   — plata a cuenta, gastable ya mismo.
- *
- * Pesos y dólares SIEMPRE en juegos separados (nunca se suman). Sin permiso de ver costos
- * (cobranzas.see_cost), los tres recuadros de cada moneda van en gris con "—".
- *
- * Props:
- *   - currencies: array de SupplierAccountStatementCurrencyBlockDto (o [] si no cargó aún)
- *   - loading: boolean — true mientras se pide /account/statement
- */
-function SupplierBalanceThreeBoxesHeader({ currencies, loading }) {
-    const puedeVerMontos = hasPermission("cobranzas.see_cost");
-
-    // Pesos primero, dólares después (y cualquier otra moneda al final), como pide la spec.
-    const bloquesOrdenados = ordenarBloquesPesosPrimero(currencies);
-
-    if (loading) {
-        return (
-            <p className="mt-3 text-xs text-slate-400" data-testid="header-saldos-cargando">
-                Cargando saldos con el operador…
-            </p>
-        );
-    }
-
-    if (bloquesOrdenados.length === 0) return null;
-
-    return (
-        <div className="mt-3 space-y-3">
-            {bloquesOrdenados.map((bloque) => (
-                <div key={bloque.currency}>
-                    <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                        {ROTULO_GRUPO_MONEDA[bloque.currency] ?? bloque.currency}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                        <RecuadroSaldoOperador
-                            etiqueta="Le debo"
-                            monto={bloque.iTheyOwe}
-                            esquema="rojo"
-                            puedeVerMontos={puedeVerMontos}
-                            currency={bloque.currency}
-                            testId={`header-le-debo-${bloque.currency}`}
-                        />
-                        <RecuadroSaldoOperador
-                            etiqueta="Me tiene que devolver"
-                            monto={bloque.theyOweMe}
-                            esquema="naranja"
-                            puedeVerMontos={puedeVerMontos}
-                            currency={bloque.currency}
-                            testId={`header-me-tiene-que-devolver-${bloque.currency}`}
-                        />
-                        <RecuadroSaldoOperador
-                            etiqueta="Saldo a favor"
-                            monto={bloque.prepayment}
-                            esquema="verde"
-                            puedeVerMontos={puedeVerMontos}
-                            currency={bloque.currency}
-                            testId={`header-saldo-a-favor-${bloque.currency}`}
-                        />
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
-}
 
 // ─── Formulario de edición del proveedor (solapa "Datos") ─────────────────────
 
@@ -1260,7 +1126,6 @@ function EstadoServicioCell({ service, onUpdated, canEdit }) {
  */
 export default function SupplierAccountPage() {
     const { publicId } = useParams();
-    const navigate = useNavigate();
 
     // ─── Solapa activa ────────────────────────────────────────────────────────
     const [activeTab, setActiveTab] = useState("cuenta-corriente");
@@ -1674,56 +1539,151 @@ export default function SupplierAccountPage() {
     return (
         <div className="p-6 space-y-6 max-w-7xl mx-auto">
 
-            {/* ── Encabezado: identidad + chips de saldo ────────────────────────
-                Siempre visible, arriba de las solapas.
-                Chips enmascarados sin permiso cobranzas.see_cost (nunca mostrar verde sin permiso).
+            {/* ── Cabecera: molde unificado de cuentas corrientes ────────────────
+                Spec docs/ux/2026-08-18-spec-dashboard-y-cuentas-corrientes.md §2.0/§2.2
+                (firmada 18/08): link de vuelta en texto (no botón-ícono), nombre 24/700,
+                una sola línea de chips (condición fiscal en pill + CUIT · plazo de pago ·
+                contacto), y las acciones "Usar saldo a favor"/"Registrar pago" acá arriba
+                — mismo patrón exacto que ya usa CustomerAccountPage.jsx (cliente).
             ─────────────────────────────────────────────────────────────────── */}
-            <div className="flex items-start gap-4">
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => navigate("/suppliers")}
-                    className="mt-1 h-10 w-10 flex-shrink-0"
-                    aria-label="Volver al listado de operadores"
+            <div className="space-y-4">
+                <Link
+                    to="/suppliers"
+                    className="inline-flex items-center gap-1 text-[13px] font-semibold text-primary hover:underline"
                 >
-                    <ArrowLeft className="h-5 w-5" />
-                </Button>
+                    ← Operadores
+                </Link>
 
-                <div className="min-w-0 flex-1">
-                    {/* Nombre del proveedor */}
-                    <h1 className="text-2xl font-bold truncate">{supplier?.name}</h1>
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                    <div className="min-w-0">
+                        <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                            {supplier?.name}
+                        </h1>
 
-                    {/* Subtítulo: tipo + CUIT + condición fiscal */}
-                    <p className="text-muted-foreground text-sm mt-0.5">
-                        Operador
-                        {supplier?.taxId && ` · CUIT ${supplier.taxId}`}
-                        {taxConditionLabel && ` · ${taxConditionLabel}`}
-                    </p>
-
-                    {/* Datos de contacto opcionales */}
-                    {(supplier?.phone || supplier?.email) && (
-                        <div className="flex flex-wrap gap-3 mt-1.5 text-sm text-muted-foreground">
-                            {supplier?.phone && (
-                                <span className="flex items-center gap-1">
-                                    <Phone className="h-4 w-4" /> {supplier.phone}
+                        {/* Una sola línea: chip de condición fiscal + resto separado por puntos
+                            medios (CUIT · plazo de pago si existe · email · teléfono) — reemplaza
+                            el subtítulo "Operador · CUIT · condición" y la línea de contacto
+                            aparte que tenía esta pantalla antes de esta tanda. */}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+                            {taxConditionLabel && (
+                                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                    {taxConditionLabel}
                                 </span>
                             )}
-                            {supplier?.email && (
-                                <span className="flex items-center gap-1">
-                                    <Mail className="h-4 w-4" /> {supplier.email}
-                                </span>
-                            )}
+                            {[
+                                supplier?.taxId ? `CUIT ${supplier.taxId}` : null,
+                                supplier?.defaultPaymentTermDays != null
+                                    ? `Plazo de pago: ${supplier.defaultPaymentTermDays} días`
+                                    : null,
+                                supplier?.email || null,
+                                supplier?.phone || null,
+                            ]
+                                .filter(Boolean)
+                                .map((dato, idx) => (
+                                    <span key={`dato-cabecera-${idx}`} className="flex items-center gap-2">
+                                        {idx > 0 && (
+                                            <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
+                                                ·
+                                            </span>
+                                        )}
+                                        {dato}
+                                    </span>
+                                ))}
+                        </div>
+                    </div>
+
+                    {/* Acciones de cabecera: "Usar saldo a favor" (una por moneda con saldo)
+                        + "Registrar pago" (única acción primaria de la pantalla, B.3 regla de
+                        oro #2). Mismo gate de siempre para todo el bloque: tesoreria.supplier_payments.
+                        Mobile: ancho completo, apiladas en columna, mismo orden que en desktop. */}
+                    {hasPermission("tesoreria.supplier_payments") && (
+                        <div className="flex w-full flex-shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+                            {monedasAFavor.map((balance) => {
+                                const simbolo = balance.currency === "USD" ? "US$" : "$";
+                                const estaAbierto = monedaUsandoSaldo === balance.currency;
+                                return (
+                                    <Button
+                                        key={balance.currency}
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() =>
+                                            setMonedaUsandoSaldo((prev) =>
+                                                prev === balance.currency ? null : balance.currency
+                                            )
+                                        }
+                                        className="w-full gap-2 sm:w-auto"
+                                        data-testid={`btn-usar-saldo-${balance.currency}`}
+                                    >
+                                        <TrendingUp className="h-4 w-4" aria-hidden="true" />
+                                        {estaAbierto
+                                            ? `Cerrar saldo ${simbolo}`
+                                            : monedasAFavor.length > 1
+                                                ? `Usar saldo en ${simbolo}`
+                                                : "Usar saldo a favor"}
+                                    </Button>
+                                );
+                            })}
+
+                            {/* Fix bloqueante (review 2026-07-21): deshabilitado mientras
+                                PagarProveedorInline tiene un guardado en curso, para que el
+                                cajero no pueda cerrar la ficha a mitad de un POST/PUT. */}
+                            <Button
+                                type="button"
+                                variant={algunaFichaCuentaCorrienteAbierta ? "outline" : "default"}
+                                onClick={handleToggleFichaPago}
+                                disabled={pagoGuardando}
+                                className="w-full gap-2 sm:w-auto"
+                                data-testid="btn-registrar-pago"
+                            >
+                                <Plus className="h-4 w-4" aria-hidden="true" />
+                                {showPagoInline ? "Cerrar" : "Registrar pago"}
+                            </Button>
                         </div>
                     )}
-
-                    {/* Los "dos números" + saldo a favor, por moneda (Fase D, 2026-07-01) */}
-                    <SupplierBalanceThreeBoxesHeader
-                        currencies={statementCurrencies}
-                        loading={loadingStatementHeader}
-                    />
                 </div>
             </div>
+
+            {/*
+                ── Foto de saldo (molde unificado, spec §2.0/§2.2) ─────────────────────
+                Una tarjeta por moneda (pesos primero) con la franja del saldo neto +
+                el desglose "Facturas por pagar" / "Te tiene que devolver" / "Saldo a
+                favor tuyo". Reemplaza los 3 recuadros lado a lado que tenía esta pantalla
+                antes de esta tanda (SupplierBalanceThreeBoxesHeader, eliminado del archivo).
+            */}
+            <FotoDeSaldoOperador
+                currencies={statementCurrencies}
+                puedeVerMontos={puedeVerMontos}
+                loading={loadingStatementHeader}
+            />
+
+            {/* Ficha "Usar saldo a favor" en línea — cuelga de la foto de saldo (EN LÍNEA,
+                nunca ventana flotante), debajo de ella. Vive acá (no dentro de la solapa
+                "Cuenta corriente") porque su botón disparador ahora vive en la cabecera,
+                igual que en la cuenta del cliente. */}
+            {monedaUsandoSaldo && (
+                <UsarSaldoOperadorInline
+                    supplierId={getPublicId(supplier)}
+                    moneda={monedaUsandoSaldo}
+                    saldoDisponible={getSaldoDisponible(monedaUsandoSaldo)}
+                    onAplicado={handleSaldoAplicado}
+                    onCancelar={() => setMonedaUsandoSaldo(null)}
+                />
+            )}
+
+            {/* Ficha "Registrar pago" en línea (nuevo pago o edición de uno existente) —
+                mismo criterio que arriba: cuelga de la cabecera/foto de saldo, no de la
+                solapa "Cuenta corriente", porque su botón ahora es una acción de cabecera. */}
+            {showPagoInline && (
+                <PagarProveedorInline
+                    supplierId={getPublicId(supplier)}
+                    balancesByCurrency={balancesByCurrency}
+                    openInvoicedCharges={overview?.openInvoicedCharges || []}
+                    paymentToEdit={paymentToEdit}
+                    onGuardado={handlePagoRegistrado}
+                    onCancelar={handleCerrarFichaPago}
+                    onSavingChange={setPagoGuardando}
+                />
+            )}
 
             {/* Aviso pasivo (2026-07-16): un operador dado de alta rápido con el toggle
                 "Datos fiscales pendientes" (ver NuevoOperadorInline) queda para siempre sin
@@ -1774,7 +1734,10 @@ export default function SupplierAccountPage() {
                                         : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                                 }`}
                             >
-                                <solapa.icon className={`h-4 w-4 ${activeTab === solapa.id ? "animate-bounce" : ""}`} />
+                                {/* Sin animate-bounce (spec §2.0, "Qué NO hacer" #6): ese efecto
+                                    no existe en ninguna otra pantalla del sistema — solo la línea
+                                    subrayada de abajo indica cuál solapa está activa. */}
+                                <solapa.icon className="h-4 w-4" aria-hidden="true" />
                                 {solapa.label}
                                 {/* Línea azul inferior del tab activo */}
                                 {activeTab === solapa.id && (
@@ -1789,130 +1752,42 @@ export default function SupplierAccountPage() {
                 <div className="p-4 sm:p-6 lg:p-8">
 
                     {/* ── SOLAPA 1: Cuenta corriente ────────────────────────────────────
-                        Botones de acción + ficha de pago en línea + Extracto.
-                        La deuda abierta por reserva se mudó a la solapa "Deuda por reserva"
-                        para no saturar esta solapa (cada una tiene una función clara).
-                        Los botones abren fichas en línea debajo (sin ventanas flotantes).
+                        "Registrar reembolso recibido" + Extracto. "Registrar pago" y "Usar
+                        saldo a favor" se mudaron a la CABECERA (spec §2.2, molde unificado
+                        de cuentas corrientes) — sus fichas en línea cuelgan ahora de la foto
+                        de saldo, no de esta solapa. La deuda abierta por reserva vive en la
+                        solapa "Deuda por reserva" (cada una tiene una función clara).
                     ─────────────────────────────────────────────────────────────── */}
                     {activeTab === "cuenta-corriente" && (
                         <div className="space-y-6" id="panel-cuenta-corriente" role="tabpanel">
 
-                            {/* Botones de acción: cada uno se gatea con SU propio permiso.
-                                "Registrar pago" / "Usar saldo a favor" -> tesoreria.supplier_payments.
-                                "Registrar reembolso recibido" -> necesita AMBOS: caja.edit (registra el
-                                movimiento de caja) Y tesoreria.supplier_payments (lista los reembolsos
-                                pendientes que hay que imputar). Sin los dos, la ficha no puede completarse,
-                                así que el botón no aparece (evita mostrar un botón que lleva a un error de carga). */}
-                            {hasPermission("tesoreria.supplier_payments") && (
-                                <div className="flex flex-wrap items-center gap-3">
-
-                                    {hasPermission("tesoreria.supplier_payments") && (
-                                        <>
-                                            {/* "Registrar pago": alterna la ficha de pago en línea. Única
-                                                acción principal de este bloque (B.3): azul boleto cuando no
-                                                hay ninguna ficha abierta. Si CUALQUIER ficha de esta fila está
-                                                abierta (la propia u otra: saldo/reembolso), se degrada a
-                                                outline — nunca dos rellenos a la vez (mismo criterio que
-                                                "Nuevo cobro" en Clientes, EstadoCuentaClienteTab). Fix
-                                                bloqueante (review 2026-07-21): deshabilitado mientras
-                                                PagarProveedorInline tiene un guardado en curso (pagoGuardando),
-                                                para que el cajero no pueda cerrar la ficha a mitad de un POST/PUT. */}
-                                            <Button
-                                                type="button"
-                                                variant={algunaFichaCuentaCorrienteAbierta ? "outline" : "default"}
-                                                onClick={handleToggleFichaPago}
-                                                disabled={pagoGuardando}
-                                                data-testid="btn-registrar-pago"
-                                                className="gap-2"
-                                            >
-                                                <Plus className="h-4 w-4" aria-hidden="true" />
-                                                {showPagoInline ? "Cerrar" : "Registrar pago"}
-                                            </Button>
-
-                                            {/* "Usar saldo a favor": un botón por cada moneda con saldo.
-                                                Secundaria (B.3, variant="outline"): el verde queda para decir
-                                                "hay plata a favor" en los recuadros de arriba, no para el
-                                                botón — así no compite con "Registrar pago". Si no hay saldo a
-                                                favor en ninguna moneda, no aparece ningún botón. Si hay dos
-                                                monedas a favor, ambos botones muestran su símbolo. */}
-                                            {monedasAFavor.map((balance) => {
-                                                const simbolo = balance.currency === "USD" ? "US$" : "$";
-                                                const estaAbierto = monedaUsandoSaldo === balance.currency;
-                                                return (
-                                                    <Button
-                                                        key={balance.currency}
-                                                        type="button"
-                                                        variant="outline"
-                                                        onClick={() =>
-                                                            setMonedaUsandoSaldo((prev) =>
-                                                                prev === balance.currency ? null : balance.currency
-                                                            )
-                                                        }
-                                                        data-testid={`btn-usar-saldo-${balance.currency}`}
-                                                        className="gap-2"
-                                                    >
-                                                        <TrendingUp className="h-4 w-4" aria-hidden="true" />
-                                                        {estaAbierto
-                                                            ? `Cerrar saldo ${simbolo}`
-                                                            : monedasAFavor.length > 1
-                                                                ? `Usar saldo en ${simbolo}`
-                                                                : "Usar saldo a favor"}
-                                                    </Button>
-                                                );
-                                            })}
-                                        </>
-                                    )}
-
-                                    {/* "Registrar reembolso recibido": alterna la ficha en línea.
-                                        Secundaria (B.3, variant="outline"), mismo criterio que "Usar saldo
-                                        a favor" — "Registrar pago" es la única acción principal de este
-                                        bloque. Requiere AMBOS permisos (registrar en caja + ver los
-                                        pendientes a imputar). */}
-                                    {hasPermission("caja.edit") && hasPermission("tesoreria.supplier_payments") && (
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            onClick={() => setShowReembolsoInline((prev) => !prev)}
-                                            data-testid="btn-registrar-reembolso"
-                                            className="gap-2"
-                                        >
-                                            <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                                            {showReembolsoInline ? "Cerrar" : "Registrar reembolso recibido"}
-                                        </Button>
-                                    )}
-                                </div>
+                            {/* "Registrar reembolso recibido": botón chico secundario (spec §2.2:
+                                size="sm", outline — nunca compite con "Registrar pago", que ahora
+                                es la única acción primaria de la pantalla, arriba). Requiere AMBOS
+                                permisos: caja.edit (registra el movimiento de caja) Y
+                                tesoreria.supplier_payments (lista los reembolsos pendientes que
+                                hay que imputar). Sin los dos, el botón no aparece (evita mostrar
+                                un botón que lleva a un error de carga). */}
+                            {hasPermission("caja.edit") && hasPermission("tesoreria.supplier_payments") && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setShowReembolsoInline((prev) => !prev)}
+                                    data-testid="btn-registrar-reembolso"
+                                    className="gap-2"
+                                >
+                                    <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                                    {showReembolsoInline ? "Cerrar" : "Registrar reembolso recibido"}
+                                </Button>
                             )}
 
-                            {/* Ficha "Usar saldo a favor" en línea (debajo de los botones) */}
-                            {monedaUsandoSaldo && (
-                                <UsarSaldoOperadorInline
-                                    supplierId={getPublicId(supplier)}
-                                    moneda={monedaUsandoSaldo}
-                                    saldoDisponible={getSaldoDisponible(monedaUsandoSaldo)}
-                                    onAplicado={handleSaldoAplicado}
-                                    onCancelar={() => setMonedaUsandoSaldo(null)}
-                                />
-                            )}
-
-                            {/* Ficha "Registrar reembolso recibido" en línea (debajo de los botones) */}
+                            {/* Ficha "Registrar reembolso recibido" en línea (debajo del botón) */}
                             {showReembolsoInline && (
                                 <RegistrarReembolsoRecibidoInline
                                     supplierId={getPublicId(supplier)}
                                     onRegistrado={handleReembolsoRegistrado}
                                     onCancelar={() => setShowReembolsoInline(false)}
-                                />
-                            )}
-
-                            {/* Ficha de pago en línea (nuevo pago o edición de uno existente) */}
-                            {showPagoInline && (
-                                <PagarProveedorInline
-                                    supplierId={getPublicId(supplier)}
-                                    balancesByCurrency={balancesByCurrency}
-                                    openInvoicedCharges={overview?.openInvoicedCharges || []}
-                                    paymentToEdit={paymentToEdit}
-                                    onGuardado={handlePagoRegistrado}
-                                    onCancelar={handleCerrarFichaPago}
-                                    onSavingChange={setPagoGuardando}
                                 />
                             )}
 
