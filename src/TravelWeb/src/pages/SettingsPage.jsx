@@ -279,7 +279,10 @@ Ajustá cómo funciona el sistema para tu agencia.
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">Moneda Base</label>
-                    <select className="w-full rounded-[10px] border-slate-200 dark:border-slate-700 dark:bg-slate-800"
+                    {/* Fix deuda menor (2026-08-18): faltaba la utilidad "border" — sin ella
+                        Tailwind no dibuja ningún borde, solo el color quedaba definido pero
+                        sin ancho. Misma receta que el select de Condición Fiscal de esta página. */}
+                    <select className="h-10 w-full rounded-[10px] border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                       value={agencyForm.currency} onChange={e => setAgencyForm({ ...agencyForm, currency: e.target.value })}>
                       <option value="ARS">ARS - Peso Argentino</option>
                       <option value="USD">USD - Dólar Estadounidense</option>

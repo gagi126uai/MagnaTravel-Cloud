@@ -47,44 +47,36 @@ import {
   aplicarFiltros,
   calcularPeriodoPorDefecto,
   formatTipoComprobante,
-  resolverEstadoFiscal,
+  resolverChipEstadoComprobante,
   OPCIONES_ESTADO_FILTRO,
 } from "../lib/facturacionFilters";
 
 /**
  * Chip de estado fiscal ARCA. Nunca muestra el código interno: siempre texto español.
- * Usa el molde StatusChip (B.5): "Anulando" y "En proceso" son procesos EN CURSO
- * (tono azul), "Aprobado" es plata/listo (verde), "Rechazado" es un freno (rojo).
+ *
+ * Spec 2026-08-18 (chip "Anulada"): usa el mismo criterio que la pantalla global de
+ * Facturación (resolverChipEstadoComprobante, extraído de ChipEstadoFiscal de
+ * FacturacionPage.jsx) para que un comprobante anulado se vea "Anulada" en rojo
+ * tachado acá también, en vez de seguir mostrando "Aprobado"/"Rechazado".
  */
 function ChipEstadoFiscal({ invoice }) {
-  if (invoice.annulmentStatus === "Pending") {
-    return (
-      <StatusChip tone="azul" role="status" aria-live="polite">
-        Anulando…
-      </StatusChip>
-    );
-  }
-
-  const estado = resolverEstadoFiscal(invoice);
-  const tonos = { aprobado: "verde", rechazado: "rojo", en_proceso: "azul" };
-  const etiquetas = { aprobado: "Aprobado", rechazado: "Rechazado", en_proceso: "En proceso" };
-
+  const { tone, etiqueta, tachado } = resolverChipEstadoComprobante(invoice);
   return (
-    <StatusChip tone={tonos[estado] ?? "azul"}>
-      {etiquetas[estado] ?? "En proceso"}
+    <StatusChip
+      tone={tone}
+      className={tachado ? "line-through" : undefined}
+      role={invoice.annulmentStatus === "Pending" ? "status" : undefined}
+      aria-live={invoice.annulmentStatus === "Pending" ? "polite" : undefined}
+    >
+      {etiqueta}
     </StatusChip>
   );
 }
 
 /**
  * Renglón chico con el motivo de anulación (Tanda 3, 2026-08-18).
- *
- * OJO — gap ya existente en esta pantalla (no lo introduce esta tanda): a diferencia
- * de la Facturación GLOBAL (FacturacionPage.jsx), acá `ChipEstadoFiscal` NUNCA
- * distingue el estado "Anulada" con su propio chip — un comprobante ya anulado sigue
- * mostrando "Aprobado"/"Rechazado" según el resultado ARCA. Arreglar ESE chip es un
- * cambio visual que necesita pasar por el gate de UX; acá solo se agrega el motivo
- * como dato informativo, sin inventar un chip nuevo.
+ * Solo se muestra cuando el comprobante está anulado de verdad
+ * (AnnulmentStatus.Succeeded) Y el backend mandó un motivo.
  */
 function MotivoAnulacion({ invoice }) {
   if (invoice.annulmentStatus !== "Succeeded" || !invoice.annulmentReason) return null;

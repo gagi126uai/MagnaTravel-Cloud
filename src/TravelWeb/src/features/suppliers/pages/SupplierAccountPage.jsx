@@ -1212,6 +1212,10 @@ function EstadoServicioCell({ service, onUpdated, canEdit }) {
                     recordKind={recordKind}
                     onResuelto={onUpdated}
                     align="start"
+                    // Fix deuda menor (2026-08-18): al plegar el casillero de esta tarjeta con
+                    // "Cancelar", el link "Corregir a mano" de acá abajo también se repliega —
+                    // mismo criterio simétrico que ya tiene la fila desktop equivalente.
+                    onCasilleroCancelado={() => setMostrarCorreccion(false)}
                 />
             )}
             {/* canEdit ya está garantizado acá (tieneBotonPrimario lo exige arriba) — no hace

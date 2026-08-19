@@ -8,7 +8,8 @@
  *   - calcularPeriodoPorDefecto: rango de fechas correcto (90 días)
  *   - formatTipoComprobante: mapeo código ARCA → texto español
  *   - resolverKindComprobante: Factura/ND → cargo, NC → abono
- *   - resolverEstadoFiscal: prioridad anulando > aprobado > rechazado > en_proceso
+ *   - resolverEstadoFiscal: prioridad anulando > anulada > aprobado > rechazado > en_proceso
+ *   - resolverChipEstadoComprobante: tono + etiqueta + tachado del chip visual
  *   - aplicarFiltros: sin filtros, por tipo, por estado, por fecha, por número, por moneda, combinados
  */
 
@@ -56,9 +57,29 @@ function resolverKindComprobante(tipoComprobante) {
 
 function resolverEstadoFiscal(invoice) {
   if (invoice.annulmentStatus === "Pending") return "anulando";
+  if (invoice.annulmentStatus === "Succeeded") return "anulada";
   if (invoice.resultado === "A") return "aprobado";
   if (invoice.resultado === "R") return "rechazado";
   return "en_proceso";
+}
+
+function resolverChipEstadoComprobante(invoice) {
+  if (invoice?.annulmentStatus === "Pending") {
+    return { tone: "azul", etiqueta: "Anulando…", tachado: false };
+  }
+  if (invoice?.annulmentStatus === "Succeeded") {
+    return { tone: "rojo", etiqueta: "Anulada", tachado: true };
+  }
+  if (invoice?.annulmentStatus === "Failed") {
+    return { tone: "rojo", etiqueta: "Error anulación", tachado: false };
+  }
+  if (invoice?.resultado === "A") {
+    return { tone: "verde", etiqueta: "Aprobado", tachado: false };
+  }
+  if (invoice?.resultado === "R") {
+    return { tone: "rojo", etiqueta: "Rechazado", tachado: false };
+  }
+  return { tone: "azul", etiqueta: "En proceso", tachado: false };
 }
 
 function aplicarFiltros(invoices, filters) {
@@ -252,6 +273,55 @@ test("resolverEstadoFiscal - en proceso (resultado sin definir)", () => {
     resolverEstadoFiscal({ annulmentStatus: "None" }),
     "en_proceso"
   );
+});
+
+test("resolverEstadoFiscal - anulada (Succeeded) tiene prioridad sobre resultado aprobado", () => {
+  assert.equal(
+    resolverEstadoFiscal({ annulmentStatus: "Succeeded", resultado: "A" }),
+    "anulada"
+  );
+});
+
+test("resolverEstadoFiscal - anulada (Succeeded) tiene prioridad sobre resultado rechazado", () => {
+  assert.equal(
+    resolverEstadoFiscal({ annulmentStatus: "Succeeded", resultado: "R" }),
+    "anulada"
+  );
+});
+
+// ─── resolverChipEstadoComprobante ───────────────────────────────────────────
+// Spec 2026-08-18: mismo criterio que ChipEstadoFiscal de FacturacionPage.jsx,
+// reusado en la solapa de la reserva (InvoicingTab.jsx) y la del cliente
+// (FacturacionClienteTab.jsx).
+
+test("resolverChipEstadoComprobante - anulando (Pending) es azul, sin tachar", () => {
+  const chip = resolverChipEstadoComprobante({ annulmentStatus: "Pending", resultado: "A" });
+  assert.deepEqual(chip, { tone: "azul", etiqueta: "Anulando…", tachado: false });
+});
+
+test("resolverChipEstadoComprobante - anulada (Succeeded) es rojo y tachado, prioridad sobre aprobado", () => {
+  const chip = resolverChipEstadoComprobante({ annulmentStatus: "Succeeded", resultado: "A" });
+  assert.deepEqual(chip, { tone: "rojo", etiqueta: "Anulada", tachado: true });
+});
+
+test("resolverChipEstadoComprobante - error de anulación (Failed) es rojo, sin tachar", () => {
+  const chip = resolverChipEstadoComprobante({ annulmentStatus: "Failed", resultado: "A" });
+  assert.deepEqual(chip, { tone: "rojo", etiqueta: "Error anulación", tachado: false });
+});
+
+test("resolverChipEstadoComprobante - aprobado sin anulación es verde", () => {
+  const chip = resolverChipEstadoComprobante({ annulmentStatus: "None", resultado: "A" });
+  assert.deepEqual(chip, { tone: "verde", etiqueta: "Aprobado", tachado: false });
+});
+
+test("resolverChipEstadoComprobante - rechazado sin anulación es rojo", () => {
+  const chip = resolverChipEstadoComprobante({ annulmentStatus: "None", resultado: "R" });
+  assert.deepEqual(chip, { tone: "rojo", etiqueta: "Rechazado", tachado: false });
+});
+
+test("resolverChipEstadoComprobante - sin resultado definido es azul 'En proceso'", () => {
+  const chip = resolverChipEstadoComprobante({ annulmentStatus: "None", resultado: null });
+  assert.deepEqual(chip, { tone: "azul", etiqueta: "En proceso", tachado: false });
 });
 
 // ─── aplicarFiltros — casos básicos ──────────────────────────────────────────

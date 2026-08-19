@@ -56,8 +56,15 @@ const CLASES_BOTON_SECUNDARIO = "inline-flex items-center gap-1 rounded-[10px] b
  *                      recarga/actualiza el estado (contador "N de M", badge, etc.).
  *   align           — "end" (default, ficha) | "start" (cuenta del operador, tabla
  *                      alineada a la izquierda) — solo cambia la alineación visual.
+ *   onCasilleroCancelado — callback() opcional cuando el usuario cierra el casillero
+ *                      con "Cancelar" (sin guardar). Fix deuda menor (2026-08-18):
+ *                      en la vista mobile de "Servicios comprados" (SupplierAccountPage),
+ *                      el link "Corregir a mano" vive en el componente padre y no se
+ *                      enteraba de este cierre — quedaba abierto aunque el usuario ya
+ *                      había plegado la acción. Mismo criterio que ya tiene la fila
+ *                      desktop equivalente (PurchasedServiceRow → cerrarFilaDeExpansion).
  */
-export function ResolverServicioInline({ reservaId, servicePublicId, recordKind, onResuelto, align = "end" }) {
+export function ResolverServicioInline({ reservaId, servicePublicId, recordKind, onResuelto, align = "end", onCasilleroCancelado }) {
     const {
         acciones,
         accionAbierta,
@@ -169,7 +176,10 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
                 </button>
                 <button
                     type="button"
-                    onClick={cerrarCasillero}
+                    onClick={() => {
+                        cerrarCasillero();
+                        onCasilleroCancelado?.();
+                    }}
                     disabled={guardando}
                     data-testid={`btn-cancelar-resolver-${servicePublicId}`}
                     className={CLASES_BOTON_SECUNDARIO}

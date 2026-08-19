@@ -4,6 +4,7 @@ import { formatCurrency, formatDate, getInvoiceLabel } from "../lib/financeUtils
 import { getPublicId } from "../../../lib/publicIds";
 import { StatusChip } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
+import { resolverChipEstadoComprobante } from "../../customers/lib/facturacionFilters";
 
 function SegmentedTabs({ options, value, onChange }) {
   return (
@@ -28,6 +29,31 @@ function FilterInput({ label, value, onChange, placeholder, type = "text" }) {
       <label className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-400">{label}</label>
       <input type={type} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full rounded-[10px] border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
     </div>
+  );
+}
+
+/**
+ * Chip de estado del comprobante (fiscal ARCA + anulación).
+ *
+ * Spec 2026-08-18 (chip "Anulada"): usa el mismo criterio que ya vale en la
+ * pantalla global de Facturación y en la solapa del cliente
+ * (resolverChipEstadoComprobante), para que un comprobante anulado se vea
+ * "Anulada" en rojo tachado acá también, en vez de seguir en verde "Aprobado".
+ * El chip "Anulando…" conserva el ícono girando que ya tenía.
+ */
+function ChipEstadoComprobante({ invoice }) {
+  const { tone, etiqueta, tachado } = resolverChipEstadoComprobante(invoice);
+  const enCurso = invoice.annulmentStatus === "Pending";
+  return (
+    <StatusChip
+      tone={tone}
+      className={tachado ? "line-through" : undefined}
+      role={enCurso ? "status" : undefined}
+      aria-live={enCurso ? "polite" : undefined}
+    >
+      {enCurso && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+      {etiqueta}
+    </StatusChip>
   );
 }
 
@@ -134,7 +160,10 @@ export function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDown
         <FilterInput label="Cliente" value={customerFilter} onChange={onCustomerFilterChange} placeholder="Nombre del cliente" />
         <FilterInput label="Reserva" value={reservationFilter} onChange={onReservationFilterChange} placeholder="Numero de reserva" />
         <FilterInput label="Comprobante" value={voucherNumberFilter} onChange={onVoucherNumberFilterChange} placeholder="Numero de comprobante" />
-        <FilterSelect label="Resultado" value={resultFilter} onChange={onResultFilterChange} options={[{ value: "all", label: "Todos" }, { value: "approved", label: "Aprobado" }, { value: "rejected", label: "Rechazado" }, { value: "pending", label: "En proceso" }]} />
+        {/* P2 de la spec 2026-08-18 (firmado): se agrega "Anulada", espejo de la
+            opción que ya tiene el filtro de la pantalla global de Facturación —
+            para poder buscar rápido "todas las anuladas" acá también. */}
+        <FilterSelect label="Resultado" value={resultFilter} onChange={onResultFilterChange} options={[{ value: "all", label: "Todos" }, { value: "approved", label: "Aprobado" }, { value: "rejected", label: "Rechazado" }, { value: "pending", label: "En proceso" }, { value: "annulled", label: "Anulada" }]} />
       </div>
 
       {items.length === 0 ? (
@@ -147,27 +176,11 @@ export function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDown
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-900 dark:text-white">{getInvoiceLabel(invoice.tipoComprobante)}</span>
                   {invoice.wasForced && <StatusChip tone="ambar">Excepcion</StatusChip>}
-                  {invoice.annulmentStatus === "Pending" ? (
-                    <StatusChip tone="ambar" role="status" aria-live="polite">
-                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                      Anulando…
-                    </StatusChip>
-                  ) : (
-                    // Mismo criterio que ChipEstadoFiscal de FacturacionPage: A = verde
-                    // (aprobado), R = rojo (rechazado), sin resultado todavia = azul "en
-                    // curso" (no le pide nada al usuario, solo falta la respuesta de ARCA).
-                    <StatusChip tone={invoice.resultado === "A" ? "verde" : invoice.resultado === "R" ? "rojo" : "azul"}>
-                      {invoice.resultado === "A" ? "Aprobado" : invoice.resultado === "R" ? "Rechazado" : "En proceso"}
-                    </StatusChip>
-                  )}
+                  <ChipEstadoComprobante invoice={invoice} />
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">{invoice.numeroReserva || "Sin reserva"} · {invoice.customerName || "Consumidor Final"}</div>
                 <div className="text-xs text-slate-400">{formatDate(invoice.createdAt)} · #{invoice.numeroComprobante?.toString().padStart(8, "0") || "--------"}</div>
                 {invoice.forceReason && <div className="text-xs text-slate-400">Motivo: {invoice.forceReason}</div>}
-                {/* Esta pantalla todavia no tiene un chip "Anulada" propio (solo distingue
-                    Pending de "en curso"): mostramos el motivo igual, como renglon chico
-                    informativo, para no perder el dato aunque falte ese chip — ver reporte
-                    de la Tanda 3 (2026-08-18). */}
                 {invoice.annulmentStatus === "Succeeded" && invoice.annulmentReason && (
                   <div className="text-xs text-slate-400">Anulada — Motivo: {invoice.annulmentReason}</div>
                 )}
@@ -180,7 +193,13 @@ export function InvoiceSection({ invoiceKind, onInvoiceKindChange, items, onDown
                   <>
                     <Button type="button" variant="outline" size="sm" onClick={() => onViewPdf(invoice)}>Ver PDF</Button>
                     <Button type="button" variant="outline" size="sm" onClick={() => onDownloadPdf(invoice)}>Descargar</Button>
-                    {![2, 3, 7, 8, 12, 13, 52, 53].includes(invoice.tipoComprobante) && invoice.annulmentStatus !== "Pending" && (
+                    {/* P1 de la spec 2026-08-18 (firmado): el botón se ESCONDE cuando la
+                        factura YA está anulada (mismo criterio que Cuentas por pagar: la
+                        acción no se repite una vez hecha) — antes solo se tapaba mientras
+                        se estaba anulando (Pending), y quedaba visible después (Succeeded). */}
+                    {![2, 3, 7, 8, 12, 13, 52, 53].includes(invoice.tipoComprobante) &&
+                      invoice.annulmentStatus !== "Pending" &&
+                      invoice.annulmentStatus !== "Succeeded" && (
                       <Button type="button" variant="destructive" size="sm" onClick={() => onAnnulInvoice(invoice)}>Anular</Button>
                     )}
                   </>

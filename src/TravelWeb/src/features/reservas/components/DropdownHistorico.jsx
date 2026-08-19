@@ -56,6 +56,12 @@ export function DropdownHistorico({ sugerencias, cargando, onElegir, onCerrar })
                             key={`historico-${sugerencia.documentType}-${sugerencia.documentNumber}-${index}`}
                             type="button"
                             role="option"
+                            // Fix deuda menor (2026-08-18): un role="option" dentro de un
+                            // role="listbox" necesita aria-selected para que el lector de
+                            // pantalla no lo marque como estado inválido. Este menú es
+                            // "elegir y cerrar" (sin selección que persista en pantalla),
+                            // por eso siempre va en false — nunca queda un ítem "marcado".
+                            aria-selected={false}
                             onClick={() => onElegir(sugerencia)}
                             className="group w-full border-b border-slate-50 px-4 py-2.5 text-left transition-colors last:border-0 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-blue-900/30"
                         >

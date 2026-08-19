@@ -73,7 +73,16 @@ export function useInvoicing(options = {}) {
       if (debouncedInvoiceCustomer.trim()) invoicesParams.set("customer", debouncedInvoiceCustomer.trim());
       if (debouncedInvoiceReservation.trim()) invoicesParams.set("reservation", debouncedInvoiceReservation.trim());
       if (debouncedInvoiceVoucherNumber.trim()) invoicesParams.set("voucherNumber", debouncedInvoiceVoucherNumber.trim());
-      if (invoiceResultFilter !== "all") invoicesParams.set("result", invoiceResultFilter);
+      // "annulled" (spec 2026-08-18, P2) es un estado de ANULACIÓN, no un resultado
+      // fiscal ARCA — el backend lo espera en el param separado "annulment"
+      // (InvoiceService.ApplyInvoiceStructuredFilters), igual que en la pantalla
+      // global de Facturación. El resto de las opciones ("approved"/"rejected"/
+      // "pending") siguen yendo por "result" como siempre.
+      if (invoiceResultFilter === "annulled") {
+        invoicesParams.set("annulment", "annulled");
+      } else if (invoiceResultFilter !== "all") {
+        invoicesParams.set("result", invoiceResultFilter);
+      }
 
       const [summaryRes, worklistRes, invoicesRes] = await Promise.all([
         api.get("/invoices/summary"),

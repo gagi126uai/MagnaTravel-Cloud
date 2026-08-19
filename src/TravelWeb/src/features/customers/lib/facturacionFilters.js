@@ -100,6 +100,11 @@ export const OPCIONES_TIPO_FILTRO = [
 /**
  * Opciones del selector "Estado" (estado fiscal ARCA + estado de anulación).
  * El valor "" representa "Todos".
+ *
+ * Spec 2026-08-18 (chip "Anulada" en Facturación): se agrega "anulada", espejo
+ * de la opción que ya tiene el filtro de la pantalla global de Facturación
+ * (OPCIONES_ESTADO_FILTRO_GLOBAL en facturacionGlobalFilters.js) — antes acá
+ * no se podía buscar "todas las anuladas", solo se veía el chip mal pintado.
  */
 export const OPCIONES_ESTADO_FILTRO = [
   { valor: "", etiqueta: "Todos" },
@@ -107,11 +112,12 @@ export const OPCIONES_ESTADO_FILTRO = [
   { valor: "rechazado", etiqueta: "Rechazado" },
   { valor: "en_proceso", etiqueta: "En proceso" },
   { valor: "anulando", etiqueta: "Anulando" },
+  { valor: "anulada", etiqueta: "Anulada" },
 ];
 
 /**
  * Infiere el estado fiscal de una factura para el filtro de estado.
- * La prioridad es: anulando > aprobado > rechazado > en_proceso.
+ * La prioridad es: anulando > anulada > aprobado > rechazado > en_proceso.
  *
  * @param {{ annulmentStatus?: string, resultado?: string }} invoice
  * @returns {string} clave interna (ej. "aprobado")
@@ -119,10 +125,55 @@ export const OPCIONES_ESTADO_FILTRO = [
 export function resolverEstadoFiscal(invoice) {
   // annulmentStatus "Pending" = en proceso de anulación (prioridad máxima)
   if (invoice.annulmentStatus === "Pending") return "anulando";
+  // Comprobante YA anulado (AnnulmentStatus.Succeeded): mismo criterio que la
+  // pantalla global de Facturación — pesa más que el resultado ARCA, porque una
+  // vez anulado ya no importa si en su momento fue aprobado o rechazado.
+  if (invoice.annulmentStatus === "Succeeded") return "anulada";
   if (invoice.resultado === "A") return "aprobado";
   if (invoice.resultado === "R") return "rechazado";
   // Sin resultado definido (en proceso de emisión ARCA)
   return "en_proceso";
+}
+
+/**
+ * Resuelve tono, texto y si el chip va tachado para el estado visual de un
+ * comprobante (estado fiscal ARCA + estado de anulación).
+ *
+ * Centraliza el MISMO criterio que ya usa la pantalla global de Facturación
+ * (FacturacionPage.jsx → ChipEstadoFiscal), para que la solapa de Facturación
+ * de la reserva (InvoicingTab.jsx) y la solapa de Facturación del cliente
+ * (FacturacionClienteTab.jsx) pinten exactamente el mismo chip ante los mismos
+ * datos — evita que una pantalla diga "Aprobado" en verde mientras otra ya
+ * sabe que el comprobante está "Anulada" en rojo.
+ *
+ * Prioridad (de más a menos urgente): anulando > anulada > error de anulación >
+ * aprobado > rechazado > en proceso. Ver spec 2026-08-18.
+ *
+ * @param {{ annulmentStatus?: string, resultado?: string }} invoice
+ * @returns {{ tone: "azul"|"rojo"|"verde", etiqueta: string, tachado: boolean }}
+ */
+export function resolverChipEstadoComprobante(invoice) {
+  if (invoice?.annulmentStatus === "Pending") {
+    return { tone: "azul", etiqueta: "Anulando…", tachado: false };
+  }
+  // Anulada de verdad: rojo + tachado, para que se lea "sin efecto" de un
+  // vistazo aunque no se llegue a leer el texto del chip (B.1: rojo = freno).
+  if (invoice?.annulmentStatus === "Succeeded") {
+    return { tone: "rojo", etiqueta: "Anulada", tachado: true };
+  }
+  // Anulación fallida: caso excepcional, mismo tono rojo que el resto de los frenos.
+  if (invoice?.annulmentStatus === "Failed") {
+    return { tone: "rojo", etiqueta: "Error anulación", tachado: false };
+  }
+  if (invoice?.resultado === "A") {
+    return { tone: "verde", etiqueta: "Aprobado", tachado: false };
+  }
+  if (invoice?.resultado === "R") {
+    return { tone: "rojo", etiqueta: "Rechazado", tachado: false };
+  }
+  // Sin resultado definitivo: en proceso de emisión ARCA — azul "en curso" (B.5):
+  // no le pide nada al usuario, solo falta la respuesta de ARCA.
+  return { tone: "azul", etiqueta: "En proceso", tachado: false };
 }
 
 /**
