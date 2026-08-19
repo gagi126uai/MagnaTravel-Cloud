@@ -186,7 +186,7 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
   );
 }
 
-// Botones de accion contextuales. Mismo molde que InvoicingTab (InvoiceSection):
+// Botones de accion contextuales. Mismo molde que tenia InvoiceSection (borrado, ver WorkItemSection.jsx):
 // outline para las secundarias, destructive para Anular, default (azul boleto)
 // para Reintentar (Button, componentes/ui/button.jsx).
 function MovementActions({ actions, item, busy, onViewPdf, onDownloadPdf, onAnnulInvoice, onRetryInvoice, onVoidReceipt }) {

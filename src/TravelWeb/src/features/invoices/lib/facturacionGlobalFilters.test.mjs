@@ -46,6 +46,7 @@ function mapEstadoToServerParams(estado) {
     case "en_proceso": return { result: "pendiente", annulment: null };
     case "anulando":   return { result: null, annulment: "anulando" };
     case "anulada":    return { result: null, annulment: "anulada"  };
+    case "error_anulacion": return { result: null, annulment: "fallida" };
     default:           return { result: null, annulment: null };
   }
 }
@@ -178,6 +179,10 @@ test("mapEstadoToServerParams — anulada: Annulment=anulada (AnnulmentStatus.Su
   assert.deepEqual(mapEstadoToServerParams("anulada"), { result: null, annulment: "anulada" });
 });
 
+test("mapEstadoToServerParams — error_anulacion: Annulment=fallida (AnnulmentStatus.Failed)", () => {
+  assert.deepEqual(mapEstadoToServerParams("error_anulacion"), { result: null, annulment: "fallida" });
+});
+
 // ─── Tests: buildInvoiceQueryParams ──────────────────────────────────────────
 
 test("buildInvoiceQueryParams — filtros vacíos: solo paginación y orden", () => {
@@ -251,6 +256,14 @@ test("buildInvoiceQueryParams — filtro anulada (AnnulmentStatus.Succeeded)", (
   const params = buildInvoiceQueryParams(filters, 1, 25);
 
   assert.strictEqual(params.get("Annulment"), "anulada");
+  assert.strictEqual(params.get("Result"), null);
+});
+
+test("buildInvoiceQueryParams — filtro error_anulacion (AnnulmentStatus.Failed)", () => {
+  const filters = { desde: "", hasta: "", tipo: "", estado: "error_anulacion", moneda: "", buscarNumero: "" };
+  const params = buildInvoiceQueryParams(filters, 1, 25);
+
+  assert.strictEqual(params.get("Annulment"), "fallida");
   assert.strictEqual(params.get("Result"), null);
 });
 

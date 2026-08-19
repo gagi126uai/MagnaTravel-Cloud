@@ -140,11 +140,11 @@ export function resolverEstadoFiscal(invoice) {
  * comprobante (estado fiscal ARCA + estado de anulación).
  *
  * Centraliza el MISMO criterio que ya usa la pantalla global de Facturación
- * (FacturacionPage.jsx → ChipEstadoFiscal), para que la solapa de Facturación
- * de la reserva (InvoicingTab.jsx) y la solapa de Facturación del cliente
- * (FacturacionClienteTab.jsx) pinten exactamente el mismo chip ante los mismos
- * datos — evita que una pantalla diga "Aprobado" en verde mientras otra ya
- * sabe que el comprobante está "Anulada" en rojo.
+ * (FacturacionPage.jsx → ChipEstadoFiscal), para que la solapa "Pendientes de
+ * emitir" de Cobranzas (WorkItemSection.jsx) y la solapa de Facturación del
+ * cliente (FacturacionClienteTab.jsx) pinten exactamente el mismo chip ante
+ * los mismos datos — evita que una pantalla diga "Aprobado" en verde mientras
+ * otra ya sabe que el comprobante está "Anulada" en rojo.
  *
  * Prioridad (de más a menos urgente): anulando > anulada > error de anulación >
  * aprobado > rechazado > en proceso. Ver spec 2026-08-18.

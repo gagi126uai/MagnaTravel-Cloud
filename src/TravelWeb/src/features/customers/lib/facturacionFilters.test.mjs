@@ -291,8 +291,8 @@ test("resolverEstadoFiscal - anulada (Succeeded) tiene prioridad sobre resultado
 
 // ─── resolverChipEstadoComprobante ───────────────────────────────────────────
 // Spec 2026-08-18: mismo criterio que ChipEstadoFiscal de FacturacionPage.jsx,
-// reusado en la solapa de la reserva (InvoicingTab.jsx) y la del cliente
-// (FacturacionClienteTab.jsx).
+// reusado en la solapa "Pendientes de emitir" de Cobranzas (WorkItemSection.jsx)
+// y la del cliente (FacturacionClienteTab.jsx).
 
 test("resolverChipEstadoComprobante - anulando (Pending) es azul, sin tachar", () => {
   const chip = resolverChipEstadoComprobante({ annulmentStatus: "Pending", resultado: "A" });

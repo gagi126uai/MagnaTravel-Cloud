@@ -33,6 +33,7 @@ import {
   Inbox,
   FileText,
   TrendingUp,
+  BarChart3,
   ChevronRight,
   X,
 } from "lucide-react";
@@ -151,8 +152,10 @@ export const MODULE_DEFS = [
       // redirect en App.jsx para no romper bookmarks/links existentes.
       // Comisiones: solo el dueño/admin la ve (decisión del dueño, guia-ux 2026-06-13).
       { to: "/commissions",           label: "Comisiones",     icon: TrendingUp,  adminOnly: true },
-      // TODO: cuando se construya la pantalla global de Reportes (spec 2026-06-28),
-      //       agregar aquí el link a su ruta.
+      // Pantalla global de Reportes construida (spec 2026-06-28): antes había un TODO
+      // acá esperando a que existiera la pantalla. Ojo: /analytics (caja) NO tiene
+      // entrada propia acá — su única puerta es la tarjeta del dashboard (spec 2026-08-18 §5.5).
+      { to: "/reports",  label: "Reportes",       icon: BarChart3, requiredPermission: "reportes.view" },
       { to: "/admin",    label: "Administración", icon: Shield,   requiredPermission: "auditoria.view" },
       { to: "/settings", label: "Configuración",  icon: Settings, requiredPermission: "configuracion.view" },
     ],

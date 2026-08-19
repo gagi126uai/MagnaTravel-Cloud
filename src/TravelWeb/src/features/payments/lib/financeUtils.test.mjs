@@ -81,7 +81,7 @@ test("formatDate: con options explícito → usa Intl.DateTimeFormat, no el stri
 // ─── Ida y vuelta — caso real de Cobranzas/Panel de pagos ───────────────────
 
 test("formatDate: ida y vuelta — la fecha de salida de un viaje se muestra sin corrimiento", () => {
-    // Simula item.startDate tal cual lo devuelve el backend en Cobranzas/InvoicingTab/PaymentsHomePage.
+    // Simula item.startDate tal cual lo devuelve el backend en Cobranzas/WorkItemSection/PaymentsHomePage.
     const fechaDeSalidaDelViaje = "2026-05-23";
     const respuestaSimuladaDelBackend = `${fechaDeSalidaDelViaje}T00:00:00Z`;
     assert.equal(formatDate(respuestaSimuladaDelBackend), "23/05/2026");

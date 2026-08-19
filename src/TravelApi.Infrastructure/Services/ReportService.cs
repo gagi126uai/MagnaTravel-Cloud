@@ -2408,13 +2408,23 @@ public class ReportService : IReportService
         var currentBalance = historical.Count > 0 ? historical[^1].RunningBalance : 0m;
         var lastProjectedBalance = projected.Count > 0 ? projected[^1].RunningBalance : currentBalance;
 
+        // P-3: mismo corte de dias que los escalares de arriba (ultimo dia historico / dia 30-60-90 de
+        // la proyeccion), pero leyendo el desglose por moneda en vez del total mezclado. No se recalcula
+        // nada: se toma el RunningBalanceByCurrency que BuildCashFlowDay ya armo enmascarado por costo.
+        var currentBalanceByCurrency = historical.Count > 0 ? historical[^1].RunningBalanceByCurrency : new List<CurrencyAmount>();
+        var lastProjectedBalanceByCurrency = projected.Count > 0 ? projected[^1].RunningBalanceByCurrency : currentBalanceByCurrency;
+
         return new CashFlowProjectionResponse(
             Historical: historical,
             Projected: projected,
             CurrentBalance: currentBalance,
             ProjectedBalance30: projected.Count >= 30 ? projected[29].RunningBalance : lastProjectedBalance,
             ProjectedBalance60: projected.Count >= 60 ? projected[59].RunningBalance : lastProjectedBalance,
-            ProjectedBalance90: projected.Count >= 90 ? projected[89].RunningBalance : lastProjectedBalance
+            ProjectedBalance90: projected.Count >= 90 ? projected[89].RunningBalance : lastProjectedBalance,
+            CurrentBalanceByCurrency: currentBalanceByCurrency,
+            ProjectedBalance30ByCurrency: projected.Count >= 30 ? projected[29].RunningBalanceByCurrency : lastProjectedBalanceByCurrency,
+            ProjectedBalance60ByCurrency: projected.Count >= 60 ? projected[59].RunningBalanceByCurrency : lastProjectedBalanceByCurrency,
+            ProjectedBalance90ByCurrency: projected.Count >= 90 ? projected[89].RunningBalanceByCurrency : lastProjectedBalanceByCurrency
         );
     }
 

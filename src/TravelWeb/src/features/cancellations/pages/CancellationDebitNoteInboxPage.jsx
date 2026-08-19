@@ -100,7 +100,7 @@ export default function CancellationDebitNoteInboxPage() {
 
 /**
  * Fila de un caso en la bandeja pasiva. Ya no tiene botón de acción: la fila ENTERA
- * es un link a la ficha de la reserva (mismo patrón que CollectionsTab/InvoicingTab),
+ * es un link a la ficha de la reserva (mismo patrón que CollectionsTab/WorkItemSection),
  * que es donde ahora vive todo el paso de la multa. Ser un <Link> real (en vez de un
  * div con onClick + navigate) le da gratis lo que un div clickeable no puede: abrir en
  * pestaña nueva con Ctrl/Cmd+click o click del medio, y foco/Enter nativos de teclado.

@@ -1,29 +1,23 @@
 import { useEffect, useState, useCallback } from "react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { api } from "../api";
 import { showError } from "../alerts";
-import { formatDate } from "../lib/utils";
+import { formatCurrency } from "../lib/utils";
+import { hasPermission } from "../auth";
+import { CurrencyBadge } from "../components/ui/CurrencyBadge";
+import { construirLineasKpiPorMoneda } from "../lib/dashboardKpiCurrency";
+import { armarSeriesRitmoCobrosPagos } from "../features/dashboard/lib/cashflowRhythmSeries";
 import {
     TrendingUp, TrendingDown, Users, MapPin, Wallet, BarChart3,
     Calendar, ArrowUpRight, ArrowDownRight, Loader2, RefreshCw,
     Trophy, Target, DollarSign, Activity
 } from "lucide-react";
 
-const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
-
-/**
- * Formatea el eje X del grafico de flujo de caja como "15 jul".
- *
- * Parte del DD/MM/AAAA que ya devuelve formatDate() (helper único, ver T-4)
- * en vez de leer la fecha con new Date() de nuevo — así no reintroducimos el
- * bug de fechas-solo-día corridas un día (el backend manda el día del flujo
- * de caja como fecha-solo-día, sin hora real).
- */
-function formatFechaEjeCashflow(value) {
-    const fechaCorta = formatDate(value);
-    if (fechaCorta === "-") return "-";
-    const [dia, mes] = fechaCorta.split("/");
-    return `${dia} ${MESES_CORTOS[Number(mes) - 1]}`;
-}
+// Mismos colores que la tarjeta "Ritmo de cobros y pagos" del dashboard
+// (CashflowRhythmCard.jsx) — un solo criterio de color para cobros/pagos en
+// toda la app, no lo reinventamos acá.
+const COLOR_COBROS = "#1D4ED8";
+const COLOR_PAGOS = "#B45309";
 
 export default function AnalyticsPage() {
     const [sellers, setSellers] = useState([]);
@@ -58,6 +52,11 @@ export default function AnalyticsPage() {
     const fmt = (n) => `$${(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
     const fmtPct = (n) => `${(n || 0).toFixed(1)}%`;
 
+    // "Pagos a operadores" es informacion de costo (F-14): sin este permiso el backend
+    // ya manda CashOutByCurrency vacio para cada dia, y el grafico de flujo de caja
+    // omite esa serie entera en vez de graficar un "$0" enganoso.
+    const puedeVerCostos = hasPermission("cobranzas.see_cost");
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-[60vh]">
@@ -88,25 +87,27 @@ export default function AnalyticsPage() {
             {/* Summary Cards */}
             {cashflow && yoy && (
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    <SummaryCard
+                    {/* P-3: el saldo nunca se suma entre monedas — una línea por moneda con su
+                        CurrencyBadge, mismo patrón que MoneyKpiGrid.jsx del dashboard nuevo. Sin
+                        flecha de tendencia: con más de una moneda no hay UNA sola dirección para
+                        mostrar (podés estar mejorando en pesos y empeorando en dólares a la vez). */}
+                    <MoneyByCurrencyCard
                         title="Balance Actual"
-                        value={fmt(cashflow.currentBalance)}
+                        lineas={construirLineasKpiPorMoneda(cashflow.currentBalanceByCurrency)}
                         icon={Wallet}
                         color="blue"
                     />
-                    <SummaryCard
+                    <MoneyByCurrencyCard
                         title="Proyección 30d"
-                        value={fmt(cashflow.projectedBalance30)}
+                        lineas={construirLineasKpiPorMoneda(cashflow.projectedBalance30ByCurrency)}
                         icon={Target}
                         color="emerald"
-                        trend={cashflow.projectedBalance30 > cashflow.currentBalance ? "up" : "down"}
                     />
-                    <SummaryCard
+                    <MoneyByCurrencyCard
                         title="Proyección 90d"
-                        value={fmt(cashflow.projectedBalance90)}
+                        lineas={construirLineasKpiPorMoneda(cashflow.projectedBalance90ByCurrency)}
                         icon={Activity}
                         color="violet"
-                        trend={cashflow.projectedBalance90 > cashflow.currentBalance ? "up" : "down"}
                     />
                     <SummaryCard
                         title="Crecimiento Interanual"
@@ -247,58 +248,42 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* ===== CASHFLOW TAB (CSS chart) ===== */}
+            {/* ===== CASHFLOW TAB (por moneda, P-3) ===== */}
             {activeTab === "cashflow" && cashflow && (
                 <div className="animate-in fade-in duration-300 space-y-6">
-                    {/* Projection KPIs */}
+                    {/* Projection KPIs — una línea por moneda, nunca un solo número sumado */}
                     <div className="grid grid-cols-3 gap-4">
                         {[
-                            { label: "30 días", val: cashflow.projectedBalance30 },
-                            { label: "60 días", val: cashflow.projectedBalance60 },
-                            { label: "90 días", val: cashflow.projectedBalance90 },
+                            { label: "30 días", lineas: construirLineasKpiPorMoneda(cashflow.projectedBalance30ByCurrency) },
+                            { label: "60 días", lineas: construirLineasKpiPorMoneda(cashflow.projectedBalance60ByCurrency) },
+                            { label: "90 días", lineas: construirLineasKpiPorMoneda(cashflow.projectedBalance90ByCurrency) },
                         ].map(p => (
                             <div key={p.label} className="bg-white dark:bg-slate-900 rounded-[10px] border border-slate-200 dark:border-slate-800 p-5 text-center">
                                 <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Proyección {p.label}</div>
-                                <div className={`text-xl font-black ${p.val >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{fmt(p.val)}</div>
+                                <div className="space-y-1">
+                                    {p.lineas.map((linea) => (
+                                        <div key={linea.currency} className="flex items-center justify-center gap-1.5">
+                                            <CurrencyBadge currency={linea.currency} size="sm" />
+                                            <span className={`text-xl font-black ${linea.monto >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                                                {formatCurrency(linea.monto, linea.currency, { withSymbol: false })}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         ))}
                     </div>
 
-                    {/* Historical chart (last 30 days as bars) */}
+                    {/* Cobros y pagos por moneda: mismo patrón visual que la tarjeta "Ritmo de
+                        cobros y pagos" del dashboard (CashflowRhythmCard.jsx), reusando su misma
+                        lib de series (cashflowRhythmSeries.js) — 30 días reales + tendencia a 90. */}
                     <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
-                        <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider mb-6 flex items-center gap-2">
+                        <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider mb-1 flex items-center gap-2">
                             <Activity className="w-4 h-4 text-blue-500" />
-                            Flujo de Caja (Últimos 30 días)
+                            Flujo de Caja
                         </h3>
-                        <div className="flex items-end gap-[2px] h-40 overflow-x-auto">
-                            {cashflow.historical.map((day, idx) => {
-                                const maxVal = Math.max(...cashflow.historical.map(d => Math.max(d.cashIn, d.cashOut)), 1);
-                                const inHeight = (day.cashIn / maxVal) * 100;
-                                const outHeight = (day.cashOut / maxVal) * 100;
-                                return (
-                                    <div key={idx} className="flex-1 min-w-[8px] flex flex-col items-center gap-[1px] group relative">
-                                        <div
-                                            className="w-full bg-emerald-400/80 dark:bg-emerald-500/60 rounded-t transition-all hover:bg-emerald-500"
-                                            style={{ height: `${inHeight}%`, minHeight: day.cashIn > 0 ? "2px" : "0" }}
-                                            title={`Ingreso: ${fmt(day.cashIn)}`}
-                                        ></div>
-                                        <div
-                                            className="w-full bg-rose-400/80 dark:bg-rose-500/60 rounded-b transition-all hover:bg-rose-500"
-                                            style={{ height: `${outHeight}%`, minHeight: day.cashOut > 0 ? "2px" : "0" }}
-                                            title={`Egreso: ${fmt(day.cashOut)}`}
-                                        ></div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <div className="flex justify-between mt-3 text-[11px] font-bold text-slate-400">
-                            <span>{formatFechaEjeCashflow(cashflow.historical[0]?.date)}</span>
-                            <div className="flex gap-4">
-                                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> Ingresos</span>
-                                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400"></span> Egresos</span>
-                            </div>
-                            <span>Hoy</span>
-                        </div>
+                        <p className="text-xs text-slate-400 mb-6">Últimos 30 días reales + tendencia a 90 días, por moneda</p>
+                        <CashflowByCurrencyChart cashflow={cashflow} puedeVerCostos={puedeVerCostos} />
                     </div>
                 </div>
             )}
@@ -412,6 +397,114 @@ function SummaryCard({ title, value, icon: Icon, color, trend, subtitle }) {
             <div className="text-xl font-black text-slate-900 dark:text-white">{value}</div>
             <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-1">{title}</div>
             {subtitle && <div className="text-[11px] text-slate-400 mt-0.5">{subtitle}</div>}
+        </div>
+    );
+}
+
+/**
+ * Tarjeta de saldo multimoneda (P-3): mismo molde visual que SummaryCard, pero en vez
+ * de un número único muestra una línea por moneda con su CurrencyBadge — igual que
+ * MoneyKpiCard del dashboard nuevo (features/dashboard/components/MoneyKpiGrid.jsx).
+ * `lineas` ya viene armada por construirLineasKpiPorMoneda (lib/dashboardKpiCurrency.js).
+ */
+function MoneyByCurrencyCard({ title, lineas, icon: Icon, color }) {
+    const colorMap = {
+        blue: "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400",
+        emerald: "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400",
+        violet: "bg-violet-50 text-violet-600 dark:bg-violet-900/20 dark:text-violet-400",
+    };
+
+    return (
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-800 p-5 shadow-sm hover:shadow-md transition-shadow">
+            <div className={`inline-flex p-2 rounded-[10px] mb-3 ${colorMap[color]}`}>
+                <Icon className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+                {lineas.map((linea) => (
+                    <div key={linea.currency} className="flex items-center gap-1.5">
+                        <CurrencyBadge currency={linea.currency} size="sm" />
+                        <span className="text-lg font-black text-slate-900 dark:text-white">
+                            {formatCurrency(linea.monto, linea.currency, { withSymbol: false })}
+                        </span>
+                    </div>
+                ))}
+            </div>
+            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-2">{title}</div>
+        </div>
+    );
+}
+
+/**
+ * Grafico de cobros/pagos por moneda de la solapa "Flujo de Caja". Reusa
+ * `armarSeriesRitmoCobrosPagos` (misma lib pura que la tarjeta "Ritmo de cobros y
+ * pagos" del dashboard, cashflowRhythmSeries.js) para no reinventar el cálculo de
+ * series por moneda ni el eje Hoy/+30/+60/+90.
+ *
+ * F-14: la línea de "pagos" (costo — plata que sale a operadores) solo se dibuja si
+ * `puedeVerCostos` es true. Sin el permiso `cobranzas.see_cost`, el backend ya manda
+ * `cashOutByCurrency` vacío en cada día — graficar esa serie igual mostraría un "$0"
+ * como si fuera el dato real, en vez de reconocer que está oculto.
+ */
+function CashflowByCurrencyChart({ cashflow, puedeVerCostos }) {
+    const { hayMovimiento, monedas, ejeXTicks } = armarSeriesRitmoCobrosPagos(cashflow);
+
+    if (!hayMovimiento) {
+        return <p className="py-10 text-center text-sm text-slate-400">Todavía no hay movimientos para graficar.</p>;
+    }
+
+    return (
+        <div className="space-y-6">
+            {monedas.map((serie) => (
+                <div key={serie.currency}>
+                    <div className="mb-1 flex items-center gap-1.5">
+                        <CurrencyBadge currency={serie.currency} size="sm" />
+                    </div>
+                    <div className="h-[160px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={serie.puntos} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                                <XAxis
+                                    dataKey="x"
+                                    type="number"
+                                    domain={["dataMin", "dataMax"]}
+                                    ticks={ejeXTicks.map((tick) => tick.x)}
+                                    tickFormatter={(valor) => ejeXTicks.find((tick) => tick.x === valor)?.etiqueta ?? ""}
+                                    stroke="#64748B"
+                                    fontSize={11}
+                                    tickLine={false}
+                                    axisLine={false}
+                                />
+                                <YAxis hide />
+                                <Tooltip
+                                    formatter={(valor, nombre) => [
+                                        formatCurrency(valor, serie.currency),
+                                        nombre === "cobros" ? "Cobros" : "Pagos a operadores",
+                                    ]}
+                                    labelFormatter={(valor) => ejeXTicks.find((tick) => tick.x === valor)?.etiqueta ?? ""}
+                                    contentStyle={{ borderRadius: "8px", border: "1px solid #E2E8F0", fontSize: "12px" }}
+                                />
+                                <Line type="monotone" dataKey="cobros" stroke={COLOR_COBROS} strokeWidth={2} dot={false} />
+                                {puedeVerCostos ? (
+                                    <Line type="monotone" dataKey="pagos" stroke={COLOR_PAGOS} strokeWidth={2} dot={false} />
+                                ) : null}
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            ))}
+
+            <div className="flex items-center gap-4 text-[11px] font-semibold text-slate-500">
+                <span className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: COLOR_COBROS }} aria-hidden="true" />
+                    Cobros
+                </span>
+                {puedeVerCostos ? (
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: COLOR_PAGOS }} aria-hidden="true" />
+                        Pagos a operadores
+                    </span>
+                ) : null}
+            </div>
         </div>
     );
 }

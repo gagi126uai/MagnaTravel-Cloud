@@ -91,25 +91,66 @@ export function SkeletonChart() {
 
 // ─── Full page skeletons ───────────────────────────────────
 
+/**
+ * Tarjeta gris genérica para la columna TRABAJO del dashboard: un título corto
+ * arriba y `rows` filas de "item de lista" abajo (mismo bloque que usan
+ * UpcomingTripsCard/PendingCollectionsCard/OpenBudgetsAndCrmCard, pero sin datos).
+ */
+function SkeletonDashboardListCard({ rows = 3 }) {
+    return (
+        <div className="rounded-[14px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-4">
+            <Skeleton className="h-4 w-40" />
+            <div className="space-y-3">
+                {Array.from({ length: rows }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                        <Skeleton className="h-9 w-9 rounded-full shrink-0" />
+                        <div className="flex-1 space-y-1.5">
+                            <Skeleton className="h-3.5 w-3/4" />
+                            <Skeleton className="h-3 w-1/2" />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Skeleton de la pantalla "Inicio" — espeja el layout REAL del dashboard nuevo
+ * (spec 2026-08-18 "Panorama ERP", ver `DashboardPage.jsx`): cabecera con
+ * título + botón "Nuevo presupuesto", y debajo dos columnas — TRABAJO a la
+ * izquierda (próximos viajes, cobros pendientes, presupuestos/CRM) y PLATA a
+ * la derecha (grid de KPIs por moneda + gráfico de ritmo de cobros/pagos +
+ * tarjeta de informes) — que en mobile se apilan en ese mismo orden (spec 1.7).
+ * Antes este skeleton tenía la forma del dashboard viejo (KpiRow + 2 charts +
+ * 2 tablas), ya no existe ese layout.
+ */
 export function DashboardSkeleton() {
     return (
-        <div className="space-y-8 animate-in fade-in duration-300">
-            <div className="space-y-2">
-                <Skeleton className="h-8 w-48" />
-                <Skeleton className="h-4 w-72" />
-            </div>
-            <SkeletonKpiRow count={4} />
-            <div className="grid gap-6 lg:grid-cols-5">
-                <div className="lg:col-span-3">
-                    <SkeletonChart />
+        <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Cabecera: título + bajada a la izquierda, botón principal a la derecha (DashboardHeader.jsx) */}
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="space-y-2">
+                    <Skeleton className="h-7 w-28" />
+                    <Skeleton className="h-4 w-64" />
                 </div>
-                <div className="lg:col-span-2">
-                    <SkeletonChart />
-                </div>
+                <Skeleton className="h-10 w-48 rounded-lg" />
             </div>
-            <div className="grid gap-6 lg:grid-cols-2">
-                <SkeletonTable rows={5} cols={4} />
-                <SkeletonTable rows={5} cols={3} />
+
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {/* Columna TRABAJO */}
+                <div className="space-y-6">
+                    <SkeletonDashboardListCard rows={3} />
+                    <SkeletonDashboardListCard rows={3} />
+                    <SkeletonDashboardListCard rows={2} />
+                </div>
+
+                {/* Columna PLATA: KPIs por moneda + gráfico + tarjeta de informes */}
+                <div className="space-y-6">
+                    <SkeletonKpiRow count={4} />
+                    <SkeletonChart />
+                    <Skeleton className="h-16 w-full rounded-[14px]" />
+                </div>
             </div>
         </div>
     );

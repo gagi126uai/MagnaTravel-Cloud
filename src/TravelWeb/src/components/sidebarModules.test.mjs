@@ -79,6 +79,8 @@ const MODULE_DEFS = [
       // /facturacion (solapas "Comprobantes por resolver" y "Recibos por regularizar"),
       // ya no es una entrada propia del menú.
       { to: "/commissions",           label: "Comisiones",     adminOnly: true },
+      // Reportes (spec 2026-06-28): pantalla global ya construida, entrada agregada al menú.
+      { to: "/reports",  label: "Reportes",       requiredPermission: "reportes.view" },
       { to: "/admin",    label: "Administración", requiredPermission: "auditoria.view" },
       { to: "/settings", label: "Configuración",  requiredPermission: "configuracion.view" },
     ],
@@ -247,15 +249,27 @@ test("agrupamiento: /rates y /packages están en CATÁLOGO", () => {
   assert.ok(routes.includes("/packages"), "/packages debe estar en CATÁLOGO");
 });
 
-test("agrupamiento: /approvals, /commissions, /admin y /settings están en GESTIÓN", () => {
+test("agrupamiento: /approvals, /commissions, /reports, /admin y /settings están en GESTIÓN", () => {
   const gestion = MODULE_DEFS.find((m) => m.id === "gestion");
   assert.ok(gestion, "El módulo GESTIÓN debe existir");
   const routes = gestion.links.map((l) => l.to);
   assert.ok(routes.includes("/approvals/inbox"),       "/approvals/inbox debe estar en GESTIÓN");
   assert.ok(routes.includes("/approvals/my-requests"), "/approvals/my-requests debe estar en GESTIÓN");
   assert.ok(routes.includes("/commissions"),            "/commissions debe estar en GESTIÓN");
+  assert.ok(routes.includes("/reports"),                "/reports debe estar en GESTIÓN");
   assert.ok(routes.includes("/admin"),                  "/admin debe estar en GESTIÓN");
   assert.ok(routes.includes("/settings"),               "/settings debe estar en GESTIÓN");
+});
+
+test("agrupamiento (spec 2026-06-28): Reportes mantiene el permiso 'reportes.view' y NO hay entrada propia para /analytics", () => {
+  // La tarjeta del dashboard (ReportsLinkCard, spec 2026-08-18 §5.5) es la única puerta a /analytics.
+  const gestion = MODULE_DEFS.find((m) => m.id === "gestion");
+  const reportesLink = gestion.links.find((l) => l.to === "/reports");
+  assert.ok(reportesLink, "El link /reports debe estar en el módulo GESTIÓN");
+  assert.equal(reportesLink.requiredPermission, "reportes.view");
+
+  const allRoutes = MODULE_DEFS.flatMap((m) => m.links.map((l) => l.to));
+  assert.ok(!allRoutes.includes("/analytics"), "/analytics no debe tener entrada propia en el menú");
 });
 
 test("agrupamiento: /dashboard y /messages son ítems sueltos (no están en ningún módulo)", () => {

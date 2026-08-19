@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
-import { WorkItemSection } from "../components/InvoicingTab";
+import { WorkItemSection } from "../components/WorkItemSection";
 import { useInvoicing } from "../hooks/useInvoicing";
 import { useInvoicePolling } from "../hooks/useInvoicePolling";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";

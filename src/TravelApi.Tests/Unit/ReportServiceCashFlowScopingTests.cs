@@ -161,4 +161,39 @@ public class ReportServiceCashFlowScopingTests
         Assert.Equal(500m, todayEntry.CashInByCurrency.Single(c => c.Currency == Monedas.ARS).Amount);
         Assert.Equal(500m, todayEntry.CashIn);
     }
+
+    // ============================================================================================
+    // (d) Limpieza chica 2026-08-19: los saldos "Actual/30/60/90 dias" del cashflow tambien
+    // separados por moneda (antes solo la serie dia a dia lo estaba, los 4 saldos resumen seguian
+    // mezclando ARS+USD en CurrentBalance/ProjectedBalanceNN — deuda anotada en AnalyticsPage).
+    // Los campos nuevos son ADITIVOS (T-8): los escalares viejos siguen andando igual.
+    // ============================================================================================
+
+    [Fact]
+    public async Task CashFlow_SaldosPorMoneda_CoincidenConElRunningBalanceDelDiaCorrespondiente()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        var today = DateTime.UtcNow.Date;
+
+        context.Payments.Add(new Payment { Amount = 1000m, Currency = Monedas.ARS, PaidAt = today, AffectsCash = true });
+        await context.SaveChangesAsync();
+
+        var accessor = BuildContextAccessor("admin-1", "Admin");
+        var resolver = BuildResolver("admin-1");
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+
+        // 90 dias: la proyeccion siempre tiene al menos 90 entradas (GetCashFlowProjectionAsync usa
+        // Math.Max(days, 90)), asi que projected[29]/[59]/[89] existen sin fallback.
+        var result = await service.GetCashFlowProjectionAsync(90, CancellationToken.None);
+
+        Assert.Equal(result.Historical[^1].RunningBalanceByCurrency, result.CurrentBalanceByCurrency);
+        Assert.Equal(result.Projected[29].RunningBalanceByCurrency, result.ProjectedBalance30ByCurrency);
+        Assert.Equal(result.Projected[59].RunningBalanceByCurrency, result.ProjectedBalance60ByCurrency);
+        Assert.Equal(result.Projected[89].RunningBalanceByCurrency, result.ProjectedBalance90ByCurrency);
+
+        // Una sola moneda con movimiento (ARS): el saldo actual por moneda tiene que coincidir con
+        // el escalar legacy, porque no hay ninguna otra moneda que el escalar este mezclando.
+        var currentArs = result.CurrentBalanceByCurrency.Single(c => c.Currency == Monedas.ARS).Amount;
+        Assert.Equal(result.CurrentBalance, currentArs);
+    }
 }

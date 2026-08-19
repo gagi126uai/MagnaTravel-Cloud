@@ -2241,7 +2241,9 @@ public class SupplierService : ISupplierService
             Applied = amountsVisible ? applied : 0m,
             Pending = amountsVisible ? Math.Max(0m, total - applied) : 0m,
             AmountsVisible = amountsVisible,
-            VoidReason = invoice.VoidReason,
+            // F-14: el motivo de anulacion suele mencionar montos/plata ("se anulo por diferencia de
+            // USD 200", etc.), asi que es informacion de costo. Sin permiso de ver costos, no viaja.
+            VoidReason = amountsVisible ? invoice.VoidReason : null,
             Lines = invoice.Lines.Select(x => new SupplierInvoiceLineDto(
                 x.PublicId, x.Reserva.PublicId, x.Reserva.NumeroReserva, ServiceKindLabel(x.ServiceRecordKind),
                 x.ServicePublicId, x.Description, amountsVisible ? x.Amount : 0m)).ToList(),

@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { FileText } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { DolarBnaTira } from "../../../components/DolarBnaTira";
 
@@ -27,8 +27,11 @@ export function DashboardHeader({ dolarRate, onRefrescarDolar }) {
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <DolarBnaTira rate={dolarRate} onRefrescar={onRefrescarDolar} />
+        {/* Mismo ícono que el botón de alta en ReservasPage.jsx: "Plus" (es un alta de
+            reserva, no un ícono de documento) — antes acá tenía FileText, desprolijo
+            frente al resto de la app. */}
         <Button type="button" onClick={() => navigate("/reservas?create=1")}>
-          <FileText className="h-4 w-4" />
+          <Plus className="h-4 w-4" />
           Nuevo presupuesto
         </Button>
       </div>

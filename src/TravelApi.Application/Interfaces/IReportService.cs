@@ -284,13 +284,33 @@ public record DestinationAnalyticsDto(
     decimal Margin,
     int PassengerCount);
 
+/// <param name="CurrentBalance">
+/// Saldo actual TOTAL, todas las monedas sumadas en un solo numero. Se conserva SOLO por
+/// compatibilidad con <c>AnalyticsPage.jsx</c> (P-3 prohibe sumar monedas distintas) — un
+/// consumidor NUEVO tiene que usar <see cref="CurrentBalanceByCurrency"/>.
+/// </param>
+/// <param name="CurrentBalanceByCurrency">
+/// P-3: mismo saldo actual que <see cref="CurrentBalance"/>, pero UNA linea por moneda — es el
+/// ultimo dia historico de <c>RunningBalanceByCurrency</c> (mismo enmascarado de costos que esa
+/// serie, no se recalcula distinto).
+/// </param>
+/// <param name="ProjectedBalance30ByCurrency">
+/// P-3: mismo saldo proyectado a 30 dias que <see cref="ProjectedBalance30"/>, pero UNA linea por
+/// moneda — mismo dia de la proyeccion, solo que en <c>RunningBalanceByCurrency</c>.
+/// </param>
+/// <param name="ProjectedBalance60ByCurrency">Igual que <see cref="ProjectedBalance30ByCurrency"/> pero a 60 dias.</param>
+/// <param name="ProjectedBalance90ByCurrency">Igual que <see cref="ProjectedBalance30ByCurrency"/> pero a 90 dias.</param>
 public record CashFlowProjectionResponse(
     List<CashFlowDayDto> Historical,
     List<CashFlowDayDto> Projected,
     decimal CurrentBalance,
     decimal ProjectedBalance30,
     decimal ProjectedBalance60,
-    decimal ProjectedBalance90);
+    decimal ProjectedBalance90,
+    List<CurrencyAmount> CurrentBalanceByCurrency,
+    List<CurrencyAmount> ProjectedBalance30ByCurrency,
+    List<CurrencyAmount> ProjectedBalance60ByCurrency,
+    List<CurrencyAmount> ProjectedBalance90ByCurrency);
 
 /// <summary>
 /// Un dia de la curva de caja (historica o proyectada), "Ritmo de cobros y pagos" del dashboard.

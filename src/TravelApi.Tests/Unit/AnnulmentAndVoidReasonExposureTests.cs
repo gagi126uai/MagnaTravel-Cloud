@@ -1,9 +1,11 @@
 using System;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
 using Hangfire;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -148,11 +150,14 @@ public class AnnulmentAndVoidReasonExposureTests
     }
 
     // ===================================================================
-    // (b) SupplierInvoiceDto trae VoidReason tras anular la factura del operador.
+    // (b) SupplierInvoiceDto trae VoidReason tras anular la factura del operador,
+    // pero SOLO si el usuario tiene permiso de ver montos de costo (F-14): el
+    // motivo de anulacion de una factura de proveedor suele mencionar plata
+    // ("se anulo por diferencia de USD 200"), asi que es informacion de costo.
     // ===================================================================
 
     [Fact]
-    public async Task VoidSupplierInvoiceAsync_ReturnsDtoWithVoidReason()
+    public async Task VoidSupplierInvoiceAsync_WithCostPermission_ReturnsDtoWithVoidReason()
     {
         var options = BuildInMemoryOptions();
         await using var context = new AppDbContext(options);
@@ -167,17 +172,80 @@ public class AnnulmentAndVoidReasonExposureTests
         await context.SaveChangesAsync();
 
         var invoicePublicId = context.SupplierInvoices.Single().PublicId;
+        var service = BuildSupplierServiceWithCostVisibility(context);
+
+        var dto = await service.VoidSupplierInvoiceAsync(
+            1, invoicePublicId, "Factura del operador cargada con el numero equivocado.", CancellationToken.None);
+
+        Assert.Equal("anulada", dto.Status);
+        Assert.True(dto.AmountsVisible);
+        Assert.Equal("Factura del operador cargada con el numero equivocado.", dto.VoidReason);
+
+        // El motivo tambien debe quedar persistido en la fila real (no solo en la respuesta de este call).
+        var persisted = await context.SupplierInvoices.AsNoTracking().SingleAsync(x => x.Id == 1);
+        Assert.Equal("Factura del operador cargada con el numero equivocado.", persisted.VoidReason);
+    }
+
+    [Fact]
+    public async Task VoidSupplierInvoiceAsync_WithoutCostPermission_HidesVoidReasonInDto()
+    {
+        var options = BuildInMemoryOptions();
+        await using var context = new AppDbContext(options);
+
+        context.Suppliers.Add(new Supplier { Id = 1, Name = "Operador Test" });
+        context.SupplierInvoices.Add(new SupplierInvoice
+        {
+            Id = 1, SupplierId = 1, Number = "OP-002", Currency = Monedas.ARS,
+            IssuedAt = DateTime.UtcNow.AddDays(-10), DueDate = DateTime.UtcNow.AddDays(20),
+            Status = SupplierInvoiceStatus.Open, CreatedByUserId = "user-1",
+        });
+        await context.SaveChangesAsync();
+
+        var invoicePublicId = context.SupplierInvoices.Single().PublicId;
+        // Sin IHttpContextAccessor/IUserPermissionResolver: fail-closed, igual que un vendedor
+        // sin cobranzas.see_cost (ver CostMasking.CanSeeCostAsync).
         var service = new SupplierService(context);
 
         var dto = await service.VoidSupplierInvoiceAsync(
             1, invoicePublicId, "Factura del operador cargada con el numero equivocado.", CancellationToken.None);
 
         Assert.Equal("anulada", dto.Status);
-        Assert.Equal("Factura del operador cargada con el numero equivocado.", dto.VoidReason);
+        Assert.False(dto.AmountsVisible);
+        Assert.Null(dto.VoidReason);
 
-        // El motivo tambien debe quedar persistido en la fila real (no solo en la respuesta de este call).
+        // El motivo SI queda persistido en la fila real: solo se oculta en el DTO de salida.
         var persisted = await context.SupplierInvoices.AsNoTracking().SingleAsync(x => x.Id == 1);
         Assert.Equal("Factura del operador cargada con el numero equivocado.", persisted.VoidReason);
+    }
+
+    /// <summary>
+    /// Arma un SupplierService con permiso cobranzas.see_cost concedido (mismo patron que
+    /// SupplierAccountEmptyCurrencyIntegrationTests.BuildServiceWithCostVisibility), para poder
+    /// leer VoidReason y montos reales sin caer en el fail-closed por defecto.
+    /// </summary>
+    private static SupplierService BuildSupplierServiceWithCostVisibility(AppDbContext context)
+    {
+        const string userId = "test-admin";
+        var claims = new[] { new Claim(ClaimTypes.NameIdentifier, userId) };
+        var accessor = new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test")),
+            },
+        };
+
+        var resolverMock = new Mock<IUserPermissionResolver>();
+        resolverMock
+            .Setup(r => r.GetPermissionsAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlySet<string>)new HashSet<string> { Permissions.CobranzasSeeCost });
+
+        return new SupplierService(
+            context,
+            auditService: null,
+            httpContextAccessor: accessor,
+            logger: null,
+            permissionResolver: resolverMock.Object);
     }
 
     // ===================================================================

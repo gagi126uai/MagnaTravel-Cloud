@@ -98,25 +98,6 @@ export function getInvoiceNetAmount(invoice) {
     : Number(invoice.importeTotal || 0);
 }
 
-export function getInvoiceLabel(type) {
-  const labels = {
-    1: "Factura A",
-    6: "Factura B",
-    11: "Factura C",
-    3: "Nota de Credito A",
-    8: "Nota de Credito B",
-    13: "Nota de Credito C",
-    2: "Nota de Debito A",
-    7: "Nota de Debito B",
-    12: "Nota de Debito C",
-    51: "Factura M",
-    53: "Nota de Credito M",
-    52: "Nota de Debito M",
-  };
-
-  return labels[type] || `Comp. ${type}`;
-}
-
 export function isCreditNote(invoice) {
   return creditNoteTypes.includes(invoice?.tipoComprobante);
 }

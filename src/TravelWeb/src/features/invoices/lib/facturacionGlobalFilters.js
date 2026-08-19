@@ -30,6 +30,10 @@ export const OPCIONES_ESTADO_FILTRO_GLOBAL = [
   { valor: "en_proceso", etiqueta: "En proceso" },
   { valor: "anulando",   etiqueta: "Anulando" },
   { valor: "anulada",    etiqueta: "Anulada" },
+  // El chip de la lista ya mostraba "Error anulación" (AnnulmentStatus.Failed) pero
+  // el selector no dejaba filtrar por ese estado. El backend lo soporta desde antes
+  // (Annulment=failed|fallida), acá solo se agrega la opción que faltaba.
+  { valor: "error_anulacion", etiqueta: "Error anulación" },
 ];
 
 /**
@@ -94,6 +98,9 @@ export function mapEstadoToServerParams(estado) {
       return { result: null, annulment: "anulando" };
     case "anulada":
       return { result: null, annulment: "anulada" };
+    // La anulación se intentó y el backend la rechazó (ej: ARCA no aceptó la NC).
+    case "error_anulacion":
+      return { result: null, annulment: "fallida" };
     default:
       return { result: null, annulment: null };
   }
