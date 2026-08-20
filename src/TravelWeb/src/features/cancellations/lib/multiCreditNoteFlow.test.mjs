@@ -25,6 +25,8 @@ import {
     construirTextoEncabezadoRevision,
     construirTextoFranjaEnRevision,
     entradasSaldoAFavor,
+    esAnulacionEnCursoTranquila,
+    describirNotaPorFactura,
 } from "./multiCreditNoteFlow.js";
 
 // ============================================================================
@@ -322,4 +324,90 @@ test("dict vacío → sin línea de saldo a favor (Estado 3: no se muestra la l�
 test("null/undefined → array vacío (no rompe)", () => {
     assert.deepEqual(entradasSaldoAFavor(null), []);
     assert.deepEqual(entradasSaldoAFavor(undefined), []);
+});
+
+// ============================================================================
+// esAnulacionEnCursoTranquila — Bloque 4 "anulación a medias" (2026-08-19), Rama B
+// ============================================================================
+
+test("Rama B: canRetryCreditNotes=false + 1 Pending + 0 Failed → en curso tranquilo (true)", () => {
+    const bc = {
+        canRetryCreditNotes: false,
+        creditNotes: [{ status: "Succeeded" }, { status: "Pending" }],
+    };
+    assert.equal(esAnulacionEnCursoTranquila(bc), true);
+});
+
+test("Rama B: canRetryCreditNotes=true → siempre false, aunque haya Pending sin Failed (gana la Rama A)", () => {
+    const bc = {
+        canRetryCreditNotes: true,
+        creditNotes: [{ status: "Pending" }],
+    };
+    assert.equal(esAnulacionEnCursoTranquila(bc), false);
+});
+
+test("Rama B: hay una Failed → false (eso ya es Rama A, alarma)", () => {
+    const bc = {
+        canRetryCreditNotes: false,
+        creditNotes: [{ status: "Failed" }, { status: "Pending" }],
+    };
+    assert.equal(esAnulacionEnCursoTranquila(bc), false);
+});
+
+test("Rama B: todas Succeeded (sin ninguna Pending) → false", () => {
+    const bc = {
+        canRetryCreditNotes: false,
+        creditNotes: [{ status: "Succeeded" }, { status: "Succeeded" }],
+    };
+    assert.equal(esAnulacionEnCursoTranquila(bc), false);
+});
+
+test("Rama B: bc null/undefined → false, no rompe", () => {
+    assert.equal(esAnulacionEnCursoTranquila(null), false);
+    assert.equal(esAnulacionEnCursoTranquila(undefined), false);
+});
+
+// ============================================================================
+// describirNotaPorFactura — Bloque 4, lista por factura de la Rama A (alarma)
+// ============================================================================
+
+test("describirNotaPorFactura: Succeeded → ✓ + 'nota de crédito emitida'", () => {
+    const nota = { originatingInvoiceComprobanteLabel: "Factura B 0001-00012345", status: "Succeeded" };
+    assert.deepEqual(describirNotaPorFactura(nota), {
+        icono: "✓",
+        texto: "Factura B 0001-00012345 — nota de crédito emitida",
+    });
+});
+
+test("describirNotaPorFactura: Failed con motivo de ARCA → copy EXACTO de la spec (P-13, sin parafrasear)", () => {
+    const nota = {
+        originatingInvoiceComprobanteLabel: "Factura B 0001-00012346",
+        status: "Failed",
+        arcaErrorMessage: "CUIT del emisor sin habilitación para operar",
+    };
+    assert.deepEqual(describirNotaPorFactura(nota), {
+        icono: "✗",
+        texto: "Factura B 0001-00012346 — la nota no salió. ARCA respondió: «CUIT del emisor sin habilitación para operar»",
+    });
+});
+
+test("describirNotaPorFactura: Failed sin motivo (defensivo) → no inventa una cita", () => {
+    const nota = { originatingInvoiceComprobanteLabel: "Factura B 0001-00012346", status: "Failed" };
+    assert.deepEqual(describirNotaPorFactura(nota), {
+        icono: "✗",
+        texto: "Factura B 0001-00012346 — la nota no salió.",
+    });
+});
+
+test("describirNotaPorFactura: Pending atascada → 'la nota todavía no salió.' sin inventar motivo", () => {
+    const nota = { originatingInvoiceComprobanteLabel: "Factura B 0001-00012347", status: "Pending" };
+    assert.deepEqual(describirNotaPorFactura(nota), {
+        icono: "✗",
+        texto: "Factura B 0001-00012347 — la nota todavía no salió.",
+    });
+});
+
+test("describirNotaPorFactura: sin comprobanteLabel → degrada a 'Factura' (no rompe)", () => {
+    const nota = { status: "Succeeded" };
+    assert.deepEqual(describirNotaPorFactura(nota), { icono: "✓", texto: "Factura — nota de crédito emitida" });
 });

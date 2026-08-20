@@ -483,4 +483,176 @@ public class OperatorRefundRegisteredReadModelTests
         var page2Reservas = page2.Items.Select(i => i.NumeroReserva).ToHashSet();
         Assert.Empty(page1Reservas.Intersect(page2Reservas));
     }
+
+    /// <summary>
+    /// Bloque 1 "descalce devolución-caja" (2026-08-19): siembra una cancelacion+reembolso con su caja
+    /// (para poder simular divergencia o coincidencia). Devuelve el operador y la reserva para que cada
+    /// test setee su propio monto de caja.
+    /// </summary>
+    private static async Task<(int SupplierId, int BookingCancellationId, int RefundId)> SeedRefundWithLedgerAsync(
+        AppDbContext ctx, string numeroReserva, decimal receivedRefundAmount, decimal? ledgerAmount, string currency = "ARS")
+    {
+        var customer = new Customer { FullName = "Cliente Descalce", IsActive = true };
+        var supplier = new Supplier { Name = "Operador Descalce", IsActive = true };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva
+        {
+            NumeroReserva = numeroReserva, Name = numeroReserva,
+            PayerId = customer.Id, Status = EstadoReserva.Cancelled,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var bc = new BookingCancellation
+        {
+            ReservaId = reserva.Id, CustomerId = customer.Id, SupplierId = supplier.Id,
+            Status = BookingCancellationStatus.AwaitingOperatorRefund, Reason = "rm-descalce",
+            DraftedByUserId = "vendedor-1",
+        };
+        ctx.BookingCancellations.Add(bc);
+        await ctx.SaveChangesAsync();
+
+        ctx.BookingCancellationLines.Add(new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id, SupplierId = supplier.Id,
+            ServiceTable = CancellableServiceTable.Generic, ServiceId = 1,
+            Scope = BookingCancellationLineScope.Full, Currency = currency, ReceivedRefundAmount = receivedRefundAmount,
+        });
+
+        var refund = new OperatorRefundReceived
+        {
+            SupplierId = supplier.Id, ReceivedAmount = receivedRefundAmount, AllocatedAmount = receivedRefundAmount,
+            Currency = currency, Method = "Transfer", ReceivedByUserId = "cajero-1", ReceivedByUserName = "Cajero Uno",
+        };
+        ctx.OperatorRefundReceived.Add(refund);
+        await ctx.SaveChangesAsync();
+
+        ctx.OperatorRefundAllocations.Add(new OperatorRefundAllocation
+        {
+            OperatorRefundReceivedId = refund.Id, BookingCancellationId = bc.Id,
+            GrossAmount = receivedRefundAmount, NetAmount = receivedRefundAmount,
+            IsVoided = false, CreatedByUserId = "cajero-1",
+        });
+
+        if (ledgerAmount.HasValue)
+        {
+            ctx.CashLedgerEntries.Add(new CashLedgerEntry
+            {
+                Direction = CashMovementDirections.Income, Amount = ledgerAmount.Value, Currency = currency,
+                Method = "Transfer", OccurredAt = DateTime.UtcNow, SourceType = CashLedgerSourceTypes.OperatorRefund,
+                OperatorRefundReceivedId = refund.Id,
+            });
+        }
+
+        await ctx.SaveChangesAsync();
+        return (supplier.Id, bc.Id, refund.Id);
+    }
+
+    [Fact]
+    public async Task CajaDivergeDeLoRecibido_MarcaHasCashLedgerDivergence_ConLosDosMontos()
+    {
+        await using var ctx = NewDbContext();
+        var (supplierId, _, _) = await SeedRefundWithLedgerAsync(
+            ctx, "R-DESCALCE-1", receivedRefundAmount: 1200m, ledgerAmount: 900m);
+
+        var service = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
+        var page = await service.GetSupplierRegisteredRefundsAsync(
+            supplierId, new OperatorRefundRegisteredQuery(), CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.True(item.HasCashLedgerDivergence);
+        Assert.Equal(1200m, item.DerivedAmount);
+        Assert.Equal(900m, item.LedgerAmount);
+    }
+
+    [Fact]
+    public async Task CajaCoincideConLoRecibido_HasCashLedgerDivergenceQuedaFalse()
+    {
+        await using var ctx = NewDbContext();
+        var (supplierId, _, _) = await SeedRefundWithLedgerAsync(
+            ctx, "R-COINCIDE-1", receivedRefundAmount: 1200m, ledgerAmount: 1200m);
+
+        var service = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
+        var page = await service.GetSupplierRegisteredRefundsAsync(
+            supplierId, new OperatorRefundRegisteredQuery(), CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.False(item.HasCashLedgerDivergence);
+        Assert.Equal(0m, item.DerivedAmount);
+        Assert.Equal(0m, item.LedgerAmount);
+    }
+
+    [Fact]
+    public async Task SinPermisoDeVerCostos_TambienEnmascaraLosMontosDeLaDivergencia()
+    {
+        // F-14: DerivedAmount/LedgerAmount son plata de costo -> mismo enmascarado que NetAmount. El chip
+        // booleano (HasCashLedgerDivergence) queda visible igual: no es un monto.
+        await using var ctx = NewDbContext();
+        var (supplierId, _, _) = await SeedRefundWithLedgerAsync(
+            ctx, "R-DESCALCE-MASK", receivedRefundAmount: 1200m, ledgerAmount: 900m);
+
+        var service = new OperatorRefundReadModelService(ctx, httpContextAccessor: null, permissionResolver: null);
+        var page = await service.GetSupplierRegisteredRefundsAsync(
+            supplierId, new OperatorRefundRegisteredQuery(), CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.True(item.AmountsMasked);
+        Assert.True(item.HasCashLedgerDivergence);
+        Assert.Equal(0m, item.DerivedAmount);
+        Assert.Equal(0m, item.LedgerAmount);
+    }
+
+    [Fact]
+    public async Task ReembolsoRepartidoEntreVariasCancelaciones_HasCashLedgerDivergenceQuedaApagado()
+    {
+        // Alcance heredado del job (documentado en el propio DTO): un reembolso N:M no se evalua, aunque
+        // objetivamente la caja no coincida linea por linea.
+        await using var ctx = NewDbContext();
+
+        var customer = new Customer { FullName = "Cliente NM", IsActive = true };
+        var supplier = new Supplier { Name = "Operador NM", IsActive = true };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva1 = new Reserva { NumeroReserva = "R-NM-1", Name = "R-NM-1", PayerId = customer.Id, Status = EstadoReserva.Cancelled };
+        var reserva2 = new Reserva { NumeroReserva = "R-NM-2", Name = "R-NM-2", PayerId = customer.Id, Status = EstadoReserva.Cancelled };
+        ctx.Reservas.AddRange(reserva1, reserva2);
+        await ctx.SaveChangesAsync();
+
+        var bc1 = new BookingCancellation { ReservaId = reserva1.Id, CustomerId = customer.Id, SupplierId = supplier.Id, Status = BookingCancellationStatus.AwaitingOperatorRefund, Reason = "rm-nm", DraftedByUserId = "vendedor-1" };
+        var bc2 = new BookingCancellation { ReservaId = reserva2.Id, CustomerId = customer.Id, SupplierId = supplier.Id, Status = BookingCancellationStatus.AwaitingOperatorRefund, Reason = "rm-nm", DraftedByUserId = "vendedor-1" };
+        ctx.BookingCancellations.AddRange(bc1, bc2);
+        await ctx.SaveChangesAsync();
+
+        ctx.BookingCancellationLines.Add(new BookingCancellationLine { BookingCancellationId = bc1.Id, SupplierId = supplier.Id, ServiceTable = CancellableServiceTable.Generic, ServiceId = 1, Scope = BookingCancellationLineScope.Full, Currency = "ARS", ReceivedRefundAmount = 600m });
+        ctx.BookingCancellationLines.Add(new BookingCancellationLine { BookingCancellationId = bc2.Id, SupplierId = supplier.Id, ServiceTable = CancellableServiceTable.Generic, ServiceId = 1, Scope = BookingCancellationLineScope.Full, Currency = "ARS", ReceivedRefundAmount = 400m });
+
+        var refund = new OperatorRefundReceived { SupplierId = supplier.Id, ReceivedAmount = 1000m, AllocatedAmount = 1000m, Currency = "ARS", Method = "Transfer", ReceivedByUserId = "cajero-1", ReceivedByUserName = "Cajero Uno" };
+        ctx.OperatorRefundReceived.Add(refund);
+        await ctx.SaveChangesAsync();
+
+        ctx.OperatorRefundAllocations.Add(new OperatorRefundAllocation { OperatorRefundReceivedId = refund.Id, BookingCancellationId = bc1.Id, GrossAmount = 600m, NetAmount = 600m, IsVoided = false, CreatedByUserId = "cajero-1" });
+        ctx.OperatorRefundAllocations.Add(new OperatorRefundAllocation { OperatorRefundReceivedId = refund.Id, BookingCancellationId = bc2.Id, GrossAmount = 400m, NetAmount = 400m, IsVoided = false, CreatedByUserId = "cajero-1" });
+
+        // Un unico ingreso de 1000 que NO coincide 1 a 1 con ninguna de las dos lineas por separado.
+        ctx.CashLedgerEntries.Add(new CashLedgerEntry { Direction = CashMovementDirections.Income, Amount = 1000m, Currency = "ARS", Method = "Transfer", OccurredAt = DateTime.UtcNow, SourceType = CashLedgerSourceTypes.OperatorRefund, OperatorRefundReceivedId = refund.Id });
+
+        await ctx.SaveChangesAsync();
+
+        var service = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
+        var page = await service.GetSupplierRegisteredRefundsAsync(
+            supplier.Id, new OperatorRefundRegisteredQuery(), CancellationToken.None);
+
+        Assert.Equal(2, page.Items.Count);
+        Assert.All(page.Items, item =>
+        {
+            Assert.False(item.HasCashLedgerDivergence);
+            Assert.Equal(0m, item.DerivedAmount);
+            Assert.Equal(0m, item.LedgerAmount);
+        });
+    }
 }

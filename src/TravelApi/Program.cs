@@ -787,6 +787,9 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<INotificationRealtimeDispatcher, SignalRNotificationDispatcher>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+// Decision firmada 2026-08-19: TargetUrl de la campanita (link "a donde vas al hacer click") se resuelve al
+// leer/enviar el aviso, sin columna nueva en Notification. Ver INotificationTargetUrlResolver.
+builder.Services.AddScoped<INotificationTargetUrlResolver, NotificationTargetUrlResolver>();
 // Decision firmada 2026-08-18: aviso de error en la campanita cuando falla "Marcar confirmado/emitido/No
 // requiere confirmacion" sobre un servicio. Lo usa NotificarFalloDeResolucionAlUsuarioAttribute.
 builder.Services.AddScoped<IServiceResolutionFailureNotifier, ServiceResolutionFailureNotifier>();

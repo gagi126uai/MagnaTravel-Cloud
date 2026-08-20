@@ -6,6 +6,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
@@ -109,6 +110,13 @@ public class TreasuryController : ControllerBase
         {
             return BadRequest(new { message = "No se pudo actualizar el movimiento manual." });
         }
+        // Decision 2026-08-19: este catch va ANTES que el generico de InvalidOperationException (misma
+        // tecnica que OperatorRefundsController) para sumar `code` al body sin tocar el `message` de
+        // siempre — el frontend usa el code para decidir el copy sin adivinar comparando texto (T-1).
+        catch (CashMovementLinkedToOperatorRefundException ex)
+        {
+            return Conflict(new { message = ex.Message, code = CashMovementLinkedToOperatorRefundException.Code });
+        }
         catch (InvalidOperationException)
         {
             return BadRequest(new { message = "No se pudo actualizar el movimiento manual." });
@@ -128,6 +136,18 @@ public class TreasuryController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        // Decision 2026-08-19: mismo criterio que UpdateManualMovement de arriba.
+        catch (CashMovementLinkedToOperatorRefundException ex)
+        {
+            return Conflict(new { message = ex.Message, code = CashMovementLinkedToOperatorRefundException.Code });
+        }
+        // Mejora backend-reviewer (2026-08-19, T-2): paridad con UpdateManualMovement — cualquier OTRO
+        // InvalidOperationException que DeleteManualMovementAsync pueda tirar en el futuro se sanea con la
+        // misma respuesta generica fija, en vez de dejarlo sin atrapar (500 con detalle tecnico).
+        catch (InvalidOperationException)
+        {
+            return BadRequest(new { message = "No se pudo anular el movimiento manual." });
         }
     }
 }

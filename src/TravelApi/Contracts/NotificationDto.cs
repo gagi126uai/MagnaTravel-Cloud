@@ -16,14 +16,21 @@ namespace TravelApi.Contracts;
 ///
 /// <para>Campos en camelCase (serialización web) idénticos al contrato previo del front:
 /// <c>id, message, type, priority, createdAt</c>. No agregar campos internos acá.</para>
+///
+/// <para><b>TargetUrl (2026-08-19, "descalce devolución-caja")</b>: ruta relativa YA ARMADA por el
+/// servidor, con <c>PublicId</c> (nunca el id interno — mismo gate T-5 que el resto de este DTO). Null en
+/// la gran mayoría de los avisos hoy (solo lo setea <c>NotificationTargetUrlResolver</c> para el tipo
+/// <c>CashLedgerRefundReconciliation</c> por ahora); el frontend trata null como "esta fila no navega",
+/// exactamente el comportamiento de siempre.</para>
 /// </summary>
 public sealed record NotificationDto(
     int Id,
     string Message,
     string Type,
     string Priority,
-    DateTime CreatedAt)
+    DateTime CreatedAt,
+    string? TargetUrl = null)
 {
-    public static NotificationDto FromEntity(Notification n) =>
-        new(n.Id, n.Message, n.Type, n.Priority, n.CreatedAt);
+    public static NotificationDto FromEntity(Notification n, string? targetUrl = null) =>
+        new(n.Id, n.Message, n.Type, n.Priority, n.CreatedAt, targetUrl);
 }

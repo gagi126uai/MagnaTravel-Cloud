@@ -12,10 +12,12 @@ namespace TravelApi.Controllers;
 public class NotificationsController : ControllerBase
 {
     private readonly INotificationService _notificationService;
+    private readonly INotificationTargetUrlResolver _targetUrlResolver;
 
-    public NotificationsController(INotificationService notificationService)
+    public NotificationsController(INotificationService notificationService, INotificationTargetUrlResolver targetUrlResolver)
     {
         _notificationService = notificationService;
+        _targetUrlResolver = targetUrlResolver;
     }
 
     [HttpGet]
@@ -24,8 +26,9 @@ public class NotificationsController : ControllerBase
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (userId == null) return Unauthorized();
 
-        var notifications = await _notificationService.GetUnreadNotificationsAsync(userId, ct);
-        return Ok(notifications.Select(NotificationDto.FromEntity));
+        var notifications = (await _notificationService.GetUnreadNotificationsAsync(userId, ct)).ToList();
+        var targetUrls = await _targetUrlResolver.ResolveManyAsync(notifications, ct);
+        return Ok(notifications.Select(n => NotificationDto.FromEntity(n, targetUrls.GetValueOrDefault(n.Id))));
     }
 
     [HttpGet("urgent")]
@@ -34,8 +37,9 @@ public class NotificationsController : ControllerBase
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (userId == null) return Unauthorized();
 
-        var notifications = await _notificationService.GetUrgentNotificationsAsync(userId, ct);
-        return Ok(notifications.Select(NotificationDto.FromEntity));
+        var notifications = (await _notificationService.GetUrgentNotificationsAsync(userId, ct)).ToList();
+        var targetUrls = await _targetUrlResolver.ResolveManyAsync(notifications, ct);
+        return Ok(notifications.Select(n => NotificationDto.FromEntity(n, targetUrls.GetValueOrDefault(n.Id))));
     }
 
     [HttpPost("{id}/read")]

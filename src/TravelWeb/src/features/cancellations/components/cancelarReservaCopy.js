@@ -97,14 +97,13 @@ export const TEXTO_PROCESANDO_MULTI =
 export const TEXTO_SALDO_A_FAVOR_MULTI_PREFIJO = "Lo cobrado quedó como saldo a favor del cliente:";
 
 /**
- * Botón que reintenta SOLO las notas faltantes desde dentro del panel (Estado 4, mismo intento).
+ * Botón único de "terminar la anulación que quedó a medias" (bloque 4, 2026-08-19). ANTES
+ * había DOS textos para la MISMA acción — "Reintentar la que falta" adentro del panel
+ * (Estado 4) y "Reintentar anulación" en la franja al reabrir la reserva (Estado 5) — y la
+ * spec los unificó: es el mismo mecanismo idempotente (ADR-042) disparado desde dos lugares
+ * distintos, así que no puede tener dos nombres. Se usa en los DOS lugares.
  */
-export const TEXTO_BOTON_REINTENTAR_FALTANTE = "Reintentar la que falta";
-
-/**
- * Botón de la franja "en revisión" al reabrir la reserva (Estado 5, sesión nueva).
- */
-export const TEXTO_BOTON_REINTENTAR_ANULACION = "Reintentar anulación";
+export const TEXTO_BOTON_EMITIR_NOTA_QUE_FALTO = "Emitir la nota que faltó";
 
 /**
  * Mensaje cuando el polling se agota sin que AFIP resuelva todas las notas (variante

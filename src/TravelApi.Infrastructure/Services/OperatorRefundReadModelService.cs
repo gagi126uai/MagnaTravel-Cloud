@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations; // CashLedgerRefundReconciliationCalculator (bloque 1, "descalce devolución-caja")
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations; // SupplierCancellationCircuitReader (formula compartida del receivable)
 using TravelApi.Infrastructure.Services.Reservations; // CostMasking
@@ -128,6 +129,10 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
         allocationsQuery = ApplyOperatorRefundRegisteredOrdering(allocationsQuery, query);
         var page = await allocationsQuery.ToPagedResponseAsync(query, ct);
 
+        // Bloque 1 "descalce devolución-caja" (2026-08-19): antes de enmascarar por costo (mas abajo), calculamos
+        // si cada fila coincide con la caja. Reusa el MISMO calculador que CashLedgerRefundReconciliationJob.
+        await EnrichWithCashLedgerDivergenceAsync(page.Items, ct);
+
         foreach (var item in page.Items)
         {
             // Paridad con el read-model de pendientes (Monedas.Normalizar): blinda monedas legacy raras
@@ -150,16 +155,139 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
         // ADR-017 F1b: NetAmount es plata del lado costo (lo que el operador termino devolviendo). Sin
         // cobranzas.see_cost se enmascara a 0; el resto de la fila (reserva, cliente, fecha, deshecho) sigue
         // visible igual que en el resto de la cuenta del proveedor.
+        //
+        // F-14 (2026-08-19): DerivedAmount/LedgerAmount tambien son plata de costo (cuanto figura recibido y
+        // cuanto hay en caja) -> mismo enmascarado. HasCashLedgerDivergence queda VISIBLE igual sin el permiso:
+        // es una señal booleana ("che, esto no cierra"), no un monto — mismo criterio que PenaltyPendingConfirmation
+        // en el read-model de pendientes, que tampoco se oculta.
         if (!canSeeCost)
         {
             foreach (var item in page.Items)
             {
                 item.NetAmount = 0m;
+                item.DerivedAmount = 0m;
+                item.LedgerAmount = 0m;
                 item.AmountsMasked = true;
             }
         }
 
         return page;
+    }
+
+    /// <summary>
+    /// Bloque 1 "descalce devolución-caja" (2026-08-19): completa <see cref="OperatorRefundRegisteredItemDto.HasCashLedgerDivergence"/>
+    /// y sus montos, mutando la lista en el lugar. Reusa <see cref="CashLedgerRefundReconciliationCalculator"/>
+    /// (el mismo calculo puro que ya usa <c>CashLedgerRefundReconciliationJob</c>) para que la solapa Reembolsos
+    /// y el aviso de la campanita NUNCA muestren numeros distintos para la misma divergencia.
+    ///
+    /// <para><b>Alcance</b>: mismo recorte que el job — solo evalua reembolsos cuyas asignaciones VIVAS apuntan a
+    /// UNA sola cancelacion. Un reembolso repartido entre varias (N:M) queda con <c>HasCashLedgerDivergence=false</c>
+    /// en TODAS sus filas de esta pagina (no se puede atribuir la divergencia a una reserva sin ambiguedad).</para>
+    /// </summary>
+    private async Task EnrichWithCashLedgerDivergenceAsync(
+        IReadOnlyList<OperatorRefundRegisteredItemDto> pageItems, CancellationToken ct)
+    {
+        if (pageItems.Count == 0) return;
+
+        // 1) A que allocation (y por lo tanto a que refund/BC) corresponde cada fila de la pagina. La pagina
+        //    solo trae PublicId -> hay que resolver el resto con una consulta chica por los PublicIds visibles.
+        var pagePublicIds = pageItems.Select(i => i.PublicId).ToList();
+        var allocationInfo = await _db.OperatorRefundAllocations
+            .AsNoTracking()
+            .Where(a => pagePublicIds.Contains(a.PublicId))
+            .Select(a => new { a.PublicId, a.OperatorRefundReceivedId, a.BookingCancellationId, a.IsVoided })
+            .ToListAsync(ct);
+        var allocationInfoByPublicId = allocationInfo.ToDictionary(a => a.PublicId);
+
+        // 2) Para saber si un refund reparte entre VARIAS cancelaciones (limitacion de alcance heredada del
+        //    job), hay que mirar TODAS sus asignaciones vivas — no solo las de esta pagina.
+        var refundIds = allocationInfo.Select(a => a.OperatorRefundReceivedId).Distinct().ToList();
+        var liveAllocationsForTheseRefunds = await _db.OperatorRefundAllocations
+            .AsNoTracking()
+            .Where(a => !a.IsVoided && refundIds.Contains(a.OperatorRefundReceivedId))
+            .Select(a => new { a.OperatorRefundReceivedId, a.BookingCancellationId })
+            .ToListAsync(ct);
+
+        var bookingCancellationIdsByRefund = liveAllocationsForTheseRefunds
+            .GroupBy(a => a.OperatorRefundReceivedId)
+            .ToDictionary(g => g.Key, g => g.Select(a => a.BookingCancellationId).Distinct().ToList());
+
+        var singleCancellationRefundIds = bookingCancellationIdsByRefund
+            .Where(kv => kv.Value.Count == 1)
+            .Select(kv => kv.Key)
+            .ToHashSet();
+
+        if (singleCancellationRefundIds.Count == 0) return; // ninguna fila de esta pagina es evaluable.
+
+        // 3) Moneda real de cada refund candidato (un refund es siempre UNA sola moneda).
+        var refundCurrencyById = await _db.OperatorRefundReceived
+            .Where(r => singleCancellationRefundIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.Currency })
+            .ToDictionaryAsync(r => r.Id, r => r.Currency, ct);
+
+        // 4) Caja VIGENTE por refund (mismo loader que el job — ver su XML-doc para el bug que corrige).
+        var liveLedgerAmountByRefundId = await CashLedgerRefundLedgerAmountLoader.LoadAsync(
+            _db, singleCancellationRefundIds, ct);
+
+        // 5) Por cancelacion candidata, total de CAJA por moneda.
+        var candidateBookingCancellationIds = new HashSet<int>();
+        var ledgerByBookingCancellationId = new Dictionary<int, Dictionary<string, decimal>>();
+        foreach (var refundId in singleCancellationRefundIds)
+        {
+            var bookingCancellationId = bookingCancellationIdsByRefund[refundId][0];
+            candidateBookingCancellationIds.Add(bookingCancellationId);
+
+            var currency = refundCurrencyById.TryGetValue(refundId, out var ccy) ? ccy : Monedas.ARS;
+            var liveAmount = liveLedgerAmountByRefundId.TryGetValue(refundId, out var amt) ? amt : 0m;
+
+            if (!ledgerByBookingCancellationId.TryGetValue(bookingCancellationId, out var perCurrency))
+            {
+                perCurrency = new Dictionary<string, decimal>();
+                ledgerByBookingCancellationId[bookingCancellationId] = perCurrency;
+            }
+            perCurrency[currency] = perCurrency.GetValueOrDefault(currency) + liveAmount;
+        }
+
+        // 6) Total DERIVADO por moneda (mismo campo que "Reembolso recibido" del extracto del proveedor).
+        var derivedRows = await _db.BookingCancellationLines
+            .Where(l => candidateBookingCancellationIds.Contains(l.BookingCancellationId))
+            .Select(l => new { l.BookingCancellationId, l.Currency, l.ReceivedRefundAmount })
+            .ToListAsync(ct);
+        var derivedByBookingCancellationId = derivedRows
+            .GroupBy(r => r.BookingCancellationId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(r => Monedas.Normalizar(r.Currency))
+                      .ToDictionary(cg => cg.Key, cg => cg.Sum(r => r.ReceivedRefundAmount)));
+
+        // 7) Divergencias por cancelacion candidata (mismo calculador puro que el job).
+        var divergenceByBookingCancellationAndCurrency = new Dictionary<(int BookingCancellationId, string Currency), CashLedgerRefundDivergence>();
+        foreach (var bookingCancellationId in candidateBookingCancellationIds)
+        {
+            var derived = derivedByBookingCancellationId.TryGetValue(bookingCancellationId, out var derivedDict)
+                ? derivedDict
+                : new Dictionary<string, decimal>();
+            var ledger = ledgerByBookingCancellationId[bookingCancellationId];
+
+            var divergences = CashLedgerRefundReconciliationCalculator.FindDivergences(derived, ledger);
+            foreach (var divergence in divergences)
+                divergenceByBookingCancellationAndCurrency[(bookingCancellationId, divergence.Currency)] = divergence;
+        }
+
+        // 8) Volcar el resultado sobre cada fila visible de la pagina.
+        foreach (var item in pageItems)
+        {
+            if (!allocationInfoByPublicId.TryGetValue(item.PublicId, out var allocation)) continue;
+            if (allocation.IsVoided) continue; // una fila deshecha no participa (mismo criterio que el frontend).
+            if (!singleCancellationRefundIds.Contains(allocation.OperatorRefundReceivedId)) continue; // N:M: queda apagado.
+
+            var key = (allocation.BookingCancellationId, Monedas.Normalizar(item.Currency));
+            if (!divergenceByBookingCancellationAndCurrency.TryGetValue(key, out var divergence)) continue; // esa moneda coincide.
+
+            item.HasCashLedgerDivergence = true;
+            item.DerivedAmount = divergence.DerivedAmount;
+            item.LedgerAmount = divergence.LedgerAmount;
+        }
     }
 
     /// <summary>Orden de "reembolsos ya registrados": por defecto mas nuevas primero (lo recien cargado arriba).</summary>

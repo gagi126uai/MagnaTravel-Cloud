@@ -22,6 +22,7 @@
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { ExternalLink } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { useOperatorRefundsRegistered } from "../hooks/useOperatorRefundsRegistered";
@@ -89,10 +90,17 @@ function FilaReembolsoRegistrado({
   }
 
   // Fila viva: reserva + cliente + moneda/monto + fecha, con Deshacer / Corregir si hay permiso.
+  //
+  // Bloque 1 "descalce devolución-caja" (2026-08-19): cuando esta fila no cierra contra la caja,
+  // se agrega la cajita ámbar de abajo. El orden visual es DISTINTO en escritorio (info + botones
+  // en la misma línea, cajita abajo ocupando todo el ancho) y en mobile (info, cajita, botones al
+  // final) — en vez de duplicar los botones en el DOM (rompería los data-testid, que tienen que
+  // ser únicos para que la automatización los encuentre), usamos `order` de flexbox: es el MISMO
+  // elemento, solo cambia dónde se dibuja según el ancho de pantalla.
   return (
     <div className="px-6 py-3" data-testid={`reembolso-fila-${item.publicId}`} data-state="live">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2 text-sm min-w-0">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2">
+        <div className="order-1 flex flex-wrap items-center gap-2 text-sm min-w-0">
           <Link
             to={`/reservas/${item.reservaPublicId}`}
             className="font-semibold text-slate-900 hover:underline dark:text-white"
@@ -110,7 +118,7 @@ function FilaReembolsoRegistrado({
         </div>
 
         {canEdit && (
-          <div className="flex flex-shrink-0 gap-2">
+          <div className="order-3 sm:order-2 flex flex-shrink-0 gap-2">
             <Button
               type="button"
               variant="outline"
@@ -131,6 +139,54 @@ function FilaReembolsoRegistrado({
             >
               Corregir reserva
             </Button>
+          </div>
+        )}
+
+        {item.hasCashLedgerDivergence && (
+          <div
+            className="order-2 sm:order-3 sm:basis-full mt-1 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20"
+            data-testid={`descalce-caja-${item.publicId}`}
+          >
+            <StatusChip tone="ambar">No coincide con la caja</StatusChip>
+
+            {/* F-14: sin permiso de costos el backend manda derivedAmount/ledgerAmount en 0
+                (mismo enmascarado que netAmount). Mostrar esos ceros como si fueran plata real
+                sería mentirle al usuario, así que en ese caso el chip queda solo, sin números. */}
+            {!item.amountsMasked && (
+              <div className="mt-1.5 space-y-0.5 text-xs text-amber-900 dark:text-amber-200">
+                <div className="flex items-center justify-between gap-4">
+                  <span>Figura recibido</span>
+                  <span>{formatCurrency(item.derivedAmount, item.currency)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span>En la caja</span>
+                  <span>{formatCurrency(item.ledgerAmount, item.currency)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4 font-bold">
+                  <span>Diferencia</span>
+                  <span>{formatCurrency(Math.abs(item.derivedAmount - item.ledgerAmount), item.currency)}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+              <Link
+                to={`/reservas/${item.reservaPublicId}`}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 underline underline-offset-2 hover:text-amber-950 dark:text-amber-300"
+                data-testid={`descalce-caja-link-anulacion-${item.publicId}`}
+              >
+                Ver la anulación <ExternalLink className="h-3 w-3" />
+              </Link>
+              {/* La página de Caja no tiene pestañas ni resalta filas por hoy — ir al listado
+                  general es lo mejor disponible sin trabajo nuevo (mejora futura opcional). */}
+              <Link
+                to="/cash"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 underline underline-offset-2 hover:text-amber-950 dark:text-amber-300"
+                data-testid={`descalce-caja-link-movimiento-${item.publicId}`}
+              >
+                Ver el movimiento de caja <ExternalLink className="h-3 w-3" />
+              </Link>
+            </div>
           </div>
         )}
       </div>

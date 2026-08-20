@@ -237,6 +237,70 @@ export function construirTextoFranjaEnRevision(cantidadFaltante) {
     return `En revisión — anulación a medias, falta emitir ${cantidadFaltante} ${etiqueta} de crédito.`;
 }
 
+// ─── Bloque 4 "anulación a medias" (2026-08-19, docs/ux/2026-08-19-...) ──────
+// La franja "en revisión" (ReservaDetailPage) hoy solo se enciende con UNA condición del
+// backend (canRetryCreditNotes), que mezcla dos causas reales: una nota RECHAZADA por ARCA
+// (hay motivo textual) y una nota ATASCADA sin trabajo en curso (el job murió, sin motivo
+// porque nunca llegó a fallar). Las dos siguen necesitando el botón "Emitir la nota que
+// faltó" (Rama A, alarma). Lo nuevo es la Rama B: una nota Pendiente con el job TODAVÍA
+// trabajándola (nadie tiene que hacer nada, se resuelve sola) — antes no mostraba nada.
+
+/**
+ * Rama B (nueva, "en curso"): true cuando la anulación tiene alguna nota de crédito
+ * Pendiente, NINGUNA Rechazada, y el backend NO habilita el reintento todavía (el job de
+ * emisión la sigue trabajando en este mismo instante). Es el caso "no hace falta que hagas
+ * nada, en un rato lo vas a ver reflejado solo" — sin alarma, sin botón.
+ *
+ * Mutuamente excluyente con la Rama A: si `bc.canRetryCreditNotes` es true, esto siempre
+ * da false (esa reserva ya muestra la alarma, no las dos franjas a la vez).
+ *
+ * @param {{ canRetryCreditNotes?: boolean, creditNotes?: Array<{status: string}> }|null} bc
+ *   BookingCancellationDto tal como lo devuelve cancellationsApi.getByReserva.
+ * @returns {boolean}
+ */
+export function esAnulacionEnCursoTranquila(bc) {
+    if (!bc) return false;
+    if (bc.canRetryCreditNotes) return false;
+    return hayNotaPendiente(bc.creditNotes) && !algunaNotaFallo(bc.creditNotes);
+}
+
+/**
+ * Arma la línea de UNA factura para la lista por factura de la Rama A (alarma). Reemplaza a
+ * `NotasCreditoProgressList` en ESE contexto puntual: ahí la unidad es "una factura, con su
+ * propio resultado", no "una moneda" (una reserva puede tener 2 facturas en la MISMA
+ * moneda, así que agrupar por moneda como hace `estadoVisualNota` no alcanza acá).
+ *
+ * Formato EXACTO de la spec (P-13: el motivo de ARCA se muestra TAL CUAL lo manda el motor,
+ * nunca parafraseado):
+ *   - Succeeded            → "{label} — nota de crédito emitida"
+ *   - Failed con motivo    → "{label} — la nota no salió. ARCA respondió: «{motivo}»"
+ *   - Failed sin motivo    → "{label} — la nota no salió." (defensivo: nunca se inventa
+ *     una cita que el motor no mandó)
+ *   - Pending (atascada — la única forma de llegar Pending a la Rama A es que el job murió)
+ *                          → "{label} — la nota todavía no salió."
+ *
+ * @param {{ originatingInvoiceComprobanteLabel?: string, status: string, arcaErrorMessage?: string|null }} nota
+ *   Un item de BookingCancellationDto.creditNotes.
+ * @returns {{ icono: "✓"|"✗", texto: string }}
+ */
+export function describirNotaPorFactura(nota) {
+    const label = nota?.originatingInvoiceComprobanteLabel || "Factura";
+
+    if (nota?.status === "Succeeded") {
+        return { icono: "✓", texto: `${label} — nota de crédito emitida` };
+    }
+
+    if (nota?.status === "Failed") {
+        if (nota.arcaErrorMessage) {
+            return { icono: "✗", texto: `${label} — la nota no salió. ARCA respondió: «${nota.arcaErrorMessage}»` };
+        }
+        return { icono: "✗", texto: `${label} — la nota no salió.` };
+    }
+
+    // Pending (atascada): sin motivo porque nunca llegó a fallar, nunca se inventa uno.
+    return { icono: "✗", texto: `${label} — la nota todavía no salió.` };
+}
+
 /**
  * Convierte el diccionario de saldo a favor por moneda (ClientCreditByCurrency del backend) en
  * una lista ordenada de entradas para que el componente las formatee con formatCurrency. Filtra

@@ -14267,8 +14267,12 @@ public class BookingCancellationService
             .Include(b => b.OriginatingInvoice)
             .Include(b => b.CreditNoteInvoice)
             // ADR-042: hijas (una por factura -> su NC) + la Invoice NC de cada una (para el numero de comprobante).
+            // Bloque 4 (2026-08-19): tambien la factura ORIGEN de cada hija (OriginatingInvoice), para el
+            // link "Ver factura" y la etiqueta ("Factura B 0001-...") del cartel EN REVISION.
             .Include(b => b.CreditNotes)
                 .ThenInclude(c => c.CreditNoteInvoice)
+            .Include(b => b.CreditNotes)
+                .ThenInclude(c => c.OriginatingInvoice)
             // ADR-044 T5-emision (2026-07-15): las lineas Partial son las que necesita el contrato de la
             // pantalla "confirmar y emitir la devolucion" (PartialCreditNoteEmission, mas abajo). Spec UX
             // 2026-07-17: cada fila de esa pantalla muestra el operador de SU linea (puede variar entre
@@ -14686,14 +14690,22 @@ public class BookingCancellationService
     /// <summary>
     /// ADR-042 §3.7 (2026-07-01): estado por NC (una por factura) a partir de las hijas. Moneda en ISO, numero
     /// del comprobante cuando ya salio, y el motivo de AFIP si fallo (info util para el vendedor, aprobado H2).
+    /// Bloque 4 "anulación a medias" (2026-08-19): tambien la factura ORIGEN (para el cartel EN REVISION del
+    /// front). <c>internal</c> para testearlo directo desde TravelApi.Tests sin armar el flujo completo de
+    /// draft->confirm->emitir NC (InternalsVisibleTo ya configurado, mismo patron que SanitizeArcaErrorForUser).
     /// </summary>
-    private static List<BookingCancellationCreditNoteDto> BuildCreditNotesDto(BookingCancellation bc)
+    internal static List<BookingCancellationCreditNoteDto> BuildCreditNotesDto(BookingCancellation bc)
     {
         return bc.CreditNotes
             .OrderBy(c => c.Id)
             .Select(c => new BookingCancellationCreditNoteDto
             {
                 PublicId = c.CreditNoteInvoice?.PublicId,
+                // Bloque 4 (2026-08-19): factura ORIGEN (la que se anula), no la NC. OriginatingInvoice es
+                // required en la entidad (siempre hay una factura origen por diseño de ADR-042).
+                OriginatingInvoicePublicId = c.OriginatingInvoice.PublicId,
+                OriginatingInvoiceComprobanteLabel = FormatComprobanteLabel(
+                    c.OriginatingInvoice.TipoComprobante, c.OriginatingInvoice.PuntoDeVenta, c.OriginatingInvoice.NumeroComprobante),
                 Currency = ArcaCurrencyMapper.ToIso(c.ArcaCurrency) ?? "ARS",
                 Status = c.Status.ToString(),
                 NumeroComprobante = c.CreditNoteInvoice != null

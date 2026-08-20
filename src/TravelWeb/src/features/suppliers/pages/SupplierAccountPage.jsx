@@ -1128,7 +1128,15 @@ export default function SupplierAccountPage() {
     const { publicId } = useParams();
 
     // ─── Solapa activa ────────────────────────────────────────────────────────
-    const [activeTab, setActiveTab] = useState("cuenta-corriente");
+    // Bloque 2 "descalce devolución-caja" (2026-08-19): si se llega acá con
+    // ?tab=reembolsos en la URL (por ejemplo, tocando el aviso de la campanita), arranca
+    // directo en esa solapa en vez de la de "Cuenta corriente" de siempre. Se lee UNA sola
+    // vez al montar (initializer perezoso de useState) — después el usuario navega entre
+    // solapas con el estado normal, sin que la URL lo vuelva a pisar.
+    const [activeTab, setActiveTab] = useState(() => {
+        const tabDeLaUrl = new URLSearchParams(window.location.search).get("tab");
+        return tabDeLaUrl === "reembolsos" ? "reembolsos" : "cuenta-corriente";
+    });
 
     // ─── Overview del proveedor ───────────────────────────────────────────────
     const [overview, setOverview] = useState(null);

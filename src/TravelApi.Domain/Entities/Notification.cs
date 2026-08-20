@@ -49,6 +49,14 @@ public static class NotificationRelatedEntityTypes
 
     /// <summary>Marca "confirmada con cambios / revisar" ligada a una reserva (mismo id que la reserva).</summary>
     public const string Reserva = "Reserva";
+
+    /// <summary>
+    /// Descalce caja-vs-devolucion de un operador (2026-08-19, ADR-022 GAP C). <c>RelatedEntityId</c> es el
+    /// Id INTERNO de la <c>BookingCancellation</c> divergente — nunca se expone al front (T-5); solo lo usa
+    /// el resolver de <c>NotificationDto.TargetUrl</c> del lado del servidor para armar el link a la ficha
+    /// del operador SIN necesitar una columna nueva en <c>Notification</c>.
+    /// </summary>
+    public const string CashLedgerRefundReconciliation = "CashLedgerRefundReconciliation";
 }
 
 /// <summary>

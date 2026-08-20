@@ -58,9 +58,45 @@ export function obtenerEstadoBadgeMovimiento(movement) {
  * True si los botones Editar/Anular de un movimiento manual deben quedar apagados
  * (P-9): tanto un movimiento reemplazado como uno anulado ya no se pueden volver a tocar.
  *
- * @param {{isReplaced?: boolean, isAnnulled?: boolean}|null|undefined} movement
+ * Bloque 3 "descalce devolución-caja" (2026-08-19): se suma una TERCERA causa — un
+ * movimiento generado por un reembolso de operador (category === "OperatorRefund") tampoco
+ * se puede tocar desde acá, aunque no esté reemplazado ni anulado. Ese movimiento se corrige
+ * desde el circuito de la devolución (solapa Reembolsos del operador), no desde Caja: si se
+ * editara/anulara acá, la caja y el extracto del operador quedarían desincronizados sin que
+ * nadie se entere. Sin dependencia de backend: el dato (`category`) ya viaja hoy.
+ *
+ * @param {{isReplaced?: boolean, isAnnulled?: boolean, category?: string}|null|undefined} movement
  * @returns {boolean}
  */
 export function debeApagarBotonesMovimiento(movement) {
-  return Boolean(movement?.isReplaced || movement?.isAnnulled);
+  return Boolean(movement?.isReplaced || movement?.isAnnulled || esMovimientoDeReembolsoOperador(movement));
+}
+
+/**
+ * True si este movimiento de Caja lo generó un reembolso de operador YA REGISTRADO
+ * (solapa "Reembolsos" del operador, no un ajuste manual ni un cobro/pago normal).
+ *
+ * @param {{category?: string}|null|undefined} movement
+ * @returns {boolean}
+ */
+export function esMovimientoDeReembolsoOperador(movement) {
+  return movement?.category === "OperatorRefund";
+}
+
+/**
+ * Motivo EXACTO (T-6, texto fijado) que se muestra cuando Editar/Anular están apagados
+ * porque el movimiento viene de un reembolso de operador. Es el ÚNICO caso de esta obra
+ * que NO agrega un chip nuevo (P-16: el ícono ya se ve gris, alcanza para distinguirlo) —
+ * el motivo se muestra en un globito (escritorio) o texto fijo (mobile), nunca los dos con
+ * el mismo criterio que Reemplazado/Anulado (ver MovementsTab.jsx).
+ *
+ * @param {{numeroReserva?: string}|null|undefined} movement
+ * @returns {string}
+ */
+export function construirMotivoReembolsoOperadorApagado(movement) {
+  const numeroReserva = movement?.numeroReserva ?? "";
+  return (
+    `Atado a la devolución recibida del operador de la reserva ${numeroReserva}. Se corrige desde ` +
+    "el circuito de la devolución (solapa Reembolsos), no acá."
+  );
 }

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services.Reservations;
@@ -535,6 +536,10 @@ public class TreasuryService : ITreasuryService
         var entity = await _dbContext.ManualCashMovements.FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
             ?? throw new KeyNotFoundException("Movimiento manual no encontrado.");
 
+        // Decision 2026-08-19: la causa raiz del descalce caja-vs-devolucion se BLOQUEA aca (T-10, el guard
+        // vive en el servidor). Ver EnsureNotLinkedToOperatorRefundAsync.
+        await EnsureNotLinkedToOperatorRefundAsync(entity, cancellationToken);
+
         if (entity.IsVoided)
             throw new InvalidOperationException("No se puede editar un movimiento anulado.");
 
@@ -567,6 +572,9 @@ public class TreasuryService : ITreasuryService
         var entity = await _dbContext.ManualCashMovements.FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
             ?? throw new KeyNotFoundException("Movimiento manual no encontrado.");
 
+        // Decision 2026-08-19: mismo guard que UpdateManualMovementAsync. Ver EnsureNotLinkedToOperatorRefundAsync.
+        await EnsureNotLinkedToOperatorRefundAsync(entity, cancellationToken);
+
         entity.IsVoided = true;
         entity.VoidedAt = DateTime.UtcNow;
 
@@ -577,6 +585,61 @@ public class TreasuryService : ITreasuryService
         await ReverseLiveManualMovementLedgerEntryAsync(entity.Id, isReplacement: false, cancellationToken: cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Decision firmada 2026-08-19 ("descalce devolucion-caja"): frena editar/borrar un movimiento manual
+    /// que ES el ingreso de una devolucion del operador (Categoria "OperatorRefund" en el Libro de Caja).
+    /// Corregir esa plata desde Tesoreria rompe la sincronia con el circuito de la anulacion; el unico
+    /// camino que mantiene los dos lados coherentes es "Deshacer" desde la ficha del operador.
+    ///
+    /// <para><b>Como se detecta el vinculo</b>: NO miramos <c>ManualCashMovement.RelatedReservaId</c> (ese
+    /// campo queda NULL a proposito para un refund — un mismo ingreso puede repartirse entre VARIAS
+    /// cancelaciones, ver <c>ManualCashMovementBuilder.BuildIncomeForRefund</c>). Miramos si existe un
+    /// <see cref="CashLedgerEntry"/> VIGENTE (ni reversado ni reversa) de este movimiento cuyo
+    /// <c>SourceType</c> sea <see cref="CashLedgerSourceTypes.OperatorRefund"/> — esa es la puerta unica
+    /// (ADR-022) que dice "este movimiento es plata de un reembolso de operador".</para>
+    /// </summary>
+    private async Task EnsureNotLinkedToOperatorRefundAsync(ManualCashMovement entity, CancellationToken cancellationToken)
+    {
+        var isLinkedToLiveOperatorRefund = await _dbContext.CashLedgerEntries.AnyAsync(
+            e => e.ManualCashMovementId == entity.Id
+              && e.SourceType == CashLedgerSourceTypes.OperatorRefund
+              && !e.IsReversed && !e.IsReversal,
+            cancellationToken);
+
+        if (!isLinkedToLiveOperatorRefund)
+            return;
+
+        var numeroReserva = await ResolveNumeroReservaForOperatorRefundLinkAsync(entity.Id, cancellationToken);
+        throw new CashMovementLinkedToOperatorRefundException(numeroReserva);
+    }
+
+    /// <summary>
+    /// Numero de reserva a mostrar en el mensaje del guard de arriba. La cadena real es
+    /// ManualCashMovement -&gt; OperatorRefundReceived -&gt; sus allocations VIVAS -&gt; BookingCancellation
+    /// -&gt; Reserva (nunca <c>RelatedReservaId</c>, que para un refund queda null a proposito).
+    ///
+    /// <para>Caso N:M (un mismo reembolso repartido entre varias cancelaciones, ADR-002 §2.5): se listan
+    /// TODAS las reservas distintas separadas por "y" (mismo criterio que el mensaje de la campanita cuando
+    /// diverge mas de una moneda) — mejor mostrar las dos que elegir una arbitrariamente. Null si por algun
+    /// motivo no se encontro ninguna allocation viva (dato roto/legacy, defensivo).</para>
+    /// </summary>
+    private async Task<string?> ResolveNumeroReservaForOperatorRefundLinkAsync(int manualCashMovementId, CancellationToken cancellationToken)
+    {
+        var numeros = await _dbContext.ManualCashMovements
+            .Where(m => m.Id == manualCashMovementId && m.OperatorRefundReceivedId != null)
+            .SelectMany(m => m.OperatorRefundReceived!.Allocations.Where(a => !a.IsVoided))
+            .Select(a => a.BookingCancellation.Reserva.NumeroReserva)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        return numeros.Count switch
+        {
+            0 => null,
+            1 => numeros[0],
+            _ => string.Join(" y ", numeros),
+        };
     }
 
     private async Task<ManualCashMovementDto> GetManualMovementDtoAsync(int id, CancellationToken cancellationToken)

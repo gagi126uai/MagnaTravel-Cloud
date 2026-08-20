@@ -64,4 +64,25 @@ public class OperatorRefundRegisteredItemDto
 
     /// <summary>Motivo del deshacer, en criollo (lo escribe quien lo deshace). Null mientras siga viva.</summary>
     public string? VoidedReason { get; set; }
+
+    /// <summary>
+    /// Bloque 1 "descalce devolución-caja" (2026-08-19): true si lo que figura recibido (la suma de
+    /// <c>BookingCancellationLine.ReceivedRefundAmount</c>) no coincide con lo que hay VIGENTE en el Libro
+    /// de Caja para esta misma reserva y moneda. Mismo cálculo que ya usa
+    /// <c>CashLedgerRefundReconciliationJob</c> (<c>CashLedgerRefundReconciliationCalculator.FindDivergences</c>),
+    /// reusado acá para que la fila de la solapa Reembolsos y el aviso de la campanita nunca diverjan entre sí.
+    ///
+    /// <para><b>Alcance heredado del job (no un gap nuevo)</b>: solo se enciende cuando el reembolso de esta
+    /// fila apunta a UNA sola cancelación. Un reembolso repartido entre varias cancelaciones (N:M) queda
+    /// afuera — mismo comportamiento que hoy tiene el aviso de la campanita, documentado en el propio job.</para>
+    /// </summary>
+    public bool HasCashLedgerDivergence { get; set; }
+
+    /// <summary>"Figura recibido": el total derivado (extracto) de la cancelación en la moneda de esta fila. Solo
+    /// tiene sentido cuando <see cref="HasCashLedgerDivergence"/> es true; 0 en el resto de los casos.</summary>
+    public decimal DerivedAmount { get; set; }
+
+    /// <summary>"En la caja": el total VIGENTE del Libro de Caja para la cancelación en la moneda de esta fila.
+    /// Solo tiene sentido cuando <see cref="HasCashLedgerDivergence"/> es true; 0 en el resto de los casos.</summary>
+    public decimal LedgerAmount { get; set; }
 }

@@ -2711,3 +2711,37 @@ Configuración haya un lugar para configurar la IA, universal para cualquier tip
 - **(2026-08-10) Si lo elegido es de otro tipo, los datos de la frase VIAJAN al formulario destino**
   (son parte de la misma elección). Lo que no viaja es lo que el vendedor había cargado a mano en la
   solapa anterior (P3=A).
+
+## Descalce devolución-caja y anulación a medias: avisos que trabajan, no que gritan (2026-08-19)
+
+> Origen: Gastón vio en PROD el banner naranja full-width + notificación "URGENTE" del control
+> caja-vs-devolución (job diario "ADR-022 GAP C", que NUNCA tuvo spec firmada — nació en código) y
+> el cartel "En revisión — anulación a medias" con su botón "Reintentar anulación". Dijo: "no se
+> entiende qué tiene que hacer el usuario ni por qué; el sistema de notificaciones es como la muerte
+> de alguien, muy alertador; así no va". Se investigó el benchmark (SAP/Odoo/NetSuite/Dynamics +
+> e-invoicing SDI/CFDI/AFIP) y Gastón firmó las tres decisiones por multiple choice el 2026-08-19.
+
+**Decisiones cerradas (no reabrir):**
+
+1. **(2026-08-19) El descalce entre la devolución del operador y la caja NO es un banner: es un
+   aviso normal en la campanita + un estado trabajable en la ficha del operador.** El aviso va SOLO
+   a quien maneja tesorería (mismo permiso que la solapa Reembolsos), con el monto de la diferencia
+   por moneda y link directo. En la solapa Reembolsos, el ítem descalzado muestra los dos números
+   lado a lado ("figura recibido" vs "en caja") + la diferencia, con accesos para ver el movimiento
+   de caja y la anulación. Descartar el aviso no lo recrea a diario: el estado vive en la ficha
+   hasta que se resuelve de verdad (P-11, P-12, P-17, P-20, F-14).
+   **El banner naranja full-width queda RESERVADO para caídas/eventos de todo el sistema** — nunca
+   más para un problema de una reserva puntual.
+
+2. **(2026-08-19) La causa raíz se BLOQUEA: un movimiento de caja atado a una devolución del
+   operador no se edita ni se borra desde Tesorería.** El freno (en el motor, T-1/T-10) explica de
+   qué reserva es y manda al circuito de la devolución, cuyo "Deshacer" deja caja y anulación
+   coherentes juntas. En pantalla, los botones editar/borrar de esos movimientos van apagados con
+   motivo (P-9). El control diario queda como red de seguridad, no como primera línea.
+
+3. **(2026-08-19) El cartel de anulación a medias EXPLICA por factura:** cuál nota de crédito ya
+   salió (✓) y cuál no, con el motivo de ARCA textual (P-13). El botón pasa de "Reintentar
+   anulación" a **"Emitir la nota que faltó"** (no re-anula nada, no duplica — mismo mecanismo
+   idempotente firmado el 2026-07-01, que sigue vigente). Si la nota está solo demorada (timeout
+   con la reconciliación automática en vuelo), NO hay cartel de alarma ni botón: se resuelve sola,
+   tono "en curso".

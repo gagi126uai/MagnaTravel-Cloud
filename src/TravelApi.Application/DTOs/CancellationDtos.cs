@@ -338,6 +338,19 @@ public class BookingCancellationCreditNoteDto
     /// <summary>Id público de la NC emitida; permite abrir su PDF o enviarla al cliente.</summary>
     public Guid? PublicId { get; set; }
 
+    /// <summary>
+    /// Bloque 4 (2026-08-19, "anulación a medias"): PublicId de la factura de venta ORIGEN que esta NC
+    /// anula (nunca el Id interno, T-5). El front lo usa para el link "Ver factura" del cartel EN REVISIÓN.
+    /// </summary>
+    public Guid OriginatingInvoicePublicId { get; set; }
+
+    /// <summary>
+    /// Bloque 4 (2026-08-19): etiqueta legible de la factura ORIGEN (ej. "Factura B 0001-00012345"), la
+    /// que el cartel "EN REVISIÓN" muestra por línea — distinta de <see cref="NumeroComprobante"/> de más
+    /// abajo, que es el comprobante de la NC misma (una vez que sale, no el de la factura que anula).
+    /// </summary>
+    public string OriginatingInvoiceComprobanteLabel { get; set; } = string.Empty;
+
     /// <summary>Moneda de la NC en codigo ISO legible (ARS/USD). Derivada del MonId ARCA de la factura origen.</summary>
     public string Currency { get; set; } = string.Empty;
 

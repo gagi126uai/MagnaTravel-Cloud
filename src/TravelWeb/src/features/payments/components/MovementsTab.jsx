@@ -35,7 +35,12 @@ import { Button } from "../../../components/ui/button";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatCurrency } from "../lib/financeUtils";
 import { formatDate, formatDateTime } from "../../../lib/utils";
-import { debeApagarBotonesMovimiento, obtenerEstadoBadgeMovimiento } from "../lib/cashMovementBadgeLogic";
+import {
+  debeApagarBotonesMovimiento,
+  obtenerEstadoBadgeMovimiento,
+  esMovimientoDeReembolsoOperador,
+  construirMotivoReembolsoOperadorApagado,
+} from "../lib/cashMovementBadgeLogic";
 import { esCategoriaDeSistema, mapearCategoriaMovimiento, mapearMetodoMovimiento } from "../lib/cashMovementLabels";
 
 // Formateador legacy mantenido solo para llamadas locales sin moneda explícita (compatibilidad interna)
@@ -412,6 +417,12 @@ export function MovementsTab({
               // cajero distingue qué pasó con el movimiento sin tener que abrir nada.
               const estadoBadge = obtenerEstadoBadgeMovimiento(movement);
               const botonesApagados = debeApagarBotonesMovimiento(movement);
+              // Bloque 3 "descalce devolución-caja" (2026-08-19): motivo SOLO para el caso
+              // "atado a un reembolso de operador" — cuando el movimiento YA tiene badge
+              // (Reemplazado/Anulado) esa razón manda, no se pisa con esta otra.
+              const motivoReembolsoOperador = !estadoBadge && esMovimientoDeReembolsoOperador(movement)
+                ? construirMotivoReembolsoOperadorApagado(movement)
+                : null;
 
               return (
                 // H14 (2026-07-25): key = movement.publicId, el PublicId ESTABLE del propio asiento
@@ -480,7 +491,12 @@ export function MovementsTab({
                       // a editar ni anular — los botones quedan APAGADOS, con el motivo siempre a
                       // la vista al lado (nunca solo en un tooltip).
                       <div className="flex flex-col items-end gap-1">
-                        <div className="flex items-center gap-1">
+                        {/* P-9 + enmienda 11/08 (escritorio = globito): el title vive en un <span>
+                            que ENVUELVE el par de botones, nunca en el <button disabled> — un botón
+                            apagado no dispara el hover del navegador (mismo bug ya documentado en
+                            ReservaTable.jsx, patrón "envoltorio"). Con motivoReembolsoOperador=null
+                            (el caso normal) el span queda sin title, sin cambiar nada de hoy. */}
+                        <span title={motivoReembolsoOperador || undefined} className="flex items-center gap-1">
                           <button
                             type="button"
                             onClick={() => !botonesApagados && openEdit(movement)}
@@ -511,7 +527,11 @@ export function MovementsTab({
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
-                        </div>
+                        </span>
+                        {/* Texto fijo debajo: SOLO para Reemplazado/Anulado (freno existente, no se
+                            toca). El motivo de "atado a un reembolso de operador" en escritorio va
+                            SOLO en el globito de arriba (spec: "sin texto fijo debajo en este caso
+                            puntual"). */}
                         {estadoBadge && (
                           <span className="text-[11px] text-slate-400 text-right">
                             {estadoBadge.motivoBotonesApagados}
@@ -548,6 +568,12 @@ export function MovementsTab({
             // "Anulado".
             const estadoBadge = obtenerEstadoBadgeMovimiento(movement);
             const botonesApagados = debeApagarBotonesMovimiento(movement);
+            // Bloque 3 (2026-08-19): en mobile el motivo va SIEMPRE escrito (no hay hover
+            // táctil) — mismo texto que en escritorio, mismo lugar que ya usan Reemplazado/
+            // Anulado (span chico gris a la derecha de los botones).
+            const motivoReembolsoOperador = !estadoBadge && esMovimientoDeReembolsoOperador(movement)
+              ? construirMotivoReembolsoOperadorApagado(movement)
+              : null;
 
             return (
               <MobileRecordCard
@@ -632,9 +658,12 @@ export function MovementsTab({
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
-                      {estadoBadge && (
+                      {/* Táctil (enmienda 11/08): motivo ESCRITO siempre, sea por Reemplazado/
+                          Anulado (freno existente) o por estar atado a un reembolso de operador
+                          (bloque 3, nuevo) — acá SÍ hay texto fijo, a diferencia de escritorio. */}
+                      {(estadoBadge || motivoReembolsoOperador) && (
                         <span className="text-[11px] text-slate-400 text-right">
-                          {estadoBadge.motivoBotonesApagados}
+                          {estadoBadge ? estadoBadge.motivoBotonesApagados : motivoReembolsoOperador}
                         </span>
                       )}
                     </div>

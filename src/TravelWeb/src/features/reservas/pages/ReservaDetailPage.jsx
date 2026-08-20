@@ -62,7 +62,9 @@ import { OperatorPenaltyStepPanel } from "../../cancellations/components/Operato
 import { PartialCreditNoteEmissionPanel } from "../../cancellations/components/PartialCreditNoteEmissionPanel";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import { getActiveSaleInvoices } from "../../cancellations/lib/partialCreditNoteEmissionLogic";
-import { contarNotasFaltantes, construirTextoFranjaEnRevision } from "../../cancellations/lib/multiCreditNoteFlow";
+import { construirTextoEncabezadoRevision, esAnulacionEnCursoTranquila } from "../../cancellations/lib/multiCreditNoteFlow";
+import { NotasCreditoPorFacturaList } from "../../cancellations/components/NotasCreditoProgressList";
+import { TEXTO_BOTON_EMITIR_NOTA_QUE_FALTO } from "../../cancellations/components/cancelarReservaCopy";
 // Spec "el paso de multa vive en la ficha" (2026-07-08) + ADR-044 T1 (2026-07-10,
 // multa por operador): helpers puros que traducen la situación de multa (singular o,
 // desde ADR-044, una lista con un elemento POR OPERADOR) a la "familia" de cartel a
@@ -805,7 +807,8 @@ export default function ReservaDetailPage() {
   // de reintento (Estado 5 → Estado 2 en adelante).
   //
   // Fix reviewer (2026-07-02): bcSiendoReintentado es una FOTO fija del BC tomada al hacer
-  // click en "Reintentar anulación", independiente de stuckCancellation. Es necesaria porque
+  // click en "Emitir la nota que faltó" (bloque 4, 2026-08-19: texto unificado — antes decía
+  // "Reintentar anulación"), independiente de stuckCancellation. Es necesaria porque
   // el propio panel de reintento refresca la reserva en cuanto sabe el resultado (onSilentRefresh),
   // y ESE refresco puede volver stuckCancellation=null (si terminó de resolverse bien) — sin esta
   // foto separada, el panel se quedaría sin la prop bookingCancellationToRetry a mitad de camino
@@ -813,6 +816,11 @@ export default function ReservaDetailPage() {
   const [stuckCancellation, setStuckCancellation] = useState(null);
   const [showRetryCancelInline, setShowRetryCancelInline] = useState(false);
   const [bcSiendoReintentado, setBcSiendoReintentado] = useState(null);
+  // Bloque 4 "anulación a medias" (2026-08-19): Rama B, nueva — la nota de crédito sigue
+  // Pendiente pero el job de ARCA la está trabajando en este mismo instante (nadie tiene que
+  // hacer nada). Se llena con el MISMO fetch que stuckCancellation (ver el useEffect de abajo),
+  // nunca dispara una llamada extra al backend.
+  const [bcEnCursoTranquilo, setBcEnCursoTranquilo] = useState(null);
 
   // ADR-027: estado de carga del botón "Dar OK" (acknowledge-changes).
   // Evita doble click y da feedback visual al usuario mientras espera la respuesta del backend.
@@ -952,17 +960,26 @@ export default function ReservaDetailPage() {
   useEffect(() => {
     if (!publicId || reserva?.status !== "PendingOperatorRefund") {
       setStuckCancellation(null);
+      setBcEnCursoTranquilo(null);
       return;
     }
     let cancelado = false;
     (async () => {
       try {
         const bc = await cancellationsApi.getByReserva(publicId);
-        if (!cancelado) setStuckCancellation(bc?.canRetryCreditNotes ? bc : null);
+        if (cancelado) return;
+        setStuckCancellation(bc?.canRetryCreditNotes ? bc : null);
+        // Bloque 4 (2026-08-19), Rama B: mismo fetch de arriba, sin pegarle una segunda vez
+        // al backend. Mutuamente excluyente con stuckCancellation (ver esAnulacionEnCursoTranquila).
+        setBcEnCursoTranquilo(esAnulacionEnCursoTranquila(bc) ? bc : null);
       } catch {
-        // 404 (sin cancelación) o error de red: no mostramos la franja. No es un error visible
-        // para el usuario — el cartel normal de "esperando reembolso" ya cubre ese caso.
-        if (!cancelado) setStuckCancellation(null);
+        // 404 (sin cancelación) o error de red: no mostramos ninguna de las dos franjas. No es
+        // un error visible para el usuario — el cartel normal de "esperando reembolso" ya cubre
+        // ese caso.
+        if (!cancelado) {
+          setStuckCancellation(null);
+          setBcEnCursoTranquilo(null);
+        }
       }
     })();
     return () => { cancelado = true; };
@@ -1588,8 +1605,14 @@ export default function ReservaDetailPage() {
           // resultado; duplicar la franja sería mostrar dos veces la misma información.
           const mostrarFranjaEnRevision = Boolean(stuckCancellation) && !showRetryCancelInline && !showCancelInline;
           const mostrarPanelDeReintento = showRetryCancelInline && bcSiendoReintentado;
+          // Bloque 4 (2026-08-19), Rama B: banner "en curso" tranquilo — mismas condiciones de
+          // no-mostrar-nada-encima-de-un-panel-abierto que la franja de arriba, y NUNCA junto a
+          // la Rama A (son mutuamente excluyentes ya desde esAnulacionEnCursoTranquila, pero el
+          // chequeo defensivo queda acá también por las dudas).
+          const mostrarBannerEnCurso =
+            Boolean(bcEnCursoTranquilo) && !mostrarFranjaEnRevision && !showRetryCancelInline && !showCancelInline;
 
-          if (mostrarFranjaEnRevision || mostrarPanelDeReintento) {
+          if (mostrarFranjaEnRevision || mostrarPanelDeReintento || mostrarBannerEnCurso) {
             return (
               <div className="space-y-3">
                 {mostrarFranjaEnRevision && (
@@ -1598,13 +1621,21 @@ export default function ReservaDetailPage() {
                     data-testid="banner-anulacion-en-revision"
                     role="status"
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <span>
-                        <span aria-hidden="true">🟠</span>{" "}
-                        <strong className="font-bold">
-                          {construirTextoFranjaEnRevision(contarNotasFaltantes(stuckCancellation.creditNotes))}
-                        </strong>
-                      </span>
+                    <p>
+                      <span aria-hidden="true">🟠</span>{" "}
+                      <strong className="font-bold">
+                        {construirTextoEncabezadoRevision(stuckCancellation.creditNotes)}
+                      </strong>
+                    </p>
+
+                    {/* Lista por factura (bloque 4, NUEVA): reemplaza al resumen "falta emitir N
+                        notas" de antes — acá se ve CUÁL factura salió y cuál no, con el motivo de
+                        ARCA tal cual cuando lo hay (P-13). */}
+                    <div className="mt-3">
+                      <NotasCreditoPorFacturaList creditNotes={stuckCancellation.creditNotes} />
+                    </div>
+
+                    <div className="mt-3 flex justify-end">
                       <button
                         type="button"
                         onClick={() => {
@@ -1615,9 +1646,23 @@ export default function ReservaDetailPage() {
                         data-testid="btn-reintentar-anulacion"
                         className="inline-flex items-center gap-1.5 rounded-[10px] border border-orange-400 bg-orange-100 px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-200 dark:hover:bg-orange-900/60 transition-colors flex-shrink-0"
                       >
-                        Reintentar anulación
+                        {TEXTO_BOTON_EMITIR_NOTA_QUE_FALTO}
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {/* Rama B (bloque 4, NUEVA): la nota sigue Pendiente pero el job de ARCA la está
+                    trabajando en este mismo instante — sin alarma, sin botón, nada que hacer. */}
+                {mostrarBannerEnCurso && (
+                  <div
+                    className="rounded-[10px] border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300"
+                    data-testid="banner-anulacion-en-curso"
+                    role="status"
+                  >
+                    <span aria-hidden="true">🔵</span>{" "}
+                    La nota de crédito de esta anulación se está terminando de emitir en ARCA. No
+                    hace falta que hagas nada — en un rato la vas a ver reflejada sola.
                   </div>
                 )}
 

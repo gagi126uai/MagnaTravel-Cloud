@@ -499,36 +499,70 @@ export default function NotificationBell() {
                             </div>
                         ) : notifications.length > 0 ? (
                             <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                                {notifications.map((notification) => (
-                                    <div
-                                        key={notification.id}
-                                        className={`relative flex items-start gap-3 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group cursor-default ${getRowHighlight(notification)}`}
-                                    >
-                                        <div className="mt-1">
-                                            <div className={`h-2 w-2 rounded-full ${getDotColor(notification)}`}></div>
-                                        </div>
-                                        <div className="flex-1 space-y-1">
-                                            {notification.priority === "Urgent" && (
-                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
-                                                    ⚡ Urgente
-                                                </span>
-                                            )}
-                                            <p className="text-sm text-slate-700 dark:text-slate-300">
-                                                {notification.message}
-                                            </p>
-                                            <p className="text-xs text-slate-400">
-                                                {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true, locale: es })}
-                                            </p>
-                                        </div>
-                                        <button
-                                            onClick={(e) => handleMarkAsRead(notification.id, e)}
-                                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-primary transition-opacity"
-                                            title="Marcar como leída"
+                                {notifications.map((notification) => {
+                                    // Bloque 2 "descalce devolución-caja" (2026-08-19): la mayoría de las
+                                    // notificaciones NO navegan (targetUrl null, avisos viejos u otros
+                                    // tipos) — se comportan EXACTO igual que antes. Solo cuando el backend
+                                    // manda targetUrl (por ahora, el aviso de descalce de caja) la fila se
+                                    // vuelve clickeable.
+                                    const puedeNavegar = Boolean(notification.targetUrl);
+
+                                    // El contenido (punto + texto + fecha) es el mismo se navegue o no —
+                                    // se arma una vez y se reusa en las dos ramas de abajo.
+                                    const contenido = (
+                                        <>
+                                            <div className="mt-1">
+                                                <div className={`h-2 w-2 rounded-full ${getDotColor(notification)}`}></div>
+                                            </div>
+                                            <div className="flex-1 space-y-1 min-w-0">
+                                                {notification.priority === "Urgent" && (
+                                                    <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
+                                                        ⚡ Urgente
+                                                    </span>
+                                                )}
+                                                <p className="text-sm text-slate-700 dark:text-slate-300">
+                                                    {notification.message}
+                                                </p>
+                                                <p className="text-xs text-slate-400">
+                                                    {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true, locale: es })}
+                                                </p>
+                                            </div>
+                                        </>
+                                    );
+
+                                    return (
+                                        <div
+                                            key={notification.id}
+                                            className={`relative flex items-start gap-0 group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${getRowHighlight(notification)}`}
                                         >
-                                            <CheckCircle2 className="h-4 w-4" />
-                                        </button>
-                                    </div>
-                                ))}
+                                            {/* Zona clickeable (Link) + botón de marcar leída separados, como
+                                                en SeccionProximosInicios: un <button> DENTRO de un <a> es HTML
+                                                inválido y rompe el click en algunos navegadores (mismo bug ya
+                                                documentado ahí). */}
+                                            {puedeNavegar ? (
+                                                <Link
+                                                    to={notification.targetUrl}
+                                                    onClick={cerrarPanel}
+                                                    className="flex items-start gap-3 p-4 flex-1 min-w-0"
+                                                    data-testid="notification-row-link"
+                                                >
+                                                    {contenido}
+                                                </Link>
+                                            ) : (
+                                                <div className="flex items-start gap-3 p-4 flex-1 min-w-0 cursor-default">
+                                                    {contenido}
+                                                </div>
+                                            )}
+                                            <button
+                                                onClick={(e) => handleMarkAsRead(notification.id, e)}
+                                                className={`opacity-0 group-hover:opacity-100 self-center p-1 text-slate-400 hover:text-primary transition-opacity flex-shrink-0 ${puedeNavegar ? "mr-3" : "mr-1"}`}
+                                                title="Marcar como leída"
+                                            >
+                                                <CheckCircle2 className="h-4 w-4" />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         ) : null}
                     </div>

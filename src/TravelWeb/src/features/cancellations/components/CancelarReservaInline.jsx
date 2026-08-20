@@ -85,7 +85,7 @@ import {
     MENSAJE_EXITO_CREDIT_NOTE,
     TEXTO_PROCESANDO_MULTI,
     TEXTO_SALDO_A_FAVOR_MULTI_PREFIJO,
-    TEXTO_BOTON_REINTENTAR_FALTANTE,
+    TEXTO_BOTON_EMITIR_NOTA_QUE_FALTO,
     TEXTO_TIMEOUT_MULTI,
     TEXTO_REQUIERE_APROBACION_MULTI,
 } from "./cancelarReservaCopy";
@@ -159,7 +159,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
     const [draftMultiFactura, setDraftMultiFactura] = useState(null);
     // BC vigente durante procesando/éxito/revisión — se actualiza en cada vuelta del polling.
     const [bcActivo, setBcActivo] = useState(bookingCancellationToRetry ?? null);
-    // Fix reviewer (2026-07-02, punto 4): true mientras "Sí, anular" o "Reintentar la que falta"
+    // Fix reviewer (2026-07-02, punto 4): true mientras "Sí, anular" o "Emitir la nota que faltó"
     // tienen su POST en vuelo — deshabilita el botón para que un doble click no dispare dos
     // llamadas. Un solo flag alcanza porque los dos botones nunca están visibles a la vez
     // (son de estados distintos: confirmando-multi vs revision-multi).
@@ -246,7 +246,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
     // ADR-042: en modo reintento (abierto desde la franja "en revisión"), arrancamos DIRECTO
     // reintentando la cancelación puntual que vino por props, sin pasar por el formulario.
     // useEffect con []: el publicId a reintentar no cambia durante la vida de este panel
-    // (se abre una vez por click en "Reintentar anulación").
+    // (se abre una vez por click en "Emitir la nota que faltó" de la franja).
     useEffect(() => {
         if (!modoReintento) return;
         (async () => {
@@ -548,12 +548,16 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
         >
             {/* ── Cabecera del panel ──
                 En modo reintento (abierto desde la franja "en revisión") el título cambia:
-                no se está anulando de nuevo, se está completando lo que ya empezó. */}
+                no se está anulando de nuevo, se está completando lo que ya empezó. Cierre de
+                hueco (PR-7, 2026-08-19): antes decía "Reintentar anulación" mientras el botón
+                de abajo (Estado 4) decía "Emitir la nota que faltó" — misma acción, dos
+                nombres. Se usa la MISMA constante que el botón (T-6: un solo texto, un solo
+                lugar). El modo normal ("Anular reserva") no se toca. */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <Ban className="w-4 h-4 text-rose-600" aria-hidden="true" />
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                        {modoReintento ? "Reintentar anulación" : "Anular reserva"}
+                        {modoReintento ? TEXTO_BOTON_EMITIR_NOTA_QUE_FALTO : "Anular reserva"}
                     </h4>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
                         #{reserva.numeroReserva} — {reserva.customerName}
@@ -849,10 +853,12 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         {construirTextoEncabezadoRevision(bcActivo?.creditNotes)}
                     </p>
                     <NotasCreditoProgressList creditNotes={bcActivo?.creditNotes} />
-                    {/* Único botón de la spec (Estado 4): "Reintentar la que falta". Para salir sin
-                        reintentar todavía, el usuario usa la [X] de la cabecera (no duplicamos un
-                        segundo "Cerrar" acá — la reserva va a seguir mostrando la franja "en
-                        revisión" la próxima vez que la abra, así que nada se pierde). */}
+                    {/* Único botón de la spec (Estado 4): "Emitir la nota que faltó" (bloque 4,
+                        2026-08-19 — texto unificado con el botón de la franja "en revisión", misma
+                        acción). Para salir sin reintentar todavía, el usuario usa la [X] de la
+                        cabecera (no duplicamos un segundo "Cerrar" acá — la reserva va a seguir
+                        mostrando la franja "en revisión" la próxima vez que la abra, así que nada
+                        se pierde). */}
                     <Button
                         type="button"
                         onClick={handleReintentarDesdeRevision}
@@ -860,7 +866,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         data-testid="cancelar-multi-btn-reintentar"
                         className="mt-2"
                     >
-                        {TEXTO_BOTON_REINTENTAR_FALTANTE}
+                        {TEXTO_BOTON_EMITIR_NOTA_QUE_FALTO}
                     </Button>
                 </div>
             )}

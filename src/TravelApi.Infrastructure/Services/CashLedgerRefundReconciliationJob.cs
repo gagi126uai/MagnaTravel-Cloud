@@ -1,8 +1,8 @@
-using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
@@ -51,23 +51,28 @@ public class CashLedgerRefundReconciliationJob
 {
     private readonly AppDbContext _db;
     private readonly INotificationService _notificationService;
-    private readonly UserManager<ApplicationUser> _userManager;
+    private readonly IUserPermissionResolver _permissionResolver;
     private readonly ILogger<CashLedgerRefundReconciliationJob> _logger;
 
     // RelatedEntityType del aviso Y prefijo de su clave de resolucion ("CashLedgerRefundReconciliation:{bcId}").
     // Mismo patron que PartialCreditNoteReviewAlertJob: un literal dedicado, para que el dedup de este job nunca
-    // choque con avisos de otro tipo sobre la misma cancelacion.
-    private const string NotificationRelatedType = "CashLedgerRefundReconciliation";
+    // choque con avisos de otro tipo sobre la misma cancelacion. Constante COMPARTIDA (no privada del job):
+    // NotificationTargetUrlResolver la necesita para reconocer estos avisos al armar el link de la campanita.
+    private const string NotificationRelatedType = NotificationRelatedEntityTypes.CashLedgerRefundReconciliation;
+
+    /// <summary>Un destinatario del aviso + si ese usuario puede ver montos de costo (F-14, revision
+    /// seguridad 2026-08-19). Ver <see cref="GetSupplierPaymentsAudienceAsync"/>.</summary>
+    private sealed record TreasuryAudienceMember(ApplicationUser User, bool CanSeeCost);
 
     public CashLedgerRefundReconciliationJob(
         AppDbContext db,
         INotificationService notificationService,
-        UserManager<ApplicationUser> userManager,
+        IUserPermissionResolver permissionResolver,
         ILogger<CashLedgerRefundReconciliationJob> logger)
     {
         _db = db;
         _notificationService = notificationService;
-        _userManager = userManager;
+        _permissionResolver = permissionResolver;
         _logger = logger;
     }
 
@@ -121,15 +126,11 @@ public class CashLedgerRefundReconciliationJob
             .ToDictionaryAsync(r => r.Id, r => r.Currency, ct);
 
         // 4) Monto VIGENTE de caja por reembolso (0 si el asiento fue revertido o nunca existio — eso es
-        //    exactamente lo que este job quiere pescar).
-        var liveLedgerAmountByRefundId = await _db.CashLedgerEntries
-            .Where(e => e.SourceType == CashLedgerSourceTypes.OperatorRefund
-                     && e.OperatorRefundReceivedId != null
-                     && singleCancellationRefundIds.Contains(e.OperatorRefundReceivedId.Value)
-                     && !e.IsReversed && !e.IsReversal)
-            .GroupBy(e => e.OperatorRefundReceivedId!.Value)
-            .Select(g => new { RefundId = g.Key, Amount = g.Sum(e => e.Amount) })
-            .ToDictionaryAsync(x => x.RefundId, x => x.Amount, ct);
+        //    exactamente lo que este job quiere pescar). Delegado a CashLedgerRefundLedgerAmountLoader: fix
+        //    2026-08-19 de un bug de origen (2026-08-16) que dejaba esto SIEMPRE en 0 en Postgres real. Ver
+        //    el XML-doc de esa clase para el detalle completo del bug y por que era el falso positivo masivo.
+        var liveLedgerAmountByRefundId = await CashLedgerRefundLedgerAmountLoader.LoadAsync(
+            _db, singleCancellationRefundIds, ct);
 
         // 5) Por cancelacion candidata, total de CAJA por moneda (sumando los reembolsos de un solo destino).
         var ledgerByBookingCancellationId = new Dictionary<int, Dictionary<string, decimal>>();
@@ -176,7 +177,7 @@ public class CashLedgerRefundReconciliationJob
             .Select(r => new { r.Id, r.NumeroReserva })
             .ToDictionaryAsync(r => r.Id, r => r.NumeroReserva, ct);
 
-        List<ApplicationUser>? adminUsers = null;
+        List<TreasuryAudienceMember>? treasuryAudience = null;
         var divergenceCount = 0;
         var resolvedCount = 0;
 
@@ -240,11 +241,11 @@ public class CashLedgerRefundReconciliationJob
                     "; ",
                     divergences.Select(dv => $"{dv.Currency} derivado={dv.DerivedAmount} caja={dv.LedgerAmount}")));
 
-            adminUsers ??= (await _userManager.GetUsersInRoleAsync("Admin")).ToList();
-            if (adminUsers.Count == 0)
+            treasuryAudience ??= await GetSupplierPaymentsAudienceAsync(ct);
+            if (treasuryAudience.Count == 0)
             {
                 _logger.LogWarning(
-                    "CashLedgerRefundReconciliationJob: BC {BookingCancellationId} diverge pero NO hay usuarios Admin a quien avisar.",
+                    "CashLedgerRefundReconciliationJob: BC {BookingCancellationId} diverge pero NO hay usuarios con tesoreria.supplier_payments a quien avisar.",
                     bookingCancellationId);
                 return;
             }
@@ -252,42 +253,135 @@ public class CashLedgerRefundReconciliationJob
             var reservaId = reservaIdByBookingCancellationId.GetValueOrDefault(bookingCancellationId);
             var numeroReserva = reservaNumeroById.TryGetValue(reservaId, out var numero) ? numero : null;
 
-            var message = BuildUserMessage(numeroReserva);
+            // F-14 (revision seguridad 2026-08-19, B1): el mensaje NO es unico. Un destinatario con
+            // tesoreria.supplier_payments pero SIN cobranzas.see_cost es la MISMA situacion que ya
+            // enmascara el resto de la cuenta del proveedor (NetAmount/DerivedAmount/LedgerAmount en 0) —
+            // el monto de la diferencia tambien es plata de costo, asi que a ese usuario le llega la
+            // variante SIN numeros. Se arman las dos variantes una sola vez por cancelacion (no por
+            // usuario) porque el texto no depende de QUIEN lo recibe, solo de si puede ver costos o no.
+            var messageWithAmounts = BuildUserMessage(numeroReserva, divergences, includeAmounts: true);
+            var messageWithoutAmounts = BuildUserMessage(numeroReserva, divergences, includeAmounts: false);
 
-            foreach (var admin in adminUsers)
+            foreach (var member in treasuryAudience)
             {
-                // Dedup: si este admin ya tiene un aviso VIVO de esta misma cancelacion, no se repite (el job
-                // corre todos los dias mientras la divergencia siga sin resolverse).
+                // Dedup (decision 2026-08-19): "vivo" para este job es SOLO ResolvedAt == null — la causa
+                // (la divergencia) sigue sin corregirse. Antes tambien exigia !IsRead && !IsDismissed, asi
+                // que un aviso que el usuario ya vio/descarto se volvia a crear al dia siguiente si la
+                // divergencia seguia viva (el "grita todos los dias" que motivo esta obra). El estado real
+                // ahora vive en la ficha del operador (solapa Reembolsos), no en si alguien ya cerro el
+                // aviso de la campanita.
                 var hasLiveAlert = await _db.Notifications.AnyAsync(n =>
-                    n.UserId == admin.Id
+                    n.UserId == member.User.Id
                     && n.ResolutionKey == resolutionKey
-                    && n.ResolvedAt == null && !n.IsRead && !n.IsDismissed, ct);
+                    && n.ResolvedAt == null, ct);
 
                 if (hasLiveAlert)
                     continue;
 
                 await _notificationService.CreateAndSendAsync(new Notification
                 {
-                    UserId = admin.Id,
+                    UserId = member.User.Id,
                     Type = "Warning",
-                    Priority = "Urgent",
+                    // Decision 2026-08-19: de "Urgent" a "Normal" — este descalce de UNA reserva puntual ya
+                    // no dispara el banner naranja full-width (ese queda reservado para caidas de TODO el
+                    // sistema). Sigue siendo un aviso Warning normal en la campanita (punto ambar).
+                    Priority = "Normal",
                     RelatedEntityId = bookingCancellationId,
                     RelatedEntityType = NotificationRelatedType,
                     ResolutionKey = resolutionKey,
-                    Message = message,
+                    Message = member.CanSeeCost ? messageWithAmounts : messageWithoutAmounts,
                 }, ct);
             }
         }
     }
 
     /// <summary>
-    /// Mensaje en castellano de negocio, sin jerga tecnica ni IDs crudos (gate de exposicion de datos): le dice
-    /// al admin QUE reserva revisar y QUE mirar, no COMO se detecto (nada de "asiento", "ledger" ni "CHECK").
+    /// Decision 2026-08-19: el aviso va SOLO a quien maneja tesoreria (mismo permiso que la solapa
+    /// Reembolsos, <c>tesoreria.supplier_payments</c>).
+    ///
+    /// <para><b>Fix revision seguridad 2026-08-19 (B1+B2)</b>: la version anterior reproducia a mano el
+    /// criterio de <c>PermissionAuthorizationHandler</c> (leer <c>RolePermissions</c> + bypass especial
+    /// para el rol Admin), lo que traia dos problemas: (B2) no filtraba <c>ApplicationUser.IsActive</c>,
+    /// divergiendo de <see cref="IUserPermissionResolver"/> (que SI deniega a un usuario dado de baja); y
+    /// (B1) no habia forma barata de saber, POR DESTINATARIO, si ademas tiene <c>cobranzas.see_cost</c>
+    /// para decidir si el mensaje puede llevar el monto de la diferencia (dato de costo, F-14).
+    ///
+    /// Ahora se resuelve la audiencia usuario-por-usuario con la MISMA fuente de verdad que ya usa el
+    /// resto del sistema (<see cref="IUserPermissionResolver.GetPermissionsAsync"/>): un candidato entra si
+    /// esa consulta dice que tiene <c>tesoreria.supplier_payments</c> (el resolver ya devuelve vacio para
+    /// un usuario inactivo, asi que IsActive queda cubierto sin duplicar el chequeo), y de paso se sabe si
+    /// tambien tiene <c>cobranzas.see_cost</c> para elegir la variante del mensaje.</para>
+    ///
+    /// <para><b>Nota de alcance</b>: al dejar de reproducir el bypass de Admin a mano, un usuario Admin
+    /// SOLO entra a esta audiencia si su rol tiene <c>tesoreria.supplier_payments</c> asignado en
+    /// <c>RolePermissions</c> (igual que cualquier otro rol) — sigue pudiendo ABRIR la pantalla de
+    /// Reembolsos igual (ese bypass vive aparte, en el handler de autorizacion HTTP), pero ya no se le
+    /// reproduce artificialmente para esta lista de destinatarios. Es una simplificacion deliberada: un
+    /// solo mecanismo de permisos en todo el sistema, sin una segunda copia del bypass en un job.</para>
     /// </summary>
-    private static string BuildUserMessage(string? numeroReserva)
+    private async Task<List<TreasuryAudienceMember>> GetSupplierPaymentsAudienceAsync(CancellationToken ct)
     {
-        return string.IsNullOrWhiteSpace(numeroReserva)
-            ? "La devolución del operador de una reserva no coincide entre lo que figura recibido y lo que hay en la caja. Revisala antes de cerrarla."
-            : $"La devolución del operador de la reserva {numeroReserva} no coincide entre lo que figura recibido y lo que hay en la caja. Revisala antes de cerrarla.";
+        // Candidatos: todo usuario activo. _db.Users (AppDbContext hereda de IdentityDbContext<ApplicationUser>)
+        // en vez de UserManager.Users: es el MISMO DbSet, pero soporta ToListAsync de verdad (UserManager.Users
+        // es un IQueryable simple sin metodos async propios). El resolver TAMBIEN chequea IsActive puertas
+        // adentro, pero filtrar aca de entrada evita resolver permisos de usuarios que ya sabemos dados de baja.
+        var candidates = await _db.Users.Where(u => u.IsActive).ToListAsync(ct);
+
+        var audience = new List<TreasuryAudienceMember>();
+        foreach (var candidate in candidates)
+        {
+            var perms = await _permissionResolver.GetPermissionsAsync(candidate.Id, ct);
+            if (!perms.Contains(Permissions.TesoreriaSupplierPayments))
+                continue;
+
+            audience.Add(new TreasuryAudienceMember(candidate, perms.Contains(Permissions.CobranzasSeeCost)));
+        }
+
+        return audience;
+    }
+
+    /// <summary>
+    /// Mensaje en castellano de negocio, sin jerga tecnica ni IDs crudos (gate de exposicion de datos): le dice
+    /// al usuario QUE reserva revisar, no COMO se detecto (nada de "asiento", "ledger" ni "CHECK"). Decision
+    /// 2026-08-19: se saca "antes de cerrarla" (sonaba a plazo urgente, contradice el tono bajado de esta
+    /// obra).
+    ///
+    /// <para><b>F-14 (revision seguridad 2026-08-19, B1)</b>: <paramref name="includeAmounts"/> decide si el
+    /// mensaje lleva el monto de la diferencia por moneda. El HECHO ("no coincide") es una señal operativa,
+    /// no un dato de costo, y puede viajar siempre; el MONTO si es plata de costo, asi que solo va cuando el
+    /// destinatario tiene <c>cobranzas.see_cost</c> (mismo criterio que ya enmascara los montos en el DTO de
+    /// la solapa Reembolsos). Cada moneda es su PROPIO numero — P-3: nunca se suman monedas distintas.</para>
+    /// </summary>
+    private static string BuildUserMessage(
+        string? numeroReserva, IReadOnlyList<CashLedgerRefundDivergence> divergences, bool includeAmounts)
+    {
+        if (string.IsNullOrWhiteSpace(numeroReserva))
+            return "La devolución del operador de una reserva no coincide con la caja. Revisala cuando puedas.";
+
+        if (!includeAmounts)
+            return $"La devolución del operador de la reserva {numeroReserva} no coincide con la caja. Revisala cuando puedas.";
+
+        var diferenciasPorMoneda = divergences
+            .Select(dv => $"{dv.Currency} {CurrencyDisplayFormat.Amount(Math.Abs(dv.Delta))}")
+            .ToList();
+        var diferenciasTexto = JoinWithSpanishAnd(diferenciasPorMoneda);
+
+        return $"La devolución del operador de la reserva {numeroReserva} no coincide con la caja: hay una " +
+               $"diferencia de {diferenciasTexto}. Revisala cuando puedas.";
+    }
+
+    /// <summary>
+    /// Junta una lista de textos al estilo castellano ("A", "A y B", "A, B y C"). Usado para no sumar
+    /// montos de monedas distintas (P-3) cuando una misma reserva diverge en 2+ monedas: cada una aparece
+    /// como su propio "{moneda} {monto}", nunca como un total unico.
+    /// </summary>
+    private static string JoinWithSpanishAnd(IReadOnlyList<string> items)
+    {
+        return items.Count switch
+        {
+            0 => string.Empty,
+            1 => items[0],
+            _ => string.Join(", ", items.Take(items.Count - 1)) + " y " + items[^1],
+        };
     }
 }

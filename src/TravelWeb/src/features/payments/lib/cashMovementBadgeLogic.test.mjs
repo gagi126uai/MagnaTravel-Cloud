@@ -10,6 +10,8 @@ import assert from "node:assert/strict";
 import {
   obtenerEstadoBadgeMovimiento,
   debeApagarBotonesMovimiento,
+  esMovimientoDeReembolsoOperador,
+  construirMotivoReembolsoOperadorApagado,
 } from "./cashMovementBadgeLogic.js";
 
 // ─── obtenerEstadoBadgeMovimiento ────────────────────────────────────────────────
@@ -72,4 +74,44 @@ test("ninguno de los dos -> botones habilitados", () => {
 test("movement null/undefined -> botones habilitados, no rompe", () => {
   assert.equal(debeApagarBotonesMovimiento(null), false);
   assert.equal(debeApagarBotonesMovimiento(undefined), false);
+});
+
+// ─── Bloque 3 "descalce devolución-caja" (2026-08-19): freno para category=OperatorRefund ──
+
+test("esMovimientoDeReembolsoOperador: category='OperatorRefund' -> true", () => {
+  assert.equal(esMovimientoDeReembolsoOperador({ category: "OperatorRefund" }), true);
+});
+
+test("esMovimientoDeReembolsoOperador: cualquier otra categoría -> false", () => {
+  assert.equal(esMovimientoDeReembolsoOperador({ category: "ManualAdjustment" }), false);
+  assert.equal(esMovimientoDeReembolsoOperador({ category: "SupplierPayment" }), false);
+});
+
+test("esMovimientoDeReembolsoOperador: movement null/undefined -> false, no rompe", () => {
+  assert.equal(esMovimientoDeReembolsoOperador(null), false);
+  assert.equal(esMovimientoDeReembolsoOperador(undefined), false);
+});
+
+test("debeApagarBotonesMovimiento: category='OperatorRefund' apaga los botones aunque no esté reemplazado ni anulado", () => {
+  const movimiento = { isReplaced: false, isAnnulled: false, category: "OperatorRefund" };
+  assert.equal(debeApagarBotonesMovimiento(movimiento), true);
+});
+
+test("debeApagarBotonesMovimiento: OperatorRefund se suma a las causas existentes, no las reemplaza", () => {
+  // Un movimiento reemplazado sigue apagando los botones aunque NO sea de reembolso.
+  assert.equal(debeApagarBotonesMovimiento({ isReplaced: true, category: "ManualAdjustment" }), true);
+});
+
+test("construirMotivoReembolsoOperadorApagado: texto EXACTO de la spec con el número de reserva interpolado", () => {
+  const texto = construirMotivoReembolsoOperadorApagado({ numeroReserva: "F-2026-1189" });
+  assert.equal(
+    texto,
+    "Atado a la devolución recibida del operador de la reserva F-2026-1189. Se corrige desde " +
+      "el circuito de la devolución (solapa Reembolsos), no acá."
+  );
+});
+
+test("construirMotivoReembolsoOperadorApagado: sin numeroReserva no rompe (string vacío en su lugar)", () => {
+  const texto = construirMotivoReembolsoOperadorApagado({});
+  assert.match(texto, /de la reserva \. Se corrige/);
 });
