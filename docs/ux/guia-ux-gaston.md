@@ -2745,3 +2745,36 @@ Configuración haya un lugar para configurar la IA, universal para cualquier tip
    idempotente firmado el 2026-07-01, que sigue vigente). Si la nota está solo demorada (timeout
    con la reconciliación automática en vuelo), NO hay cartel de alarma ni botón: se resuelve sola,
    tono "en curso".
+
+## La ficha del operador no borra la historia (2026-08-19/20)
+
+> Origen: Gastón probó reserva → factura → anulación → "sin multa" y la ficha del operador quedó
+> vacía "como si nunca hubiese pasado nada". Investigación: las solapas se autolimpian (filtro que
+> excluye Cancelled para que el saldo cierre solo) y no existe vista de historial, aunque los datos
+> están completos en el dominio y la auditoría. Benchmark (SAP storno, BC cancel→NC, NetSuite,
+> Odoo, Lemax): append-only con reversa visible + capa de historial por ficha (chatter/System
+> Notes). F-6 ya lo pedía: "nada se borra, se tacha". Gastón firmó por multiple choice.
+
+**Decisiones cerradas (no reabrir):**
+
+1. **(2026-08-19) Las compras de una reserva anulada QUEDAN en la plata del operador.** En el
+   extracto: la línea de compra original + una contra-línea "Anulación" con la fecha de la
+   anulación, ambas visibles, neteando cero; la compra va tachada con chip "Anulada" (mismo molde
+   que la cuenta del cliente con facturas anuladas). En Servicios comprados: los servicios de
+   reservas anuladas se ven con chip "Anulada", con filtro para ocultarlos. La solapa Deuda por
+   reserva NO cambia: solo deuda viva. (F-2, F-6, P-3, F-14.)
+2. **(2026-08-19) Solapa nueva "Historial" en la ficha del operador**: línea de tiempo de todo lo
+   que pasó con ese operador — compra confirmada, anulación, multa cobrada o perdonada (con quién
+   y cuándo), reembolsos, pagos, facturas del operador. Es la única superficie donde las
+   decisiones SIN plata ("cerrada sin multa") quedan visibles en la ficha. Montos enmascarados
+   sin permiso de ver costos (F-14); molde visual del Historial de la reserva.
+3. **(2026-08-19) El Historial de la RESERVA también muestra la anulación**: anulación confirmada,
+   decisión de multa (cobrada/perdonada) y sus notas de crédito — hoy ese timeline no incluye la
+   cancelación, ni siquiera en la propia reserva.
+
+**Spec completa (2026-08-20):** `docs/ux/2026-08-20-operador-con-rastro-e-historial.md` — layout
+del extracto (compra tachada + contra-línea "Anulación de compra"), filtro "Mostrar anuladas" en
+Servicios comprados, posición y textos exactos de la solapa "Historial" del operador, y los
+eventos nuevos del Historial de la reserva. Sin preguntas: todo sale de estas 3 decisiones +
+moldes ya en producción (chip de factura anulada del cliente, checkbox "Mostrar inactivos" de
+Operadores, `ReservaTimeline.jsx`).

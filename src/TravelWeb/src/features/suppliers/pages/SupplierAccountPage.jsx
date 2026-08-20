@@ -18,6 +18,7 @@ import {
     ChevronRight,
     FileText,
     AlertTriangle,
+    Clock,
 } from "lucide-react";
 import { api } from "../../../api";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
@@ -61,6 +62,7 @@ import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { Button } from "../../../components/ui/button";
+import { StatusChip } from "../../../components/ui/badge";
 import { SupplierExtractoSection } from "../components/SupplierExtractoSection";
 import { FotoDeSaldoOperador } from "../components/FotoDeSaldoOperador";
 import { PagarProveedorInline } from "../components/PagarProveedorInline";
@@ -70,6 +72,7 @@ import { OperatorRefundsPendingSection } from "../components/OperatorRefundsPend
 import { OperatorRefundsRegisteredSection } from "../components/OperatorRefundsRegisteredSection";
 import { RegistrarReembolsoRecibidoInline } from "../components/RegistrarReembolsoRecibidoInline";
 import { SupplierInvoicesSection } from "../components/SupplierInvoicesSection";
+import { SupplierHistorialSection } from "../components/SupplierHistorialSection";
 import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 // CURRENCY_OPTIONS se reutiliza del alta de operador para mantener las etiquetas consistentes.
 // No duplicamos el array: si el equipo agrega una moneda, se actualiza en un solo lugar.
@@ -1051,6 +1054,13 @@ function EstadoServicioCell({ service, onUpdated, canEdit }) {
         reservaPublicId: service.reservaPublicId,
     });
 
+    // Obra "la ficha del operador no borra la historia" (2026-08-20, spec §2.2, P-19: "no se
+    // ofrece una acción que no existe"): un servicio de una reserva anulada no tiene nada para
+    // Confirmar/Emitir — mismo criterio que la fila desktop (PurchasedServiceRow.jsx).
+    if (service.reservaIsVoided) {
+        return <span className="text-xs text-slate-400 dark:text-slate-500">Reserva anulada</span>;
+    }
+
     if (!tieneBotonPrimario) {
         return <ServiceStatusEditor service={service} onUpdated={onUpdated} canEdit={canEdit} />;
     }
@@ -1149,6 +1159,11 @@ export default function SupplierAccountPage() {
     const [servicesLoading, setServicesLoading] = useState(true);
     const [serviceSearch, setServiceSearch] = useState("");
     const [serviceType, setServiceType] = useState("all");
+    // Obra "la ficha del operador no borra la historia" (2026-08-20, spec §2.1): default
+    // tildado — las compras de reservas anuladas se ven de entrada, mismo criterio que
+    // "Mostrar inactivos" en SuppliersPage.jsx. Filtro SERVER-SIDE (la grilla pagina en el
+    // backend), no se puede filtrar solo en el cliente sin romper la paginación.
+    const [showVoidedServices, setShowVoidedServices] = useState(true);
     const debouncedServiceSearch = useDebounce(serviceSearch, 300);
 
     // ─── Control de fichas en línea (Cuenta corriente) ───────────────────────
@@ -1289,6 +1304,10 @@ export default function SupplierAccountPage() {
             if (serviceType !== "all") {
                 params.set("type", serviceType);
             }
+            // Siempre explícito (a diferencia de "type", que se omite en su valor default):
+            // el checkbox alterna true/false y los dos casos son distintos del default del
+            // backend, así que mandarlo siempre evita ambigüedad sobre qué pidió el usuario.
+            params.set("includeVoided", String(showVoidedServices));
             const response = await api.get(`/suppliers/${publicId}/account/services?${params.toString()}`);
             setServicesPage({ ...emptyPage, ...(response || {}) });
             setDatabaseUnavailable(false);
@@ -1299,7 +1318,7 @@ export default function SupplierAccountPage() {
         } finally {
             setServicesLoading(false);
         }
-    }, [debouncedServiceSearch, publicId, serviceType, servicesPaging.page, servicesPaging.pageSize]);
+    }, [debouncedServiceSearch, publicId, serviceType, showVoidedServices, servicesPaging.page, servicesPaging.pageSize]);
 
     // ─── Handlers ─────────────────────────────────────────────────────────────
 
@@ -1452,10 +1471,10 @@ export default function SupplierAccountPage() {
     // favor, y los recuadros de arriba tienen que reflejar ese mismo momento.
     useEffect(() => { loadStatementHeader(); }, [loadStatementHeader, extractoRefreshKey]);
 
-    // Al cambiar filtros de búsqueda o tipo, volvemos a la página 1 de servicios.
+    // Al cambiar filtros de búsqueda, tipo o "Mostrar anuladas", volvemos a la página 1.
     useEffect(() => {
         setServicesPaging((current) => ({ ...current, page: 1 }));
-    }, [debouncedServiceSearch, serviceType, servicesPaging.pageSize]);
+    }, [debouncedServiceSearch, serviceType, showVoidedServices, servicesPaging.pageSize]);
 
     // ─── Guardas de estado ────────────────────────────────────────────────────
 
@@ -1542,6 +1561,12 @@ export default function SupplierAccountPage() {
         ...(puedeVerReembolsos ? [{ id: "reembolsos", label: labelReembolsos, icon: RotateCcw }] : []),
         { id: "datos-bancarios",     label: "Datos bancarios",      icon: Landmark    },
         { id: "datos",               label: "Datos",                icon: Settings    },
+        // Obra "la ficha del operador no borra la historia" (2026-08-20, guía #2): AL FINAL,
+        // junto a las solapas de ficha/metadata (no las de plata viva) — ver el razonamiento
+        // completo en la spec §3.1. Sin gate de permiso propio (mismo criterio que "Cuenta
+        // corriente"): quien entra a la ficha ve la solapa; los MONTOS de cada evento se
+        // enmascaran adentro (F-14), no la solapa entera.
+        { id: "historial",           label: "Historial",            icon: Clock       },
     ];
 
     return (
@@ -1861,21 +1886,35 @@ export default function SupplierAccountPage() {
                                             </div>
                                         }
                                         filterSlot={
-                                            <div className="relative lg:w-56">
-                                                <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                                                <select
-                                                    value={serviceType}
-                                                    onChange={(event) => setServiceType(event.target.value)}
-                                                    className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                                                >
-                                                    <option value="all">Todos los tipos</option>
-                                                    <option value="Aereo">Aereo</option>
-                                                    <option value="Hotel">Hotel</option>
-                                                    <option value="Traslado">Traslado</option>
-                                                    <option value="Paquete">Paquete</option>
-                                                    <option value="Otro">Otros</option>
-                                                </select>
-                                            </div>
+                                            <>
+                                                <div className="relative lg:w-56">
+                                                    <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                                    <select
+                                                        value={serviceType}
+                                                        onChange={(event) => setServiceType(event.target.value)}
+                                                        className="w-full rounded-[10px] border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                                    >
+                                                        <option value="all">Todos los tipos</option>
+                                                        <option value="Aereo">Aereo</option>
+                                                        <option value="Hotel">Hotel</option>
+                                                        <option value="Traslado">Traslado</option>
+                                                        <option value="Paquete">Paquete</option>
+                                                        <option value="Otro">Otros</option>
+                                                    </select>
+                                                </div>
+                                                {/* Obra "la ficha del operador no borra la historia" (2026-08-20,
+                                                    spec §2.1): mismo molde que "Mostrar inactivos" de SuppliersPage.jsx,
+                                                    sin contador (la grilla pagina en el backend). */}
+                                                <label className="flex cursor-pointer select-none items-center gap-2 rounded-[10px] px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={showVoidedServices}
+                                                        onChange={(event) => setShowVoidedServices(event.target.checked)}
+                                                        className="rounded border-slate-300 text-primary focus:ring-primary"
+                                                    />
+                                                    Mostrar anuladas
+                                                </label>
+                                            </>
                                         }
                                     />
                                 </div>
@@ -1933,7 +1972,25 @@ export default function SupplierAccountPage() {
                                         {services.map((service) => (
                                             <MobileRecordCard
                                                 key={getPublicId(service)}
-                                                title={service.description || "Sin descripcion"}
+                                                title={
+                                                    // Obra "la ficha del operador no borra la historia" (2026-08-20,
+                                                    // spec §2.2): mismo tachado que la fila desktop cuando la
+                                                    // reserva dueña de este servicio está anulada.
+                                                    service.reservaIsVoided ? (
+                                                        <span className="line-through text-slate-400 dark:text-slate-500">
+                                                            {service.description || "Sin descripcion"}
+                                                        </span>
+                                                    ) : (
+                                                        service.description || "Sin descripcion"
+                                                    )
+                                                }
+                                                statusSlot={
+                                                    service.reservaIsVoided ? (
+                                                        <StatusChip tone="rojo" className="line-through">
+                                                            Anulada
+                                                        </StatusChip>
+                                                    ) : undefined
+                                                }
                                                 subtitle={service.type}
                                                 meta={
                                                     <>
@@ -2124,6 +2181,16 @@ export default function SupplierAccountPage() {
                                     </p>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* ── SOLAPA 7: Historial ──────────────────────────────────────────
+                        Línea de tiempo de TODO lo que pasó con este operador (obra "la
+                        ficha del operador no borra la historia", 2026-08-20, spec §3).
+                    ─────────────────────────────────────────────────────────────── */}
+                    {activeTab === "historial" && (
+                        <div id="panel-historial" role="tabpanel">
+                            <SupplierHistorialSection supplierPublicId={publicId} />
                         </div>
                     )}
                 </div>

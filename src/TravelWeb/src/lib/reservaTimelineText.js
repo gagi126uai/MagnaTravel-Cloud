@@ -208,6 +208,28 @@ function esActorHumano(actor) {
 }
 
 /**
+ * Obra "la ficha del operador no borra la historia" (2026-08-20): color del punto para los
+ * eventos cuya frase COMPLETA ya viene armada del backend (ver el "Caso 1b" de
+ * `describirEventoHistorial`). Mismo criterio de siempre en toda la app (P-20, "un color, un
+ * significado"): rojo = sin efecto/reversa, verde = entra plata a favor de la agencia, índigo
+ * = documento fiscal/comprobante, ámbar = decisión notable SIN plata, neutro = movimiento de
+ * rutina. Fuente: spec docs/ux/2026-08-20-operador-con-rastro-e-historial.md §3.4 y §4.2.
+ */
+const COLOR_POR_EVENTO_BACKEND = {
+  SupplierPurchaseConfirmed: "neutro", // "Se compró {servicio}: {monto}."
+  ReservaAnnulled: "rojo", // "{Actor} anuló la reserva." (versión del historial del OPERADOR)
+  OperatorPenaltyConfirmed: "indigo", // "La multa del operador quedó confirmada: {monto}."
+  OperatorPenaltyWaived: "ambar", // única familia SIN plata: "cerró la multa sin cobrar nada"
+  OperatorRefundRegistered: "verde", // entra plata del operador a favor de la agencia
+  OperatorRefundUndone: "rojo", // reversa de un reembolso ya registrado
+  SupplierPaymentRegistered: "neutro", // pago de rutina al operador
+  SupplierInvoiceCreated: "indigo", // comprobante fiscal del operador
+  SupplierInvoiceVoided: "rojo", // ese comprobante quedó sin efecto
+  CreditNoteEmitted: "indigo", // comprobante fiscal (nota de crédito) emitido
+  CreditNoteRejected: "rojo", // ARCA rechazó la nota: quedó sin efecto
+};
+
+/**
  * Caso especial: Update sobre la RESERVA en sí, con un cambio de Estado en el
  * diff VIEJO de AuditLogs (formato previo a la Tanda 3, 2026-08-18). Es el
  * ÚNICO caso donde el mapeo enum→label es total y confiable
@@ -269,6 +291,22 @@ function extraerMotivoYAutorizacion(details) {
   return { motivo: lineaMotivo, autorizoTexto: lineaAutorizo };
 }
 
+// Par de estados "sin efecto" del dominio (EstadoReserva.IsVoidedStatus del backend, mismo
+// criterio que ya usa moneyStatus.js ESTADOS_ANULADOS_FALLBACK). Se usa acá SOLO para saber
+// si un StatusChange fue "la reserva se anuló" — no decide nada de plata, no duplica ninguna
+// regla de negocio, solo lee el par de códigos crudos que ya manda el backend en fromStatus/
+// toStatus (T-3: el front no inventa qué estados son "anulados").
+const ESTADOS_ANULADOS = new Set(["Cancelled", "PendingOperatorRefund"]);
+
+/**
+ * True si este cambio de estado es el ACTO de anular la reserva: entra a un estado anulado
+ * viniendo de uno que no lo era (así una reserva que pasa Cancelled → PendingOperatorRefund,
+ * dos estados anulados seguidos, no dispara la frase "anuló" dos veces).
+ */
+function esTransicionDeAnulacion(fromStatus, toStatus) {
+  return ESTADOS_ANULADOS.has(toStatus) && !ESTADOS_ANULADOS.has(fromStatus);
+}
+
 /**
  * Caso nuevo (Tanda 3, 2026-08-18): evento propio de cambio de estado de la
  * reserva, `eventType: "StatusChange"`, con los códigos crudos en
@@ -282,15 +320,36 @@ function extraerMotivoYAutorizacion(details) {
  * tipeado y quién autorizó — mismo patrón " · " que ya usan otras pantallas
  * de la app para encadenar datos secundarios cortos en una sola línea chica.
  *
- * @returns {{frase: string, detalle: string|null}|null}
+ * Caso especial (obra "la ficha del operador no borra la historia", 2026-08-20,
+ * spec §4.2): cuando el destino es un estado anulado, la frase genérica "La
+ * reserva pasó de X a Anulada" se reemplaza por la frase de ACCIÓN "anuló" —
+ * es la misma palabra que ya usa el toast de éxito al confirmar la anulación
+ * (`CancelarReservaInline.jsx`, "Anulación confirmada"), y el punto pasa a rojo
+ * (mismo significado que usa toda la app: rojo = freno/sin efecto).
+ *
+ * @returns {{frase: string, detalle: string|null, colorPunto: "neutro"|"rojo", actor: string|null}|null}
  */
 function fraseYDetalleCambioDeEstado(event) {
   if (event.eventType !== "StatusChange") return null;
 
-  const frase = `La reserva pasó de ${traducirEstadoReserva(event.fromStatus)} a ${traducirEstadoReserva(event.toStatus)}.`;
-
   const humano = esActorHumano(event.actor);
   const { motivo, autorizoTexto } = extraerMotivoYAutorizacion(event.details);
+
+  if (esTransicionDeAnulacion(event.fromStatus, event.toStatus)) {
+    const partesDetalle = [];
+    if (motivo) partesDetalle.push(`Motivo: ${motivo}`);
+    if (autorizoTexto) partesDetalle.push(autorizoTexto);
+
+    return {
+      // El actor va SEPARADO (no metido en la frase) para que Hito lo dibuje en negrita,
+      // igual que el resto de los eventos "de acción" de este archivo (ver el caso
+      // genérico más abajo) — "María anuló la reserva." con "María" en negrita.
+      frase: humano ? "anuló la reserva." : "Se anuló la reserva.",
+      actor: humano ? event.actor : null,
+      detalle: partesDetalle.length > 0 ? partesDetalle.join(" · ") : null,
+      colorPunto: "rojo",
+    };
+  }
 
   const partesDetalle = [];
   if (humano) partesDetalle.push(`La hizo ${event.actor}.`);
@@ -298,8 +357,10 @@ function fraseYDetalleCambioDeEstado(event) {
   if (autorizoTexto) partesDetalle.push(autorizoTexto);
 
   return {
-    frase,
+    frase: `La reserva pasó de ${traducirEstadoReserva(event.fromStatus)} a ${traducirEstadoReserva(event.toStatus)}.`,
+    actor: null, // acá la frase ya queda completa, sin sujeto al principio (caso histórico, sin tocar)
     detalle: partesDetalle.length > 0 ? partesDetalle.join(" · ") : null,
+    colorPunto: "neutro",
   };
 }
 
@@ -327,7 +388,7 @@ function detalleNumeroDeConfirmacion(event) {
  *
  * @param {object} event - TimelineEventDto (ver ReservaTimeline.jsx)
  * @returns {{
- *   colorPunto: "rojo"|"verde"|"indigo"|"neutro",
+ *   colorPunto: "rojo"|"verde"|"indigo"|"ambar"|"neutro",
  *   actor: string|null,       // null = frase impersonal ("Se anuló...")
  *   esCobro: boolean,         // true → el componente arma "Actor cobró $monto." en verde
  *   montoTexto: string|null,  // solo si esCobro
@@ -373,14 +434,37 @@ export function describirEventoHistorial(event) {
     };
   }
 
+  // Caso 1b (obra "la ficha del operador no borra la historia", 2026-08-20): eventos que
+  // el backend arma con la FRASE COMPLETA ya lista (actor y monto adentro del texto, si
+  // corresponden) — vienen tanto del historial de la RESERVA (multa del operador, notas de
+  // crédito de la cancelación) como del historial NUEVO del OPERADOR (compra, anulación,
+  // reembolso, pago, factura). Acá NO se reconstruye ninguna frase: el mismo texto tiene que
+  // verse igual en las dos pantallas, así que solo se le asigna el color del punto según la
+  // tabla de la spec de UX (§3.4/§4.2) — event.title y event.details se muestran tal cual.
+  if (Object.prototype.hasOwnProperty.call(COLOR_POR_EVENTO_BACKEND, event.eventType)) {
+    return {
+      colorPunto: COLOR_POR_EVENTO_BACKEND[event.eventType],
+      actor: null, // el actor (si lo hizo una persona) ya está adentro de event.title
+      esCobro: false,
+      montoTexto: null,
+      // Red de seguridad: si un evento nuevo del backend viniera sin title (no debería,
+      // pero un renglón mudo es peor que una frase genérica), se muestra algo igual.
+      frase: event.title || "Hubo un movimiento con este operador.",
+      detalle: event.details || null,
+    };
+  }
+
   // Caso 2: cambio de estado de la reserva (evento propio del backend, Tanda 3
   // 2026-08-18) — frase natural con los dos labels traducidos, más motivo y
-  // autorizante si vinieron. Es el camino que usan las reservas nuevas.
+  // autorizante si vinieron. Es el camino que usan las reservas nuevas. Incluye
+  // el caso especial "anuló la reserva" (obra 2026-08-20, ver el XML-doc de
+  // fraseYDetalleCambioDeEstado): por eso acá se respeta el actor/colorPunto que
+  // arma esa función, en vez de fijarlos siempre a null/"neutro".
   const cambioDeEstado = fraseYDetalleCambioDeEstado(event);
   if (cambioDeEstado) {
     return {
-      colorPunto: "neutro",
-      actor: null, // la frase ya está armada completa, sin sujeto al principio
+      colorPunto: cambioDeEstado.colorPunto,
+      actor: cambioDeEstado.actor,
       esCobro: false,
       montoTexto: null,
       frase: cambioDeEstado.frase,

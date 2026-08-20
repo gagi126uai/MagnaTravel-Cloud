@@ -70,6 +70,14 @@ public interface ISupplierService
     Task<SupplierInvoiceDto> ApplySupplierPaymentToInvoiceAsync(int id, Guid invoicePublicId, SupplierInvoicePaymentApplicationRequest request, CancellationToken cancellationToken);
     Task<SupplierInvoiceDto> ReverseSupplierInvoicePaymentApplicationAsync(int id, Guid invoicePublicId, Guid applicationPublicId, string reason, CancellationToken cancellationToken);
     Task<SupplierInvoiceDto> VoidSupplierInvoiceAsync(int id, Guid invoicePublicId, string reason, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Obra "la ficha del operador no borra la historia" (2026-08-20): linea de tiempo COMPLETA de este
+    /// operador armada desde el DOMINIO (compras, anulaciones de reservas, multas, reembolsos, pagos y
+    /// facturas), NO parseando el JSON de AuditLog. Mismo permiso que el resto de la ficha
+    /// (<c>proveedores.view</c>); los montos respetan el masking <c>cobranzas.see_cost</c> (F-14).
+    /// </summary>
+    Task<SupplierTimelineDto> GetSupplierTimelineAsync(int id, CancellationToken cancellationToken);
 }
 
 /// <summary>

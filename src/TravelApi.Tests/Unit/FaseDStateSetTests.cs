@@ -387,7 +387,12 @@ public class FaseDStateSetTests
     {
         using var context = new AppDbContext(NewDbOptions());
         const int supplierId = 9;
-        // ValidReservationStatuses historico = Confirmed, Traveling, Closed. Budget/Cancelled afuera.
+        // ValidReservationStatuses historico = Confirmed, Traveling, Closed. Budget siempre afuera.
+        //
+        // Obra "la ficha del operador no borra la historia" (2026-08-20, punto 2, F-6): Cancelled paso a
+        // CONTAR por default en "Servicios comprados" (SupplierAccountServicesQuery.IncludeVoided = true),
+        // con chip "Anulada" — antes desaparecia sin dejar rastro. Este test ahora prueba LAS DOS caras:
+        // el default (4, incluye la anulada) y el toggle "Mostrar anuladas" destildado (3, el conteo viejo).
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Confirmed));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.Traveling));
         context.Reservas.Add(ReservaWithBalance(3, EstadoReserva.Closed));
@@ -402,13 +407,24 @@ public class FaseDStateSetTests
 
         var service = new SupplierService(context);
 
-        var page = await service.GetSupplierAccountServicesAsync(
+        var defaultPage = await service.GetSupplierAccountServicesAsync(
             supplierId,
             new SupplierAccountServicesQuery(),
             CancellationToken.None);
 
-        // Confirmed + Traveling + Closed = 3. Budget y Cancelled NO cuentan (igual que siempre).
-        Assert.Equal(3, page.TotalCount);
+        // Default (IncludeVoided=true): Confirmed + Traveling + Closed + Cancelled = 4. Budget sigue afuera
+        // (nunca fue "vivo" ni "anulado", es pre-venta).
+        Assert.Equal(4, defaultPage.TotalCount);
+        Assert.Contains(defaultPage.Items, i => i.ReservaIsVoided);
+
+        var withoutVoidedPage = await service.GetSupplierAccountServicesAsync(
+            supplierId,
+            new SupplierAccountServicesQuery { IncludeVoided = false },
+            CancellationToken.None);
+
+        // Con el filtro destildado: el conteo HISTORICO de siempre (3), la anulada se oculta.
+        Assert.Equal(3, withoutVoidedPage.TotalCount);
+        Assert.DoesNotContain(withoutVoidedPage.Items, i => i.ReservaIsVoided);
     }
 
     // ---- Helpers ----

@@ -339,6 +339,27 @@ public class SuppliersController : ControllerBase
         }
     }
 
+    // Obra "la ficha del operador no borra la historia" (2026-08-20, punto 3): solapa "Historial" de la ficha
+    // del operador. Sin gate propio (mismo criterio que "Cuenta corriente"/"Servicios comprados"): cualquiera
+    // que pueda entrar a la ficha ve la solapa; los MONTOS de cada evento los enmascara el servicio si falta
+    // cobranzas.see_cost (F-14) — el evento sigue apareciendo, solo se le esconde el numero.
+    [HttpGet("{publicIdOrLegacyId}/timeline")]
+    [RequirePermission(Permissions.ProveedoresView)]
+    public async Task<ActionResult<SupplierTimelineDto>> GetSupplierTimeline(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.GetSupplierTimelineAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     // Auditoria ERP hallazgo #4 (2026-06-12): deuda con el proveedor DESGLOSADA POR EXPEDIENTE (reserva).
     // Mismo permiso que el resto de la cuenta del proveedor (proveedores.view): la estructura (que reservas,
     // que monedas) es visible con ese permiso; los MONTOS los enmascara el servicio si falta cobranzas.see_cost.

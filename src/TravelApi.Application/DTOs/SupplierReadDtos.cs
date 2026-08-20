@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Application.DTOs;
@@ -210,6 +211,34 @@ public class SupplierAccountServiceListItemDto
     /// (T-13: el front no la recalcula, la recibe calculada).
     /// </summary>
     public bool FaltaTitularConNombre { get; set; }
+
+    /// <summary>
+    /// Obra "la ficha del operador no borra la historia" (2026-08-20, F-6): true si la RESERVA de este
+    /// servicio esta anulada (Cancelled o PendingOperatorRefund — mismo criterio que
+    /// <c>EstadoReserva.IsVoidedStatus</c>, la fuente unica del dominio). El front la usa para el chip
+    /// "Anulada" y el texto tachado en "Servicios comprados"; NUNCA lo decide del lado del cliente (F-1).
+    /// </summary>
+    public bool ReservaIsVoided { get; set; }
+
+    /// <summary>
+    /// (2026-08-20) Insumo INTERNO para <c>SupplierService.GetSupplierAccountStatementAsync</c>: el
+    /// <c>Status</c> crudo que tenia este servicio JUSTO ANTES de que la anulacion de la reserva lo
+    /// pisara a "Cancelado" (ADR-050, <c>StatusBeforeCancellation</c>). Permite saber si el servicio
+    /// contaba como compra CONFIRMADA con el operador antes de anularse, para armar el par
+    /// compra+reverso del extracto. <c>[JsonIgnore]</c>: es un dato de trabajo del backend, la ficha del
+    /// proveedor no lo tiene que mostrar (T-5).
+    /// </summary>
+    [JsonIgnore]
+    public string? StatusBeforeCancellation { get; set; }
+
+    /// <summary>
+    /// (2026-08-20) Insumo INTERNO: instante en que se cancelo este servicio (coincide con el instante
+    /// de la anulacion de la reserva cuando la anulacion fue total — ver
+    /// <c>BookingCancellationService.CancelAllReservaServicesAsync</c>). Se usa como fecha de la
+    /// contra-linea "Anulacion de compra" del extracto. <c>[JsonIgnore]</c> por el mismo motivo de arriba.
+    /// </summary>
+    [JsonIgnore]
+    public DateTime? CancelledAt { get; set; }
 }
 
 // ===================================================================================================
@@ -535,6 +564,15 @@ public class SupplierAccountStatementLineDto
 
     /// <summary>Descripcion del servicio puntual imputado, si el pago se imputo a un servicio concreto (no a toda la reserva).</summary>
     public string? ServicioDescripcion { get; set; }
+
+    /// <summary>
+    /// Obra "la ficha del operador no borra la historia" (2026-08-20, F-6): true si la RESERVA duena de
+    /// esta linea esta anulada (Cancelled/PendingOperatorRefund). Es un HECHO sobre la reserva: el chip
+    /// rojo "Anulada" lo pinta el front SOLO en la linea de Kind="Purchase" (la compra), nunca en la
+    /// contra-linea Kind="PurchaseReversal" (esa lleva el chip ambar "Anulacion" — ver §1.4 de la spec de
+    /// UX). El front NO decide si algo esta anulado: lo lee (F-1).
+    /// </summary>
+    public bool ReservaIsVoided { get; set; }
 }
 
 /// <summary>
@@ -569,6 +607,29 @@ public class SupplierPaymentImpactDto
 
     /// <summary>true si el caller puede ver montos de costo (cobranzas.see_cost); si false, RemainingBalance viene en 0.</summary>
     public bool AmountsVisible { get; set; }
+}
+
+// ===================================================================================================
+// Obra "la ficha del operador no borra la historia" (2026-08-20, punto 3): linea de tiempo de TODO lo
+// que paso con un operador — la unica superficie donde una decision SIN plata ("cerrada sin multa")
+// queda visible en la ficha. Reusa TimelineEventDto (el mismo contrato que ya usa el historial de la
+// reserva, src/TravelApi.Application/DTOs/TimelineEventDto.cs): no se inventa un timeline nuevo.
+// ===================================================================================================
+
+/// <summary>
+/// Historial completo de un proveedor/operador: eventos de compras, anulaciones de reservas, multas del
+/// operador, reembolsos, pagos y facturas del operador, ordenados del MAS NUEVO al mas viejo.
+/// </summary>
+public class SupplierTimelineDto
+{
+    /// <summary>
+    /// true si el caller puede ver montos de costo (<c>cobranzas.see_cost</c>). Si false, los eventos con
+    /// plata (compra, multa, reembolso, pago, factura) vienen SIN <c>Amount</c>/<c>Currency</c> y con el
+    /// texto generico sin numero (F-14) — el evento SIGUE apareciendo, solo se le esconde el monto.
+    /// </summary>
+    public bool AmountsVisible { get; set; }
+
+    public List<TimelineEventDto> Events { get; set; } = new();
 }
 
 public class SupplierPaymentDto

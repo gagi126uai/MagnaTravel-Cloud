@@ -519,6 +519,11 @@ function ReconciliacionSaldoOperador({ bloque, montosVisibles }) {
  *     lado del servidor). Este componente NO arma el texto, solo agrega el chip
  *     encima del que venga del servidor.
  *
+ * Obra "la ficha del operador no borra la historia" (2026-08-20, F-6): se suma
+ * "PurchaseReversal", la contra-línea "Anulación de compra" que acompaña a una compra de una
+ * reserva anulada — MISMO chip ámbar "Anulación" que el resto del circuito (§1.4 de la spec:
+ * la compra original lleva el chip ROJO "Anulada" por separado, nunca este ámbar).
+ *
  * @param {string} kind
  * @returns {boolean}
  */
@@ -527,7 +532,8 @@ export function esLineaDeCircuitoCancelacion(kind) {
     kind === "PenaltyRetained" ||
     kind === "RefundReceived" ||
     kind === "OperatorChargeInvoiced" ||
-    kind === "TreasuryFxAdjustment"
+    kind === "TreasuryFxAdjustment" ||
+    kind === "PurchaseReversal"
   );
 }
 
@@ -555,6 +561,22 @@ export function construirSufijoDestinoPago(linea) {
         : ` · Reserva ${linea.reservaNumero}`;
 }
 
+/**
+ * Obra "la ficha del operador no borra la historia" (2026-08-20, spec §1.2/§1.4): true si esta
+ * línea es la COMPRA ORIGINAL (kind="Purchase") de una reserva que quedó anulada — decide el
+ * chip rojo "Anulada" + el tachado. SOLO la compra lo lleva: la contra-línea "Anulación de
+ * compra" (kind="PurchaseReversal") es la MISMA reserva anulada (`reservaIsVoided` viaja en
+ * las dos líneas, es un hecho de la reserva) pero ya tiene su propio chip ámbar "Anulación" —
+ * los dos chips nunca conviven en la misma fila. Exportada como función PURA (mismo patrón
+ * que `esLineaDeCircuitoCancelacion`) para poder testearla sin montar el componente.
+ *
+ * @param {{kind?:string, reservaIsVoided?:boolean}} linea
+ * @returns {boolean}
+ */
+export function esCompraDeReservaAnulada(linea) {
+    return linea?.kind === "Purchase" && linea?.reservaIsVoided === true;
+}
+
 function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, canEditarEliminar, onEditarPago, onEliminarPago }) {
     // Purchase → columna Cargo (cargamos deuda); Payment → columna Abono (abonamos deuda)
     const esCargo = linea.charge > 0;
@@ -562,6 +584,7 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
     const esPago = linea.kind === "Payment";
     const esCircuito = esLineaDeCircuitoCancelacion(linea.kind);
     const sufijoDestino = construirSufijoDestinoPago(linea);
+    const esCompraAnulada = esCompraDeReservaAnulada(linea);
 
     // Cruzamos sourcePublicId de la línea con la lista de pagos completos del padre.
     // Así tenemos el objeto completo (con method, reference, exchangeRate, etc.)
@@ -598,8 +621,16 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
 
             <DataGridCell>
                 <span
-                    className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}
-                    title={esCircuito ? "Movimiento de una anulación: reduce lo que el operador te tiene que devolver (no es una compra nueva)." : undefined}
+                    className={`${esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}${
+                        esCompraAnulada ? " line-through text-slate-400 dark:text-slate-500" : ""
+                    }`}
+                    title={
+                        esCircuito
+                            ? "Movimiento de una anulación: reduce lo que el operador te tiene que devolver (no es una compra nueva)."
+                            : esCompraAnulada
+                                ? "La reserva de esta compra está anulada: queda tachada acá y neteada por la contra-línea de abajo, nunca se borra."
+                                : undefined
+                    }
                 >
                     {linea.description || "—"}
                     {/* Rediseño 2026-07-20: a qué reserva/servicio bajó la plata de este pago.
@@ -618,17 +649,38 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
                         Anulación
                     </StatusChip>
                 )}
+                {/* Obra "la ficha del operador no borra la historia" (2026-08-20, spec §1.1/§1.4):
+                    MISMO molde que la factura anulada del cliente (FacturacionClienteTab.jsx,
+                    ChipEstadoFiscal) — tone rojo + chip tachado. Nunca convive con el chip ámbar
+                    de arriba: uno es Purchase, el otro PurchaseReversal (esLineaDeCircuitoCancelacion
+                    excluye Purchase). */}
+                {esCompraAnulada && (
+                    <StatusChip
+                        tone="rojo"
+                        className="ml-2 line-through"
+                        title="Esta compra quedó sin efecto: la reserva se anuló."
+                        data-testid="extracto-anulada-chip"
+                    >
+                        Anulada
+                    </StatusChip>
+                )}
             </DataGridCell>
 
             <DataGridCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
                 {linea.documentRef || "—"}
             </DataGridCell>
 
-            {/* Cargo: solo se muestra para compras; si no hay permiso → "—" gris */}
+            {/* Cargo: solo se muestra para compras; si no hay permiso → "—" gris.
+                F-6/F-14: el monto de una compra anulada SIGUE viéndose (tachado), nunca se
+                esconde el número — la contra-línea de abajo es la que explica que ya no pesa. */}
             <DataGridCell align="right">
                 {esCargo ? (
                     montosVisibles ? (
-                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                        <span
+                            className={`font-bold text-slate-800 dark:text-slate-200${
+                                esCompraAnulada ? " line-through text-slate-400 dark:text-slate-500" : ""
+                            }`}
+                        >
                             {formatCurrency(linea.charge, currency)}
                         </span>
                     ) : (

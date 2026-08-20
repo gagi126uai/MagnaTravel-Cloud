@@ -15,6 +15,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { DataGridCell, DataGridRow } from "../../../components/ui/DataGrid";
+import { StatusChip } from "../../../components/ui/badge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { supplierDueState } from "../lib/supplierAging";
 import {
@@ -76,7 +77,20 @@ export function PurchasedServiceRow({ service, canEdit, onUpdated, puedeVerMonto
                     </span>
                 </DataGridCell>
                 <DataGridCell>
-                    <div className="font-medium">{service.description || "-"}</div>
+                    <div className="flex items-center gap-2">
+                        {/* Obra "la ficha del operador no borra la historia" (2026-08-20, spec
+                            §2.2): mismo molde que la compra tachada del extracto — nombre tachado
+                            gris + chip rojo "Anulada" al lado, cuando la reserva dueña de este
+                            servicio quedó sin efecto. */}
+                        <div className={`font-medium ${service.reservaIsVoided ? "line-through text-slate-400 dark:text-slate-500" : ""}`}>
+                            {service.description || "-"}
+                        </div>
+                        {service.reservaIsVoided && (
+                            <StatusChip tone="rojo" className="line-through" data-testid={`chip-anulada-${service.publicId}`}>
+                                Anulada
+                            </StatusChip>
+                        )}
+                    </div>
                     {service.fileName
                         ? <div className="text-xs text-muted-foreground">{service.fileName}</div>
                         : null}
@@ -107,7 +121,12 @@ export function PurchasedServiceRow({ service, canEdit, onUpdated, puedeVerMonto
                     })()}
                 </DataGridCell>
                 <DataGridCell>
-                    {!tieneBotonPrimario ? (
+                    {service.reservaIsVoided ? (
+                        // P-19 ("no se ofrece una acción que no existe"): un servicio de una
+                        // reserva anulada no tiene nada para Confirmar/Emitir — texto fijo de
+                        // solo lectura en vez del botón, spec §2.2.
+                        <span className="text-xs text-slate-400 dark:text-slate-500">Reserva anulada</span>
+                    ) : !tieneBotonPrimario ? (
                         <ServiceStatusEditor service={service} onUpdated={onUpdated} canEdit={canEdit} />
                     ) : service.faltaTitularConNombre ? (
                         // F4 (plan 2026-07-31 tarde, hueco cerrado): mismo candado pre-emptivo P-9

@@ -467,4 +467,122 @@ public class SupplierAccountStatementServiceTests
         Assert.Equal(0m, ars.TotalPaid);
         Assert.Equal(0m, ars.Balance);
     }
+
+    // ===================================================================================================
+    // Obra "la ficha del operador no borra la historia" (2026-08-20, punto 1): la compra de una reserva
+    // ANULADA queda en el extracto (tachada) + su contra-linea "Anulacion de compra", neteando cero.
+    // ===================================================================================================
+
+    [Fact]
+    public async Task Statement_VoidedReservaWithPreviouslyConfirmedPurchase_ShowsPurchaseAndReversalPair_NettingToZero()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context);
+        var reserva = await AddReservaAsync(context, "F-ANU", EstadoReserva.Cancelled);
+
+        var cancelledAt = DateTime.UtcNow.AddDays(-1);
+        var purchaseDate = DateTime.UtcNow.AddDays(-30);
+        context.HotelBookings.Add(new HotelBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel Bariloche",
+            City = "Bariloche",
+            CheckIn = DateTime.UtcNow.AddDays(10),
+            CheckOut = DateTime.UtcNow.AddDays(12),
+            Nights = 2,
+            // ADR-050: al anular la reserva, CancelAllReservaServicesAsync pisa Status a "Cancelado" y
+            // guarda el estado PREVIO en StatusBeforeCancellation. Se simula ese estado final aca.
+            Status = WorkflowStatuses.Cancelado,
+            StatusBeforeCancellation = "Confirmado",
+            CancelledAt = cancelledAt,
+            NetCost = 90000m,
+            SalePrice = 130000m,
+            Currency = "ARS",
+            CreatedAt = purchaseDate
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateServiceForUser(context, canSeeCost: true);
+        // Sin materializar SupplierBalanceByCurrency a proposito: una reserva Cancelled NUNCA contaria para
+        // la proyeccion (ValidReservationStatuses la excluye), asi que no hay fila persistida que comparar
+        // — lo que se prueba aca es que el EXTRACTO tampoco altera ningun saldo por mostrar el rastro.
+
+        var statement = await service.GetSupplierAccountStatementAsync(supplier.Id, CancellationToken.None);
+        var block = Assert.Single(statement.Currencies);
+
+        // Dos lineas: la compra original (tachada) + la contra-linea, neteando exactamente cero.
+        Assert.Equal(2, block.Lines.Count);
+        var purchase = Assert.Single(block.Lines.Where(l => l.Kind == SupplierAccountStatementLineKinds.Purchase));
+        var reversal = Assert.Single(block.Lines.Where(l => l.Kind == SupplierAccountStatementLineKinds.PurchaseReversal));
+
+        // La compra conserva su fecha ORIGINAL (cuando se compro, no cuando se anulo) y su chip.
+        Assert.Equal(purchaseDate, purchase.Date);
+        Assert.Equal(90000m, purchase.Charge);
+        Assert.Equal(0m, purchase.Credit);
+        Assert.True(purchase.ReservaIsVoided);
+
+        // La reversa va fechada el dia de la ANULACION (no el de la compra), por el MISMO monto en Abono.
+        Assert.Equal(cancelledAt, reversal.Date);
+        Assert.Equal(0m, reversal.Charge);
+        Assert.Equal(90000m, reversal.Credit);
+        Assert.Contains("Anulación de compra", reversal.Description);
+        Assert.Contains("F-ANU", reversal.Description);
+        Assert.Contains("Hotel Bariloche", reversal.Description);
+        Assert.Null(reversal.DocumentRef);
+
+        // El saldo de cierre por moneda NO se mueve: el par compra+reverso neteo exactamente cero.
+        Assert.Equal(0m, block.CashClosingBalance);
+        Assert.Equal(0m, block.ClosingBalance);
+    }
+
+    [Fact]
+    public async Task Statement_VoidedReserva_ServiceNeverConfirmedBeforeCancellation_ShowsNoLines()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context);
+        var reserva = await AddReservaAsync(context, "F-ANU2", EstadoReserva.Cancelled);
+
+        // El servicio quedo cancelado, pero NUNCA habia sido confirmado con el operador (StatusBeforeCancellation
+        // = "Solicitado"): nunca conto como compra, asi que no corresponde mostrar ni compra ni reverso.
+        context.HotelBookings.Add(new HotelBooking
+        {
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel Sin Confirmar",
+            City = "Bariloche",
+            CheckIn = DateTime.UtcNow.AddDays(10),
+            CheckOut = DateTime.UtcNow.AddDays(12),
+            Nights = 2,
+            Status = WorkflowStatuses.Cancelado,
+            StatusBeforeCancellation = "Solicitado",
+            CancelledAt = DateTime.UtcNow,
+            NetCost = 50000m,
+            SalePrice = 70000m,
+            Currency = "ARS"
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateServiceForUser(context, canSeeCost: true);
+        var statement = await service.GetSupplierAccountStatementAsync(supplier.Id, CancellationToken.None);
+
+        Assert.Empty(statement.Currencies);
+    }
+
+    [Fact]
+    public async Task Statement_LiveReserva_PurchaseLineNeverCarriesReservaIsVoided()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context);
+        var reserva = await AddReservaAsync(context, "F-VIVA", EstadoReserva.Confirmed);
+        AddConfirmedHotel(context, supplier.Id, reserva.Id, netCost: 1000m, currency: "ARS");
+        await context.SaveChangesAsync();
+
+        var service = CreateServiceForUser(context, canSeeCost: true);
+        var statement = await service.GetSupplierAccountStatementAsync(supplier.Id, CancellationToken.None);
+        var block = Assert.Single(statement.Currencies);
+        var purchase = Assert.Single(block.Lines);
+
+        Assert.False(purchase.ReservaIsVoided);
+    }
 }

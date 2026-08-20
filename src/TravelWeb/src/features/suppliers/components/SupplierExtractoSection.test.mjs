@@ -18,7 +18,8 @@ function esLineaDeCircuitoCancelacion(kind) {
     kind === "PenaltyRetained" ||
     kind === "RefundReceived" ||
     kind === "OperatorChargeInvoiced" ||
-    kind === "TreasuryFxAdjustment"
+    kind === "TreasuryFxAdjustment" ||
+    kind === "PurchaseReversal"
   );
 }
 
@@ -35,6 +36,10 @@ test("esLineaDeCircuitoCancelacion: OperatorChargeInvoiced y TreasuryFxAdjustmen
 test("esLineaDeCircuitoCancelacion: una compra normal (Purchase) o un pago (Payment) NO llevan el chip", () => {
   assert.equal(esLineaDeCircuitoCancelacion("Purchase"), false);
   assert.equal(esLineaDeCircuitoCancelacion("Payment"), false);
+});
+
+test("esLineaDeCircuitoCancelacion: PurchaseReversal (obra 2026-08-20, contra-línea de compra anulada) SÍ lleva el chip ámbar", () => {
+  assert.equal(esLineaDeCircuitoCancelacion("PurchaseReversal"), true);
 });
 
 test("esLineaDeCircuitoCancelacion: kind desconocido o ausente → false (degradación segura)", () => {
@@ -87,4 +92,33 @@ test("construirSufijoDestinoPago: una compra (Purchase) nunca lleva sufijo, aunq
 test("construirSufijoDestinoPago: linea null/undefined no rompe", () => {
   assert.equal(construirSufijoDestinoPago(null), null);
   assert.equal(construirSufijoDestinoPago(undefined), null);
+});
+
+// ─── Réplica de esCompraDeReservaAnulada (obra "la ficha del operador no borra la
+// historia", 2026-08-20, spec §1.2/§1.4) — mismo patrón: función replicada inline. ──
+
+function esCompraDeReservaAnulada(linea) {
+    return linea?.kind === "Purchase" && linea?.reservaIsVoided === true;
+}
+
+test("esCompraDeReservaAnulada: compra (Purchase) de una reserva anulada → true (chip rojo + tachado)", () => {
+  assert.equal(esCompraDeReservaAnulada({ kind: "Purchase", reservaIsVoided: true }), true);
+});
+
+test("esCompraDeReservaAnulada: compra de una reserva VIVA → false", () => {
+  assert.equal(esCompraDeReservaAnulada({ kind: "Purchase", reservaIsVoided: false }), false);
+});
+
+test("esCompraDeReservaAnulada: la contra-línea (PurchaseReversal) de la MISMA reserva anulada → false (ese chip es el ámbar, no el rojo)", () => {
+  assert.equal(esCompraDeReservaAnulada({ kind: "PurchaseReversal", reservaIsVoided: true }), false);
+});
+
+test("esCompraDeReservaAnulada: un pago (Payment) nunca lleva este chip, aunque venga con reservaIsVoided", () => {
+  assert.equal(esCompraDeReservaAnulada({ kind: "Payment", reservaIsVoided: true }), false);
+});
+
+test("esCompraDeReservaAnulada: linea null/undefined o sin reservaIsVoided → false, no rompe", () => {
+  assert.equal(esCompraDeReservaAnulada(null), false);
+  assert.equal(esCompraDeReservaAnulada(undefined), false);
+  assert.equal(esCompraDeReservaAnulada({ kind: "Purchase" }), false);
 });

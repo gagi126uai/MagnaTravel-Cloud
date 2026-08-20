@@ -74,6 +74,16 @@ public static class SupplierAccountStatementLineKinds
     /// se muestran las filas VIGENTES (<c>IsSuperseded = false</c>).
     /// </summary>
     public const string TreasuryFxAdjustment = "TreasuryFxAdjustment";
+
+    /// <summary>
+    /// Obra "la ficha del operador no borra la historia" (2026-08-20, F-6/F-2): contra-linea de una
+    /// compra que quedo SIN EFECTO porque la reserva se anulo DESPUES de haberse confirmado con el
+    /// operador. Es un ABONO (resta) por el MISMO monto que la compra original (que sigue viva en el
+    /// extracto, tachada) — juntas netean CERO, asi el saldo de la moneda no cambia un centavo por
+    /// mostrar el rastro. NUNCA se borra la compra original: se agrega esta contra-linea al lado (F-6,
+    /// "una reversa es un contra-asiento, no un borrado").
+    /// </summary>
+    public const string PurchaseReversal = "PurchaseReversal";
 }
 
 /// <summary>
@@ -107,7 +117,14 @@ public readonly record struct SupplierAccountStatementInputLine(
     /// <summary>Numero de la reserva a la que se imputo el pago. Null si es un anticipo "a cuenta" o si la linea es una compra.</summary>
     string? ReservaNumero = null,
     /// <summary>Descripcion del servicio puntual imputado (si el pago se imputo a un servicio, no a toda la reserva). Null en el resto de los casos.</summary>
-    string? ServicioDescripcion = null);
+    string? ServicioDescripcion = null,
+    /// <summary>
+    /// (2026-08-20) true si la RESERVA duena de esta linea esta anulada (Cancelled/PendingOperatorRefund).
+    /// Es un HECHO sobre la reserva, no una instruccion de que chip pintar: el front decide el chip rojo
+    /// "Anulada" mirando el <see cref="Kind"/> de la linea (solo la compra lo lleva), no este campo solo.
+    /// Default false para no romper a los callers/tests existentes que arman lineas de reservas vivas.
+    /// </summary>
+    bool ReservaIsVoided = false);
 
 /// <summary>
 /// Una linea del extracto del proveedor YA con su saldo corriente calculado. <see cref="RunningBalance"/>
@@ -127,7 +144,9 @@ public readonly record struct SupplierAccountStatementResultLine(
     /// <summary>Numero de la reserva a la que se imputo el pago (ver <see cref="SupplierAccountStatementInputLine.ReservaNumero"/>).</summary>
     string? ReservaNumero = null,
     /// <summary>Descripcion del servicio puntual imputado (ver <see cref="SupplierAccountStatementInputLine.ServicioDescripcion"/>).</summary>
-    string? ServicioDescripcion = null);
+    string? ServicioDescripcion = null,
+    /// <summary>Ver <see cref="SupplierAccountStatementInputLine.ReservaIsVoided"/>.</summary>
+    bool ReservaIsVoided = false);
 
 /// <summary>
 /// Un bloque del extracto: todas las lineas de UNA moneda, en orden cronologico, con su saldo de cierre.
@@ -207,7 +226,10 @@ public static class SupplierAccountStatementBuilder
         string? documentRef,
         string? currency,
         decimal netCost,
-        Guid? sourcePublicId)
+        Guid? sourcePublicId,
+        // (2026-08-20) Ver el XML-doc de SupplierAccountStatementInputLine.ReservaIsVoided. Default false:
+        // la inmensa mayoria de las compras son de reservas vivas.
+        bool reservaIsVoided = false)
         => new(
             Date: date,
             Kind: SupplierAccountStatementLineKinds.Purchase,
@@ -216,7 +238,42 @@ public static class SupplierAccountStatementBuilder
             Currency: Monedas.Normalizar(currency),
             Charge: netCost,
             Credit: 0m,
-            SourcePublicId: sourcePublicId);
+            SourcePublicId: sourcePublicId,
+            ReservaIsVoided: reservaIsVoided);
+
+    /// <summary>
+    /// Obra "la ficha del operador no borra la historia" (2026-08-20): construye la contra-linea
+    /// "Anulacion de compra" que acompaña a una <see cref="PurchaseLine"/> cuya reserva se anulo DESPUES
+    /// de haberse confirmado con el operador. Es un ABONO (resta) por el MISMO monto que la compra
+    /// original, fechado el dia de la anulacion (no el dia de la compra) — juntas netean CERO.
+    /// </summary>
+    /// <param name="date">Fecha en que se confirmo la anulacion de la reserva (no la fecha de la compra).</param>
+    /// <param name="reservaNumero">Numero de la reserva anulada, para el texto "Anulacion de compra · Reserva {numero} ({servicio})".</param>
+    /// <param name="servicioDescripcion">Descripcion corta del servicio anulado (sin el prefijo "Tipo:").</param>
+    /// <param name="netCost">MISMO monto que tenia la compra original en <see cref="PurchaseLine"/> (neteo exacto).</param>
+    /// <param name="sourcePublicId">PublicId del servicio anulado (mismo que la compra original): la fila no lleva
+    /// acciones propias, pero conserva la trazabilidad hacia el servicio de origen.</param>
+    public static SupplierAccountStatementInputLine PurchaseReversalLine(
+        DateTime date,
+        string reservaNumero,
+        string servicioDescripcion,
+        string? currency,
+        decimal netCost,
+        Guid? sourcePublicId)
+        => new(
+            Date: date,
+            Kind: SupplierAccountStatementLineKinds.PurchaseReversal,
+            Description: $"Anulación de compra · Reserva {reservaNumero} ({servicioDescripcion})",
+            // Sin comprobante propio: es un contra-asiento, no un documento nuevo (el front lo muestra como "—").
+            DocumentRef: null,
+            Currency: Monedas.Normalizar(currency),
+            Charge: 0m,
+            Credit: netCost,
+            SourcePublicId: sourcePublicId,
+            // (2026-08-20) true: la reserva duena de esta linea TAMBIEN esta anulada (es la misma reserva que la
+            // compra que revierte). El front NUNCA pinta el chip rojo "Anulada" aca porque decide por Kind
+            // (PurchaseReversal siempre lleva el chip ambar "Anulacion", nunca el rojo) — ver §1.4 de la spec.
+            ReservaIsVoided: true);
 
     /// <summary>
     /// Construye la linea de un ABONO (pago al operador). La moneda y el monto del abono se derivan con las
@@ -313,7 +370,8 @@ public static class SupplierAccountStatementBuilder
                 RunningBalance: runningBalance,
                 SourcePublicId: line.SourcePublicId,
                 ReservaNumero: line.ReservaNumero,
-                ServicioDescripcion: line.ServicioDescripcion));
+                ServicioDescripcion: line.ServicioDescripcion,
+                ReservaIsVoided: line.ReservaIsVoided));
         }
 
         decimal closingBalance = resultLines.Count > 0 ? resultLines[^1].RunningBalance : 0m;

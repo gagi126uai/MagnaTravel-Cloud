@@ -367,7 +367,23 @@ test("describirEventoHistorial: StatusChange sin motivo ni autorizante, con acto
   assert.equal(d.detalle, "La hizo Maite.");
 });
 
-test("describirEventoHistorial: StatusChange con motivo → detalle 'Motivo: …' además de quién lo hizo", () => {
+test("describirEventoHistorial: StatusChange con motivo, entrando a un estado NO anulado → frase genérica + detalle 'La hizo X. · Motivo: …'", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Maite",
+    fromStatus: "Confirmed",
+    toStatus: "Closed",
+    details: "El viaje terminó antes de lo previsto.",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de Confirmada a Finalizada.");
+  assert.equal(d.detalle, "La hizo Maite. · Motivo: El viaje terminó antes de lo previsto.");
+});
+
+// Obra "la ficha del operador no borra la historia" (2026-08-20, spec §4.2): este MISMO
+// fixture (Confirmed → Cancelled con motivo) antes caía en la frase genérica de arriba —
+// ahora es "el acto de anular" y usa la frase de acción específica.
+test("describirEventoHistorial: StatusChange que entra a Cancelled (anula la reserva) con motivo → 'anuló la reserva.' + 'Motivo: …' (sin 'La hizo', el actor va aparte para negrita)", () => {
   const event = {
     eventType: "StatusChange",
     actor: "Maite",
@@ -376,8 +392,10 @@ test("describirEventoHistorial: StatusChange con motivo → detalle 'Motivo: …
     details: "El cliente pidió cancelar el viaje.",
   };
   const d = describirEventoHistorial(event);
-  assert.equal(d.frase, "La reserva pasó de Confirmada a Anulada.");
-  assert.equal(d.detalle, "La hizo Maite. · Motivo: El cliente pidió cancelar el viaje.");
+  assert.equal(d.frase, "anuló la reserva.");
+  assert.equal(d.actor, "Maite");
+  assert.equal(d.colorPunto, "rojo");
+  assert.equal(d.detalle, "Motivo: El cliente pidió cancelar el viaje.");
 });
 
 test("describirEventoHistorial: StatusChange con motivo y autorizante (reversión) → los tres datos encadenados", () => {
@@ -435,6 +453,127 @@ test("describirEventoHistorial: eventType desconocido → cae al verbo genérico
   // No es un Create de Payment (es "Restore"), así que no entra por la rama de cobro.
   assert.equal(d.esCobro, false);
   assert.equal(d.frase, "modificó el pago.");
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * describirEventoHistorial — obra "la ficha del operador no borra la
+ * historia" (2026-08-20, spec docs/ux/2026-08-20-operador-con-rastro-e-
+ * historial.md §3.4/§4.2). Dos familias nuevas:
+ *   (a) StatusChange especial: entrar a un estado ANULADO usa la frase de
+ *       acción "anuló" en vez de la genérica "pasó de X a Y".
+ *   (b) Eventos que el backend arma con la frase YA completa (Title/Details):
+ *       acá SOLO se les asigna color, nunca se reconstruye el texto.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+test("describirEventoHistorial: StatusChange que ANULA la reserva, con actor humano → 'anuló la reserva.' con actor separado (para negrita) y punto rojo", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "María",
+    fromStatus: "Confirmed",
+    toStatus: "Cancelled",
+    details: "El pasajero se bajó del viaje",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.actor, "María");
+  assert.equal(d.frase, "anuló la reserva.");
+  assert.equal(d.colorPunto, "rojo");
+  assert.equal(d.detalle, "Motivo: El pasajero se bajó del viaje");
+});
+
+test("describirEventoHistorial: StatusChange que ANULA la reserva SIN actor humano → 'Se anuló la reserva.' impersonal", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Sistema",
+    fromStatus: "InManagement",
+    toStatus: "PendingOperatorRefund",
+    details: null,
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.actor, null);
+  assert.equal(d.frase, "Se anuló la reserva.");
+  assert.equal(d.colorPunto, "rojo");
+});
+
+test("describirEventoHistorial: StatusChange entre DOS estados anulados (Cancelled → PendingOperatorRefund) NO es 'el acto de anular' → frase genérica, punto neutro", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Maite",
+    fromStatus: "Cancelled",
+    toStatus: "PendingOperatorRefund",
+    details: null,
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de Anulada a Esperando reembolso.");
+  assert.equal(d.colorPunto, "neutro");
+});
+
+test("describirEventoHistorial: StatusChange normal (no anula) sigue igual que antes — actor va en el detalle, no en la frase", () => {
+  const event = {
+    eventType: "StatusChange",
+    actor: "Maite",
+    fromStatus: "InManagement",
+    toStatus: "Confirmed",
+    details: null,
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "La reserva pasó de En gestión a Confirmada.");
+  assert.equal(d.actor, null);
+  assert.equal(d.detalle, "La hizo Maite.");
+  assert.equal(d.colorPunto, "neutro");
+});
+
+test("describirEventoHistorial: eventos armados por el BACKEND con la frase completa (Title) → se muestran tal cual, sin reconstruir nada", () => {
+  const casos = [
+    { eventType: "SupplierPurchaseConfirmed", colorEsperado: "neutro" },
+    { eventType: "ReservaAnnulled", colorEsperado: "rojo" },
+    { eventType: "OperatorPenaltyConfirmed", colorEsperado: "indigo" },
+    { eventType: "OperatorPenaltyWaived", colorEsperado: "ambar" },
+    { eventType: "OperatorRefundRegistered", colorEsperado: "verde" },
+    { eventType: "OperatorRefundUndone", colorEsperado: "rojo" },
+    { eventType: "SupplierPaymentRegistered", colorEsperado: "neutro" },
+    { eventType: "SupplierInvoiceCreated", colorEsperado: "indigo" },
+    { eventType: "SupplierInvoiceVoided", colorEsperado: "rojo" },
+    { eventType: "CreditNoteEmitted", colorEsperado: "indigo" },
+    { eventType: "CreditNoteRejected", colorEsperado: "rojo" },
+  ];
+
+  for (const { eventType, colorEsperado } of casos) {
+    const event = {
+      eventType,
+      actor: "María",
+      title: `Texto ya armado por el backend para ${eventType}.`,
+      details: "Reserva F-2026-1050",
+    };
+    const d = describirEventoHistorial(event);
+    assert.equal(d.frase, event.title, `${eventType}: la frase tiene que ser event.title tal cual`);
+    assert.equal(d.detalle, event.details, `${eventType}: el detalle tiene que ser event.details tal cual`);
+    assert.equal(d.actor, null, `${eventType}: el actor ya está adentro de la frase, no se repite en negrita`);
+    assert.equal(d.esCobro, false, `${eventType}: nunca es la rama de cobro`);
+    assert.equal(d.colorPunto, colorEsperado, `${eventType}: color de punto incorrecto`);
+  }
+});
+
+test("describirEventoHistorial: OperatorPenaltyWaived sin permiso de costo (Title sin monto) → igual se muestra, F-14 nunca esconde el evento entero", () => {
+  const event = {
+    eventType: "OperatorPenaltyWaived",
+    actor: "Sistema",
+    title: "Se cerró la multa del operador sin cobrar nada.",
+    details: "Operador: Despegar",
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.frase, "Se cerró la multa del operador sin cobrar nada.");
+  assert.equal(d.colorPunto, "ambar");
+});
+
+test("describirEventoHistorial: evento del backend sin details (null) → detalle null, no 'undefined' ni string vacío", () => {
+  const event = {
+    eventType: "CreditNoteEmitted",
+    actor: "Sistema",
+    title: "FC A 0001-00001234 — nota de crédito emitida.",
+    details: null,
+  };
+  const d = describirEventoHistorial(event);
+  assert.equal(d.detalle, null);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════

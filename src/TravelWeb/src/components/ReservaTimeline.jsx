@@ -4,11 +4,7 @@ import { Activity } from "lucide-react";
 import { camelize } from "../lib/utils";
 import { getApiErrorMessage } from "../lib/errors";
 import { ListLoadErrorState } from "./ui/ListLoadErrorState";
-import {
-    agruparEventosPorDia,
-    horaDeEvento,
-    describirEventoHistorial,
-} from "../lib/reservaTimelineText";
+import { TimelineEventsList } from "./TimelineEventsList";
 
 /**
  * Solapa "Historial" de la ficha de una reserva: línea de tiempo de todo lo que
@@ -21,6 +17,13 @@ import {
  * que cambió es cómo se leen: agrupados por día ("Hoy", "Ayer", el nombre del
  * día), con hora + punto de color + una oración humana en vez de un título
  * técnico ("Cambio en una Factura") seguido de una lista de bullets cruda.
+ *
+ * Obra "la ficha del operador no borra la historia" (2026-08-20): el timeline
+ * ahora también trae la anulación de la reserva, la multa del operador y sus
+ * notas de crédito (antes ausentes) — ver `describirEventoHistorial` en
+ * `lib/reservaTimelineText.js`. El esqueleto visual (agrupado + renglón) vive
+ * en `TimelineEventsList.jsx`, compartido con la solapa gemela del operador
+ * (`SupplierHistorialSection.jsx`) para no duplicar el mismo JSX dos veces.
  */
 export default function ReservaTimeline({ reservaId }) {
     const [events, setEvents] = useState([]);
@@ -67,119 +70,5 @@ export default function ReservaTimeline({ reservaId }) {
         );
     }
 
-    // El backend ya manda los eventos del más nuevo al más viejo — acá solo se
-    // agrupan por día calendario de Argentina, sin reordenar nada.
-    const grupos = agruparEventosPorDia(events);
-
-    return (
-        <div>
-            {grupos.map((grupo) => (
-                <div key={grupo.etiqueta}>
-                    <SeparadorDeDia etiqueta={grupo.etiqueta} />
-                    {grupo.eventos.map((event, idx) => (
-                        <Hito
-                            key={`${event.timestamp}-${idx}`}
-                            event={event}
-                            esUltimoDelDia={idx === grupo.eventos.length - 1}
-                        />
-                    ))}
-                </div>
-            ))}
-        </div>
-    );
-}
-
-/**
- * Separador de día ("Hoy — 03/08/2026"): una línea fina con la etiqueta a la
- * izquierda, igual que la maqueta (".dia"). Reemplaza la fecha repetida en
- * cada renglón que tenía la versión vieja.
- */
-function SeparadorDeDia({ etiqueta }) {
-    return (
-        <div className="mb-2 mt-5 flex items-center gap-3 first:mt-0">
-            <span className="whitespace-nowrap text-xs font-bold text-slate-500 dark:text-slate-400">
-                {etiqueta}
-            </span>
-            <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
-        </div>
-    );
-}
-
-// Color del punto de la línea de tiempo según qué pasó — mismo criterio que
-// describirEventoHistorial ya calculó (rojo=anulación, verde=cobro,
-// indigo=factura, neutro=el resto).
-const COLOR_PUNTO = {
-    rojo: "bg-rose-500",
-    verde: "bg-emerald-500",
-    indigo: "bg-blue-500",
-    neutro: "bg-slate-400 dark:bg-slate-600",
-};
-
-/**
- * Un renglón de la línea de tiempo: hora, punto de color, y la frase humana
- * (con el actor en negrita cuando lo hizo una persona). `esUltimoDelDia`
- * decide si se dibuja la línea vertical que conecta con el próximo renglón
- * del MISMO día (no cruza el separador hacia el día anterior).
- */
-function Hito({ event, esUltimoDelDia }) {
-    const descripcion = describirEventoHistorial(event);
-    const hora = horaDeEvento(event.timestamp);
-
-    return (
-        <div className="grid grid-cols-[44px_16px_1fr] items-start gap-2.5 py-1.5" data-testid="hito-historial">
-            <div className="pt-0.5 text-xs text-slate-400 dark:text-slate-500">{hora}</div>
-
-            <div className="relative flex justify-center pt-1.5">
-                <span
-                    className={`h-2 w-2 rounded-full ${COLOR_PUNTO[descripcion.colorPunto] || COLOR_PUNTO.neutro}`}
-                    aria-hidden="true"
-                />
-                {!esUltimoDelDia && (
-                    <span
-                        className="absolute top-3.5 bottom-[-22px] w-px bg-slate-200 dark:bg-slate-700"
-                        aria-hidden="true"
-                    />
-                )}
-            </div>
-
-            <div className="min-w-0 pb-1">
-                <p className="text-[13.5px] text-slate-700 dark:text-slate-300">
-                    {descripcion.esCobro ? (
-                        <FraseCobro actor={descripcion.actor} montoTexto={descripcion.montoTexto} />
-                    ) : (
-                        <>
-                            {descripcion.actor && (
-                                <span className="font-bold text-slate-900 dark:text-white">{descripcion.actor} </span>
-                            )}
-                            {descripcion.frase}
-                        </>
-                    )}
-                </p>
-                {descripcion.detalle && (
-                    <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{descripcion.detalle}</p>
-                )}
-            </div>
-        </div>
-    );
-}
-
-/**
- * Frase de un cobro: "Actor cobró $X." con el monto en verde y negrita — nunca
- * en negativo (regla firmada de la maqueta: "un cobro entra plata"). Si no hay
- * actor humano (caso raro, cobro registrado por un proceso sin usuario), queda
- * "Se cobró $X." en vez de nombrar a un actor que no existe.
- */
-function FraseCobro({ actor, montoTexto }) {
-    return (
-        <>
-            {actor ? (
-                <span className="font-bold text-slate-900 dark:text-white">{actor} </span>
-            ) : null}
-            {actor ? "cobró " : "Se cobró "}
-            {montoTexto ? (
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">{montoTexto}</span>
-            ) : null}
-            .
-        </>
-    );
+    return <TimelineEventsList events={events} />;
 }

@@ -866,12 +866,26 @@ public class SupplierService : ISupplierService
 
         // CARGOS = compras CONFIRMADAS que cuentan como deuda. Mismo universo + misma regla por tipo + mismo
         // gate CommissionOnly que el persister de la deuda (un proveedor intermediacion no genera compras).
+        //
+        // Obra "la ficha del operador no borra la historia" (2026-08-20, F-6/F-2): includeVoidedReservations
+        // = true suma TAMBIEN los servicios de reservas anuladas (antes esas compras directamente
+        // desaparecian del extracto). Separamos en DOS grupos, no uno:
+        //   - confirmedServiceRows: reserva VIVA + servicio confirmado con el operador AHORA. Comportamiento
+        //     de SIEMPRE, sin cambios (solo la linea de compra, como hoy).
+        //   - voidedButWasConfirmedServiceRows: reserva ANULADA, pero que SI habia sido confirmada con el
+        //     operador ANTES de anularse. OJO: no se puede mirar row.Status para esto (la anulacion ya lo
+        //     piso a "Cancelado" via CancelAllReservaServicesAsync) — se mira StatusBeforeCancellation, el
+        //     snapshot ADR-050 del estado JUSTO ANTES de cancelarse. Estas compras se muestran con su PAR
+        //     compra+reverso (ver el loop mas abajo), neteando cero: el saldo de la moneda no cambia.
         var generatesPurchaseDebt = await SupplierGeneratesPurchaseDebtAsync(id, cancellationToken);
         var serviceRows = generatesPurchaseDebt
-            ? await BuildSupplierServicesQuery(id).ToListAsync(cancellationToken)
+            ? await BuildSupplierServicesQuery(id, includeVoidedReservations: true).ToListAsync(cancellationToken)
             : new List<SupplierAccountServiceListItemDto>();
         var confirmedServiceRows = serviceRows
-            .Where(row => WorkflowStatusHelper.CountsForSupplierDebtByType(row.Type, row.Status))
+            .Where(row => !row.ReservaIsVoided && WorkflowStatusHelper.CountsForSupplierDebtByType(row.Type, row.Status))
+            .ToList();
+        var voidedButWasConfirmedServiceRows = serviceRows
+            .Where(row => row.ReservaIsVoided && WorkflowStatusHelper.CountsForSupplierDebtByType(row.Type, row.StatusBeforeCancellation))
             .ToList();
 
         // ABONOS = pagos vivos al operador. El query filter !IsDeleted ya excluye los anulados (igual que la
@@ -920,6 +934,33 @@ public class SupplierService : ISupplierService
                 date: row.Date,
                 description: BuildPurchaseDescription(row),
                 documentRef: row.NumeroReserva,
+                currency: row.Currency,
+                netCost: row.NetCost,
+                sourcePublicId: row.PublicId));
+        }
+
+        // F-6/F-2 (obra "la ficha del operador no borra la historia", 2026-08-20): la compra de una reserva
+        // anulada NO se borra del extracto — se muestra tachada (ReservaIsVoided=true) TAL COMO ERA, mas una
+        // contra-linea "Anulacion de compra" fechada el dia de la anulacion, por el MISMO monto. Las dos
+        // lineas netean cero: el saldo por moneda del header no cambia un centavo por dejar este rastro.
+        foreach (var row in voidedButWasConfirmedServiceRows)
+        {
+            inputLines.Add(SupplierAccountStatementBuilder.PurchaseLine(
+                date: row.Date,
+                description: BuildPurchaseDescription(row),
+                documentRef: row.NumeroReserva,
+                currency: row.Currency,
+                netCost: row.NetCost,
+                sourcePublicId: row.PublicId,
+                reservaIsVoided: true));
+
+            // CancelledAt SIEMPRE deberia estar seteado en este punto (es lo que hizo que StatusBeforeCancellation
+            // cuente como confirmado), pero el fallback a row.Date es defensivo ante datos legacy incompletos:
+            // mejor una fecha razonable que un reves fechado en 0001-01-01 si algun dato viejo llegara sin marcar.
+            inputLines.Add(SupplierAccountStatementBuilder.PurchaseReversalLine(
+                date: row.CancelledAt ?? row.Date,
+                reservaNumero: row.NumeroReserva ?? "-",
+                servicioDescripcion: string.IsNullOrWhiteSpace(row.Description) ? row.Type : row.Description,
                 currency: row.Currency,
                 netCost: row.NetCost,
                 sourcePublicId: row.PublicId));
@@ -1056,7 +1097,11 @@ public class SupplierService : ISupplierService
         // dos datos (ver BuildMergedLines); el circuito de cancelacion y el saldo a favor aplicado los dejan
         // en null porque no son un pago imputado a un servicio/reserva de la misma forma.
         string? ReservaNumero = null,
-        string? ServicioDescripcion = null);
+        string? ServicioDescripcion = null,
+        // (2026-08-20) Ver SupplierAccountStatementLineDto.ReservaIsVoided. Solo la caja lo trae poblado
+        // (viene de SupplierAccountStatementResultLine); el circuito y el saldo a favor aplicado quedan en
+        // false porque esos movimientos no representan una compra puntual de una reserva.
+        bool ReservaIsVoided = false);
 
     /// <summary>
     /// Mapea el extracto del dominio (value object puro) al DTO de salida.
@@ -1173,7 +1218,11 @@ public class SupplierService : ISupplierService
                     // (2026-07-20) SIEMPRE visibles, sin masking: son identidad de la reserva/servicio, no un
                     // monto de costo ni un dato de tesoreria (ver el XML-doc del DTO).
                     ReservaNumero = line.ReservaNumero,
-                    ServicioDescripcion = line.ServicioDescripcion
+                    ServicioDescripcion = line.ServicioDescripcion,
+                    // (2026-08-20) Tambien SIEMPRE visible: es identidad de la reserva (anulada o no), no un
+                    // monto de costo. El chip "Anulada" del front lo necesita aunque el usuario no tenga
+                    // cobranzas.see_cost (F-14 solo enmascara PLATA, no el hecho de que la reserva esta anulada).
+                    ReservaIsVoided = line.ReservaIsVoided
                 });
             }
 
@@ -1223,7 +1272,8 @@ public class SupplierService : ISupplierService
                     Charge: line.Charge,
                     Credit: line.Credit,
                     ReservaNumero: line.ReservaNumero,
-                    ServicioDescripcion: line.ServicioDescripcion));
+                    ServicioDescripcion: line.ServicioDescripcion,
+                    ReservaIsVoided: line.ReservaIsVoided));
             }
         }
 
@@ -1275,12 +1325,466 @@ public class SupplierService : ISupplierService
             .ToList();
     }
 
+    // ===================================================================================================
+    // Obra "la ficha del operador no borra la historia" (2026-08-20, punto 3): GET /suppliers/{id}/timeline.
+    // Linea de tiempo COMPLETA de un operador armada desde el DOMINIO (compras, anulaciones, multas,
+    // reembolsos, pagos, facturas) — NO parseando el JSON de AuditLog (a diferencia de TimelineService, que
+    // SI lo hace para la reserva; aca se evita a proposito porque el volumen de eventos de un operador con
+    // años de historia haria carísimo diffear AuditLog fila por fila, y el dominio YA tiene todos los datos
+    // estructurados que hacen falta). Mismo permiso que el resto de la ficha (proveedores.view); los montos
+    // respetan el masking cobranzas.see_cost (F-14) via canSeeCost, igual que el resto de la cuenta.
+    // ===================================================================================================
+
+    public async Task<SupplierTimelineDto> GetSupplierTimelineAsync(int id, CancellationToken cancellationToken)
+    {
+        var supplierExists = await _dbContext.Suppliers.AnyAsync(s => s.Id == id, cancellationToken);
+        if (!supplierExists)
+        {
+            throw new KeyNotFoundException("Proveedor no encontrado");
+        }
+
+        bool canSeeCost = await CanSeeSupplierCostFiguresAsync(cancellationToken);
+        // Fix BLOQUEANTE (review seguridad B1 + data-exposure, 2026-08-20): el metodo/referencia de un pago
+        // al proveedor es dato de TESORERIA (mismo patron SEC-1 que ya aplica el extracto — ver
+        // CanSeeSupplierPaymentDetailsAsync mas arriba). proveedores.view NO alcanza para verlo.
+        bool canSeePaymentDetails = await CanSeeSupplierPaymentDetailsAsync(cancellationToken);
+
+        var events = new List<TimelineEventDto>();
+        events.AddRange(await BuildSupplierPurchaseTimelineEventsAsync(id, canSeeCost, cancellationToken));
+        events.AddRange(await BuildSupplierAnnulmentTimelineEventsAsync(id, cancellationToken));
+        events.AddRange(await BuildSupplierPenaltyTimelineEventsAsync(id, canSeeCost, cancellationToken));
+        events.AddRange(await BuildSupplierRefundTimelineEventsAsync(id, canSeeCost, cancellationToken));
+        events.AddRange(await BuildSupplierPaymentTimelineEventsAsync(id, canSeeCost, canSeePaymentDetails, cancellationToken));
+        events.AddRange(await BuildSupplierInvoiceTimelineEventsAsync(id, canSeeCost, cancellationToken));
+
+        return new SupplierTimelineDto
+        {
+            AmountsVisible = canSeeCost,
+            // Del mas nuevo al mas viejo (mismo orden que TimelineService.GetTimelineAsync de la reserva).
+            Events = events.OrderByDescending(e => e.Timestamp).ToList()
+        };
+    }
+
+    /// <summary>
+    /// Reservas donde este proveedor tiene AL MENOS un servicio, en CUALQUIER estado (a diferencia de
+    /// <see cref="BuildSupplierServicesQuery"/>, que siempre filtra por estado). La usan los eventos del
+    /// timeline que necesitan mirar el historial de estados de la reserva completa (anulaciones), no solo
+    /// sus compras confirmadas.
+    /// </summary>
+    private async Task<List<int>> GetReservaIdsForSupplierAsync(int supplierId, CancellationToken cancellationToken)
+    {
+        var hotelIds = _dbContext.HotelBookings.Where(x => x.SupplierId == supplierId).Select(x => x.ReservaId);
+        var transferIds = _dbContext.TransferBookings.Where(x => x.SupplierId == supplierId).Select(x => x.ReservaId);
+        var packageIds = _dbContext.PackageBookings.Where(x => x.SupplierId == supplierId).Select(x => x.ReservaId);
+        var flightIds = _dbContext.FlightSegments.Where(x => x.SupplierId == supplierId).Select(x => x.ReservaId);
+        var assistanceIds = _dbContext.AssistanceBookings.Where(x => x.SupplierId == supplierId).Select(x => x.ReservaId);
+        // ServicioReserva.ReservaId es nullable (a diferencia de las otras 5 tablas, que lo tienen NOT
+        // NULL) — se filtran los null y se des-anula con .Value para que el tipo del IQueryable<int> sea
+        // el MISMO en las 6 ramas del Concat (si se mezcla int con int? el compilador ya no resuelve el
+        // Concat de Queryable y cae, en runtime, a una sobrecarga de PLINQ que no aplica aca).
+        var genericIds = _dbContext.Servicios
+            .Where(x => x.SupplierId == supplierId && x.ReservaId != null)
+            .Select(x => x.ReservaId!.Value);
+
+        return await hotelIds.Concat(transferIds).Concat(packageIds).Concat(flightIds).Concat(assistanceIds).Concat(genericIds)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <summary>Evento #1 de la spec: "Se compró {servicio}: {monto}." — una fila por cada compra que llego a estar CONFIRMADA con el operador (viva o de una reserva ya anulada; la compra pasada no deja de haber ocurrido).</summary>
+    private async Task<List<TimelineEventDto>> BuildSupplierPurchaseTimelineEventsAsync(
+        int supplierId, bool canSeeCost, CancellationToken cancellationToken)
+    {
+        var rows = await BuildSupplierServicesQuery(supplierId, includeVoidedReservations: true)
+            .ToListAsync(cancellationToken);
+
+        var events = new List<TimelineEventDto>();
+        foreach (var row in rows)
+        {
+            // Mismo criterio que GetSupplierAccountStatementAsync: si la reserva esta anulada, lo que importa
+            // es si el servicio HABIA quedado confirmado ANTES de anularse (StatusBeforeCancellation), no su
+            // Status actual (que ya quedo pisado a Cancelado).
+            var statusToCheck = row.ReservaIsVoided ? row.StatusBeforeCancellation : row.Status;
+            if (!WorkflowStatusHelper.CountsForSupplierDebtByType(row.Type, statusToCheck))
+            {
+                continue;
+            }
+
+            var descripcionServicio = string.IsNullOrWhiteSpace(row.Description) ? row.Type : row.Description;
+            events.Add(new TimelineEventDto
+            {
+                Timestamp = row.Date,
+                Actor = "Sistema",
+                EventType = "SupplierPurchaseConfirmed",
+                Title = canSeeCost
+                    ? $"Se compró {descripcionServicio}: {FormatMoneyForSupplierTimeline(row.NetCost, row.Currency)}."
+                    : $"Se compró {descripcionServicio}.",
+                Details = string.IsNullOrWhiteSpace(row.NumeroReserva) ? null : $"Reserva {row.NumeroReserva}",
+                RelatedEntityType = "ServicioReserva",
+                RelatedEntityPublicId = row.PublicId,
+                Amount = canSeeCost ? row.NetCost : null,
+                Currency = canSeeCost ? row.Currency : null,
+            });
+        }
+        return events;
+    }
+
+    /// <summary>Evento #2 de la spec: "{Actor} anuló la reserva." — una fila por CADA reserva de este proveedor que entro a estado anulado (Cancelled/PendingOperatorRefund), leida de ReservaStatusChangeLogs (rastro auditable oficial, no el diff generico de AuditLog).</summary>
+    private async Task<List<TimelineEventDto>> BuildSupplierAnnulmentTimelineEventsAsync(
+        int supplierId, CancellationToken cancellationToken)
+    {
+        var reservaIds = await GetReservaIdsForSupplierAsync(supplierId, cancellationToken);
+        if (reservaIds.Count == 0)
+        {
+            return new List<TimelineEventDto>();
+        }
+
+        var logs = await _dbContext.ReservaStatusChangeLogs
+            .AsNoTracking()
+            .Where(log => reservaIds.Contains(log.ReservaId))
+            .Select(log => new
+            {
+                log.OccurredAt,
+                log.ByUserName,
+                log.Reason,
+                log.FromStatus,
+                log.ToStatus,
+                NumeroReserva = log.Reserva!.NumeroReserva
+            })
+            .ToListAsync(cancellationToken);
+
+        var events = new List<TimelineEventDto>();
+        foreach (var log in logs)
+        {
+            // "Entro a anulado" = el evento del ACTO de anular (una sola vez por anulacion, sin importar si
+            // el camino paso por PendingOperatorRefund antes de llegar a Cancelled): el estado de origen NO
+            // era ya un estado anulado, y el destino SI lo es.
+            bool enteringVoided = EstadoReserva.IsVoidedStatus(log.ToStatus) && !EstadoReserva.IsVoidedStatus(log.FromStatus);
+            if (!enteringVoided)
+            {
+                continue;
+            }
+
+            var actor = string.IsNullOrWhiteSpace(log.ByUserName) ? null : log.ByUserName;
+            var detalles = new List<string>();
+            if (!string.IsNullOrWhiteSpace(log.NumeroReserva)) detalles.Add($"Reserva {log.NumeroReserva}");
+            if (!string.IsNullOrWhiteSpace(log.Reason)) detalles.Add($"Motivo: {log.Reason}");
+
+            events.Add(new TimelineEventDto
+            {
+                Timestamp = log.OccurredAt,
+                Actor = actor ?? "Sistema",
+                EventType = "ReservaAnnulled",
+                Title = actor != null ? $"{actor} anuló la reserva." : "Se anuló la reserva.",
+                Details = detalles.Count > 0 ? string.Join("\n", detalles) : null,
+                RelatedEntityType = "Reserva",
+            });
+        }
+        return events;
+    }
+
+    /// <summary>
+    /// Eventos #3a/#3b de la spec: multa del operador confirmada / cerrada sin multa. Una fila por cada
+    /// linea de cancelacion (<see cref="BookingCancellationLine"/>) de este proveedor con decision tomada.
+    ///
+    /// <para><b>GAP conocido (documentado, no inventado)</b>: igual que en el timeline de la reserva
+    /// (<c>TimelineService.BuildOperatorPenaltyEventsAsync</c>), el actor de "cerro sin multa" solo esta
+    /// persistido cuando este proveedor es el operador PRINCIPAL del BC. Para un operador SECUNDARIO
+    /// (ADR-044 T1) el evento sale sin nombre, con la frase generica.</para>
+    /// </summary>
+    private async Task<List<TimelineEventDto>> BuildSupplierPenaltyTimelineEventsAsync(
+        int supplierId, bool canSeeCost, CancellationToken cancellationToken)
+    {
+        var rows = await _dbContext.BookingCancellationLines
+            .AsNoTracking()
+            .Where(line => line.SupplierId == supplierId
+                && (line.PenaltyStatus == PenaltyStatus.Confirmed || line.PenaltyStatus == PenaltyStatus.Waived))
+            .Select(line => new
+            {
+                line.PenaltyStatus,
+                line.PenaltyAmount,
+                line.PenaltyCurrency,
+                line.PenaltyConfirmedAt,
+                IsPrincipalOperator = line.SupplierId == line.BookingCancellation.SupplierId,
+                BcPenaltyConfirmedByUserName = line.BookingCancellation.PenaltyConfirmedByUserName,
+                BcDraftedAt = line.BookingCancellation.DraftedAt,
+                NumeroReserva = line.BookingCancellation.Reserva.NumeroReserva
+            })
+            .ToListAsync(cancellationToken);
+
+        var events = new List<TimelineEventDto>();
+        foreach (var row in rows)
+        {
+            var timestamp = row.PenaltyConfirmedAt ?? row.BcDraftedAt;
+            var detalle = string.IsNullOrWhiteSpace(row.NumeroReserva) ? null : $"Reserva {row.NumeroReserva}";
+
+            if (row.PenaltyStatus == PenaltyStatus.Confirmed)
+            {
+                events.Add(new TimelineEventDto
+                {
+                    Timestamp = timestamp,
+                    Actor = "Sistema",
+                    EventType = "OperatorPenaltyConfirmed",
+                    Title = canSeeCost && row.PenaltyAmount.HasValue
+                        ? $"La multa del operador quedó confirmada: {FormatMoneyForSupplierTimeline(row.PenaltyAmount.Value, row.PenaltyCurrency)}."
+                        : "La multa del operador quedó confirmada.",
+                    Details = detalle,
+                    RelatedEntityType = "BookingCancellationLine",
+                    Amount = canSeeCost ? row.PenaltyAmount : null,
+                    Currency = canSeeCost && row.PenaltyAmount.HasValue ? row.PenaltyCurrency : null,
+                });
+            }
+            else // Waived
+            {
+                var actorName = row.IsPrincipalOperator && !string.IsNullOrWhiteSpace(row.BcPenaltyConfirmedByUserName)
+                    ? row.BcPenaltyConfirmedByUserName
+                    : null;
+                events.Add(new TimelineEventDto
+                {
+                    Timestamp = timestamp,
+                    Actor = actorName ?? "Sistema",
+                    EventType = "OperatorPenaltyWaived",
+                    Title = actorName != null
+                        ? $"{actorName} cerró la multa del operador sin cobrar nada."
+                        : "Se cerró la multa del operador sin cobrar nada.",
+                    Details = detalle,
+                    RelatedEntityType = "BookingCancellationLine",
+                });
+            }
+        }
+        return events;
+    }
+
+    /// <summary>Eventos #4a/#4b de la spec: reembolso del operador registrado / deshecho.</summary>
+    private async Task<List<TimelineEventDto>> BuildSupplierRefundTimelineEventsAsync(
+        int supplierId, bool canSeeCost, CancellationToken cancellationToken)
+    {
+        var events = new List<TimelineEventDto>();
+
+        var receivedRows = await _dbContext.OperatorRefundReceived
+            .AsNoTracking()
+            .Where(refund => refund.SupplierId == supplierId)
+            .Select(refund => new { refund.PublicId, refund.ReceivedAt, refund.ReceivedAmount, refund.Currency })
+            .ToListAsync(cancellationToken);
+        foreach (var row in receivedRows)
+        {
+            events.Add(new TimelineEventDto
+            {
+                Timestamp = row.ReceivedAt,
+                Actor = "Sistema",
+                EventType = "OperatorRefundRegistered",
+                Title = canSeeCost
+                    ? $"Se registró un reembolso del operador: {FormatMoneyForSupplierTimeline(row.ReceivedAmount, row.Currency)}."
+                    : "Se registró un reembolso del operador.",
+                RelatedEntityType = "OperatorRefundReceived",
+                RelatedEntityPublicId = row.PublicId,
+                Amount = canSeeCost ? row.ReceivedAmount : null,
+                Currency = canSeeCost ? row.Currency : null,
+            });
+        }
+
+        // Deshecho = allocation soft-voided (OperatorRefundService.VoidAllocationAsync). El actor solo tiene
+        // UserId persistido (VoidedByUserId), sin el nombre — se resuelve contra AspNetUsers, mismo patron que
+        // ya usa TimelineService.GetTimelineAsync para resolver actores de AuditLog.
+        var voidedAllocations = await _dbContext.OperatorRefundAllocations
+            .AsNoTracking()
+            .Where(allocation => allocation.IsVoided && allocation.Refund.SupplierId == supplierId)
+            .Select(allocation => new { allocation.PublicId, allocation.VoidedAt, allocation.VoidedByUserId })
+            .ToListAsync(cancellationToken);
+        if (voidedAllocations.Count > 0)
+        {
+            var actorIds = voidedAllocations
+                .Where(a => !string.IsNullOrWhiteSpace(a.VoidedByUserId))
+                .Select(a => a.VoidedByUserId!)
+                .Distinct()
+                .ToList();
+            var actorNames = actorIds.Count == 0
+                ? new Dictionary<string, string?>()
+                : await _dbContext.Users
+                    .AsNoTracking()
+                    .Where(u => actorIds.Contains(u.Id))
+                    .ToDictionaryAsync(u => u.Id, u => u.FullName, cancellationToken);
+
+            foreach (var row in voidedAllocations)
+            {
+                string? actor = null;
+                if (!string.IsNullOrWhiteSpace(row.VoidedByUserId) && actorNames.TryGetValue(row.VoidedByUserId, out var name) && !string.IsNullOrWhiteSpace(name))
+                {
+                    actor = name;
+                }
+
+                events.Add(new TimelineEventDto
+                {
+                    Timestamp = row.VoidedAt ?? DateTime.UtcNow,
+                    Actor = actor ?? "Sistema",
+                    EventType = "OperatorRefundUndone",
+                    Title = actor != null
+                        ? $"{actor} deshizo el reembolso del operador."
+                        : "Se deshizo el reembolso del operador.",
+                    RelatedEntityType = "OperatorRefundAllocation",
+                    RelatedEntityPublicId = row.PublicId,
+                });
+            }
+        }
+
+        return events;
+    }
+
+    /// <summary>
+    /// Evento #5 de la spec: "Se registró un pago al operador: {monto}." — SupplierPayment no persiste actor,
+    /// por eso el texto de la spec tampoco lo pide.
+    ///
+    /// <para><b>Fix BLOQUEANTE (review seguridad B1 + data-exposure, 2026-08-20)</b>: el METODO del pago
+    /// (<c>Method</c>: "Transfer"/"Cash"/"Card"/"Check") es dato de TESORERIA, mismo patron SEC-1 que ya
+    /// aplica el extracto (<see cref="CanSeeSupplierPaymentDetailsAsync"/> — un vendedor con solo
+    /// <c>proveedores.view</c> NO debe verlo). Antes este metodo lo exponia SIEMPRE, crudo, en
+    /// <c>Details</c> y en <c>PaymentMethod</c>. Ahora: sin <c>tesoreria.supplier_payments</c>, ambos
+    /// campos vienen en <c>null</c> (fail-closed, igual que <c>documentRef</c> en el extracto). Con el
+    /// permiso, <c>Details</c> se traduce al castellano EN EL SERVIDOR (nunca el token crudo — un cajero
+    /// no programador no tiene por que entender "Transfer"); <c>PaymentMethod</c> sigue viajando crudo a
+    /// proposito, igual que <see cref="TimelineEventDto.PaymentMethod"/> ya documenta para el timeline de
+    /// la RESERVA ("el texto final en español lo arma el frontend") — es el MISMO contrato de DTO,
+    /// reusado para el operador, y cambiar su significado solo aca lo haria inconsistente entre las dos
+    /// pantallas que leen el mismo campo.</para>
+    /// </summary>
+    private async Task<List<TimelineEventDto>> BuildSupplierPaymentTimelineEventsAsync(
+        int supplierId, bool canSeeCost, bool canSeePaymentDetails, CancellationToken cancellationToken)
+    {
+        var rows = await _dbContext.SupplierPayments
+            .Where(payment => payment.SupplierId == supplierId)
+            .Select(payment => new { payment.PublicId, payment.PaidAt, payment.Amount, payment.Currency, payment.Method })
+            .ToListAsync(cancellationToken);
+
+        var events = new List<TimelineEventDto>();
+        foreach (var row in rows)
+        {
+            events.Add(new TimelineEventDto
+            {
+                Timestamp = row.PaidAt,
+                Actor = "Sistema",
+                EventType = "SupplierPaymentRegistered",
+                Title = canSeeCost
+                    ? $"Se registró un pago al operador: {FormatMoneyForSupplierTimeline(row.Amount, row.Currency)}."
+                    : "Se registró un pago al operador.",
+                Details = canSeePaymentDetails ? TranslatePaymentMethodToSpanish(row.Method) : null,
+                RelatedEntityType = "SupplierPayment",
+                RelatedEntityPublicId = row.PublicId,
+                Amount = canSeeCost ? row.Amount : null,
+                Currency = canSeeCost ? row.Currency : null,
+                PaymentMethod = canSeePaymentDetails ? row.Method : null,
+            });
+        }
+        return events;
+    }
+
+    /// <summary>
+    /// Traduce el codigo crudo de <c>Payment.Method</c>/<c>SupplierPayment.Method</c> a una etiqueta en
+    /// castellano para textos RENDERIZADOS (nunca para el campo estructurado <c>PaymentMethod</c>, que
+    /// sigue crudo por contrato — ver el XML-doc de <see cref="BuildSupplierPaymentTimelineEventsAsync"/>).
+    /// Mismo mapa que ya usa el frontend en <c>traducirMetodoPago</c>
+    /// (<c>src/TravelWeb/src/features/customers/lib/paymentHelpers.js</c>): ingles legado + español actual
+    /// + variantes de mayuscula/minuscula. A diferencia del frontend (que devuelve "" si no reconoce el
+    /// valor), aca devolvemos "Otro medio" — un texto de historial nunca debe quedar con un hueco vacio
+    /// donde iba el medio de pago.
+    /// </summary>
+    private static string TranslatePaymentMethodToSpanish(string? method)
+    {
+        if (string.IsNullOrWhiteSpace(method))
+        {
+            return "Otro medio";
+        }
+
+        return method.Trim().ToLowerInvariant() switch
+        {
+            "transfer" or "transferencia" => "Transferencia",
+            "cash" or "efectivo" => "Efectivo",
+            "card" or "tarjeta" => "Tarjeta",
+            "check" or "cheque" => "Cheque",
+            _ => "Otro medio",
+        };
+    }
+
+    /// <summary>
+    /// Eventos #6a/#6b de la spec: factura del operador cargada / anulada.
+    ///
+    /// <para><b>GAP conocido (documentado, no inventado)</b>: <see cref="SupplierInvoice"/> no persiste QUIEN
+    /// anulo la factura (solo <c>VoidedAt</c>/<c>VoidReason</c>, sin <c>VoidedByUserId</c>/<c>UserName</c>).
+    /// El evento de anulacion sale sin actor. Si Gaston pide ver quien la anulo, hace falta agregar esas 2
+    /// columnas en una migracion aparte — no se agregan aca por especular sin que lo pida.</para>
+    /// </summary>
+    private async Task<List<TimelineEventDto>> BuildSupplierInvoiceTimelineEventsAsync(
+        int supplierId, bool canSeeCost, CancellationToken cancellationToken)
+    {
+        var rows = await _dbContext.SupplierInvoices
+            .AsNoTracking()
+            .IgnoreQueryFilters() // las anuladas (Void) tambien tienen que dejar su rastro en el historial.
+            .Where(invoice => invoice.SupplierId == supplierId)
+            .Select(invoice => new
+            {
+                invoice.PublicId,
+                invoice.Number,
+                invoice.Currency,
+                invoice.CreatedAt,
+                invoice.CreatedByUserName,
+                invoice.Status,
+                invoice.VoidedAt,
+                invoice.VoidReason,
+                Total = invoice.Lines.Sum(l => (decimal?)l.Amount) ?? 0m
+            })
+            .ToListAsync(cancellationToken);
+
+        var events = new List<TimelineEventDto>();
+        foreach (var row in rows)
+        {
+            events.Add(new TimelineEventDto
+            {
+                Timestamp = row.CreatedAt,
+                Actor = string.IsNullOrWhiteSpace(row.CreatedByUserName) ? "Sistema" : row.CreatedByUserName,
+                EventType = "SupplierInvoiceCreated",
+                Title = canSeeCost
+                    ? $"Se cargó la factura {row.Number} del operador: {FormatMoneyForSupplierTimeline(row.Total, row.Currency)}."
+                    : $"Se cargó la factura {row.Number} del operador.",
+                RelatedEntityType = "SupplierInvoice",
+                RelatedEntityPublicId = row.PublicId,
+                Amount = canSeeCost ? row.Total : null,
+                Currency = canSeeCost ? row.Currency : null,
+            });
+
+            if (row.Status == SupplierInvoiceStatus.Void && row.VoidedAt.HasValue)
+            {
+                events.Add(new TimelineEventDto
+                {
+                    Timestamp = row.VoidedAt.Value,
+                    Actor = "Sistema", // GAP: SupplierInvoice no persiste quien anulo (ver XML-doc del metodo).
+                    EventType = "SupplierInvoiceVoided",
+                    Title = $"Se anuló la factura {row.Number} del operador.",
+                    Details = string.IsNullOrWhiteSpace(row.VoidReason) ? null : $"Motivo: {row.VoidReason}",
+                    RelatedEntityType = "SupplierInvoice",
+                    RelatedEntityPublicId = row.PublicId,
+                });
+            }
+        }
+        return events;
+    }
+
+    /// <summary>Formatea un monto con su moneda en texto criollo simple ("$ 45.000" / "USD 500"). Sin moneda = ARS.</summary>
+    private static string FormatMoneyForSupplierTimeline(decimal amount, string? currency)
+    {
+        var iso = string.IsNullOrWhiteSpace(currency) ? "ARS" : currency;
+        var formatted = amount.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("es-AR"));
+        return iso == "ARS" ? $"$ {formatted}" : $"{iso} {formatted}";
+    }
+
     public async Task<PagedResponse<SupplierAccountServiceListItemDto>> GetSupplierAccountServicesAsync(
         int id,
         SupplierAccountServicesQuery query,
         CancellationToken cancellationToken)
     {
-        var servicesQuery = BuildSupplierServicesQuery(id);
+        // Obra "la ficha del operador no borra la historia" (2026-08-20): includeVoided default true
+        // (ver el XML-doc de SupplierAccountServicesQuery.IncludeVoided) — "Servicios comprados" pasa a
+        // traer TAMBIEN los servicios de reservas anuladas, con ReservaIsVoided=true para que el front
+        // pinte el chip "Anulada" y ofrezca el filtro "Mostrar anuladas".
+        var servicesQuery = BuildSupplierServicesQuery(id, includeVoidedReservations: query.IncludeVoided);
 
         if (!string.IsNullOrWhiteSpace(query.Type))
         {
@@ -2341,11 +2845,31 @@ public class SupplierService : ISupplierService
     // mano con ternarios traducibles (string.IsNullOrWhiteSpace + concatenacion), como ya hacia el
     // fix de Asistencia del hallazgo #47 (mas abajo). Blindado contra Postgres real en
     // SupplierServiceAssistanceDescriptionIntegrationTests.
-    private IQueryable<SupplierAccountServiceListItemDto> BuildSupplierServicesQuery(int supplierId)
+    /// <param name="supplierId">Proveedor cuyos servicios se listan.</param>
+    /// <param name="includeVoidedReservations">
+    /// Obra "la ficha del operador no borra la historia" (2026-08-20, F-6): por default (false) esta
+    /// consulta sigue siendo la de SIEMPRE (solo reservas VIVAS, <see cref="ValidReservationStatuses"/>) —
+    /// la usa "Deuda por reserva", que NUNCA debe mostrar plata de una reserva anulada (esa solapa sigue
+    /// mostrando SOLO deuda viva, sin cambios). Cuando es true, SUMA las reservas anuladas
+    /// (<c>EstadoReserva.VoidedStatuses</c>: Cancelled + PendingOperatorRefund) — la usan el extracto y
+    /// "Servicios comprados", que ahora SI dejan rastro de las compras de reservas anuladas (tachadas, con
+    /// su contra-linea). <see cref="SupplierAccountServiceListItemDto.ReservaIsVoided"/> le dice al
+    /// caller cual es cual, sin que el front tenga que adivinar por el Status del servicio.
+    /// </param>
+    private IQueryable<SupplierAccountServiceListItemDto> BuildSupplierServicesQuery(
+        int supplierId, bool includeVoidedReservations = false)
     {
+        // Union UNA sola vez (no repetida por cada .Concat) de los estados permitidos: reservas vivas +,
+        // si el caller lo pide, las anuladas. Es un array chico materializado en memoria: EF Core lo
+        // traduce a un IN/ANY de Postgres igual que ValidReservationStatuses solo (no rompe la traduccion
+        // a SQL, a diferencia de llamar a un metodo C# como EstadoReserva.IsVoidedStatus adentro del Where).
+        var allowedReservaStatuses = includeVoidedReservations
+            ? ValidReservationStatuses.Concat(EstadoReserva.VoidedStatuses).ToArray()
+            : ValidReservationStatuses;
+
         var flights = _dbContext.FlightSegments
             .AsNoTracking()
-            .Where(segment => segment.SupplierId == supplierId && ValidReservationStatuses.Contains(segment.Reserva!.Status))
+            .Where(segment => segment.SupplierId == supplierId && allowedReservaStatuses.Contains(segment.Reserva!.Status))
             .Select(segment => new SupplierAccountServiceListItemDto
             {
                 PublicId = segment.PublicId,
@@ -2364,12 +2888,19 @@ public class SupplierService : ISupplierService
                 Status = segment.Status,
                 NumeroReserva = segment.Reserva!.NumeroReserva,
                 FileName = segment.Reserva!.Name,
-                ReservaPublicId = segment.Reserva!.PublicId
+                ReservaPublicId = segment.Reserva!.PublicId,
+                // (2026-08-20) EstadoReserva.IsVoidedStatus NO se puede llamar aca (EF Core no traduce
+                // metodos C# arbitrarios a SQL, mismo limite documentado en el comentario de arriba de
+                // esta funcion): se repite la comparacion inline contra las 2 constantes del par.
+                ReservaIsVoided = segment.Reserva!.Status == EstadoReserva.Cancelled
+                    || segment.Reserva!.Status == EstadoReserva.PendingOperatorRefund,
+                StatusBeforeCancellation = segment.StatusBeforeCancellation,
+                CancelledAt = segment.CancelledAt
             });
 
         var hotels = _dbContext.HotelBookings
             .AsNoTracking()
-            .Where(booking => booking.SupplierId == supplierId && ValidReservationStatuses.Contains(booking.Reserva!.Status))
+            .Where(booking => booking.SupplierId == supplierId && allowedReservaStatuses.Contains(booking.Reserva!.Status))
             .Select(booking => new SupplierAccountServiceListItemDto
             {
                 PublicId = booking.PublicId,
@@ -2386,12 +2917,16 @@ public class SupplierService : ISupplierService
                 Status = booking.Status,
                 NumeroReserva = booking.Reserva!.NumeroReserva,
                 FileName = booking.Reserva!.Name,
-                ReservaPublicId = booking.Reserva!.PublicId
+                ReservaPublicId = booking.Reserva!.PublicId,
+                ReservaIsVoided = booking.Reserva!.Status == EstadoReserva.Cancelled
+                    || booking.Reserva!.Status == EstadoReserva.PendingOperatorRefund,
+                StatusBeforeCancellation = booking.StatusBeforeCancellation,
+                CancelledAt = booking.CancelledAt
             });
 
         var transfers = _dbContext.TransferBookings
             .AsNoTracking()
-            .Where(transfer => transfer.SupplierId == supplierId && ValidReservationStatuses.Contains(transfer.Reserva!.Status))
+            .Where(transfer => transfer.SupplierId == supplierId && allowedReservaStatuses.Contains(transfer.Reserva!.Status))
             .Select(transfer => new SupplierAccountServiceListItemDto
             {
                 PublicId = transfer.PublicId,
@@ -2410,12 +2945,16 @@ public class SupplierService : ISupplierService
                 Status = transfer.Status,
                 NumeroReserva = transfer.Reserva!.NumeroReserva,
                 FileName = transfer.Reserva!.Name,
-                ReservaPublicId = transfer.Reserva!.PublicId
+                ReservaPublicId = transfer.Reserva!.PublicId,
+                ReservaIsVoided = transfer.Reserva!.Status == EstadoReserva.Cancelled
+                    || transfer.Reserva!.Status == EstadoReserva.PendingOperatorRefund,
+                StatusBeforeCancellation = transfer.StatusBeforeCancellation,
+                CancelledAt = transfer.CancelledAt
             });
 
         var packages = _dbContext.PackageBookings
             .AsNoTracking()
-            .Where(package => package.SupplierId == supplierId && ValidReservationStatuses.Contains(package.Reserva!.Status))
+            .Where(package => package.SupplierId == supplierId && allowedReservaStatuses.Contains(package.Reserva!.Status))
             .Select(package => new SupplierAccountServiceListItemDto
             {
                 PublicId = package.PublicId,
@@ -2429,12 +2968,16 @@ public class SupplierService : ISupplierService
                 Status = package.Status,
                 NumeroReserva = package.Reserva!.NumeroReserva,
                 FileName = package.Reserva!.Name,
-                ReservaPublicId = package.Reserva!.PublicId
+                ReservaPublicId = package.Reserva!.PublicId,
+                ReservaIsVoided = package.Reserva!.Status == EstadoReserva.Cancelled
+                    || package.Reserva!.Status == EstadoReserva.PendingOperatorRefund,
+                StatusBeforeCancellation = package.StatusBeforeCancellation,
+                CancelledAt = package.CancelledAt
             });
 
         var assistances = _dbContext.AssistanceBookings
             .AsNoTracking()
-            .Where(assistance => assistance.SupplierId == supplierId && ValidReservationStatuses.Contains(assistance.Reserva!.Status))
+            .Where(assistance => assistance.SupplierId == supplierId && allowedReservaStatuses.Contains(assistance.Reserva!.Status))
             .Select(assistance => new SupplierAccountServiceListItemDto
             {
                 PublicId = assistance.PublicId,
@@ -2454,12 +2997,16 @@ public class SupplierService : ISupplierService
                 Status = assistance.Status,
                 NumeroReserva = assistance.Reserva!.NumeroReserva,
                 FileName = assistance.Reserva!.Name,
-                ReservaPublicId = assistance.Reserva!.PublicId
+                ReservaPublicId = assistance.Reserva!.PublicId,
+                ReservaIsVoided = assistance.Reserva!.Status == EstadoReserva.Cancelled
+                    || assistance.Reserva!.Status == EstadoReserva.PendingOperatorRefund,
+                StatusBeforeCancellation = assistance.StatusBeforeCancellation,
+                CancelledAt = assistance.CancelledAt
             });
 
         var services = _dbContext.Servicios
             .AsNoTracking()
-            .Where(service => service.SupplierId == supplierId && ValidReservationStatuses.Contains(service.Reserva!.Status))
+            .Where(service => service.SupplierId == supplierId && allowedReservaStatuses.Contains(service.Reserva!.Status))
             .Select(service => new SupplierAccountServiceListItemDto
             {
                 PublicId = service.PublicId,
@@ -2473,7 +3020,11 @@ public class SupplierService : ISupplierService
                 Status = service.Status,
                 NumeroReserva = service.Reserva!.NumeroReserva,
                 FileName = service.Reserva!.Name,
-                ReservaPublicId = service.Reserva!.PublicId
+                ReservaPublicId = service.Reserva!.PublicId,
+                ReservaIsVoided = service.Reserva!.Status == EstadoReserva.Cancelled
+                    || service.Reserva!.Status == EstadoReserva.PendingOperatorRefund,
+                StatusBeforeCancellation = service.StatusBeforeCancellation,
+                CancelledAt = service.CancelledAt
             });
 
         return flights

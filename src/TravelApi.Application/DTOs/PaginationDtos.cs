@@ -185,6 +185,12 @@ public class SupplierAccountServicesQuery : PagedQuery
     // hoy (Solicitado + Confirmado), sin este parametro no cambia nada.
     public bool ConfirmedOnly { get; set; }
 
+    // Obra "la ficha del operador no borra la historia" (2026-08-20): antes esta grilla excluia SIEMPRE
+    // los servicios de reservas anuladas. Ahora se ven por defecto (chip "Anulada", filtro "Mostrar
+    // anuladas" en el toolbar). Default TRUE tambien del lado del backend: un cliente de API viejo que
+    // todavia no manda este parametro sigue viendo TODO, sin sorpresas (T-8, API aditiva).
+    public bool IncludeVoided { get; set; } = true;
+
     public SupplierAccountServicesQuery()
     {
         SortBy = "date";

@@ -299,4 +299,69 @@ public class SupplierAccountStatementBuilderTests
         Assert.Equal(serviceId, block.Lines[0].SourcePublicId);
         Assert.Equal(paymentId, block.Lines[1].SourcePublicId);
     }
+
+    // ===================================================================================================
+    // Obra "la ficha del operador no borra la historia" (2026-08-20, punto 1): PurchaseReversalLine +
+    // PurchaseLine(reservaIsVoided:) — cobertura PURA del builder, sin EF.
+    // ===================================================================================================
+
+    [Fact]
+    public void PurchaseAndPurchaseReversal_SameNetCost_NetToZero()
+    {
+        var purchaseDate = new DateTime(2026, 6, 10);
+        var cancelledDate = new DateTime(2026, 8, 19);
+        var serviceId = Guid.NewGuid();
+
+        var statement = SupplierAccountStatementBuilder.Build(new[]
+        {
+            SupplierAccountStatementBuilder.PurchaseLine(
+                purchaseDate, "Hotel: Hotel Bariloche 3 noches", "F-2026-1050", "ARS", 90000m, serviceId,
+                reservaIsVoided: true),
+            SupplierAccountStatementBuilder.PurchaseReversalLine(
+                cancelledDate, "F-2026-1050", "Hotel Bariloche 3 noches", "ARS", 90000m, serviceId),
+        });
+
+        var block = Assert.Single(statement.Currencies);
+        Assert.Equal(2, block.Lines.Count);
+        // El par netea EXACTO a cero: el saldo de la moneda no se mueve por dejar el rastro (F-2/F-6).
+        Assert.Equal(0m, block.ClosingBalance);
+    }
+
+    [Fact]
+    public void PurchaseReversalLine_BuildsExactConceptText_AndLandsInCreditColumn()
+    {
+        var line = SupplierAccountStatementBuilder.PurchaseReversalLine(
+            date: new DateTime(2026, 8, 19), reservaNumero: "F-2026-1050", servicioDescripcion: "Hotel Bariloche",
+            currency: "ARS", netCost: 90000m, sourcePublicId: null);
+
+        Assert.Equal(SupplierAccountStatementLineKinds.PurchaseReversal, line.Kind);
+        Assert.Equal("Anulación de compra · Reserva F-2026-1050 (Hotel Bariloche)", line.Description);
+        // Abono (Credit), nunca Cargo: revierte la compra, no es un cargo nuevo.
+        Assert.Equal(0m, line.Charge);
+        Assert.Equal(90000m, line.Credit);
+        Assert.Null(line.DocumentRef);
+    }
+
+    [Fact]
+    public void PurchaseLine_Default_ReservaIsVoidedIsFalse()
+    {
+        var line = SupplierAccountStatementBuilder.PurchaseLine(
+            new DateTime(2026, 1, 1), "compra", null, "ARS", 1000m, null);
+
+        Assert.False(line.ReservaIsVoided);
+    }
+
+    [Fact]
+    public void ReservaIsVoided_TravelsThroughToTheResultLine()
+    {
+        var statement = SupplierAccountStatementBuilder.Build(new[]
+        {
+            SupplierAccountStatementBuilder.PurchaseLine(
+                new DateTime(2026, 1, 1), "compra anulada", "F-1", "ARS", 1000m, null, reservaIsVoided: true),
+        });
+
+        var block = Assert.Single(statement.Currencies);
+        var line = Assert.Single(block.Lines);
+        Assert.True(line.ReservaIsVoided);
+    }
 }
