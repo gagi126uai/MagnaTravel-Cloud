@@ -510,9 +510,12 @@ public class BookingServiceRescheduleTests
         var service = CreateService(context, CreateMapper());
 
         // Calculamos un shift que deje la salida claramente en el pasado: (hoy - 10 dias) - salida actual.
+        // OJO fecha-trampa (cazada el 2026-08-20): si "hoy - 10" cae JUSTO en el check-in del seed,
+        // la resta da 0 y el reschedule es un no-op (0 servicios movidos) — el test fallaba solo ese
+        // dia. El Math.Min garantiza un corrimiento negativo de al menos 10 dias, siempre.
         var today = TravelApi.Infrastructure.Time.AgencyTimezone.TodayWallClockUtc();
         var targetPast = today.AddDays(-10);
-        var shiftToPast = (int)(targetPast.Date - HotelCheckIn.Date).TotalDays;
+        var shiftToPast = Math.Min(-10, (int)(targetPast.Date - HotelCheckIn.Date).TotalDays);
 
         var result = await service.RescheduleAsync(
             reserva.PublicId.ToString(), new RescheduleReservaRequest(DaysShift: shiftToPast), CancellationToken.None);
