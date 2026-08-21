@@ -222,4 +222,98 @@ public sealed class ReportServiceDashboardSqlTranslationIntegrationTests
         Assert.NotNull(dto);
         Assert.Equal(500m, dto.VentasDelMes);
     }
+
+    /// <summary>
+    /// Hallazgo de review (2026-08-20, bloqueante backend+security): la obra "informes por moneda" agrega
+    /// ownerFilter + proyecciones nuevas a <see cref="ReportService.GetSellerRankingAsync"/>,
+    /// <see cref="ReportService.GetDestinationAnalyticsAsync"/> (JOIN nuevo contra Reservas desde
+    /// Hotel/Package/Flight) y <see cref="ReportService.GetYearOverYearAsync"/> (proyeccion a los records
+    /// <c>ReservaYearRow</c>/<c>ReservaCurrencyMoneyRow</c>, nunca ejercitada contra un provider SQL real
+    /// hasta este test). Mismo riesgo que el resto de este archivo: el InMemory de la suite unit no
+    /// traduce nada a SQL, asi que una expresion no traducible recien explota aca.
+    /// </summary>
+    [Fact]
+    public async Task SellersDestinationsYoy_ComoVendedorSinViewAll_TraducenLosJoinsNuevosASqlSinExplotar()
+    {
+        await using var ctx = _fixture.CreateDbContext();
+
+        await SeedAspNetUserAsync(ctx, "vendedor-bi-A");
+        await SeedAspNetUserAsync(ctx, "vendedor-bi-B");
+
+        var reservaPropia = new Reserva
+        {
+            NumeroReserva = $"F-BI-{Guid.NewGuid():N}"[..14],
+            Name = "Reserva propia del vendedor A",
+            Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedor-bi-A",
+            ResponsibleUserName = "Vendedor A",
+            ConfirmedSale = 1000m,
+            TotalSale = 1000m,
+            TotalCost = 600m,
+            CreatedAt = DateTime.UtcNow,
+        };
+        var reservaAjena = new Reserva
+        {
+            NumeroReserva = $"F-BI-{Guid.NewGuid():N}"[..14],
+            Name = "Reserva ajena del vendedor B",
+            Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedor-bi-B",
+            ResponsibleUserName = "Vendedor B",
+            ConfirmedSale = 2000m,
+            TotalSale = 2000m,
+            TotalCost = 1200m,
+            CreatedAt = DateTime.UtcNow,
+        };
+        ctx.Reservas.AddRange(reservaPropia, reservaAjena);
+        await ctx.SaveChangesAsync();
+
+        // Desglose por moneda (ReservaMoneyByCurrency) de cada reserva: ejercita la proyeccion nueva a
+        // ReservaCurrencyMoneyRow (YoY) y el join por vendedor (sellers).
+        ctx.ReservaMoneyByCurrency.AddRange(
+            new ReservaMoneyByCurrency { ReservaId = reservaPropia.Id, Currency = Monedas.ARS, ConfirmedSale = 700m, TotalSale = 700m, TotalCost = 400m },
+            new ReservaMoneyByCurrency { ReservaId = reservaPropia.Id, Currency = Monedas.USD, ConfirmedSale = 300m, TotalSale = 300m, TotalCost = 200m },
+            new ReservaMoneyByCurrency { ReservaId = reservaAjena.Id, Currency = Monedas.ARS, ConfirmedSale = 2000m, TotalSale = 2000m, TotalCost = 1200m });
+
+        // Hoteles atados a cada reserva por FK real: ejercita el JOIN nuevo de GetDestinationAnalyticsAsync.
+        ctx.HotelBookings.AddRange(
+            new HotelBooking { ReservaId = reservaPropia.Id, City = "Bariloche", Currency = Monedas.ARS, SalePrice = 700m, NetCost = 400m, Adults = 2, CreatedAt = DateTime.UtcNow },
+            new HotelBooking { ReservaId = reservaAjena.Id, City = "Cancun", Currency = Monedas.ARS, SalePrice = 2000m, NetCost = 1200m, Adults = 2, CreatedAt = DateTime.UtcNow });
+        await ctx.SaveChangesAsync();
+
+        var httpContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "vendedor-bi-A"),
+                    new Claim(ClaimTypes.Role, "Vendedor"),
+                },
+                authenticationType: "Test")),
+        };
+        var accessor = new HttpContextAccessor { HttpContext = httpContext };
+
+        var resolverMock = new Mock<IUserPermissionResolver>();
+        IReadOnlySet<string> permisos = new HashSet<string> { Permissions.ReportesView, Permissions.CobranzasSeeCost };
+        resolverMock.Setup(r => r.GetPermissionsAsync("vendedor-bi-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(permisos);
+
+        var service = new ReportService(ctx, BuildBnaMock().Object, resolverMock.Object, accessor);
+
+        // Si el JOIN nuevo o la proyeccion a record no fueran traducibles, esto explota aca (no en el
+        // InMemory de la suite unit, que ejecuta todo como C# directo sin validar SQL real).
+        var sellers = await service.GetSellerRankingAsync(null, null, CancellationToken.None);
+        var destinations = await service.GetDestinationAnalyticsAsync(null, null, CancellationToken.None);
+        var yoy = await service.GetYearOverYearAsync(CancellationToken.None);
+
+        // Scope real: vendedor-bi-A solo ve SU fila/destino/interanual, nunca los de vendedor-bi-B.
+        var sellerRow = Assert.Single(sellers);
+        Assert.Equal("vendedor-bi-A", sellerRow.UserId);
+        Assert.Equal(1000m, sellerRow.TotalSales);
+
+        var destinationRow = Assert.Single(destinations);
+        Assert.Equal("BARILOCHE", destinationRow.Destination);
+
+        var currentMonth = yoy.CurrentYear.Single(m => m.MonthNumber == DateTime.UtcNow.Month);
+        Assert.Equal(1000m, currentMonth.Sales);
+    }
 }

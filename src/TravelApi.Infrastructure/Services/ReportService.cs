@@ -88,6 +88,40 @@ public class ReportService : IReportService
     /// </summary>
     private sealed record DayCurrencyAmount(DateTime Date, string Currency, decimal Amount);
 
+    // Tipos internos de GetYearOverYearAsync: una fila por reserva del anio (ReservaYearRow) y una fila
+    // por (reserva, moneda) de la tabla hija materializada (ReservaCurrencyMoneyRow). Records nombrados
+    // en vez de anonimos porque BuildYoyMonths los recibe como parametro tipado — un tipo anonimo no se
+    // puede nombrar en la firma de otro metodo.
+    private sealed record ReservaYearRow(int Id, DateTime CreatedAt, decimal TotalSale, decimal TotalCost);
+    private sealed record ReservaCurrencyMoneyRow(int ReservaId, string Currency, decimal TotalSale, decimal TotalCost);
+
+    /// <summary>
+    /// Suma <paramref name="rows"/> agrupados por moneda (P-3: nunca se mezcla ARS con USD en una sola
+    /// linea). Solo las monedas que de verdad aparecen en <paramref name="rows"/> — no se inventa una
+    /// linea en $0 para una moneda que nunca tuvo movimiento (mismo criterio que el resto del dashboard
+    /// por moneda, ver <see cref="GetCashFlowProjectionAsync"/>).
+    /// </summary>
+    private static List<CurrencyAmount> SumByCurrency<T>(
+        IEnumerable<T> rows, Func<T, string> currencySelector, Func<T, decimal> amountSelector)
+    {
+        return rows
+            .GroupBy(currencySelector)
+            .Select(group => new CurrencyAmount(group.Key, group.Sum(amountSelector)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Igual que <see cref="SumByCurrency{T}"/> pero para datos de COSTO (F-14): sin
+    /// <paramref name="canSeeCost"/>, devuelve la lista VACIA — no en cero, AFUERA. Un costo en $0
+    /// todavia dice "hoy no hubo costo"; una lista vacia dice "no tenes permiso para ver esto", que es
+    /// el mensaje correcto para quien no tiene <c>cobranzas.see_cost</c>.
+    /// </summary>
+    private static List<CurrencyAmount> SumCostSensitiveByCurrency<T>(
+        bool canSeeCost, IEnumerable<T> rows, Func<T, string> currencySelector, Func<T, decimal> amountSelector)
+    {
+        return canSeeCost ? SumByCurrency(rows, currencySelector, amountSelector) : new List<CurrencyAmount>();
+    }
+
     private async Task<UserScope> ResolveUserScopeAsync(CancellationToken cancellationToken)
     {
         var httpUser = _httpContextAccessor?.HttpContext?.User;
@@ -2176,24 +2210,54 @@ public class ReportService : IReportService
     ///   en pleno circuito de devolucion del operador no es una venta a acreditarle al vendedor.</item>
     /// <item>Las reservas sin responsable caen en el bucket "Sin asignar" en vez de inventar un dueño.</item>
     /// </list>
-    /// La forma del DTO (<see cref="SellerRankingDto"/>) NO cambia: es contenido del reporte, no layout.
+    ///
+    /// <para><b>F-14 (apertura 2026-08-20)</b>: este endpoint vivia detras de <c>[Authorize(Roles="Admin")]</c>,
+    /// que SIEMPRE ve costo — no hacia falta enmascarar nada. Ahora cualquiera con <c>reportes.view</c>
+    /// puede pedir el ranking (ver <c>ReportsController</c>), asi que se repite el mismo candado que ya
+    /// usa el dashboard: sin <c>cobranzas.see_cost</c>, costo y margen se esconden (el escalar legacy
+    /// <see cref="SellerRankingDto.TotalCosts"/> queda en 0, el desglose por moneda queda vacio) — la
+    /// venta se sigue viendo siempre, no es informacion de costo.</para>
+    ///
+    /// <para><b>P-3 (desglose por moneda)</b>: <c>ConfirmedSale</c>/<c>TotalCost</c> del file son un
+    /// escalar surrogate que puede mezclar ARS y USD si la reserva tiene servicios en las dos monedas
+    /// (ADR-021). El desglose por moneda de cada vendedor sale de la tabla hija materializada
+    /// <c>ReservaMoneyByCurrency</c> (misma fuente que usa el resto del dashboard por moneda) — nunca se
+    /// suma una reserva que todavia no tiene esa tabla backfileada, el vendedor simplemente no muestra
+    /// esa reserva en el desglose (mismo criterio conservador que el resto de esta obra).</para>
+    ///
+    /// <para><b>Hallazgo de review (2026-08-20, bloqueante backend+security)</b>: sin <c>reservas.view_all</c>
+    /// el criterio firmado (linea 175 de este archivo) es "el vendedor no ve los numeros de toda la
+    /// agencia SIN EXCEPCIONES" — un ranking de vendedores es justamente el lugar donde mas duele
+    /// olvidarse de este candado (un vendedor podria comparar su venta contra la de sus companeros).
+    /// Mismo <c>scope.OwnerFilter</c> que ya usan <see cref="GetDashboardAsync"/> y
+    /// <see cref="GetCashFlowProjectionAsync"/>: con el filtro activo, la unica fila que devuelve es la
+    /// del propio vendedor (sus reservas agrupadas bajo su propio <c>ResponsibleUserId</c>). Admin o
+    /// quien tenga <c>reservas.view_all</c> sigue viendo el ranking completo, igual que hoy.</para>
     /// </summary>
     public async Task<List<SellerRankingDto>> GetSellerRankingAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken)
     {
         var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
 
+        var scope = await ResolveUserScopeAsync(cancellationToken);
+
         // Universo: reservas creadas en el periodo que representan una venta real. Se descartan los
         // estados que NO son venta atribuible (presupuesto, cancelada, y la que esta esperando
         // devolucion del operador). El costo asociado a la venta confirmada lo tomamos de TotalCost
         // (el costo del file); ConfirmedSale es la venta exigible.
-        var files = await _dbContext.Reservas
+        var filesQuery = _dbContext.Reservas
             .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo
                         && f.Status != EstadoReserva.Budget
                         && f.Status != EstadoReserva.Cancelled
-                        && f.Status != EstadoReserva.PendingOperatorRefund)
+                        && f.Status != EstadoReserva.PendingOperatorRefund);
+        if (scope.OwnerFilter != null)
+        {
+            filesQuery = filesQuery.Where(f => f.ResponsibleUserId == scope.OwnerFilter);
+        }
+        var files = await filesQuery
             .Select(f => new
             {
+                f.Id,
                 f.ResponsibleUserId,
                 f.ResponsibleUserName,
                 f.ConfirmedSale,
@@ -2206,6 +2270,15 @@ public class ReportService : IReportService
         // Para completar el nombre cuando la reserva no lo tiene cacheado (ResponsibleUserName null).
         var users = await _dbContext.Users.ToDictionaryAsync(u => u.Id, u => u.FullName, cancellationToken);
 
+        // P-3: quien es el vendedor de cada reserva, resuelto UNA vez aca (se reusa abajo para no
+        // volver a consultar Reservas al leer la tabla hija por moneda).
+        var responsibleUserIdByReservaId = files.ToDictionary(f => f.Id, f => f.ResponsibleUserId ?? UnassignedSellerUserId);
+        var reservaIds = files.Select(f => f.Id).ToList();
+        var moneyRows = await _dbContext.ReservaMoneyByCurrency
+            .Where(row => reservaIds.Contains(row.ReservaId))
+            .Select(row => new { row.ReservaId, row.Currency, row.ConfirmedSale, row.TotalCost })
+            .ToListAsync(cancellationToken);
+
         var ranking = files
             // Las reservas sin responsable se agrupan todas juntas bajo la misma clave vacia.
             .GroupBy(f => f.ResponsibleUserId ?? UnassignedSellerUserId)
@@ -2215,9 +2288,21 @@ public class ReportService : IReportService
                 var sellerName = ResolveSellerName(userId, group.Select(g => g.ResponsibleUserName), users);
 
                 var confirmedSales = group.Sum(f => f.ConfirmedSale);
-                var totalCosts = group.Sum(f => f.TotalCost);
-                var margin = confirmedSales - totalCosts;
-                var marginPercent = confirmedSales > 0 ? Math.Round((margin / confirmedSales) * 100, 1) : 0;
+                var totalCosts = scope.CanSeeCost ? group.Sum(f => f.TotalCost) : 0m;
+                // F-14: el margen se calcula SOLO si hay permiso — "venta menos margen" reconstruiria el
+                // costo aunque totalCosts ya venga en 0 (0 no es lo mismo que "no lo calculo").
+                var margin = scope.CanSeeCost ? confirmedSales - totalCosts : 0m;
+                var marginPercent = scope.CanSeeCost && confirmedSales > 0
+                    ? Math.Round((margin / confirmedSales) * 100, 1)
+                    : 0m;
+
+                var moneyForSeller = moneyRows
+                    .Where(m => responsibleUserIdByReservaId[m.ReservaId] == userId)
+                    .ToList();
+                var salesByCurrency = SumByCurrency(moneyForSeller, m => m.Currency, m => m.ConfirmedSale);
+                var costsByCurrency = SumCostSensitiveByCurrency(scope.CanSeeCost, moneyForSeller, m => m.Currency, m => m.TotalCost);
+                var marginByCurrency = SumCostSensitiveByCurrency(
+                    scope.CanSeeCost, moneyForSeller, m => m.Currency, m => m.ConfirmedSale - m.TotalCost);
 
                 return new SellerRankingDto(
                     userId,
@@ -2226,7 +2311,10 @@ public class ReportService : IReportService
                     confirmedSales,
                     totalCosts,
                     margin,
-                    marginPercent);
+                    marginPercent,
+                    salesByCurrency,
+                    costsByCurrency,
+                    marginByCurrency);
             })
             .OrderByDescending(s => s.TotalSales)
             .ToList();
@@ -2259,15 +2347,44 @@ public class ReportService : IReportService
         return "Vendedor desconocido";
     }
 
+    /// <summary>
+    /// Top 15 destinos por venta, agregando Hoteles + Paquetes + Vuelos.
+    ///
+    /// <para><b>F-14 (apertura 2026-08-20)</b>: este endpoint vivia detras de <c>[Authorize(Roles="Admin")]</c>
+    /// (siempre ve costo). Ahora cualquiera con <c>reportes.view</c> puede pedirlo (ver
+    /// <c>ReportsController</c>), asi que se repite el candado del dashboard: sin
+    /// <c>cobranzas.see_cost</c>, costo y margen quedan en 0 (escalar) y afuera (desglose por moneda) —
+    /// la venta se sigue viendo siempre.</para>
+    ///
+    /// <para><b>P-3 (desglose por moneda)</b>: cada servicio (hotel/paquete/vuelo) tiene su propia
+    /// <c>Currency</c> — <c>null</c> se lee como ARS (regla legacy, <c>Monedas.Normalizar</c>). Sumar
+    /// distintas monedas en un solo numero mezclaria plata que no se puede sumar; el desglose por moneda
+    /// agrupa cada destino por la moneda real de cada servicio.</para>
+    ///
+    /// <para><b>Hallazgo de review (2026-08-20, bloqueante backend+security)</b>: mismo <c>scope.OwnerFilter</c>
+    /// que <see cref="GetSellerRankingAsync"/> — sin <c>reservas.view_all</c> el criterio firmado (linea
+    /// 175 de este archivo) es "el vendedor no ve los numeros de toda la agencia SIN EXCEPCIONES". Cada
+    /// servicio (Hotel/Package/Flight) no tiene <c>ResponsibleUserId</c> propio — se hace JOIN contra
+    /// <c>Reservas</c> por <c>ReservaId</c> (FK obligatoria, todo servicio pertenece a una reserva) para
+    /// recortar por vendedor ANTES de agregar por destino.</para>
+    /// </summary>
     public async Task<List<DestinationAnalyticsDto>> GetDestinationAnalyticsAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken)
     {
         var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
 
-        // Aggregate destinations from Hotels, Packages, and Flights
-        var hotelDestinations = await _dbContext.Set<HotelBooking>()
-            .Where(h => h.CreatedAt >= dateFrom && h.CreatedAt <= dateTo)
-            .Select(h => new { Destination = h.City, h.SalePrice, h.NetCost, Passengers = h.Adults + h.Children })
+        var scope = await ResolveUserScopeAsync(cancellationToken);
+
+        // Aggregate destinations from Hotels, Packages, and Flights. Las 3 proyecciones tienen que
+        // mantener EXACTAMENTE la misma forma (mismos nombres/orden/tipos de propiedad) para que el
+        // Concat de mas abajo compile como un unico tipo anonimo. JOIN contra Reservas para poder recortar
+        // por scope.OwnerFilter (ver el docstring del metodo).
+        var hotelDestinations = await (
+            from h in _dbContext.Set<HotelBooking>()
+            join r in _dbContext.Reservas on h.ReservaId equals r.Id
+            where h.CreatedAt >= dateFrom && h.CreatedAt <= dateTo
+                && (scope.OwnerFilter == null || r.ResponsibleUserId == scope.OwnerFilter)
+            select new { Destination = h.City, h.SalePrice, h.NetCost, Passengers = h.Adults + h.Children, h.Currency })
             .ToListAsync(cancellationToken);
 
         // ADR-018 (§4-ter, R-D3): los servicios cargados con la ficha "producto-primero" dejan Destination
@@ -2275,34 +2392,61 @@ public class ReportService : IReportService
         // ranking y su revenue desapareceria del reporte. Por eso caemos al nombre del producto
         // (PackageName / ProductName) — misma regla que ServiceDisplayName, replicada aca porque la
         // proyeccion corre en SQL y no puede invocar el helper de C#. Decision de negocio: no perder revenue.
-        var packageDestinations = await _dbContext.Set<PackageBooking>()
-            .Where(p => p.CreatedAt >= dateFrom && p.CreatedAt <= dateTo)
-            .Select(p => new { Destination = p.Destination ?? p.PackageName, p.SalePrice, NetCost = p.NetCost, Passengers = p.Adults + p.Children })
+        var packageDestinations = await (
+            from p in _dbContext.Set<PackageBooking>()
+            join r in _dbContext.Reservas on p.ReservaId equals r.Id
+            where p.CreatedAt >= dateFrom && p.CreatedAt <= dateTo
+                && (scope.OwnerFilter == null || r.ResponsibleUserId == scope.OwnerFilter)
+            select new { Destination = p.Destination ?? p.PackageName, p.SalePrice, NetCost = p.NetCost, Passengers = p.Adults + p.Children, p.Currency })
             .ToListAsync(cancellationToken);
 
-        var flightDestinations = await _dbContext.Set<FlightSegment>()
-            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo)
-            .Select(f => new { Destination = f.DestinationCity ?? f.Destination ?? f.ProductName, f.SalePrice, f.NetCost, Passengers = 1 })
+        var flightDestinations = await (
+            from f in _dbContext.Set<FlightSegment>()
+            join r in _dbContext.Reservas on f.ReservaId equals r.Id
+            where f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo
+                && (scope.OwnerFilter == null || r.ResponsibleUserId == scope.OwnerFilter)
+            select new { Destination = f.DestinationCity ?? f.Destination ?? f.ProductName, f.SalePrice, f.NetCost, Passengers = 1, f.Currency })
             .ToListAsync(cancellationToken);
 
+        // Currency normalizada ACA (fuera de SQL, ya en memoria): Monedas.Normalizar no es traducible
+        // por el provider de EF, y null-como-ARS es una regla del dominio, no del storage.
         var allBookings = hotelDestinations
             .Concat(packageDestinations)
             .Concat(flightDestinations)
             .Where(b => !string.IsNullOrWhiteSpace(b.Destination))
+            .Select(b => new { b.Destination, b.SalePrice, b.NetCost, b.Passengers, Currency = Monedas.Normalizar(b.Currency) })
+            .ToList();
+
+        var destinations = allBookings
             .GroupBy(b => b.Destination.Trim().ToUpper())
-            .Select(g => new DestinationAnalyticsDto(
-                g.Key,
-                g.Count(),
-                g.Sum(b => b.SalePrice),
-                g.Sum(b => b.NetCost),
-                g.Sum(b => b.SalePrice) - g.Sum(b => b.NetCost),
-                g.Sum(b => b.Passengers)
-            ))
+            .Select(group =>
+            {
+                var totalRevenue = group.Sum(b => b.SalePrice);
+                var totalCost = scope.CanSeeCost ? group.Sum(b => b.NetCost) : 0m;
+                // F-14: igual criterio que GetSellerRankingAsync — el margen se calcula SOLO con permiso.
+                var margin = scope.CanSeeCost ? totalRevenue - totalCost : 0m;
+
+                var revenueByCurrency = SumByCurrency(group, b => b.Currency, b => b.SalePrice);
+                var costByCurrency = SumCostSensitiveByCurrency(scope.CanSeeCost, group, b => b.Currency, b => b.NetCost);
+                var marginByCurrency = SumCostSensitiveByCurrency(
+                    scope.CanSeeCost, group, b => b.Currency, b => b.SalePrice - b.NetCost);
+
+                return new DestinationAnalyticsDto(
+                    group.Key,
+                    group.Count(),
+                    totalRevenue,
+                    totalCost,
+                    margin,
+                    group.Sum(b => b.Passengers),
+                    revenueByCurrency,
+                    costByCurrency,
+                    marginByCurrency);
+            })
             .OrderByDescending(d => d.TotalRevenue)
             .Take(15)
             .ToList();
 
-        return allBookings;
+        return destinations;
     }
 
     /// <summary>
@@ -2472,6 +2616,25 @@ public class ReportService : IReportService
             runningBalanceByCurrencyList);
     }
 
+    /// <summary>
+    /// "Año contra año": venta/costo/margen mes a mes de este año vs. el año pasado.
+    ///
+    /// <para><b>F-14 (apertura 2026-08-20)</b>: dejo de ser <c>[Authorize(Roles="Admin")]</c> (siempre ve
+    /// costo). Ahora cualquiera con <c>reportes.view</c> puede pedirlo (ver <c>ReportsController</c>),
+    /// asi que se repite el candado del dashboard: sin <c>cobranzas.see_cost</c>, costo y margen quedan
+    /// en 0 (escalar) y afuera (desglose por moneda) — la venta se sigue viendo siempre.</para>
+    ///
+    /// <para><b>P-3 (desglose por moneda)</b>: <c>TotalSale</c>/<c>TotalCost</c> del file son un escalar
+    /// surrogate que puede mezclar ARS y USD (ADR-021). El desglose mes a mes por moneda sale de la
+    /// tabla hija materializada <c>ReservaMoneyByCurrency</c>, igual criterio que <see
+    /// cref="GetSellerRankingAsync"/>.</para>
+    ///
+    /// <para><b>Hallazgo de review (2026-08-20, bloqueante backend+security)</b>: mismo <c>scope.OwnerFilter</c>
+    /// que <see cref="GetSellerRankingAsync"/> — sin <c>reservas.view_all</c> el criterio firmado (linea
+    /// 175 de este archivo) es "el vendedor no ve los numeros de toda la agencia SIN EXCEPCIONES". Con el
+    /// filtro activo, "año contra año" muestra la evolucion mes a mes de las reservas del propio vendedor,
+    /// no de toda la agencia.</para>
+    /// </summary>
     public async Task<YearOverYearResponse> GetYearOverYearAsync(CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
@@ -2479,34 +2642,72 @@ public class ReportService : IReportService
         var previousYearStart = new DateTime(now.Year - 1, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var previousYearEnd = new DateTime(now.Year - 1, 12, 31, 23, 59, 59, DateTimeKind.Utc);
 
-        var currentYearData = await _dbContext.Reservas
-            .Where(f => f.CreatedAt >= currentYearStart && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
-            .GroupBy(f => f.CreatedAt.Month)
-            .Select(g => new { Month = g.Key, Sales = g.Sum(f => f.TotalSale), Costs = g.Sum(f => f.TotalCost), Count = g.Count() })
+        var scope = await ResolveUserScopeAsync(cancellationToken);
+
+        var currentYearReservasQuery = _dbContext.Reservas
+            .Where(f => f.CreatedAt >= currentYearStart && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled);
+        var previousYearReservasQuery = _dbContext.Reservas
+            .Where(f => f.CreatedAt >= previousYearStart && f.CreatedAt <= previousYearEnd && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled);
+        if (scope.OwnerFilter != null)
+        {
+            currentYearReservasQuery = currentYearReservasQuery.Where(f => f.ResponsibleUserId == scope.OwnerFilter);
+            previousYearReservasQuery = previousYearReservasQuery.Where(f => f.ResponsibleUserId == scope.OwnerFilter);
+        }
+
+        var currentYearReservas = await currentYearReservasQuery
+            .Select(f => new ReservaYearRow(f.Id, f.CreatedAt, f.TotalSale, f.TotalCost))
             .ToListAsync(cancellationToken);
 
-        var previousYearData = await _dbContext.Reservas
-            .Where(f => f.CreatedAt >= previousYearStart && f.CreatedAt <= previousYearEnd && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
-            .GroupBy(f => f.CreatedAt.Month)
-            .Select(g => new { Month = g.Key, Sales = g.Sum(f => f.TotalSale), Costs = g.Sum(f => f.TotalCost), Count = g.Count() })
+        var previousYearReservas = await previousYearReservasQuery
+            .Select(f => new ReservaYearRow(f.Id, f.CreatedAt, f.TotalSale, f.TotalCost))
             .ToListAsync(cancellationToken);
 
-        var currentYear = Enumerable.Range(1, 12).Select(m => {
-            var data = currentYearData.FirstOrDefault(d => d.Month == m);
-            var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(m);
-            return new YoyMonthDto(monthName, m, data?.Sales ?? 0, data?.Costs ?? 0, (data?.Sales ?? 0) - (data?.Costs ?? 0), data?.Count ?? 0);
-        }).ToList();
+        // P-3: una sola consulta a la tabla hija para los dos anios (los ids de cada periodo no se pisan).
+        var allReservaIds = currentYearReservas.Select(r => r.Id)
+            .Concat(previousYearReservas.Select(r => r.Id))
+            .ToList();
+        var moneyRows = await _dbContext.ReservaMoneyByCurrency
+            .Where(row => allReservaIds.Contains(row.ReservaId))
+            .Select(row => new ReservaCurrencyMoneyRow(row.ReservaId, row.Currency, row.TotalSale, row.TotalCost))
+            .ToListAsync(cancellationToken);
 
-        var previousYear = Enumerable.Range(1, 12).Select(m => {
-            var data = previousYearData.FirstOrDefault(d => d.Month == m);
-            var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(m);
-            return new YoyMonthDto(monthName, m, data?.Sales ?? 0, data?.Costs ?? 0, (data?.Sales ?? 0) - (data?.Costs ?? 0), data?.Count ?? 0);
-        }).ToList();
+        var currentYear = BuildYoyMonths(currentYearReservas, moneyRows, scope.CanSeeCost);
+        var previousYear = BuildYoyMonths(previousYearReservas, moneyRows, scope.CanSeeCost);
 
         var currentTotal = currentYear.Sum(m => m.Sales);
         var previousTotal = previousYear.Sum(m => m.Sales);
         var growth = previousTotal > 0 ? Math.Round(((currentTotal - previousTotal) / previousTotal) * 100, 1) : 0;
 
         return new YearOverYearResponse(currentYear, previousYear, currentTotal, previousTotal, growth);
+    }
+
+    /// <summary>
+    /// Arma los 12 meses de UN año para <see cref="GetYearOverYearAsync"/> (siempre los 12, en 0 el mes
+    /// que no tuvo venta). El enmascarado de costo/margen YA se decidio antes de llamar aca
+    /// (<paramref name="canSeeCost"/>) — este helper solo suma, no decide permisos.
+    /// </summary>
+    private static List<YoyMonthDto> BuildYoyMonths(
+        List<ReservaYearRow> yearReservas, List<ReservaCurrencyMoneyRow> moneyRows, bool canSeeCost)
+    {
+        return Enumerable.Range(1, 12).Select(month =>
+        {
+            var monthReservas = yearReservas.Where(r => r.CreatedAt.Month == month).ToList();
+            var sales = monthReservas.Sum(r => r.TotalSale);
+            var costs = canSeeCost ? monthReservas.Sum(r => r.TotalCost) : 0m;
+            // F-14: igual criterio que GetSellerRankingAsync — el margen se calcula SOLO con permiso.
+            var margin = canSeeCost ? sales - costs : 0m;
+            var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(month);
+
+            var monthReservaIds = monthReservas.Select(r => r.Id).ToHashSet();
+            var moneyThisMonth = moneyRows.Where(m => monthReservaIds.Contains(m.ReservaId)).ToList();
+            var salesByCurrency = SumByCurrency(moneyThisMonth, m => m.Currency, m => m.TotalSale);
+            var costsByCurrency = SumCostSensitiveByCurrency(canSeeCost, moneyThisMonth, m => m.Currency, m => m.TotalCost);
+            var marginByCurrency = SumCostSensitiveByCurrency(
+                canSeeCost, moneyThisMonth, m => m.Currency, m => m.TotalSale - m.TotalCost);
+
+            return new YoyMonthDto(
+                monthName, month, sales, costs, margin, monthReservas.Count,
+                salesByCurrency, costsByCurrency, marginByCurrency);
+        }).ToList();
     }
 }

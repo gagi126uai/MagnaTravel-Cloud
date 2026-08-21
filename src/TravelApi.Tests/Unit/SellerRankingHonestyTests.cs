@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using TravelApi.Application.Interfaces;
@@ -156,10 +158,36 @@ public class SellerRankingHonestyTests
         return new AppDbContext(options);
     }
 
+    /// <summary>
+    /// F-14 (2026-08-20): <c>GetSellerRankingAsync</c> ahora enmascara costo/margen sin
+    /// <c>cobranzas.see_cost</c> (antes el endpoint era Admin-only, siempre veia costo). Estos tests
+    /// fijan la ATRIBUCION (que vendedor, que venta cuenta), no el enmascarado — se arman con un usuario
+    /// Admin para que TotalCosts/GrossMargin sigan mostrando el numero real. El enmascarado tiene su
+    /// propia cobertura en <c>ReportServiceBiAnalyticsCurrencyTests</c>.
+    /// </summary>
     private static ReportService BuildReports(AppDbContext db)
     {
         var bna = new Mock<IBnaExchangeRateService>();
         bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync((BnaUsdSellerRateDto?)null);
-        return new ReportService(db, bna.Object);
+
+        var accessor = BuildAdminHttpContextAccessor();
+        var resolver = BuildResolver("admin-test");
+
+        return new ReportService(db, bna.Object, resolver, accessor);
+    }
+
+    private static IHttpContextAccessor BuildAdminHttpContextAccessor()
+    {
+        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, "admin-test"), new(ClaimTypes.Role, "Admin") };
+        var ctx = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test")) };
+        return new HttpContextAccessor { HttpContext = ctx };
+    }
+
+    private static IUserPermissionResolver BuildResolver(string userId, params string[] permissions)
+    {
+        var mock = new Mock<IUserPermissionResolver>();
+        IReadOnlySet<string> set = new HashSet<string>(permissions);
+        mock.Setup(r => r.GetPermissionsAsync(userId, It.IsAny<CancellationToken>())).ReturnsAsync(set);
+        return mock.Object;
     }
 }

@@ -58,6 +58,12 @@ public class OperatorRefundService : IOperatorRefundService
     private readonly IAuditService _auditService;
     private readonly IOperationalFinanceSettingsService _settings;
     private readonly ILogger<OperatorRefundService> _logger;
+    // Fix ADR-044 (2026-08-20): antes ExchangeRateAtReceipt se hardcodeaba en 1 SIEMPRE, aunque el
+    // refund fuera en USD. Opcional (default null) para no romper los unit tests que instancian este
+    // service con el ctor de 6 args (mismo criterio "opcional" que el resto de la app, ver ReportService)
+    // — sin este resolver inyectado, ResolveExchangeRateAtReceiptAsync degrada a 1 igual que el
+    // comportamiento de siempre.
+    private readonly IExchangeRateResolver? _exchangeRateResolver;
 
     public OperatorRefundService(
         AppDbContext db,
@@ -65,7 +71,8 @@ public class OperatorRefundService : IOperatorRefundService
         IClientCreditService clientCreditService,
         IAuditService auditService,
         IOperationalFinanceSettingsService settings,
-        ILogger<OperatorRefundService> logger)
+        ILogger<OperatorRefundService> logger,
+        IExchangeRateResolver? exchangeRateResolver = null)
     {
         _db = db;
         _bcService = bcService;
@@ -73,6 +80,66 @@ public class OperatorRefundService : IOperatorRefundService
         _auditService = auditService;
         _settings = settings;
         _logger = logger;
+        _exchangeRateResolver = exchangeRateResolver;
+    }
+
+    /// <summary>
+    /// Tipo de cambio "de recibo" que <see cref="TreasuryFxAdjustmentEngine"/> usa como base de
+    /// comparacion (ADR-044 T3b) para calcular si hubo diferencia de cambio entre lo que se declaro en
+    /// la ND del cargo del operador y lo que efectivamente entro en pesos al recibir el reembolso.
+    ///
+    /// <para>ARS siempre da 1 (no hay conversion que hacer). Para cualquier otra moneda, se busca en la
+    /// libreta historica (<see cref="IExchangeRateResolver"/>, ADR-011) el TC del dia del recibo — este
+    /// camino interactivo NUNCA le pega a una API externa en vivo, solo lee lo que el job diario ya dejo
+    /// guardado (mismo criterio que el resto del sistema). Se pide con
+    /// <c>excludePracticeOfficialData: true</c> porque esto es un calculo de tesoreria interno, no una
+    /// factura: no corresponde usar el numero de practica que ARCA exige en homologacion.</para>
+    ///
+    /// <para>Si la libreta no tiene dato para esa fecha (ventana de respaldo sin cotizacion cargada), se
+    /// degrada a 1 SIN romper el alta del refund — falla abierta hacia el comportamiento de siempre
+    /// (regla P-21: nunca bloquear una carga de caja por falta de un dato auxiliar). Un TC en 1 para una
+    /// moneda extranjera hace que <see cref="TreasuryFxAdjustmentEngine"/> no calcule ajuste real para
+    /// ESE refund puntual — mismo resultado que antes de este fix, no es peor.</para>
+    ///
+    /// <para>TODO: cuando <see cref="OperatorRefundReceived"/> gane trazabilidad de origen del TC
+    /// (fuente + fecha efectiva, hoy no hay columna para eso — ver el comentario original del campo),
+    /// esta resolucion deberia guardar tambien ESE dato, no solo el numero. Queda para una FC futura,
+    /// no bloquea este fix.</para>
+    /// </summary>
+    private async Task<decimal> ResolveExchangeRateAtReceiptAsync(
+        string currencyIso, DateTime receivedAtUtc, CancellationToken ct)
+    {
+        if (string.Equals(currencyIso, Monedas.ARS, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1m;
+        }
+
+        if (_exchangeRateResolver is null)
+        {
+            _logger.LogWarning(
+                "Refund de operador en {Currency} sin IExchangeRateResolver inyectado: " +
+                "ExchangeRateAtReceipt degrada a 1 y el ajuste FX de ese refund no sera real.",
+                currencyIso);
+            return 1m;
+        }
+
+        var suggestion = await _exchangeRateResolver.GetSuggestionAsync(
+            currencyIso,
+            DateOnly.FromDateTime(receivedAtUtc),
+            ct,
+            excludePracticeOfficialData: true);
+
+        if (suggestion is null)
+        {
+            _logger.LogWarning(
+                "Sin cotizacion en la libreta para {Currency} al {Date}: ExchangeRateAtReceipt degrada " +
+                "a 1 (falla abierta). El ajuste FX de TreasuryFxAdjustmentEngine para ese refund queda " +
+                "calculado con TC degradado.",
+                currencyIso, DateOnly.FromDateTime(receivedAtUtc));
+            return 1m;
+        }
+
+        return suggestion.Rate;
     }
 
     /// <summary>
@@ -135,20 +202,26 @@ public class OperatorRefundService : IOperatorRefundService
             ?? throw new KeyNotFoundException(
                 $"Supplier {request.SupplierPublicId} no encontrado.");
 
+        var receivedAtUtc = request.ReceivedAt.ToUniversalTime();
+        var currency = request.Currency.ToUpperInvariant();
+
+        // Fix ADR-044 (2026-08-20): antes esto era SIEMPRE 1, aunque la moneda fuera USD — el motor de
+        // diferencia de cambio de tesoreria (TreasuryFxAdjustmentEngine) calculaba contra un TC de
+        // recibo falso. Ver el docstring de ResolveExchangeRateAtReceiptAsync para la escalera completa.
+        var exchangeRateAtReceipt = await ResolveExchangeRateAtReceiptAsync(currency, receivedAtUtc, ct);
+
         // 2) Crear el aggregate del ingreso.
         var refund = new OperatorRefundReceived
         {
             SupplierId = supplier.Id,
             Supplier = supplier, // navigation seteada explicitamente para que el builder NO tire
-            ReceivedAt = request.ReceivedAt.ToUniversalTime(),
+            ReceivedAt = receivedAtUtc,
             ReceivedAmount = ReservationEconomicPolicy.RoundCurrency(request.ReceivedAmount),
             AllocatedAmount = 0m,
             Method = string.IsNullOrWhiteSpace(request.Method) ? "Transfer" : request.Method!,
             Reference = request.Reference,
-            Currency = request.Currency.ToUpperInvariant(),
-            // ExchangeRateAtReceipt: en MVP se setea = 1 si la moneda es ARS y no
-            // viene en el request. Una FC futura agrega FetchedAt + fuente.
-            ExchangeRateAtReceipt = 1m,
+            Currency = currency,
+            ExchangeRateAtReceipt = exchangeRateAtReceipt,
             ReceivedByUserId = userId,
             ReceivedByUserName = userName ?? string.Empty,
             // Sello de idempotencia EN EL INSERT (ver doc del metodo). Null en el flujo de 2 pasos.

@@ -267,6 +267,25 @@ public record ReportsSummaryResponse(
     decimal GrossMargin);
 
 // BI Analytics DTOs
+
+/// <param name="TotalSales">
+/// TOTAL de venta confirmada del vendedor, TODAS las monedas sumadas en un solo numero. Se conserva
+/// SOLO por compatibilidad con el front actual de "Ranking de vendedores" (P-3 prohibe sumar monedas
+/// distintas) — un consumidor NUEVO tiene que usar <see cref="TotalSalesByCurrency"/>.
+/// </param>
+/// <param name="TotalCosts">
+/// Igual que <paramref name="TotalSales"/> pero de costo — Y ADEMAS en 0 sin <c>cobranzas.see_cost</c>
+/// (F-14: es informacion de costo, mismo criterio que <c>CostosDelMes</c> del dashboard). Antes este
+/// endpoint era Admin-only (que siempre ve costo) asi que nunca hacia falta enmascarar; al abrirlo a
+/// <c>reportes.view</c> (ver <c>ReportsController</c>) el enmascarado pasa a ser obligatorio.
+/// </param>
+/// <param name="GrossMargin">Igual criterio que <paramref name="TotalCosts"/>: en 0 sin <c>cobranzas.see_cost</c>.</param>
+/// <param name="MarginPercent">Igual criterio: en 0 sin <c>cobranzas.see_cost</c> (revelaria costo por division).</param>
+/// <param name="TotalSalesByCurrency">P-3: venta confirmada del vendedor, UNA linea por moneda (ADR-021, tabla hija ReservaMoneyByCurrency).</param>
+/// <param name="TotalCostsByCurrency">
+/// P-3 + F-14: costo por moneda. Lista VACIA (no solo en 0) sin <c>cobranzas.see_cost</c> — es costo, se omite entero.
+/// </param>
+/// <param name="GrossMarginByCurrency">Igual criterio que <paramref name="TotalCostsByCurrency"/>: lista vacia sin permiso.</param>
 public record SellerRankingDto(
     string UserId,
     string SellerName,
@@ -274,15 +293,27 @@ public record SellerRankingDto(
     decimal TotalSales,
     decimal TotalCosts,
     decimal GrossMargin,
-    decimal MarginPercent);
+    decimal MarginPercent,
+    List<CurrencyAmount> TotalSalesByCurrency,
+    List<CurrencyAmount> TotalCostsByCurrency,
+    List<CurrencyAmount> GrossMarginByCurrency);
 
+/// <param name="TotalRevenue">TOTAL de venta del destino, TODAS las monedas sumadas — se conserva por compatibilidad (P-3), ver <see cref="TotalRevenueByCurrency"/>.</param>
+/// <param name="TotalCost">Igual criterio que <see cref="SellerRankingDto.TotalCosts"/>: en 0 sin <c>cobranzas.see_cost</c> (F-14).</param>
+/// <param name="Margin">Igual criterio: en 0 sin <c>cobranzas.see_cost</c>.</param>
+/// <param name="TotalRevenueByCurrency">P-3: venta del destino, UNA linea por moneda (la moneda de cada servicio: hotel/paquete/vuelo).</param>
+/// <param name="TotalCostByCurrency">P-3 + F-14: costo por moneda, lista VACIA sin <c>cobranzas.see_cost</c>.</param>
+/// <param name="MarginByCurrency">Igual criterio que <see cref="TotalCostByCurrency"/>.</param>
 public record DestinationAnalyticsDto(
     string Destination,
     int BookingCount,
     decimal TotalRevenue,
     decimal TotalCost,
     decimal Margin,
-    int PassengerCount);
+    int PassengerCount,
+    List<CurrencyAmount> TotalRevenueByCurrency,
+    List<CurrencyAmount> TotalCostByCurrency,
+    List<CurrencyAmount> MarginByCurrency);
 
 /// <param name="CurrentBalance">
 /// Saldo actual TOTAL, todas las monedas sumadas en un solo numero. Se conserva SOLO por
@@ -354,10 +385,19 @@ public record YearOverYearResponse(
     decimal PreviousYearTotal,
     decimal GrowthPercent);
 
+/// <param name="Sales">TOTAL de venta del mes, TODAS las monedas sumadas — se conserva por compatibilidad (P-3), ver <see cref="SalesByCurrency"/>.</param>
+/// <param name="Costs">Igual criterio que <see cref="SellerRankingDto.TotalCosts"/>: en 0 sin <c>cobranzas.see_cost</c> (F-14).</param>
+/// <param name="Margin">Igual criterio: en 0 sin <c>cobranzas.see_cost</c>.</param>
+/// <param name="SalesByCurrency">P-3: venta del mes, UNA linea por moneda (ADR-021, tabla hija ReservaMoneyByCurrency).</param>
+/// <param name="CostsByCurrency">P-3 + F-14: costo por moneda, lista VACIA sin <c>cobranzas.see_cost</c>.</param>
+/// <param name="MarginByCurrency">Igual criterio que <see cref="CostsByCurrency"/>.</param>
 public record YoyMonthDto(
     string Month,
     int MonthNumber,
     decimal Sales,
     decimal Costs,
     decimal Margin,
-    int ReservaCount);
+    int ReservaCount,
+    List<CurrencyAmount> SalesByCurrency,
+    List<CurrencyAmount> CostsByCurrency,
+    List<CurrencyAmount> MarginByCurrency);

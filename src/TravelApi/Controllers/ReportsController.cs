@@ -134,8 +134,14 @@ public class ReportsController : ControllerBase
 
     // ===== BI Analytics Endpoints =====
 
+    /// <summary>
+    /// R3 (spec dashboard 2026-08-18): dejo de ser [Authorize(Roles="Admin")] duro. Ahora sigue el
+    /// mismo sistema de permisos que <c>GET /reports/dashboard</c>: cualquiera con <c>reportes.view</c>
+    /// puede pedirlo, y el service enmascara adentro costo/margen (informacion de costo) para quien no
+    /// tenga <c>cobranzas.see_cost</c> — ver el docstring de <c>ReportService.GetSellerRankingAsync</c>.
+    /// </summary>
     [HttpGet("sellers")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReportesView)]
     public async Task<ActionResult> GetSellerRanking(
         [FromQuery] DateTime? from, [FromQuery] DateTime? to, CancellationToken cancellationToken)
     {
@@ -143,8 +149,14 @@ public class ReportsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// R3 (spec dashboard 2026-08-18): dejo de ser [Authorize(Roles="Admin")] duro. Mismo sistema de
+    /// permisos que <c>GET /reports/dashboard</c>: cualquiera con <c>reportes.view</c> puede pedirlo, y
+    /// el service enmascara adentro costo/margen para quien no tenga <c>cobranzas.see_cost</c> — ver el
+    /// docstring de <c>ReportService.GetDestinationAnalyticsAsync</c>.
+    /// </summary>
     [HttpGet("destinations")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReportesView)]
     public async Task<ActionResult> GetDestinationAnalytics(
         [FromQuery] DateTime? from, [FromQuery] DateTime? to, CancellationToken cancellationToken)
     {
@@ -168,8 +180,14 @@ public class ReportsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// R3 (spec dashboard 2026-08-18): dejo de ser [Authorize(Roles="Admin")] duro. Mismo sistema de
+    /// permisos que <c>GET /reports/dashboard</c>: cualquiera con <c>reportes.view</c> puede pedirlo, y
+    /// el service enmascara adentro costo/margen para quien no tenga <c>cobranzas.see_cost</c> — ver el
+    /// docstring de <c>ReportService.GetYearOverYearAsync</c>.
+    /// </summary>
     [HttpGet("yoy")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.ReportesView)]
     public async Task<ActionResult> GetYearOverYear(CancellationToken cancellationToken)
     {
         var result = await _reportService.GetYearOverYearAsync(cancellationToken);

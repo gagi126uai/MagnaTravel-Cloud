@@ -497,6 +497,14 @@ public class Adr018ProductFirstReconciliationTests
     {
         await using var context = CreateContext();
         var now = DateTime.UtcNow;
+        // Hallazgo de review (2026-08-20, bloqueante backend+security): GetDestinationAnalyticsAsync ahora
+        // hace INNER JOIN contra Reservas (para poder recortar por scope.OwnerFilter) — sin esta fila
+        // padre, los dos servicios de mas abajo quedarian afuera del resultado.
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1, NumeroReserva = "R-ADR018-DEST", Name = "Reserva con catalogo",
+            Status = EstadoReserva.Confirmed, ResponsibleUserId = "vendedor-adr018", CreatedAt = now,
+        });
         context.PackageBookings.Add(new PackageBooking
         {
             Id = 1, ReservaId = 1, PackageName = "Caribe Magico", Destination = null,
@@ -512,7 +520,12 @@ public class Adr018ProductFirstReconciliationTests
 
         var bna = new Mock<IBnaExchangeRateService>();
         bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync((BnaUsdSellerRateDto?)null);
-        var reportService = new ReportService(context, bna.Object);
+        // Con reservas.view_all para que scope.OwnerFilter quede null: este test mide la reconciliacion
+        // de nombre/destino del catalogo, no el recorte por vendedor (eso ya tiene su propia cobertura en
+        // ReportServiceBiAnalyticsCurrencyTests).
+        var accessor = BuildHttpContextAccessor("vendedor-adr018");
+        var resolver = BuildResolver("vendedor-adr018", Permissions.ReservasViewAll);
+        var reportService = new ReportService(context, bna.Object, resolver, accessor);
 
         var ranking = await reportService.GetDestinationAnalyticsAsync(null, null, CancellationToken.None);
 
