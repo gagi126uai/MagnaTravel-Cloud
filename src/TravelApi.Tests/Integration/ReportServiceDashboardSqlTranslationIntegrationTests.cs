@@ -265,6 +265,10 @@ public sealed class ReportServiceDashboardSqlTranslationIntegrationTests
             CreatedAt = DateTime.UtcNow,
         };
         ctx.Reservas.AddRange(reservaPropia, reservaAjena);
+        // Postgres valida la FK HotelBookings -> Suppliers de verdad (InMemory no): el operador
+        // padre tiene que existir ANTES de colgar hoteles, igual que en el resto de este archivo.
+        var supplierBi = new Supplier { Name = "Operador Test BI" };
+        ctx.Suppliers.Add(supplierBi);
         await ctx.SaveChangesAsync();
 
         // Desglose por moneda (ReservaMoneyByCurrency) de cada reserva: ejercita la proyeccion nueva a
@@ -276,8 +280,8 @@ public sealed class ReportServiceDashboardSqlTranslationIntegrationTests
 
         // Hoteles atados a cada reserva por FK real: ejercita el JOIN nuevo de GetDestinationAnalyticsAsync.
         ctx.HotelBookings.AddRange(
-            new HotelBooking { ReservaId = reservaPropia.Id, City = "Bariloche", Currency = Monedas.ARS, SalePrice = 700m, NetCost = 400m, Adults = 2, CreatedAt = DateTime.UtcNow },
-            new HotelBooking { ReservaId = reservaAjena.Id, City = "Cancun", Currency = Monedas.ARS, SalePrice = 2000m, NetCost = 1200m, Adults = 2, CreatedAt = DateTime.UtcNow });
+            new HotelBooking { ReservaId = reservaPropia.Id, SupplierId = supplierBi.Id, City = "Bariloche", Currency = Monedas.ARS, SalePrice = 700m, NetCost = 400m, Adults = 2, CreatedAt = DateTime.UtcNow },
+            new HotelBooking { ReservaId = reservaAjena.Id, SupplierId = supplierBi.Id, City = "Cancun", Currency = Monedas.ARS, SalePrice = 2000m, NetCost = 1200m, Adults = 2, CreatedAt = DateTime.UtcNow });
         await ctx.SaveChangesAsync();
 
         var httpContext = new DefaultHttpContext
