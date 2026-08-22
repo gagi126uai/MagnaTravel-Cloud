@@ -197,7 +197,9 @@ public class PartialCreditNoteReviewAlertJobTests
             It.Is<Notification>(notif =>
                 notif.RelatedEntityType == "PartialCreditNoteReviewPending"
                 && notif.Type == "Warning"
-                && notif.Priority == "Urgent"),
+                // Decision 2026-08-19/22: el banner naranja queda reservado a caidas de sistema; esta
+                // cancelacion trabada puntual ahora es un aviso Normal en la campanita, no Urgent.
+                && notif.Priority == "Normal"),
             It.IsAny<CancellationToken>()),
             Times.Exactly(2));
 

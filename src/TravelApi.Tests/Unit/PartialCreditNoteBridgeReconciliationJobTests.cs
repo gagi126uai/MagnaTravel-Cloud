@@ -329,7 +329,9 @@ public class PartialCreditNoteBridgeReconciliationJobTests
         notificationMock.Verify(n => n.CreateAndSendAsync(
             It.Is<Notification>(notif =>
                 notif.RelatedEntityType == "PartialCreditNoteBridgeReconciliationFailed"
-                && notif.Priority == "Urgent"),
+                // Decision 2026-08-19/22: el banner naranja queda reservado a caidas de sistema; esta
+                // falla puntual del bridge ahora es un aviso Normal en la campanita, no Urgent.
+                && notif.Priority == "Normal"),
             It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }

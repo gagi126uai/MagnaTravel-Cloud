@@ -261,7 +261,10 @@ public class CoherenceWatchdogJob
             {
                 UserId = admin.Id,
                 Type = "Warning",
-                Priority = "Urgent",
+                // Decision 2026-08-22: de "Urgent" a "Normal" — el banner naranja full-width queda
+                // reservado a caidas de TODO el sistema (decision firmada 2026-08-19). El resumen diario
+                // del vigia sigue siendo un Warning normal en la campanita.
+                Priority = "Normal",
                 RelatedEntityType = WatchdogNotificationType,
                 // Sin RelatedEntityId: el hallazgo es agregado (varias reservas), no una entidad puntual. La clave de
                 // resolución es fija (no derivable de la entidad), por eso se setea a mano.

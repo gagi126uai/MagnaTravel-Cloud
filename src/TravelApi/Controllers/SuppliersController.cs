@@ -126,13 +126,23 @@ public class SuppliersController : ControllerBase
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             var mapped = MapSupplier(supplier);
 
-            // Tres campos con el mismo riesgo de "PUT que omite y pisa": InvoicingMode (ya cubierto antes de este
-            // fix con el campo nullable del DTO), PenaltyBehavior y TreasuryFxAssumedByOverride (cubiertos ahora
-            // mirando presencia en el JSON crudo). Se pide el valor actual UNA sola vez si hace falta.
+            // Cinco campos con el mismo riesgo de "PUT que omite y pisa": InvoicingMode (ya cubierto antes de
+            // este fix con el campo nullable del DTO), PenaltyBehavior, TreasuryFxAssumedByOverride,
+            // DefaultPaymentTermDays e IsActive (estos ultimos dos, 2026-08-22) cubiertos mirando presencia en
+            // el JSON crudo. Se pide el valor actual UNA sola vez si hace falta.
             var faltaInvoicingMode = !supplier.InvoicingMode.HasValue;
             var faltaPenaltyBehavior = !JsonTieneCampo(rawBody, "penaltyBehavior");
             var faltaTreasuryFxOverride = !JsonTieneCampo(rawBody, "treasuryFxAssumedByOverride");
-            if (faltaInvoicingMode || faltaPenaltyBehavior || faltaTreasuryFxOverride)
+            // DefaultPaymentTermDays YA es nullable en el DTO (null explicito = "borrar el plazo", semantica
+            // vigente y con test propio) — por eso NO alcanza con mirar HasValue como en InvoicingMode: hay que
+            // distinguir "el campo no vino en el JSON" (preservar) de "vino en null a proposito" (borrar).
+            var faltaDefaultPaymentTermDays = !JsonTieneCampo(rawBody, "defaultPaymentTermDays");
+            // IsActive es bool (no nullable) con default true en el record: un PUT que omite el campo deserializa
+            // "true" igual que uno que lo manda a proposito, y hoy eso REACTIVA en silencio un proveedor
+            // desactivado. Mismo mecanismo de JSON crudo que los demas.
+            var faltaIsActive = !JsonTieneCampo(rawBody, "isActive");
+            if (faltaInvoicingMode || faltaPenaltyBehavior || faltaTreasuryFxOverride
+                || faltaDefaultPaymentTermDays || faltaIsActive)
             {
                 var current = await _supplierService.GetSupplierAsync(id, cancellationToken);
                 // Clientes previos a este contrato no mandan InvoicingMode. Preservar el valor real evita
@@ -141,6 +151,8 @@ public class SuppliersController : ControllerBase
                 if (faltaInvoicingMode) mapped.InvoicingMode = current.InvoicingMode;
                 if (faltaPenaltyBehavior) mapped.PenaltyBehavior = current.PenaltyBehavior;
                 if (faltaTreasuryFxOverride) mapped.TreasuryFxAssumedByOverride = current.TreasuryFxAssumedByOverride;
+                if (faltaDefaultPaymentTermDays) mapped.DefaultPaymentTermDays = current.DefaultPaymentTermDays;
+                if (faltaIsActive) mapped.IsActive = current.IsActive;
             }
 
             var result = await _supplierService.UpdateSupplierAsync(id, mapped, cancellationToken);

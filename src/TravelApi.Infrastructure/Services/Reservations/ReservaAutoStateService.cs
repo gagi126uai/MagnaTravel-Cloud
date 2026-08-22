@@ -402,7 +402,10 @@ public class ReservaAutoStateService
                 UserId = userId,
                 Message = message,
                 Type = NotificationTypes.ReservaNeedsReview,
-                Priority = "Urgent",
+                // Decision 2026-08-22: de "Urgent" a "Normal" — el banner naranja full-width queda
+                // reservado a caidas de TODO el sistema (decision firmada 2026-08-19). "Confirmada con
+                // cambios" sigue siendo un aviso normal en la campanita.
+                Priority = "Normal",
                 RelatedEntityId = reserva.Id,
                 RelatedEntityType = NotificationRelatedEntityTypes.Reserva,
                 ResolutionKey = resolutionKey,

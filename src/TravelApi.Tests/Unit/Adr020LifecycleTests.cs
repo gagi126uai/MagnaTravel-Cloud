@@ -151,7 +151,9 @@ public class Adr020LifecycleTests
         Assert.NotNull(reserva.ChangesPendingSince);
         var notif = Assert.Single(ctx.Notifications.Where(n => n.RelatedEntityId == 1));
         Assert.Equal("vendedor-1", notif.UserId);
-        Assert.Equal("Urgent", notif.Priority);
+        // Decision 2026-08-19/22: el banner naranja queda reservado a caidas de sistema; "confirmada con
+        // cambios" ahora es un aviso Normal en la campanita, no Urgent.
+        Assert.Equal("Normal", notif.Priority);
         Assert.Equal(NotificationTypes.ReservaNeedsReview, notif.Type);
     }
 

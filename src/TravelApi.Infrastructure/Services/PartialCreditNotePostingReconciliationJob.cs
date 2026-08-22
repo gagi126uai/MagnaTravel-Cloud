@@ -332,7 +332,8 @@ public class PartialCreditNotePostingReconciliationJob
         // D5 (2026-07-05): dedup por AVISO VIVO con la misma clave ("PartialCreditNotePostingStuck:{ncId}"), no por
         // "creado hoy". El job corre cada 30 min y la NC puede quedar colgada dias: antes eso re-creaba el aviso cada
         // dia (spam). Ahora solo se re-crea si el anterior ya se atendio/resolvio y la NC sigue trabada.
-        var resolutionKey = NotificationResolutionKeys.ForEntity("PartialCreditNotePostingStuck", creditNote.Id);
+        var resolutionKey = NotificationResolutionKeys.ForEntity(
+            NotificationRelatedEntityTypes.PartialCreditNotePostingStuck, creditNote.Id);
 
         foreach (var admin in adminUsers)
         {
@@ -348,9 +349,12 @@ public class PartialCreditNotePostingReconciliationJob
             {
                 UserId = admin.Id,
                 Type = "Error",
-                Priority = "Urgent",
+                // Decision 2026-08-22: de "Urgent" a "Normal" — el banner naranja full-width queda
+                // reservado a caidas de TODO el sistema (decision firmada 2026-08-19). Una NC puntual
+                // trabada sigue siendo un Error normal en la campanita.
+                Priority = "Normal",
                 RelatedEntityId = creditNote.Id,
-                RelatedEntityType = "PartialCreditNotePostingStuck",
+                RelatedEntityType = NotificationRelatedEntityTypes.PartialCreditNotePostingStuck,
                 Message = message,
             }, ct);
         }

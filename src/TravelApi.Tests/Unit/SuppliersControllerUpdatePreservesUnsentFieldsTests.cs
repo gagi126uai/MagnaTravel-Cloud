@@ -39,7 +39,9 @@ public class SuppliersControllerUpdatePreservesUnsentFieldsTests : IClassFixture
 
     private async Task<Guid> SeedSupplierAsync(
         SupplierPenaltyBehavior penaltyBehavior = SupplierPenaltyBehavior.Unknown,
-        TreasuryFxAssumedBy? treasuryFxAssumedByOverride = null)
+        TreasuryFxAssumedBy? treasuryFxAssumedByOverride = null,
+        bool isActive = true,
+        int? defaultPaymentTermDays = null)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -47,9 +49,10 @@ public class SuppliersControllerUpdatePreservesUnsentFieldsTests : IClassFixture
         var supplier = new Supplier
         {
             Name = "Operador test " + Guid.NewGuid().ToString("N")[..8],
-            IsActive = true,
+            IsActive = isActive,
             PenaltyBehavior = penaltyBehavior,
             TreasuryFxAssumedByOverride = treasuryFxAssumedByOverride,
+            DefaultPaymentTermDays = defaultPaymentTermDays,
         };
         db.Suppliers.Add(supplier);
         await db.SaveChangesAsync();
@@ -254,5 +257,98 @@ public class SuppliersControllerUpdatePreservesUnsentFieldsTests : IClassFixture
         var content = await resp.Content.ReadAsStringAsync();
         Assert.DoesNotContain("JsonException", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("System.Text.Json", content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ============================================================================================
+    // Extension 2026-08-22 del mismo guard a DefaultPaymentTermDays e IsActive (mismo patron de arriba:
+    // "campo ausente" preserva, "campo presente" aplica -- incluido el null explicito de
+    // DefaultPaymentTermDays, que es un borrado a proposito, no un descuido del cliente HTTP).
+    // ============================================================================================
+
+    [Fact]
+    public async Task PUT_SinDefaultPaymentTermDaysEnElBody_PreservaElPlazoYaCargado()
+    {
+        var publicId = await SeedSupplierAsync(defaultPaymentTermDays: 45);
+
+        var client = _factory.CreateClient();
+        // El body no menciona "defaultPaymentTermDays" en absoluto.
+        var resp = await client.PutAsync(
+            $"/api/suppliers/{publicId}",
+            JsonBody("{ \"name\": \"Operador editado\", \"phone\": \"11-2222-3333\" }"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var reloaded = await ReloadSupplierAsync(publicId);
+        Assert.Equal(45, reloaded.DefaultPaymentTermDays);
+    }
+
+    [Fact]
+    public async Task PUT_ConDefaultPaymentTermDaysNullExplicito_BorraElPlazoAProposito()
+    {
+        // Caso espejo: la ficha del operador SI permite volver a "sin plazo" a proposito (semantica ya
+        // fijada por SupplierDefaultPaymentTermDaysTests.UpdateSupplierAsync_CanSetAndClearTerm). Si el
+        // fix tratara CUALQUIER null como "campo ausente", ese borrado dejaria de funcionar.
+        var publicId = await SeedSupplierAsync(defaultPaymentTermDays: 45);
+
+        var client = _factory.CreateClient();
+        var resp = await client.PutAsync(
+            $"/api/suppliers/{publicId}",
+            JsonBody("{ \"name\": \"Operador editado\", \"defaultPaymentTermDays\": null }"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var reloaded = await ReloadSupplierAsync(publicId);
+        Assert.Null(reloaded.DefaultPaymentTermDays);
+    }
+
+    [Fact]
+    public async Task PUT_ConDefaultPaymentTermDaysPresente_ActualizaAlValorNuevo()
+    {
+        var publicId = await SeedSupplierAsync(defaultPaymentTermDays: 15);
+
+        var client = _factory.CreateClient();
+        var resp = await client.PutAsync(
+            $"/api/suppliers/{publicId}",
+            JsonBody("{ \"name\": \"Operador editado\", \"defaultPaymentTermDays\": 60 }"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var reloaded = await ReloadSupplierAsync(publicId);
+        Assert.Equal(60, reloaded.DefaultPaymentTermDays);
+    }
+
+    [Fact]
+    public async Task PUT_SinIsActiveEnElBody_UnProveedorDesactivadoSigueDesactivado()
+    {
+        // Antes del fix, IsActive es bool con default "true" en el record: un PUT que omite el campo
+        // deserializaba exactamente igual que uno que manda isActive=true a proposito, y reactivaba en
+        // silencio un proveedor que el dueño habia dado de baja.
+        var publicId = await SeedSupplierAsync(isActive: false);
+
+        var client = _factory.CreateClient();
+        var resp = await client.PutAsync(
+            $"/api/suppliers/{publicId}",
+            JsonBody("{ \"name\": \"Operador editado\", \"phone\": \"11-2222-3333\" }"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var reloaded = await ReloadSupplierAsync(publicId);
+        Assert.False(reloaded.IsActive);
+    }
+
+    [Fact]
+    public async Task PUT_ConIsActivePresente_Aplica()
+    {
+        var publicId = await SeedSupplierAsync(isActive: true);
+
+        var client = _factory.CreateClient();
+        var resp = await client.PutAsync(
+            $"/api/suppliers/{publicId}",
+            JsonBody("{ \"name\": \"Operador editado\", \"isActive\": false }"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var reloaded = await ReloadSupplierAsync(publicId);
+        Assert.False(reloaded.IsActive);
     }
 }

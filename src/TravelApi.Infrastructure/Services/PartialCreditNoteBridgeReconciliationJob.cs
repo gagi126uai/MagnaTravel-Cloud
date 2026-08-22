@@ -157,7 +157,10 @@ public class PartialCreditNoteBridgeReconciliationJob
             //    ManualReviewPending. Si no hay BC o ya transiciono, no hay
             //    nada para conciliar -> skip silencioso (no contamos como
             //    intento, no notificamos).
+            // Include(Reserva): el mensaje del aviso de "intervencion manual" habla en criollo por
+            // NUMERO de reserva (nunca un id interno) — hace falta la navegacion cargada para eso.
             var bookingCancellation = await _dbContext.BookingCancellations
+                .Include(bc => bc.Reserva)
                 .FirstOrDefaultAsync(
                     bc => bc.PartialCreditNoteApprovalRequestId == approvalRequest.Id
                        && bc.Status == BookingCancellationStatus.ManualReviewPending,
@@ -272,11 +275,21 @@ public class PartialCreditNoteBridgeReconciliationJob
             return;
         }
 
+        // Gate de exposicion de datos (revision 2026-08-22): el Message anterior filtraba internals que un
+        // agente de viajes (usuario NO programador) jamas deberia ver — el GUID publico de la aprobacion y
+        // de la cancelacion, el nombre del endpoint interno "force-bridge-callback", el flag
+        // "InvariantOverride" y el texto crudo de la excepcion (BridgeLastError). El detalle tecnico completo
+        // queda SOLO en el log de abajo; el Message habla en criollo, por NUMERO de reserva (nunca un GUID).
+        var numeroReserva = bookingCancellation.Reserva.NumeroReserva;
         var message =
-            $"La aprobacion {approvalRequest.PublicId} (BC {bookingCancellation.PublicId}) " +
-            $"alcanzo {maxRetries} reintentos del bridge sin exito. " +
-            $"Requiere intervencion manual: usar el endpoint force-bridge-callback con InvariantOverride. " +
-            $"Ultimo error: {approvalRequest.BridgeLastError}";
+            $"La aprobación de la nota de crédito de la reserva {numeroReserva} no se pudo completar " +
+            "después de varios intentos. Avisale al soporte técnico para destrabarla.";
+
+        _logger.LogError(
+            "PartialCreditNoteBridgeReconciliationJob: AR {ApprovalPublicId} (BC {BcPublicId}, Reserva {NumeroReserva}) " +
+            "alcanzo {MaxRetries} reintentos del bridge sin exito. Requiere force-bridge-callback manual con " +
+            "InvariantOverride. Ultimo error: {BridgeLastError}",
+            approvalRequest.PublicId, bookingCancellation.PublicId, numeroReserva, maxRetries, approvalRequest.BridgeLastError);
 
         foreach (var admin in adminUsers)
         {
@@ -284,8 +297,16 @@ public class PartialCreditNoteBridgeReconciliationJob
             {
                 UserId = admin.Id,
                 Type = "Error",
-                Priority = "Urgent",
+                // Decision 2026-08-22: de "Urgent" a "Normal" — el banner naranja full-width queda
+                // reservado a caidas de TODO el sistema (decision firmada 2026-08-19). Esta falla puntual
+                // del bridge sigue siendo un Error normal en la campanita.
+                Priority = "Normal",
                 RelatedEntityId = approvalRequest.Id,
+                // (2026-08-22) A proposito SIN entrada en NotificationTargetUrlResolver: la accion que pide
+                // el mensaje ("usar el endpoint force-bridge-callback con InvariantOverride") es una
+                // intervencion tecnica sin pantalla propia en el front hoy — no hay a donde navegar todavia.
+                // Si algun dia se arma una UI para esto, ahi se agrega el caso al resolver (mismo patron que
+                // los demas tipos).
                 RelatedEntityType = "PartialCreditNoteBridgeReconciliationFailed",
                 Message = message,
             }, ct);

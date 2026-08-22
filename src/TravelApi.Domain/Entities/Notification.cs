@@ -57,6 +57,22 @@ public static class NotificationRelatedEntityTypes
     /// del operador SIN necesitar una columna nueva en <c>Notification</c>.
     /// </summary>
     public const string CashLedgerRefundReconciliation = "CashLedgerRefundReconciliation";
+
+    /// <summary>
+    /// Cancelacion parcial en <c>ManualReviewPending</c> desde hace mas de N dias (job
+    /// <c>PartialCreditNoteReviewAlertJob</c>, 2026-08-22 bajada a "Normal"). <c>RelatedEntityId</c> es el Id
+    /// INTERNO de la <c>BookingCancellation</c> — el resolver lo traduce a la reserva duena (PublicId) para
+    /// armar <c>/reservas/{publicId}</c>, misma reserva que el mensaje le pide al admin abrir.
+    /// </summary>
+    public const string PartialCreditNoteReviewPending = "PartialCreditNoteReviewPending";
+
+    /// <summary>
+    /// Nota de credito parcial trabada sin confirmacion de ARCA (job
+    /// <c>PartialCreditNotePostingReconciliationJob</c>, 2026-08-22 bajada a "Normal"). <c>RelatedEntityId</c>
+    /// es el Id INTERNO de la <c>Invoice</c> (la NC). El resolver la traduce a su reserva duena cuando la
+    /// tiene; si la NC no esta ligada a una reserva, el aviso queda sin link (igual que hoy).
+    /// </summary>
+    public const string PartialCreditNotePostingStuck = "PartialCreditNotePostingStuck";
 }
 
 /// <summary>

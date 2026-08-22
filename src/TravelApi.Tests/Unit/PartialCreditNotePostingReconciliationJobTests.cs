@@ -301,7 +301,9 @@ public class PartialCreditNotePostingReconciliationJobTests
         notificationMock.Verify(n => n.CreateAndSendAsync(
             It.Is<Notification>(notif =>
                 notif.RelatedEntityType == "PartialCreditNotePostingStuck"
-                && notif.Priority == "Urgent"),
+                // Decision 2026-08-19/22: el banner naranja queda reservado a caidas de sistema; esta
+                // NC puntual trabada ahora es un aviso Normal en la campanita, no Urgent.
+                && notif.Priority == "Normal"),
             It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }

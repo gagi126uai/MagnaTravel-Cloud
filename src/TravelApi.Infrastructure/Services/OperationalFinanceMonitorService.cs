@@ -86,7 +86,10 @@ public class OperationalFinanceMonitorService
                 {
                     UserId = userId,
                     Type = "Warning",
-                    Priority = "Urgent",
+                    // Decision 2026-08-22: de "Urgent" a "Normal" — el banner naranja full-width queda
+                    // reservado a caidas de TODO el sistema (decision firmada 2026-08-19). "Sale pronto y
+                    // debe" sigue siendo un Warning normal en la campanita.
+                    Priority = "Normal",
                     RelatedEntityId = reserva.Id,
                     RelatedEntityType = NotificationRelatedEntityTypes.ReservaUnpaidDeparture,
                     Message = $"La reserva {reserva.NumeroReserva} sale el {reserva.StartDate:dd/MM/yyyy} y todavía tiene " +

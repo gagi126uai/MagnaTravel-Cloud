@@ -213,7 +213,9 @@ public class CoherenceWatchdogTests
         notificationMock.Verify(n => n.CreateAndSendAsync(
             It.Is<Notification>(notif =>
                 notif.RelatedEntityType == "CoherenceWatchdogReport"
-                && notif.Priority == "Urgent"),
+                // Decision 2026-08-19/22: el banner naranja queda reservado a caidas de sistema; este
+                // resumen del vigia ahora es un aviso Normal en la campanita, no Urgent.
+                && notif.Priority == "Normal"),
             It.IsAny<CancellationToken>()),
             Times.Once);
     }

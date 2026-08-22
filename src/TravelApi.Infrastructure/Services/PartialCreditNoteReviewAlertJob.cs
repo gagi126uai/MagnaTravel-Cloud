@@ -172,7 +172,7 @@ public class PartialCreditNoteReviewAlertJob
             // cada noche mientras el BC siguiera trabado (acumulacion). Ahora solo se re-crea si el anterior ya se
             // atendio (leido/descartado) o se resolvio y el BC sigue stale (recordatorio legitimo).
             var resolutionKey = NotificationResolutionKeys.ForEntity(
-                "PartialCreditNoteReviewPending", bookingCancellation.Id);
+                NotificationRelatedEntityTypes.PartialCreditNoteReviewPending, bookingCancellation.Id);
 
             foreach (var admin in adminUsers)
             {
@@ -188,9 +188,12 @@ public class PartialCreditNoteReviewAlertJob
                 {
                     UserId = admin.Id,
                     Type = "Warning",
-                    Priority = "Urgent",
+                    // Decision 2026-08-22: de "Urgent" a "Normal" — el banner naranja full-width queda
+                    // reservado a caidas de TODO el sistema (decision firmada 2026-08-19). Este aviso
+                    // puntual de UNA cancelacion trabada sigue siendo un Warning normal en la campanita.
+                    Priority = "Normal",
                     RelatedEntityId = bookingCancellation.Id,
-                    RelatedEntityType = "PartialCreditNoteReviewPending",
+                    RelatedEntityType = NotificationRelatedEntityTypes.PartialCreditNoteReviewPending,
                     Message = message,
                 }, ct);
             }
